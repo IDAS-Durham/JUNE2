@@ -1,0 +1,278 @@
+# Contact matrices for the 2021 COVID-19 simulation.
+#
+# This file is read directly by the simulator. Edit it by hand to change
+# contact rates or transmission probabilities.
+#
+# ---------------------------------------------------------------------------
+# What each venue declares
+# ---------------------------------------------------------------------------
+# Each venue has two transmission modes:
+#   respiratory      : non-physical (airborne / droplet) contact
+#   physical_contact : physical (touching) contact
+#
+# Each mode has three fields:
+#   beta     - per-mode transmission rate at this venue.
+#   bins     - subset names within the venue (e.g. resident vs worker).
+#              Both modes must use the same bins.
+#   contacts - matrix of contacts per person per day, indexed
+#              [observer_bin][other_bin]. Same units as the original
+#              experimental contact-survey data (e.g. POLYMOD-style).
+#
+# At config-load time the parser multiplies them together:
+#   effective_C[s,i] = beta * contacts[s][i]
+#
+# So:
+#   - To change "how often people meet at this venue", edit contacts.
+#   - To tune the transmission probability of the venue, edit beta.
+#
+# ---------------------------------------------------------------------------
+# YAML anchors (&idXXX) and aliases (*idXXX)
+# ---------------------------------------------------------------------------
+# These are standard YAML for "define a value once, reference it elsewhere":
+#
+#     bins: &id001 [resident, worker]   # define anchor id001
+#     bins: *id001                       # alias - resolves to [resident, worker]
+#
+# This file uses them where respiratory and physical_contact share the same
+# bins or contacts, just to avoid repetition. They are a serialization
+# convenience, not semantic. If you want the two modes to diverge, replace
+# the *idXXX alias with an inline value.
+#
+# ---------------------------------------------------------------------------
+# Note on the four "non-uniform p" venues
+# ---------------------------------------------------------------------------
+# For care_home, classroom, household, and hospital, the share of contacts
+# that are physical (rather than respiratory) varies per bin pair. For these
+# venues the contacts matrix has been split per mode at file-write time:
+#   respiratory      contacts = C * (1 - p)
+#   physical_contact contacts = C * p
+# The two matrices sum back to the original raw contact counts. For every
+# other venue the contacts matrix is the raw count and is identical between
+# the two modes (which is why those venues use *idXXX aliases).
+#
+# ---------------------------------------------------------------------------
+# Disease-config dependency
+# ---------------------------------------------------------------------------
+# disease.yaml's mode_susceptibility_multipliers must be [1.0, 1.0]. The
+# physical-contact infectiousness multiplier (historically called alpha) has
+# been folded into physical_contact.beta at this file's values, so doubling
+# it again in disease.yaml would double-count.
+#
+default_contacts_matrix:
+  modes:
+    respiratory:
+      beta: 0.0375
+      bins: [all]
+      contacts:
+      - [20]
+    physical_contact:
+      beta: 0.0083333333
+      bins: [all]
+      contacts:
+      - [20]
+contact_matrices:
+  care_home:
+    modes:
+      respiratory:
+        beta: 0.0116666667
+        bins: &id001 [resident, worker]
+        contacts:
+        - [4.0, 0.0]
+        - [0.0, 14.25]
+      physical_contact:
+        beta: 0.0233333333
+        bins: *id001
+        contacts:
+        - [0.0, 15.0]
+        - [1.5, 0.75]
+  office:
+    modes:
+      respiratory:
+        beta: 0.04312875
+        bins: &id002 [workers]
+        contacts: &id003
+        - [4.8]
+      physical_contact:
+        beta: 0.0064925
+        bins: *id002
+        contacts: *id003
+  uni_groups_by_year:
+    modes:
+      respiratory:
+        beta: 0.09375
+        bins: &id004 [student]
+        contacts: &id005
+        - [2]
+      physical_contact:
+        beta: 0.0625
+        bins: *id004
+        contacts: *id005
+  student_dorms:
+    modes:
+      respiratory:
+        beta: 0.012
+        bins: &id006 [resident]
+        contacts: &id007
+        - [7.5]
+      physical_contact:
+        beta: 0.0093333333
+        bins: *id006
+        contacts: *id007
+  boarding_school:
+    modes:
+      respiratory:
+        beta: 0.0094285714
+        bins: &id008 [resident]
+        contacts: &id009
+        - [10]
+      physical_contact:
+        beta: 0.0125714286
+        bins: *id008
+        contacts: *id009
+  classroom:
+    modes:
+      respiratory:
+        beta: 0.0375
+        bins: &id010 [student, worker]
+        contacts:
+        - [8.5, 2.3]
+        - [23.0, 5.7]
+      physical_contact:
+        beta: 0.075
+        bins: *id010
+        contacts:
+        - [1.5, 0.2]
+        - [2.0, 0.3]
+  household:
+    modes:
+      respiratory:
+        beta: 0.0673333333
+        bins: &id011 [Kids, Young Adults, Adults, Old Adults]
+        contacts:
+        - [1.63482, 0.7872, 0.7872, 0.7872]
+        - [0.5568, 0.45296, 0.45296, 0.45296]
+        - [0.3891, 0.4455, 0.4455, 0.4455]
+        - [0.35264, 0.45296, 0.45296, 0.71775]
+      physical_contact:
+        beta: 0.1346666667
+        bins: *id011
+        contacts:
+        - [0.84218, 0.5248, 0.5248, 0.5248]
+        - [0.3712, 0.73904, 0.73904, 0.73904]
+        - [0.9079, 1.0395, 1.0395, 1.0395]
+        - [0.57536, 0.73904, 0.73904, 0.58725]
+  pub:
+    modes:
+      respiratory:
+        beta: 0.1259602667
+        bins: &id012 [patron]
+        contacts: &id013
+        - [3]
+      physical_contact:
+        beta: 0.0343528
+        bins: *id012
+        contacts: *id013
+  gym:
+    modes:
+      respiratory:
+        beta: 0.1259602667
+        bins: &id014 [patron]
+        contacts: &id015
+        - [3]
+      physical_contact:
+        beta: 0.0343528
+        bins: *id014
+        contacts: *id015
+  grocery:
+    modes:
+      respiratory:
+        beta: 0.0121352
+        bins: &id016 [patron]
+        contacts: &id017
+        - [1.5]
+      physical_contact:
+        beta: 0.0033096
+        bins: *id016
+        contacts: *id017
+  cinema:
+    modes:
+      respiratory:
+        beta: 0.04618856
+        bins: &id018 [patron]
+        contacts: &id019
+        - [3]
+      physical_contact:
+        beta: 0.01259688
+        bins: *id018
+        contacts: *id019
+  hospital:
+    modes:
+      respiratory:
+        beta: 0.0146
+        bins: &id020 [workers, patients, icu_patients]
+        contacts:
+        - [4.75, 0.0, 0.0]
+        - [0.0, 0.0, 0.0]
+        - [0.0, 0.0, 0.0]
+      physical_contact:
+        beta: 0.0292
+        bins: *id020
+        contacts:
+        - [0.25, 10.0, 10.0]
+        - [1.0, 0.0, 0.0]
+        - [1.0, 0.0, 0.0]
+  coordinated_encounter:
+    modes:
+      respiratory:
+        beta: 0.0
+        bins: &id021 [participant]
+        contacts: &id022
+        - [4.0]
+      physical_contact:
+        beta: 1.8
+        bins: *id021
+        contacts: *id022
+  social_encounter:
+    modes:
+      respiratory:
+        beta: 0.125
+        bins: &id023 [participant]
+        contacts: &id024
+        - [6.0]
+      physical_contact:
+        beta: 0.25
+        bins: *id023
+        contacts: *id024
+  company:
+    modes:
+      respiratory:
+        beta: 0.0139125
+        bins: &id027 [all]
+        contacts: &id028
+        - [20]
+      physical_contact:
+        beta: 0.0030916667
+        bins: *id027
+        contacts: *id028
+  school:
+    modes:
+      respiratory:
+        beta: 0.002625
+        bins: &id029 [all]
+        contacts: &id030
+        - [20]
+      physical_contact:
+        beta: 0.0005833333
+        bins: *id029
+        contacts: *id030
+  university:
+    modes:
+      respiratory:
+        beta: 0.011475
+        bins: &id031 [all]
+        contacts: &id032
+        - [20]
+      physical_contact:
+        beta: 0.00255
+        bins: *id031
+        contacts: *id032

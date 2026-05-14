@@ -1,0 +1,74 @@
+# Infection Seeding Configuration
+# Controls how and when infections are introduced into the simulation
+
+global_parameters:
+  default_seed_strength: 1.0
+  base_cases_per_capita: 0.0002
+
+infection_seeds:
+  # Single uniform seeding event
+  - name: "basic_seeding"
+    type: "uniform"
+    date: "2024-01-01 08:00"
+    parameters:
+      cases_per_capita_multiplier: 1.0
+
+# bulk_csv: "config/bulk_seeds.csv"
+
+# infection_seeds:
+#   # 1. Uniform Seeding (Default)
+#   # introduce infections randomly across the entire population based on a rate.
+#   - name: "base_uniform_seeding"
+#     type: "uniform"
+#     date: "2024-01-01 08:00" # ISO datetime (Day 0)
+#     parameters:
+#       # Cases per capita = global_parameters.base_cases_per_capita * multiplier
+#       cases_per_capita_multiplier: 10.0
+#       seed_strength: 1.0 # Optional: Multiplier for total cases
+      
+#       # Optional: Restrict to specific people
+#       attribute_filters:
+#         properties.ethnicity: "W"
+#         sex: "female"
+
+#   # 2. Exact Seeding
+#   # introduce a specific number of cases in specific geographic units.
+#   - name: "targeted_exact_seeding"
+#     type: "exact"
+#     date: "2024-01-02 12:00"
+#     geo_level: "MGU" # Geographic level for 'units'
+#     parameters:
+#       # Filter for demographic groups (Target Groups)
+#       age_groups: ["0-17", "18-64", "65+"] 
+      
+#       # units: "unit_id": [cases_per_group_1, cases_per_group_2, ...]
+#       # Or "unit_id": total_cases (distributed across groups)
+#       units:
+#         "E02004292": [5, 10, 2] # 5 kids, 10 adults, 2 seniors
+#         "E02001234": 20        # 20 people total, matching any age group
+
+#   # 3. Clustered Seeding
+#   # Same as 'exact', but prioritizes infecting people within the same households.
+#   - name: "targeted_clustered_seeding"
+#     type: "clustered"
+#     date: "2024-01-03 18:00"
+#     geo_level: "SGU"
+#     parameters:
+#       age_groups: ["18-30"]
+#       units:
+#         "E01000001": 5 # Seed 5 cases in 18-30 year olds, clustered in households
+
+#   # 4. Attribute-only Seeding (Manual)
+#   # Direct selection of people by properties without specific geographic units.
+#   - name: "comorbidity_seeding"
+#     type: "uniform"
+#     date: "2024-01-04 09:00"
+#     parameters:
+#       cases_per_capita_multiplier: 1.0
+#       attribute_filters:
+#         properties.comorbidities: "diabetes"
+#         age: 60 # Direct numeric comparison supported
+
+#   # Note on CSV Bulk Seeding:
+#   # See 'bulk_csv' entry above. The CSV can contain all the above types 
+#   # in a single file, grouped by 'name', 'date', and 'type'.

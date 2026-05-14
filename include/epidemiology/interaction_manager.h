@@ -1,0 +1,277 @@
+#pragma once
+
+#include <map>
+#include <optional>
+#include <random>
+#include <unordered_set>
+#include <vector>
+
+#include "../activity/activity_manager.h"
+#include "../core/config.h"
+#include "../core/world_state.h"
+#include "../utils/age_utils.h"
+#include "../utils/event_logger.h"
+#include "../utils/event_logging/event_types.h"
+#include "../utils/time_utils.h"
+#include "disease.h"
+#include "policy.h"
+
+namespace june {
+
+class CompartmentalModelManager;  // optional plugin — null when inactive
+
+// =============================================================================
+// InteractionMember - Lightweight person reference
+// =============================================================================
+struct InteractionMember {
+  PersonId id;
+  size_t array_index;
+  SubsetIndex subset_index;
+  uint8_t encounter_type_id;
+};
+
+// =============================================================================
+// Structures used in transmission processing (moved to header for reuse)
+// =============================================================================
+
+struct SusceptibleMember {
+  PersonId id;
+  double susceptibility;
+  const VisitorInfo* visitor;
+  uint8_t encounter_type_id;
+};
+
+struct BinGroup {
+  std::vector<SusceptibleMember> susceptible;
+  std::vector<PersonId> infectious_ids;
+  // [mode_index][person_idx_within_bin] — per-mode infectiousness
+  std::vector<std::vector<double>> infectiousness_by_mode;
+  std::vector<double> total_infectiousness_by_mode;
+  int total_size = 0;
+  // [mode_index] cumulative weights derived from I_{b,m} for that mode.
+  // Empty if the mode has no positive weight. Built once per bin/mode in
+  // STEP 2 of processVenueTransmissions and sampled many times in STEP 3b
+  // via sampleFromCumulative — replaces a per-call std::discrete_distribution
+  // construction (the 116M "smoking gun" from the 60M profile).
+  std::vector<std::vector<double>> cumulative_by_mode;
+  // Per-fomite-mode deposition totals for this bin
+  // [local_fomite_mode_index][sub_bin_k]
+  std::vector<std::vector<double>> total_fomite_deposition_sub;
+
+  // Clear person-proportional fields post-transmission while cache-hot.
+  // Does NOT touch total_fomite_deposition_sub; that is handled exclusively
+  // by initFomiteSubBins, called pre-use with the correct slot parameters.
+  void clearAfterUse(int num_modes) {
+    susceptible.clear();
+    infectious_ids.clear();
+    infectiousness_by_mode.resize(num_modes);
+    for (auto& v : infectiousness_by_mode) v.clear();
+    total_infectiousness_by_mode.assign(num_modes, 0.0);
+    total_size = 0;
+    cumulative_by_mode.resize(num_modes);
+    for (auto& c : cumulative_by_mode) c.clear();
+  }
+
+  // Size and zero fomite sub-bin accumulators for the current slot's
+  // delta_hours. Called pre-use so total_fomite_deposition_sub[fm] has exactly
+  // n_sub_per_mode[fm] elements before any deposition is accumulated into them.
+  void initFomiteSubBins(int num_fomite_modes,
+                         const std::vector<int>& n_sub_per_mode) {
+    total_fomite_deposition_sub.resize(num_fomite_modes);
+    for (int fm = 0; fm < num_fomite_modes; ++fm) {
+      int n_sub = fm < (int)n_sub_per_mode.size() ? n_sub_per_mode[fm] : 1;
+      total_fomite_deposition_sub[fm].assign(n_sub, 0.0);
+    }
+  }
+};
+
+struct SourceEntry {
+  int mode;
+  int inf_bin;
+  // For sibling-mixing sources, inf_bin == SIBLING_INF_BIN_SENTINEL and
+  // sibling_parent_inf_bin holds the bin under the PARENT matrix to use
+  // when sampling the infector from the per-parent flat list.
+  int sibling_parent_inf_bin = -1;
+};
+// Sentinel for SourceEntry::inf_bin meaning "this source is sibling-venue
+// mixing; sample infector from ParentAggregate". Distinct from -1 (fomite)
+// and -2 (compartmental).
+constexpr int SIBLING_INF_BIN_SENTINEL = -3;
+
+// =============================================================================
+// ParentAggregate - per-tick aggregation of infectiousness across all child
+// venues of a single parent venue (e.g. classrooms of one school). Built in
+// processTransmissions::buildParentAggregates() before the main per-venue
+// loop. Each child venue (classroom/office/uni_groups) reads from its
+// ParentAggregate to add a "sibling-mixing" force-of-infection term.
+//
+// All child venues of a parent live on the same MPI rank (children share
+// the parent's MGU), so this map is rank-local with no MPI communication.
+// =============================================================================
+struct ParentInfectorEntry {
+  PersonId person_id;
+  VenueId child_venue_id;  // origin child, used to exclude own-venue at sample
+  // Per-mode integrated infectiousness (24*∫I dt), same units as
+  // BinGroup::infectiousness_by_mode entries.
+  std::vector<double> inf_by_mode;
+};
+
+struct ParentAggregate {
+  // [parent_bin][mode] → sum of integrated infectiousness across all children
+  std::vector<std::vector<double>> total_inf_by_bin_mode;
+  // [parent_bin] → headcount across all children
+  std::vector<int> size_by_bin;
+  // [parent_bin] → flat list of infectors from any child, used for sibling
+  // infector sampling (filter by child_venue_id at sample time to exclude own)
+  std::vector<std::vector<ParentInfectorEntry>> infectors_by_bin;
+
+  // Per-child contributions, so each child can subtract its own share when
+  // computing the sibling FOI it sees. Keyed by child venue id.
+  // child_size[child_venue_id][parent_bin]
+  std::unordered_map<VenueId, std::vector<int>> child_size_by_bin;
+  // child_inf[child_venue_id][parent_bin][mode]
+  std::unordered_map<VenueId, std::vector<std::vector<double>>>
+      child_inf_by_bin_mode;
+  // Cached parent venue metadata (filled at first insertion)
+  uint8_t parent_venue_type_id = 255;
+};
+
+// =============================================================================
+// InteractionManager - Handles disease transmission through interactions
+// =============================================================================
+
+class InteractionManager {
+ public:
+  struct PerformanceStats {
+    size_t matrix_lookups = 0;
+    size_t bin_lookups = 0;
+    size_t weight_allocations = 0;
+    size_t distribution_constructions = 0;
+    size_t grouping_ops = 0;
+
+    void print() const {
+      std::cout << "\n=== InteractionManager Performance Stats ==="
+                << std::endl;
+      std::cout << "  Matrix lookups:      " << matrix_lookups << std::endl;
+      std::cout << "  Bin lookups:         " << bin_lookups << std::endl;
+      std::cout << "  Weight allocations:  " << weight_allocations << std::endl;
+      std::cout << "  Dist constructions:  " << distribution_constructions
+                << std::endl;
+      std::cout << "  Grouping operations: " << grouping_ops << std::endl;
+    }
+  };
+
+  InteractionManager(WorldState& world,
+                     const ContactMatrixConfig& contact_matrices,
+                     const SimulationConfig& simulation_config,
+                     const ParallelConfig& parallel_config, Disease* disease,
+                     EventLogger* event_logger = nullptr);
+
+  // Calculate and apply transmissions for a time slot.
+  // Returns the number of new infections.
+  // Pass comp_model to enable compartmental uptake FOI; null = no plugin.
+  int processTransmissions(
+      const std::vector<PersonLocation>& locations, double current_time,
+      double delta_hours,
+      std::unordered_set<PersonId>* active_infections = nullptr,
+      const std::unordered_set<PersonId>* visitor_ids = nullptr,
+      std::vector<PendingInfection>* pending_infections = nullptr,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data = nullptr,
+      const CompartmentalModelManager* comp_model = nullptr);
+
+  PerformanceStats& getStats() { return stats_; }
+
+  // Set the current day type index (used by EventLogger for per-type stats)
+  void setCurrentDayTypeIdx(int idx) { current_day_type_idx_ = idx; }
+
+ private:
+  WorldState& world_;
+  const ContactMatrixConfig& contact_matrices_;
+  const SimulationConfig& simulation_config_;
+  const ParallelConfig& parallel_config_;
+  Disease* disease_;
+  EventLogger* event_logger_;
+  int current_day_type_idx_ = 0;
+  std::unordered_map<uint8_t, std::string> encounter_subset_overrides_;
+
+  // Pre-pass over locations (already sorted by venue) building
+  // parent_aggregates_ for the current tick. Called once per
+  // processTransmissions invocation before the per-venue loop. Iterates each
+  // venue group, computes per-bin per-mode integrated infectiousness under
+  // the PARENT's contact matrix, and stores per-child contributions so each
+  // child can subtract its own share later. Walks members in person_id order
+  // (the same order the main loop uses) for deterministic FP accumulation.
+  void buildParentAggregates(
+      double current_time, double delta_hours,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
+
+  // Compute the bin index for a person under a given contact matrix.
+  // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
+  // can bin people under the PARENT matrix (which may have a different bin
+  // scheme than the child).
+  int computeBinIndexForMatrix(const Person* person, const Venue* venue,
+                               SubsetIndex subset_index,
+                               uint8_t encounter_type_id,
+                               const ContactMatrix* matrix, int num_bins) const;
+
+  // Process transmissions within a single venue/subset
+  int processVenueTransmissions(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      VenueId actual_venue_id, double current_time, double delta_hours,
+      std::unordered_set<PersonId>* active_infections = nullptr,
+      const std::unordered_set<PersonId>* visitor_ids = nullptr,
+      std::vector<PendingInfection>* pending_infections = nullptr,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data = nullptr,
+      uint8_t encounter_type_id = 255,
+      const CompartmentalModelManager* comp_model = nullptr);
+
+  PerformanceStats stats_;
+
+  // Optimization buffers (reused across calls to avoid allocation)
+  std::vector<PersonLocation> active_locations_buffer_;
+  std::vector<InteractionMember> group_members_buffer_;
+
+  // BinGroup reuse buffer
+  std::vector<BinGroup> bins_buffer_;
+  // Tracks which bin indices were actually used (for selective clearing)
+  std::vector<int> used_bins_;
+
+  // Source/weight buffers for transmission sampling
+  std::vector<SourceEntry> sources_buffer_;
+  std::vector<double> source_weights_buffer_;
+  // Cumulative-weight scratch for source sampling (rebuilt per susc_bin,
+  // sampled once per susceptible). Avoids per-bin std::discrete_distribution
+  // allocation; see sampleFromCumulative in utils/random.h.
+  std::vector<double> source_cumulative_buffer_;
+
+  // Scratch buffers for sibling-infector two-stage sampling. Reused across
+  // infections so we don't reallocate on every sibling-attributed event.
+  std::vector<double> sibling_cum_buffer_;
+  std::vector<size_t> sibling_pool_indices_buffer_;
+
+  // Per-mode infectiousness scratch buffer
+  std::vector<double> im_scratch_buffer_;
+
+  // Cached uniform distribution for transmission rolls
+  std::uniform_real_distribution<double> uniform_dist_{0.0, 1.0};
+
+  // Base seed for deterministic per-entity RNG (MPI reproducibility)
+  uint64_t base_seed_ = 0;
+
+  // Per-tick parent-venue aggregates for cross-child-venue ("sibling")
+  // mixing. Cleared and rebuilt at the start of each processTransmissions
+  // call. Rank-local by construction: all child venues of a parent share
+  // its MGU, so no MPI sync is required.
+  std::unordered_map<VenueId, ParentAggregate> parent_aggregates_;
+
+  // Cached env-flag enabling verbose parent-mixing debug prints
+  // (JUNE_DEBUG_PARENT_MIXING=1). Read once at construction.
+  bool debug_parent_mixing_ = false;
+  // Per-tick debug counters so we can summarise at the end of each tick
+  // instead of spamming once per encounter.
+  mutable int dbg_sibling_infections_ = 0;
+  mutable int dbg_sample_susc_prints_ = 0;
+  mutable int dbg_sample_infection_prints_ = 0;
+};
+
+}  // namespace june

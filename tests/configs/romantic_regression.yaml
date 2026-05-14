@@ -1,0 +1,28 @@
+betas:
+  romantic_encounter: 0.90
+  office: 0.90
+
+# Both a virtual-encounter matrix and a venue matrix exist. The office
+# contact rate is set to a distinctly different value from romantic_encounter
+# so the aliasing regression (where a virtual encounter accidentally used
+# the venue matrix at the colliding integer id) is detectable by the
+# transmission count.
+contact_matrices:
+  romantic_encounter:
+    contacts:
+      - [1.0]
+    proportion_physical:
+      - [1.0]
+    bins: ["all"]
+  office:
+    contacts:
+      - [9.0]
+    proportion_physical:
+      - [1.0]
+    bins: ["all"]
+
+default_beta: 0.05
+default_contacts: 0.000001
+default_proportion_physical: 0.1
+default_characteristic_time: 24.0
+alpha_physical: 2.0

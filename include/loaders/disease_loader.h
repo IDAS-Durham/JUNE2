@@ -1,0 +1,48 @@
+#pragma once
+
+#include <map>
+#include <string>
+
+#include "../epidemiology/disease.h"
+
+// Forward declaration for YAML
+namespace YAML {
+class Node;
+}
+
+namespace june {
+
+// =============================================================================
+// Disease Configuration Loader
+// =============================================================================
+
+class DiseaseLoader {
+ public:
+  // Load disease from YAML config with trajectories and CSV outcome rates.
+  // When verbose is true, a [DEBUG] line is printed for each PDF-based curve
+  // (gamma, lognormal, beta) showing the old peak value and the
+  // max_infectiousness value required to preserve previous infectiousness
+  // magnitudes.
+  static Disease loadFromYAML(const std::string& yaml_path,
+                              bool verbose = false);
+
+ private:
+  // Load outcome rates from filter-column CSV
+  static OutcomeRates loadOutcomeRatesFromCSV(const std::string& csv_path);
+
+  // Parse trajectory definitions from YAML
+  static std::vector<TrajectoryDefinition> parseTrajectories(
+      const YAML::Node& trajectories_node);
+
+  // Parse distribution parameters from YAML
+  static DistributionParams parseDistribution(const YAML::Node& dist_node);
+
+  // Parse an infectiousness curve from YAML.
+  // context_label identifies the curve (e.g. "animal_bite / bacteraemia") for
+  // diagnostic output when verbose is true.
+  static std::shared_ptr<InfectiousnessCurve> parseCurve(
+      const YAML::Node& curve_node, const std::string& context_label = "",
+      bool verbose = false);
+};
+
+}  // namespace june

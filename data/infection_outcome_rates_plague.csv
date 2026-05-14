@@ -1,0 +1,8 @@
+filter.age, filter.sex, filter.infector_symptom, filter.transmission_mode, bubonic_mild_recovered, bubonic_bacteraemia_recovered, bubonic_bacteraemia_perished, bubonic_bacteraemia_pneumonic_death, pneumonic_perished
+# animal_bite (flea/lice vector) → bubonic trajectories only
+# ~30% survive (mild or bacteraemia); ~70% fatal via bacteraemia or secondary pneumonia
+, , , animal_bite,  0.15, 0.213, 0.085, 0.552, 0.0
+# respiratory (droplet) → primary pneumonic trajectory only; near-universally fatal
+, , , respiratory,  0.0,  0.0,  0.0,  0.0,  1.0
+# Default (seeds / no infector) → treat as animal_bite 
+, , ,            ,  0.15, 0.213, 0.085, 0.552, 0.0

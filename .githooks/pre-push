@@ -1,0 +1,43 @@
+#!/bin/bash
+# JUNE 2 Pre-Push Hook
+# Automatically builds and tests the project before allowing a push to the remote repository.
+
+echo "========================================"
+echo "    JUNE 2 Pre-Push Verification       "
+echo "========================================"
+echo "Building and running tests locally..."
+
+# Ensure we are in the project root
+cd "$(git rev-parse --show-toplevel)"
+
+# Ensure we are in the project root for formatting check
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "[1/3] Checking Code Formatting (clang-format)..."
+if ! find "$REPO_ROOT/src" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.cc" -o -name "*.hpp" \) -not -path "*/doctest.h" | xargs "$REPO_ROOT/.venv/bin/clang-format" --dry-run --Werror; then
+    echo "❌ Formatting Errors Found! Please run 'clang-format -i' on your changes before pushing."
+    echo "========================================"
+    exit 1
+fi
+
+# Create build directory if needed
+mkdir -p "$REPO_ROOT/build" && cd "$REPO_ROOT/build"
+
+echo "[2/3] Configuring CMake & Building..."
+cmake .. -DBUILD_TESTING=ON > /dev/null
+if ! make -j8 > /dev/null; then
+    echo "❌ Build Failed! Please fix compilation errors before pushing."
+    echo "========================================"
+    exit 1
+fi
+
+echo "[3/3] Running Unit Tests..."
+if ! ctest --output-on-failure; then
+    echo "❌ Tests Failed! Please fix the broken tests before pushing."
+    echo "========================================"
+    exit 1
+fi
+
+echo "✅ All tests passed! Proceeding with push."
+echo "========================================"
+exit 0

@@ -1,0 +1,181 @@
+#pragma once
+
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <numeric>
+#include <random>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "../core/config.h"  // For AgeGroup definition
+#include "../core/types.h"
+#include "../core/world_state.h"
+#include "../utils/event_logger.h"
+
+namespace june {
+
+// =============================================================================
+// Infection Seed Types and Configuration
+// =============================================================================
+
+enum class InfectionSeedType {
+  UNIFORM,   // Uniform distribution across population
+  EXACT,     // Exact number of cases in specific locations/ages
+  CLUSTERED  // Clustered by households in specific locations/ages
+};
+
+// Configuration for global infection seeding parameters
+struct InfectionSeedGlobalConfig {
+  double default_seed_strength = 1.0;
+  double base_cases_per_capita = 0.0000001;
+};
+
+// Target group defining which people to infect based on any property
+struct SeedTargetGroup {
+  std::vector<SelectionCriterion> criteria;
+
+  bool matches(const Person& person, const WorldState* world) const {
+    if (criteria.empty()) return true;
+    for (const auto& c : criteria) {
+      if (!c.evaluate(person, world)) return false;
+    }
+    return true;
+  }
+
+  void resolve(const WorldState& world) {
+    for (auto& c : criteria) {
+      c.resolve(world);
+    }
+  }
+};
+
+// Cases for a specific geographic area and target groups
+struct UnitCases {
+  std::string unit_id;  // e.g., geographic unit code or name
+  std::vector<int> cases_per_target_group;  // Number of cases per target group
+};
+
+// Configuration for exact/clustered seeding
+struct StructuredSeedConfig {
+  std::string geo_level;  // e.g., "SGU", "MGU", "LGU"
+  std::vector<SeedTargetGroup> target_groups;
+  std::vector<UnitCases> unit_cases;
+};
+
+// Configuration for uniform seeding
+struct UniformSeedConfig {
+  double cases_per_capita = 0.0;
+};
+
+// Single infection seed event
+struct InfectionSeedEvent {
+  std::string name;
+  InfectionSeedType type;
+  std::string date_time;  // ISO format: "2025-08-28 09:00"
+
+  // Type-specific configuration
+  StructuredSeedConfig structured_config;  // For EXACT/CLUSTERED
+  UniformSeedConfig uniform_config;        // For UNIFORM
+
+  // Parameters
+  double seed_strength = 1.0;
+  std::vector<SelectionCriterion>
+      attribute_filters;  // Global filters for this event
+
+  // Optional trajectory override for seeded infections.
+  // trajectory_key names a selection_key directly; empty = sample from
+  // probability distribution. start_symptom overrides the trajectory's
+  // start_stage field.
+  std::string trajectory_key =
+      "";  // e.g. "pneumonic_perished"; empty = use rates
+  std::string start_symptom =
+      "";  // e.g. "pneumonia"; empty = trajectory's own start_stage
+};
+
+// Collection of all infection seeds
+struct InfectionSeedConfig {
+  InfectionSeedGlobalConfig global_params;
+  std::vector<InfectionSeedEvent> seeds;
+  std::string bulk_csv_path;
+
+  void resolve(const WorldState& world) {
+    for (auto& seed : seeds) {
+      for (auto& filter : seed.attribute_filters) {
+        filter.resolve(world);
+      }
+      for (auto& group : seed.structured_config.target_groups) {
+        group.resolve(world);
+      }
+    }
+  }
+};
+
+// =============================================================================
+// Infection Seeding Implementation
+// =============================================================================
+
+// Forward declaration
+class Disease;
+
+class InfectionSeeder {
+ public:
+  InfectionSeeder(WorldState& world, const Disease* disease,
+                  const InfectionSeedConfig& config,
+                  EventLogger* event_logger = nullptr, uint64_t base_seed = 0);
+
+  // Seed infections for a given simulation time
+  // Returns IDs of people infected
+  std::vector<PersonId> seedInfections(const std::string& current_datetime,
+                                       double simulation_time);
+
+  // Re-resolve all attribute_filter SelectionCriterion against the current
+  // WorldState. Called after the world is fully loaded.
+  void resolveConfig(const WorldState& world) { config_.resolve(world); }
+
+ private:
+  WorldState& world_;
+  const Disease* disease_;
+  InfectionSeedConfig config_;
+  EventLogger* event_logger_;
+  double current_simulation_time_;
+  uint64_t base_seed_ = 0;
+
+  // Track which seeds have been applied
+  std::set<std::string> applied_seeds_;
+
+  // Apply a single seed event
+  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed);
+
+  // Type-specific seeding methods
+  std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed);
+  std::vector<PersonId> applyExactSeed(const InfectionSeedEvent& seed);
+  std::vector<PersonId> applyClusteredSeed(const InfectionSeedEvent& seed);
+
+  // Helper methods
+  bool matchesAttributes(const Person* person,
+                         const std::vector<SelectionCriterion>& filters);
+
+  void infectPerson(Person* person, const std::string& trajectory_key = "",
+                    const std::string& start_symptom = "");
+};
+
+// =============================================================================
+// Configuration Loader
+// =============================================================================
+
+class InfectionSeedConfigLoader {
+ public:
+  static InfectionSeedConfig loadFromFile(const std::string& filename);
+
+  static void loadBulkCsvSeeds(const std::string& csv_path,
+                               InfectionSeedConfig& config);
+  static std::vector<SelectionCriterion> parseCriterion(const std::string& key,
+                                                        const std::string& val);
+
+ private:
+  static InfectionSeedType parseSeedType(const std::string& type_str);
+};
+
+}  // namespace june

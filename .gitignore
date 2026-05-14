@@ -1,0 +1,35 @@
+build/
+.cache/
+*.o
+*.a
+compile_commands.json
+.DS_Store
+*.h5
+*.txt
+!CMakeLists.txt
+*.prof
+outputs/
+# Simulation output files
+*.csv
+!data/infection_outcome_rates_covid19.csv
+!data/infection_outcome_rates_plague.csv
+memory_bench.log
+*.stdout
+.vscode/
+*.json
+# Domain decomposition centroids/adjacency are checked-in inputs, not outputs
+!data/domain_decomposition/**
+data/relationships
+data/relationships_fake_numbers
+worlds/
+.clangd
+.claude/
+tmp/
+\#*\#
+*~
+/runs
+/scripts/*
+!/scripts/setup_hooks.sh
+/tools
+/mpox_utla_data
+/mpox_region_tables

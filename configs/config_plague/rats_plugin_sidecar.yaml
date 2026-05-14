@@ -1,0 +1,36 @@
+# Sidecar config for the rat-flea plague compartmental model plugin.
+# Referenced from simulation.yaml via compartmental_model_sidecar.
+
+# Path to the compiled plugin shared library.
+plugin_so_path: "/home/gavin/Documents/Black_Death/Rats/Simulation/cpp/build/libplague_rats_june_plugin.so"   # set to absolute path of libplague_rats_june_plugin.so
+
+# Path to the plugin's own ODE config (rats_plugin.yaml in this directory).
+model_config_path: "configs/config_plague/rats_plugin.yaml"
+
+# Path to the combined graph HDF5 — same file used by the plugin to load the graph.
+# June uses this to build the venue→node mapping.
+graph_hdf5_path: "data/data_plague/combined_graph.h5"  # set to absolute path of combined_graph.h5
+
+# Rate at which one unit of human deposition (bacteraemic person-hours × deposition_rate)
+# drives the compartmental model input per venue type.  Calibrate after initial runs.
+human_to_compartmental_model_input:
+  household: 0.1
+  land:      0.1
+  church:    0.01
+
+default_human_to_compartmental_model_input: 0.005
+
+# Per-venue-type FOI scaling: raw plugin output (infectious flea density per node) is
+# multiplied by this scale before applying susceptibility_multiplier.
+# bins follow the same definition as ContactMatrices and Fomite infections,
+# as defined in the contact matrices .yaml file; currently bin_idx=0 (one value per venue).
+# Calibrate all values against mortality data after initial runs.
+compartmental_model_output_to_human_foi:
+  default:
+    values: [0.01]     # fallback for venue types not listed below
+  household:
+    values: [0.02]     # highest exposure: domestic rat contact and grain storage
+  land:
+    values: [0.015]    # outdoor agricultural exposure
+  church:
+    values: [0.001]    # lower exposure: stone floors, less grain

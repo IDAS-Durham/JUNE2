@@ -1,0 +1,50 @@
+name: CI Build and Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build_and_test:
+    name: Build & Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install hdf5 yaml-cpp open-mpi metis gperftools cmake
+
+      - name: Install Dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libhdf5-dev libyaml-cpp-dev libopenmpi-dev libmetis-dev google-perftools libgoogle-perftools-dev cmake
+
+      - name: Configure CMake
+        run: cmake -B build -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        # Exclude tests that require world HDF5 files not committed to the repo.
+        run: ctest --output-on-failure -E mpi_full_reproducibility
+
+  # This job runs after the matrix is done
+  check-integrity:
+    runs-on: ubuntu-latest
+    needs: build_and_test
+    steps:
+      - name: All tests passed
+        run: echo "The matrix is green!"

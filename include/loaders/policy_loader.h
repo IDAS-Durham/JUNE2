@@ -1,0 +1,272 @@
+#pragma once
+
+#include <yaml-cpp/yaml.h>
+
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+#include "../core/config.h"
+#include "../epidemiology/policy.h"
+#include "../utils/time_utils.h"
+
+namespace june {
+
+class PolicyLoader {
+ public:
+  // Load policies from YAML file
+  static void loadPolicies(PolicyManager& policy_manager,
+                           const std::string& filename,
+                           const std::string& simulation_start_date);
+
+ private:
+  // Load selection criteria (same format as schedule selection criteria)
+  static std::vector<SelectionCriterion> loadSelectionCriteria(
+      const YAML::Node& node);
+
+  // Load a policy action
+  static PolicyAction loadPolicyAction(const YAML::Node& node);
+
+  // Load symptom policies
+  static void loadSymptomPolicies(PolicyManager& policy_manager,
+                                  const YAML::Node& node);
+
+  // Load temporal policies (lockdowns, etc.)
+  static void loadTemporalPolicies(PolicyManager& policy_manager,
+                                   const YAML::Node& node,
+                                   const std::string& simulation_start_date);
+};
+
+// =============================================================================
+// Implementation
+// =============================================================================
+
+inline void PolicyLoader::loadPolicies(
+    PolicyManager& policy_manager, const std::string& filename,
+    const std::string& simulation_start_date) {
+  try {
+    YAML::Node root = YAML::LoadFile(filename);
+
+    if (!root["policies"]) {
+      std::cout << "No policies section found in " << filename << std::endl;
+      return;
+    }
+
+    const YAML::Node& policies = root["policies"];
+
+    // Load symptom-based policies
+    if (policies["symptom_policies"]) {
+      loadSymptomPolicies(policy_manager, policies["symptom_policies"]);
+    }
+
+    // Load temporal policies
+    if (policies["temporal_policies"]) {
+      loadTemporalPolicies(policy_manager, policies["temporal_policies"],
+                           simulation_start_date);
+    }
+
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error("Error loading policy file '" + filename +
+                             "': " + e.what());
+  }
+}
+
+inline std::vector<SelectionCriterion> PolicyLoader::loadSelectionCriteria(
+    const YAML::Node& node) {
+  std::vector<SelectionCriterion> criteria;
+
+  if (!node || !node.IsSequence()) {
+    return criteria;
+  }
+
+  for (const auto& criterion_node : node) {
+    SelectionCriterion criterion;
+    criterion.property_path = criterion_node["property"].as<std::string>();
+    criterion.operator_type = criterion_node["operator"].as<std::string>();
+
+    // Parse value (can be int, float, string, or list)
+    const auto& value_node = criterion_node["value"];
+    if (value_node.IsSequence()) {
+      // List of ints
+      std::vector<int32_t> values = value_node.as<std::vector<int32_t>>();
+      criterion.value = values;
+    } else if (value_node.IsScalar()) {
+      // Try boolean first, then int, then float, then string
+      std::string str_val = value_node.as<std::string>();
+      if (str_val == "true" || str_val == "false") {
+        criterion.value = value_node.as<bool>() ? 1 : 0;
+      } else {
+        try {
+          criterion.value = value_node.as<int>();
+        } catch (...) {
+          try {
+            criterion.value = value_node.as<float>();
+          } catch (...) {
+            criterion.value = value_node.as<std::string>();
+          }
+        }
+      }
+    }
+
+    criteria.push_back(criterion);
+  }
+
+  return criteria;
+}
+
+inline PolicyAction PolicyLoader::loadPolicyAction(const YAML::Node& node) {
+  PolicyAction action;
+
+  // Override activities
+  if (node["override_activities"]) {
+    if (node["override_activities"].IsSequence()) {
+      // Load as vector then convert to unordered_set
+      auto activities_vec =
+          node["override_activities"].as<std::vector<std::string>>();
+      action.override_activities = std::unordered_set<std::string>(
+          activities_vec.begin(), activities_vec.end());
+    } else {
+      // Single activity or "*"
+      std::string activity = node["override_activities"].as<std::string>();
+      action.override_activities.insert(activity);
+    }
+  }
+
+  // Replacement activity (ignored when replacement_schedule is set)
+  if (node["replacement"]) {
+    action.replacement_activity = node["replacement"].as<std::string>();
+  } else {
+    action.replacement_activity = "residence";  // Default fallback
+  }
+
+  // Replacement schedule: policy triggers a schedule hop instead of an
+  // activity replacement. Only effective for persons already on a hop.
+  if (node["replacement_schedule"]) {
+    action.replacement_schedule =
+        node["replacement_schedule"].as<std::string>();
+  }
+
+  // Generic exemptions
+  if (node["exempt"]) {
+    if (node["exempt"].IsSequence()) {
+      for (const auto& exempt_node : node["exempt"]) {
+        ActivityExemption exemption;
+        exemption.activity_name = exempt_node["activity"].as<std::string>();
+        if (exempt_node["selection"]) {
+          exemption.criteria = loadSelectionCriteria(exempt_node["selection"]);
+        }
+        action.exemptions.push_back(exemption);
+      }
+    }
+  }
+
+  // Compliance rate
+  if (node["compliance_rate"]) {
+    action.compliance_rate = node["compliance_rate"].as<double>();
+  }
+
+  return action;
+}
+
+inline void PolicyLoader::loadSymptomPolicies(PolicyManager& policy_manager,
+                                              const YAML::Node& node) {
+  if (!node.IsSequence()) {
+    throw std::runtime_error("symptom_policies must be a list");
+  }
+
+  for (const auto& policy_node : node) {
+    SymptomPolicy policy;
+
+    // Name
+    if (!policy_node["name"]) {
+      throw std::runtime_error("symptom_policy must have a 'name' field");
+    }
+    policy.name = policy_node["name"].as<std::string>();
+
+    // Trigger symptoms
+    if (!policy_node["symptoms"]) {
+      throw std::runtime_error("symptom_policy '" + policy.name +
+                               "' must have 'symptoms' field");
+    }
+    policy.trigger_symptoms =
+        policy_node["symptoms"].as<std::vector<std::string>>();
+
+    // Action
+    policy.action = loadPolicyAction(policy_node);
+
+    // Follow-up policy (optional)
+    if (policy_node["follow_up_policy"]) {
+      policy.follow_up_policy_name =
+          policy_node["follow_up_policy"].as<std::string>();
+    }
+    if (policy_node["inherit_compliance"]) {
+      policy.inherit_compliance = policy_node["inherit_compliance"].as<bool>();
+    }
+    if (policy_node["inherit_refusal"]) {
+      policy.inherit_refusal = policy_node["inherit_refusal"].as<bool>();
+    }
+
+    // Selection criteria (optional)
+    if (policy_node["applies_to"]) {
+      policy.applies_to = loadSelectionCriteria(policy_node["applies_to"]);
+    }
+
+    policy_manager.addSymptomPolicy(policy);
+  }
+}
+
+inline void PolicyLoader::loadTemporalPolicies(
+    PolicyManager& policy_manager, const YAML::Node& node,
+    const std::string& simulation_start_date) {
+  if (!node.IsSequence()) {
+    throw std::runtime_error("temporal_policies must be a list");
+  }
+
+  for (const auto& policy_node : node) {
+    TemporalPolicy policy;
+
+    // Name
+    if (!policy_node["name"]) {
+      throw std::runtime_error("temporal_policy must have a 'name' field");
+    }
+    policy.name = policy_node["name"].as<std::string>();
+
+    // Start date/time
+    if (policy_node["start_date"]) {
+      std::string start_date = policy_node["start_date"].as<std::string>();
+      std::tm sim_start_tm = parseDate(simulation_start_date);
+      std::tm policy_start_tm = parseDate(start_date);
+      policy.start_time =
+          static_cast<double>(daysBetween(sim_start_tm, policy_start_tm));
+    } else if (policy_node["start_time"]) {
+      policy.start_time = policy_node["start_time"].as<double>();
+    } else {
+      policy.start_time = 0.0;  // Start immediately
+    }
+
+    // End date/time
+    if (policy_node["end_date"]) {
+      std::string end_date = policy_node["end_date"].as<std::string>();
+      std::tm sim_start_tm = parseDate(simulation_start_date);
+      std::tm policy_end_tm = parseDate(end_date);
+      policy.end_time =
+          static_cast<double>(daysBetween(sim_start_tm, policy_end_tm));
+    } else if (policy_node["end_time"]) {
+      policy.end_time = policy_node["end_time"].as<double>();
+    } else {
+      policy.end_time = -1.0;  // No end
+    }
+
+    // Action
+    policy.action = loadPolicyAction(policy_node);
+
+    // Selection criteria (optional)
+    if (policy_node["applies_to"]) {
+      policy.applies_to = loadSelectionCriteria(policy_node["applies_to"]);
+    }
+
+    policy_manager.addTemporalPolicy(policy);
+  }
+}
+
+}  // namespace june

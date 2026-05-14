@@ -1,0 +1,63 @@
+# Parallel execution configuration for MPI domain decomposition
+
+parallel:
+  # Enable parallel mode (requires MPI build)
+  enabled: true
+
+  # Geographic partitioning settings
+  partitioning:
+    # Which geographic level to partition on (e.g., "SGU", "MGU", "LGU", "XLGU")
+    # This should match the level used in your centroid/adjacency files.
+    #
+    # The 1911 Durham world has SGU (268 parishes) and MGU (1 unit: DURHAM
+    # county). With only one MGU, MGU-level partitioning cannot split work
+    # across ranks. Partition at SGU instead until the world covers more than
+    # one county (e.g. full-England 1911), at which point switch to:
+    #   level: "MGU"
+    #   centroids_file: "data/domain_decomposition/mgu_centroids.csv"
+    #   adjacency_file: "data/domain_decomposition/mgu_adjacency_graph.json"
+    # The SGU centroids/adjacency below are generated from the world HDF5 by
+    # scripts/generate_geo_adjacency.py.
+    level: "SGU"
+
+    # Path to centroid file (CSV with columns: geo_unit,X,Y)
+    centroids_file: "data/domain_decomposition/1911/durham_1911_sgu_centroids.csv"
+
+    # Path to adjacency graph file (JSON with geo_unit -> [neighbor_ids])
+    adjacency_file: "data/domain_decomposition/1911/durham_1911_sgu_adjacency_graph.json"
+
+    # METIS graph partitioning options
+    metis:
+      # Allow up to X% population imbalance between domains
+      imbalance_tolerance: 0.05  # 5% imbalance allowed
+
+  # Chunked loading settings (for memory efficiency)
+  chunked_loading:
+    # Load person metadata in chunks of N people (Stage 1)
+    # Reduces peak memory during partitioning
+    person_metadata_chunk_size: 100000
+
+    # Load domain data in chunks of N geo_units (Stage 2, parallel mode)
+    # Optimal for large-scale: 500 geo_units = ~100MB per chunk
+    # For 180K geo_units: adjust based on memory (500-1000 recommended)
+    geo_unit_chunk_size: 1000
+
+  # MPI communication options
+  communication:
+    # Buffer size for MPI_Alltoallv (in MB)
+    buffer_size_mb: 256
+
+  # Output and reporting
+  output:
+    # Save domain partition to file for visualization
+    save_partition: true
+    partition_file: "output/partition.json"
+
+    # Report load balance statistics at initialization
+    report_load_balance: true
+
+    # Report communication statistics during simulation
+    report_communication: false
+
+    # How often to report stats (in simulation days)
+    report_interval_days: 1

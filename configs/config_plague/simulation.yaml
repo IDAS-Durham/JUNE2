@@ -1,0 +1,41 @@
+time:
+  start_date: "1348-09-01"
+  end_date: "1352-09-01"
+  
+# Disease configuration path
+disease_file: "config/disease_plague.yaml"
+
+config_paths:
+# Configuration paths
+  disease_file: "configs/config_plague/disease_plague.yaml"
+  contact_matrices_file: "configs/config_plague/contact_matrices.yaml"
+  schedules_file: "configs/config_plague/schedules.yaml"
+  vaccines_file: "configs/config_plague/vaccines.yaml"
+  activity_preferences_file: "configs/config_plague/activity_preferences.yaml"
+  coordinated_encounters_file: "configs/config_plague/coordinated_encounters.yaml"
+  performance_file: "configs/config_plague/performance.yaml"
+  parallel_file: "configs/config_plague/parallel.yaml"
+  policies_file: "configs/config_plague/policies.yaml"
+  infection_seeds_file: "configs/config_plague/infection_seeds.yaml"
+  # Uncomment when libplague_rats_june_plugin.so is built and paths are filled in rats_plugin_sidecar.yaml:
+  compartmental_model_sidecar: "configs/config_plague/rats_plugin_sidecar.yaml"
+
+# Random seeds for reproducibility
+random_seed: 12345
+
+verbose: true
+
+output:
+  stats_interval_days: 1          # Output statistics every N days
+  track_by_age_group: true
+  track_by_venue_type: true
+  track_by_geography: true
+  flush_interval_days: 7
+  max_event_buffer_size: 1000000
+
+  age_groups:
+    - { name: "0-4", min: 0, max: 4 }
+    - { name: "5-17", min: 5, max: 17 }
+    - { name: "18-64", min: 18, max: 64 }
+    - { name: "65+", min: 65, max: 99 }
+

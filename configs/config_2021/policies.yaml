@@ -1,0 +1,243 @@
+# =============================================================================
+# Policy Configuration - Controls behavior changes based on symptoms and time
+# =============================================================================
+#
+# This file defines two types of policies:
+# 1. Symptom Policies: Override behavior based on disease symptoms
+# 2. Temporal Policies: Override behavior during specific time periods (lockdowns, etc.)
+#
+# Policies are checked in order: symptom policies first, then temporal policies
+# If multiple policies apply, the first matching policy is used
+
+policies:
+
+  # ===========================================================================
+  # SYMPTOM-BASED POLICIES
+  # ===========================================================================
+  # These policies trigger when a person has specific disease symptoms
+  # Use symptom names from disease.yaml (e.g., "mild", "severe", "hospitalised")
+
+  symptom_policies:
+
+    # -------------------------------------------------------------------------
+    # Policy: Mild/Severe symptoms → Stay at residence
+    # -------------------------------------------------------------------------
+
+    - name: "isolate_when_mild"
+
+      # Symptoms that trigger this policy
+      symptoms: ["mild"]
+
+      # Override these activities when symptoms trigger
+      # Options: List of activity names, or "*" for all activities
+      override_activities: ["primary_activity", "leisure"]
+
+      # Replace with this activity
+      replacement: "residence"
+
+      compliance_rate: 0.4
+
+      # Follow up with severe isolation if symptoms worsen
+      follow_up_policy: "isolate_when_severe"
+      inherit_compliance: true
+      inherit_refusal: false # Let them change their mind for severe symptoms
+
+      # Optional: Only apply to certain people (using selection criteria)
+      # applies_to:
+      #   - property: "age"
+      #     operator: "<"
+      #     value: 65
+
+    - name: "isolate_when_severe"
+
+      # Symptoms that trigger this policy
+      symptoms: ["severe"]
+
+      # Override these activities when symptoms trigger
+      # Options: List of activity names, or "*" for all activities
+      override_activities: ["primary_activity", "leisure"]
+
+      # Replace with this activity
+      replacement: "residence"
+
+      compliance_rate: 0.8
+
+      # Optional: Only apply to certain people (using selection criteria)
+      # applies_to:
+      #   - property: "age"
+      #     operator: "<"
+      #     value: 65
+
+    # -------------------------------------------------------------------------
+    # Policy: Hospitalized → Go to medical facility
+    # -------------------------------------------------------------------------
+    - name: "hospitalize_severe_cases"
+
+      symptoms: ["hospitalised", "intensive_care"]
+
+      # "*" means override ALL activities
+      override_activities: "*"
+
+      # Send to medical facility
+      replacement: "medical_facility"
+
+      # 100% compliance - hospitalized people MUST go to hospital
+      compliance_rate: 1.0
+
+  # ===========================================================================
+  # TEMPORAL POLICIES (Lockdowns, restrictions, etc.)
+  # ===========================================================================
+  # These policies are active during specific date ranges
+  # Use dates in "YYYY-MM-DD" format (relative to simulation start date)
+
+  temporal_policies:
+
+    # -------------------------------------------------------------------------
+    # Example: National Lockdown (March-May 2020)
+    # -------------------------------------------------------------------------
+    - name: "first_national_lockdown"
+
+      # Start and end dates (YYYY-MM-DD format)
+      start_date: "3024-01-01"
+      end_date: "3024-12-31"
+
+      # Override these activities during lockdown
+      override_activities: ["primary_activity", "leisure"]
+
+      # Stay at residence instead
+      replacement: "residence"
+
+      compliance_rate: 1.0
+
+    # -------------------------------------------------------------------------
+    # Example: School Closures
+    # -------------------------------------------------------------------------
+    # - name: "school_closure_spring_2020"
+    #
+    #   start_date: "2020-03-20"
+    #   end_date: "2020-09-01"
+    #
+    #   # Only override school-related activities
+    #   override_activities: ["primary_activity"]
+    #
+    #   replacement: "residence"
+    #
+    #   compliance_rate: 0.95
+    #
+    #   # Only apply to children/students
+    #   applies_to:
+    #     - property: "age"
+    #       operator: "<"
+    #       value: 18
+
+    # -------------------------------------------------------------------------
+    # Example: Partial Lockdown (November 2020)
+    # -------------------------------------------------------------------------
+    # - name: "second_lockdown"
+    #
+    #   start_date: "2020-11-05"
+    #   end_date: "2020-12-02"
+    #
+    #   # Allow work, restrict leisure
+    #   override_activities: ["leisure", "social"]
+    #
+    #   replacement: "residence"
+    #
+    #   compliance_rate: 0.80
+
+    # -------------------------------------------------------------------------
+    # Example: Regional Lockdown (only certain geographic areas)
+    # -------------------------------------------------------------------------
+    # - name: "regional_lockdown_london"
+    #
+    #   start_date: "2020-12-20"
+    #   end_date: "2021-01-31"
+    #
+    #   override_activities: ["primary_activity", "leisure"]
+    #
+    #   replacement: "residence"
+    #
+    #   compliance_rate: 0.90
+    #
+    #   # Only apply in specific geographic units
+    #   applies_to:
+    #     - property: "geo_unit_id"
+    #       operator: "in"
+    #       value: [100, 101, 102, 103]  # London MGU IDs
+
+# =============================================================================
+# USAGE NOTES
+# =============================================================================
+#
+# 1. Symptom Policy Priority:
+#    - Symptom policies are checked BEFORE temporal policies
+#    - This means sick people stay home even during lockdowns
+#
+# 2. Compliance Rates:
+#    - Set to 1.0 for mandatory policies (e.g., hospitalization)
+#    - Set to 0.7-0.9 for voluntary policies (e.g., self-isolation)
+#    - Each person rolls independently each time slot
+#
+# 3. Selection Criteria (applies_to):
+#    - Use to target specific demographics or groups
+#    - Available properties: age, sex, geo_unit_id, properties.*, activities.*
+#    - Operators: <, >, <=, >=, ==, !=, in, contains
+#
+# 4. Activity Names:
+#    - Must match activity names in your data (residence, primary_activity, etc.)
+#    - Use "*" to override all activities
+#
+# 5. Date Format:
+#    - Dates are relative to simulation start_date in simulation.yaml
+#    - Use "YYYY-MM-DD" format
+#    - Or use "start_time" / "end_time" with days from start (e.g., start_time: 30.0)
+#
+# 6. Multiple Policies:
+#    - If multiple policies apply, the FIRST matching policy wins
+#    - Order policies by specificity (most specific first)
+#
+# 7. Disable Policies:
+#    - Comment out policies you don't want
+#    - Or set compliance_rate: 0.0 to disable without removing
+
+# =============================================================================
+# EXAMPLES OF ADVANCED POLICIES
+# =============================================================================
+
+# # Only elderly people stay home when symptomatic
+# symptom_policies:
+#   - name: "elderly_isolation"
+#     symptoms: ["mild", "severe"]
+#     override_activities: ["primary_activity", "leisure"]
+#     replacement: "residence"
+#     compliance_rate: 0.9
+#     applies_to:
+#       - property: "age"
+#         operator: ">="
+#         value: 65
+
+# # Healthcare workers exempt from lockdown
+# temporal_policies:
+#   - name: "lockdown_non_healthcare"
+#     start_date: "2020-03-23"
+#     end_date: "2020-05-15"
+#     override_activities: ["primary_activity"]
+#     replacement: "residence"
+#     compliance_rate: 0.85
+#     applies_to:
+#       - property: "properties.occupation"
+#         operator: "!="
+#         value: "healthcare"
+
+# # People with 2 jobs can't go to second job during lockdown
+# temporal_policies:
+#   - name: "lockdown_second_jobs"
+#     start_date: "2020-03-23"
+#     end_date: "2020-05-15"
+#     override_activities: ["primary_activity"]
+#     replacement: "residence"
+#     compliance_rate: 0.90
+#     applies_to:
+#       - property: "activities.primary_activity.length"
+#         operator: ">"
+#         value: 1

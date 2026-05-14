@@ -1,0 +1,27 @@
+# ODE config for the rat-flea plague compartmental model plugin.
+# Passed to PlagueRatsJunePlugin::initialise() as config_path.
+# Uses the same YAML schema as the standalone plague_rats simulation.
+
+simulation:
+  t_end: 730.0      # days — generous upper bound; june controls actual end
+  dt: 0.25           # internal sub-step size in days (Euler integrator)
+  integrator: euler
+
+input:
+  graph_h5: "data/data_plague/combined_graph.h5"          # set to absolute path of combined_graph.h5
+  initial_state_h5: "data/data_plague/initial_state.h5"  # set to absolute path of initial_state.h5
+
+# output:
+#   directory: "results/rats/"
+#   output_file: "state.bin"
+#   snapshot_interval_days: 1.0
+#   flush_interval_days: 7.0
+#   compartments: ["FS", "FE", "FI"]
+
+#ode_params:
+  # All params fall back to defaults in OdeParams if omitted.
+  # Override below as needed:
+  # flea_bite_transmission_rate: 0.70
+  # flea_exposure_rate: 0.30
+  # rat_recovery_rate: 0.015
+  # ... (see ode_params.h for full list)

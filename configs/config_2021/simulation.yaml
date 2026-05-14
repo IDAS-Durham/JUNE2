@@ -1,0 +1,29 @@
+time:
+    start_date : "2024-01-01"
+    end_date : "2024-01-31"
+
+config_paths:
+# Configuration paths
+  disease_file: "configs/config_2021/disease.yaml"
+  contact_matrices_file: "configs/config_2021/contact_matrices.yaml"
+  schedules_file: "configs/config_2021/schedules.yaml"
+  vaccines_file: "configs/config_2021/vaccines.yaml"
+  activity_preferences_file: "configs/config_2021/activity_preferences.yaml"
+  coordinated_encounters_file: "configs/config_2021/coordinated_encounters.yaml"
+  performance_file: "configs/config_2021/performance.yaml"
+  parallel_file: "configs/config_2021/parallel.yaml"
+  policies_file: "configs/config_2021/policies.yaml"
+  infection_seeds_file: "configs/config_2021/infection_seeds.yaml"
+
+#Random seeds for reproducibility
+random_seed: 12345
+
+output:
+    stats_interval_days: 1
+    flush_interval_days: 7
+    max_event_buffer_size: 100000
+
+#Regional Risk Factors
+regional_risk:
+    enabled: false
+    regional_risk_file: "data/regional_risk.csv"

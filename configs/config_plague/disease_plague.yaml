@@ -1,0 +1,349 @@
+disease:
+  name: plague
+  settings:
+    default_lowest_stage: exposed
+    max_mild_symptom_tag: 
+    stay_at_home_stage:
+      - name: bacteraemia
+    severe_symptoms_stay_at_home_stage:
+      - name: primary_pneumonic
+    fatality_stage:
+      - name: perished
+    recovered_stage:
+      - name: recovered
+    # No hospitalisation or ICU in medieval plague
+    hospitalised_stage: []
+    intensive_care_stage: []
+
+  symptom_tags:
+    # 'value' determines relative ordering for behaviour (stay-at-home) and statistics.
+    - name: recovered
+      value: -2
+    - name: healthy
+      value: -1
+    - name: exposed
+      value: 0
+    - name: buboes_and_fever
+      value: 2
+    - name: bacteraemia
+      value: 4
+    - name: secondary_pneumonic
+      value: 5
+    - name: primary_pneumonic_onset
+      value: 3
+    - name: primary_pneumonic
+      value: 6
+    - name: perished
+      value: 8
+
+  outcome_rates_csv: ../../data/infection_outcome_rates_plague.csv
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # All trajectories in a single flat list. Each has a unique selection_key.
+  # The outcome rates CSV specifies joint probabilities P(trajectory) per row,
+  # optionally conditioned on filter.infector_symptom. Probabilities must sum
+  # to 1.0 across all trajectory columns for each matching row.
+  # ─────────────────────────────────────────────────────────────────────────────
+  trajectories:
+    - description: "Bubonic: exposed => buboes_and_fever => recovered"
+      selection_key: bubonic_mild_recovered
+      severity: 0.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: beta # between 0.5 and 5 days.
+            a: 2
+            b: 5
+            loc: 0.5
+            scale: 12.0 
+        - symptom_tag: buboes_and_fever
+          completion_time:
+            type: beta
+            a: 2
+            b: 5
+            loc: 2.0
+            scale: 4.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+
+    - description: "Bubonic: exposed => buboes_and_fever => bacteraemia => recovered"
+      selection_key: bubonic_bacteraemia_recovered
+      severity: 0.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: beta # between 0.5 and 5 days.
+            a: 2
+            b: 5
+            loc: 0.5
+            scale: 12.0 
+        - symptom_tag: buboes_and_fever
+          completion_time:
+            type: beta
+            a: 2
+            b: 5
+            loc: 2.0
+            scale: 2.0
+        - symptom_tag: bacteraemia
+          completion_time:
+            type: lognormal
+            scale: 7.0
+            s: 0.24
+            loc: 0.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+
+    - description: "Bubonic: exposed => buboes_and_fever => bacteraemia => perished"
+      selection_key: bubonic_bacteraemia_perished
+      severity: 0.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: beta # between 0.5 and 5 days.
+            a: 2
+            b: 5
+            loc: 0.5
+            scale: 12.0 
+        - symptom_tag: buboes_and_fever
+          completion_time:
+            type: beta
+            a: 2
+            b: 5
+            loc: 2.0
+            scale: 2.0
+        - symptom_tag: bacteraemia
+          completion_time:
+            type: lognormal # 3-5 days
+            scale: 4.0
+            s: 0.14
+            loc: 0.0
+        - symptom_tag: perished
+          completion_time:
+            type: constant
+            value: 0.0      
+
+    - description: "Bubonic: exposed => buboes_and_fever => bacteraemia => secondary_pneumonic => perished"
+      selection_key: bubonic_bacteraemia_pneumonic_death
+      severity: 0.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: beta # between 0.5 and 5 days.
+            a: 2
+            b: 5
+            loc: 0.5
+            scale: 12.0 
+        - symptom_tag: buboes_and_fever
+          completion_time:
+            type: beta
+            a: 2
+            b: 5
+            loc: 2.0
+            scale: 2.0
+        - symptom_tag: bacteraemia
+          completion_time:
+            type: constant
+            value: 1
+        - symptom_tag: secondary_pneumonic
+          completion_time:
+            type: lognormal # 3-5 days
+            scale: 4.0
+            s: 0.14
+            loc: 0.0
+        - symptom_tag: perished
+          completion_time:
+            type: constant
+            value: 0.0      
+
+    - description: "Pneumonic: exposed => primary_pneumonic => perished"
+      selection_key: pneumonic_perished
+      severity: 1.0
+#       start_stage: primary_pneumonic_onset  # Potentially eronious. Needs investigating
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: beta
+            a: 2
+            b: 5
+            scale: 5.0
+            loc: 0.0
+        - symptom_tag: primary_pneumonic_onset
+          completion_time:
+            type: beta
+            a: 2
+            b: 2
+            scale: 1.5
+            loc: 0.0
+        - symptom_tag: primary_pneumonic
+          completion_time:
+            type: lognormal # Avg 1.8 days
+            scale: 1.8
+            s: 0.1
+            loc: 0.0    
+        - symptom_tag: perished
+          completion_time:
+            type: constant
+            value: 0.0
+
+  transmission:
+    mode: Stage-Driven
+
+    # ── Two transmission modes ────────────────────────────────────────────
+    # animal_bite: vector-borne (rat flea) spread; driven by bubonic/bacteraemic stages.
+    # respiratory:  droplet spread; driven by pneumonic stages only.
+    modes:
+      - name: animal_bite
+        susceptibility_multiplier: 0.0
+      - name: respiratory
+        susceptibility_multiplier: 0.0
+
+      # Rat-flea reservoir coupling: infectious free fleas (FI) from the
+      # compartmental model drive human exposure.
+      # susceptibility_multiplier scales raw FI density to infection probability.
+      - name: rat_flea_bite
+        type: compartmental_uptake
+        susceptibility_multiplier: 1.0   # calibrate vs. historical mortality
+
+      # Human bacteraemia deposits infection pressure on susceptible free fleas.
+      # Only the bacteraemia stage (peak bacteraemia, fleas can acquire infection).
+      - name: compartmental_deposition
+        type: compartmental_deposition
+        deposition_stages:
+          bacteraemia:
+            type: constant
+            value: 1.0   # person-hours/day; calibrate later
+        
+      # - name: fomite
+      #   type: fomite
+      #   susceptibility_multiplier: 1.0
+      #   # Infectiousness of surface-deposited material as a function of time since deposition.
+      #   # All time values are in DAYS (simulation time units).
+      #   # Lognormal: mode = exp(mu - sigma^2) = exp(2.59 - 0.64) ≈ 7 days; decays over ~2 weeks.
+      #   fomite_curve:
+      #     type: lognormal
+      #     mu: 2.59     # log-space mean → peak at ~7 days after deposition
+      #     sigma: 0.8   # broader spread → slow decay over ~2 weeks
+      #     max_infectiousness: 1.0
+      #   max_age: 21.0  # days: discard deposits older than 3 weeks
+      #   # Deposition rate per symptom stage (units: deposit/hour at the given time-in-stage)
+      #   deposition_stages:
+      #     bacteraemia:
+      #       type: constant
+      #       value: 0.3
+      #     buboes_and_fever:
+      #       type: linear_ramp
+      #       start_value: 0.0
+      #       end_value: 0.3
+      #       ramp_duration: 4.0
+      #     secondary_pneumonic:
+      #       type: constant
+      #       value: 0.3
+      #     primary_pneumonic:
+      #       type: linear_ramp
+      #       start_value: 0.0
+      #       end_value: 0.3
+      #       ramp_duration: 4.0      
+
+    stage_curves:
+      # ── animal_bite mode ─────────────────────────────────────────────────
+      # Infectiousness tracks bacteraemia load available to fleas.
+      animal_bite:
+        exposed:
+          type: constant
+          value: 0.0
+
+        buboes_and_fever:
+          # Flea-mediated spread begins. Infectiousness rises as bacteraemia
+          # builds in the blood during the bubonic stage.
+          type: linear_ramp
+          start_value: 0.0
+          end_value: 0.3
+          ramp_duration: 4.0
+
+        bacteraemia:
+          # Peak flea-vector infectivity: blood is heavily contaminated.
+          type: gamma
+          max_infectiousness: 0.4
+          shape: 3.0
+          rate: 0.6
+          shift: -0.5
+
+        secondary_pneumonic:
+          # Blood still heavily infected even as pneumonia develops;
+          # flea-vector risk persists at bacteraemia peak level.
+          type: constant
+          value: 1.0
+
+        primary_pneumonic_onset:
+          type: linear_ramp
+          start_value: 0.0
+          end_value: 0.3
+          ramp_duration: 2.0
+
+        primary_pneumonic:
+          type: linear_ramp
+          start_value: 0.1
+          end_value: 0.3
+          ramp_duration: 1.0
+
+        perished:
+          type: constant
+          value: 0.0
+
+        recovered:
+          type: constant
+          value: 0.0
+
+      # ── respiratory mode ─────────────────────────────────────────────────
+      # Infectiousness is zero until pneumonic stages produce respiratory droplets.
+      respiratory:
+        exposed:
+          type: constant
+          value: 0.0
+
+        buboes_and_fever:
+          type: constant
+          value: 0.0
+
+        bacteraemia:
+          type: constant
+          value: 0.0
+
+        secondary_pneumonic:
+          # Secondary pneumonia from bubonic: droplet shedding starts high
+          # then decays as the person rapidly deteriorates.
+          # type: gamma
+          # max_infectiousness: 1.0
+          # shape: 3.0
+          # rate: 2.0
+          # shift: 0.0
+          type: constant
+          value: 1.0
+
+        primary_pneumonic_onset:
+          # Short prodromal period: respiratory infectiousness builds quickly.
+          type: linear_ramp
+          start_value: 0.0
+          end_value: 1.1
+          ramp_duration: 1.5
+
+        primary_pneumonic:
+          # Peak respiratory infectiousness; maintained until death.
+          type: constant
+          value: 1.1
+
+        perished:
+          type: constant
+          value: 0.0
+
+        recovered:
+          type: constant
+          value: 0.0
+
+  immunity:
+    level: 1.0
+    waning_rate: 0.000001

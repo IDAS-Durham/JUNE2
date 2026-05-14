@@ -1,0 +1,185 @@
+disease:
+  name: spanish_flu
+  settings:
+    fatality_stage: 
+      - name: dead_home
+      - name: dead_hospital
+    recovered_stage:
+      - name: recovered
+    hospitalised_stage:
+      - name: hospitalised
+    intensive_care_stage: []
+
+  symptom_tags:
+    - name: recovered
+      value: -2
+    - name: healthy
+      value: -1
+    - name: exposed
+      value: 0
+    - name: asymptomatic
+      value: 1
+    - name: symptomatic
+      value: 2
+    - name: hospitalised
+      value: 3
+    - name: dead_home
+      value: 4
+    - name: dead_hospital
+      value: 5
+
+  outcome_rates_csv:
+    file: ../../data/infection_outcome_rates_spanishflu_mapped.csv
+    age_column_index: 0
+    populations:
+      gp:
+        name: general_population
+        default: true
+      ch:
+        name: care_home
+    sexes:
+      - male
+      - female
+    outcomes:
+      asymptomatic:
+        symptom_tag: asymptomatic
+      symptomatic:
+        symptom_tag: symptomatic
+      hospitalisation:
+        symptom_tag: hospitalised
+      home_death:
+        symptom_tag: dead_home
+      hospital_death:
+        symptom_tag: dead_hospital
+
+  trajectories:
+    - description: "exposed => asymptomatic => recovered"
+      selection_key: asymptomatic
+      severity: 0.1
+      infectiousness_factor: 0.5
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: gamma
+            shape: 1.0
+            scale: 1.0
+        - symptom_tag: asymptomatic
+          completion_time:
+            type: gamma
+            shape: 5.0
+            scale: 1.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+
+    - description: "exposed => symptomatic => recovered"
+      selection_key: symptomatic
+      severity: 0.3
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: gamma
+            shape: 1.0
+            scale: 1.0
+        - symptom_tag: symptomatic
+          completion_time:
+            type: gamma
+            shape: 8.0
+            scale: 1.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+
+    - description: "exposed => symptomatic => hospitalised => recovered"
+      selection_key: hospitalisation
+      severity: 0.7
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: gamma
+            shape: 1.0
+            scale: 1.0
+        - symptom_tag: symptomatic
+          completion_time:
+            type: gamma
+            shape: 2.0
+            scale: 1.0
+        - symptom_tag: hospitalised
+          completion_time:
+            type: gamma
+            shape: 4.0
+            scale: 1.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+
+    - description: "exposed => symptomatic => hospitalised => dead"
+      selection_key: hospital_death
+      severity: 1.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: gamma
+            shape: 1.0
+            scale: 1.0
+        - symptom_tag: symptomatic
+          completion_time:
+            type: gamma
+            shape: 2.0
+            scale: 1.0
+        - symptom_tag: hospitalised
+          completion_time:
+            type: gamma
+            shape: 6.0
+            scale: 1.0
+        - symptom_tag: dead_hospital
+          completion_time:
+            type: constant
+            value: 0.0
+
+    - description: "exposed => symptomatic => dead"
+      selection_key: home_death
+      severity: 1.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: gamma
+            shape: 1.0
+            scale: 1.0
+        - symptom_tag: symptomatic
+          completion_time:
+            type: gamma
+            shape: 8.0
+            scale: 1.0
+        - symptom_tag: dead_home
+          completion_time:
+            type: constant
+            value: 0.0
+
+  transmission:
+    mode: Trajectory-Driven
+    type: gamma  
+    max_infectiousness:
+      type: constant
+      value: 1.5
+    shape:
+      type: constant
+      value: 2.0
+    rate:
+      type: constant
+      value: 0.5
+    shift:
+      type: constant
+      value: -1.0
+    modes:
+    - name: respiratory
+      susceptibility_multiplier: 1.0
+    - name: physical_contact
+      susceptibility_multiplier: 1.0
+
+  immunity:
+    level: 0.95
+    waning_rate: 0.001

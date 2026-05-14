@@ -1,0 +1,29 @@
+default_contacts_matrix:
+  beta: 1.5
+  bins: [all]
+  contacts:
+    - [0.004]
+
+contact_matrices:
+  household:
+    beta: 3.0
+    contacts:
+      - [2.5]
+    bins: ["residents"]
+  office:
+    contacts:
+      - [5.0]
+    bins: ["workers"]
+  hospital:
+    modes:
+      respiratory:
+        beta: 2.0
+        bins: ["worker"]
+        contacts:
+          - [1.5]
+      physical_contact:
+        bins: ["worker"]
+        contacts:
+          - [0.5]
+
+default_contacts: 2.0

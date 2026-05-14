@@ -1,0 +1,30 @@
+time:
+  start_date: "2024-01-01"
+  end_date: "2024-01-15"
+
+config_paths:
+  disease_file: "configs/config_1911/disease.yaml"
+  contact_matrices_file: "configs/config_1911/contact_matrices.yaml"
+  schedules_file: "configs/config_1911/schedules.yaml"
+  activity_preferences_file: "configs/config_1911/activity_preferences.yaml"
+  performance_file: "configs/config_1911/performance.yaml"
+  parallel_file: "configs/config_1911/parallel.yaml"
+  policies_file: "configs/config_1911/policies.yaml"
+  coordinated_encounters_file: "configs/config_1911/coordinated_encounters.yaml"
+  # NOTE: infection_seeds is passed separately via --infection_seeds CLI arg
+  # (defaults to config/infection_seeds.yaml if not specified)
+  infection_seeds_file: "configs/config_1911/infection_seeds.yaml"
+
+
+# Random seeds for reproducibility
+random_seed: 12345
+
+output:
+  stats_interval_days: 1
+  flush_interval_days: 7
+  max_event_buffer_size: 100000
+
+# Regional Risk Factors
+regional_risk:
+  enabled: false
+  regional_risk_file: "data/regional_risk.csv"

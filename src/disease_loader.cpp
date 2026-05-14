@@ -1,0 +1,670 @@
+#include "loaders/disease_loader.h"
+
+#include <yaml-cpp/yaml.h>
+
+#include <algorithm>
+#include <iostream>
+#include <stdexcept>
+#include <unordered_set>
+
+#include "utils/filtered_csv.h"
+
+namespace june {
+
+// =============================================================================
+// Parse Distribution Parameters from YAML
+// =============================================================================
+
+DistributionParams DiseaseLoader::parseDistribution(
+    const YAML::Node& dist_node) {
+  DistributionParams dist;
+
+  if (!dist_node["type"]) {
+    throw std::runtime_error("Distribution must have a 'type' field");
+  }
+
+  dist.type = dist_node["type"].as<std::string>();
+
+  // Parse all parameters into the params map
+  for (auto it = dist_node.begin(); it != dist_node.end(); ++it) {
+    std::string key = it->first.as<std::string>();
+    if (key != "type") {  // Skip the type field
+      try {
+        double value = it->second.as<double>();
+        dist.params[key] = value;
+      } catch (const YAML::Exception& e) {
+        std::cerr << "Warning: Could not parse parameter '" << key
+                  << "' as double: " << e.what() << std::endl;
+      }
+    }
+  }
+
+  return dist;
+}
+
+// =============================================================================
+// Parse Trajectory Definitions from YAML
+// =============================================================================
+
+std::vector<TrajectoryDefinition> DiseaseLoader::parseTrajectories(
+    const YAML::Node& trajectories_node) {
+  std::vector<TrajectoryDefinition> trajectories;
+
+  if (!trajectories_node || !trajectories_node.IsSequence()) {
+    std::cerr << "Warning: No trajectories defined or invalid format"
+              << std::endl;
+    return trajectories;
+  }
+
+  for (const auto& traj_node : trajectories_node) {
+    TrajectoryDefinition traj;
+
+    if (traj_node["description"]) {
+      traj.description = traj_node["description"].as<std::string>();
+    }
+
+    if (traj_node["selection_key"]) {
+      traj.selection_key = traj_node["selection_key"].as<std::string>();
+    }
+
+    if (traj_node["probability"]) {
+      traj.probability = traj_node["probability"].as<double>();
+    }
+
+    traj.severity =
+        traj_node["severity"] ? traj_node["severity"].as<double>() : 0.0;
+
+    traj.infectiousness_factor =
+        traj_node["infectiousness_factor"]
+            ? traj_node["infectiousness_factor"].as<double>()
+            : 1.0;
+
+    if (traj_node["start_stage"]) {
+      traj.start_stage = traj_node["start_stage"].as<std::string>();
+    }
+
+    if (!traj_node["stages"]) {
+      std::cerr << "Warning: Trajectory missing 'stages' field" << std::endl;
+      continue;
+    }
+
+    for (const auto& stage_node : traj_node["stages"]) {
+      TrajectoryStage stage;
+
+      if (!stage_node["symptom_tag"]) {
+        std::cerr << "Warning: Stage missing 'symptom_tag' field" << std::endl;
+        continue;
+      }
+
+      stage.symptom_tag = stage_node["symptom_tag"].as<std::string>();
+
+      if (stage_node["completion_time"]) {
+        stage.completion_time =
+            parseDistribution(stage_node["completion_time"]);
+      }
+
+      traj.stages.push_back(stage);
+    }
+
+    trajectories.push_back(traj);
+  }
+
+  return trajectories;
+}
+
+// =============================================================================
+// Load Outcome Rates from filter-column CSV
+// =============================================================================
+
+OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
+    const std::string& csv_path) {
+  OutcomeRates rates;
+  csv::FilteredTable table = csv::loadFilteredCSV(csv_path);
+
+  int row_num = 0;
+  for (const auto& r : table.rows) {
+    ++row_num;
+    OutcomeRow row;
+    row.criteria = r.criteria;
+    for (const auto& name : table.value_columns) {
+      auto it = r.values.find(name);
+      if (it == r.values.end() || it->second.empty()) continue;
+      try {
+        row.probabilities[name] = std::stod(it->second);
+      } catch (const std::exception&) {
+        throw std::runtime_error("Outcome rates CSV '" + csv_path + "' row " +
+                                 std::to_string(row_num) + " column '" + name +
+                                 "' has non-numeric value '" + it->second +
+                                 "'");
+      }
+    }
+    rates.rows.push_back(std::move(row));
+  }
+
+  return rates;
+}
+
+// =============================================================================
+// Main Loading Function
+// =============================================================================
+
+Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
+                                    bool verbose) {
+  try {
+    YAML::Node root = YAML::LoadFile(yaml_path);
+
+    // Get disease node
+    if (!root["disease"]) {
+      throw std::runtime_error("YAML must contain 'disease' section");
+    }
+
+    YAML::Node config = root["disease"];
+
+    // Get disease name
+    std::string disease_name = config["name"].as<std::string>("covid19");
+
+    // === Load Symptom Tags ===
+    std::vector<SymptomTag> symptom_tags;
+    if (config["symptom_tags"]) {
+      uint16_t current_id = 0;
+      for (const auto& tag_node : config["symptom_tags"]) {
+        SymptomTag tag;
+        tag.name = tag_node["name"].as<std::string>();
+        tag.value = tag_node["value"].as<int>();
+        tag.id = current_id++;  // Assign runtime ID
+        symptom_tags.push_back(tag);
+      }
+    }
+
+    // === Load Stage Settings ===
+    DiseaseStageSettings stage_settings;
+    if (config["settings"]) {
+      auto settings = config["settings"];
+
+      if (settings["default_lowest_stage"]) {
+        stage_settings.default_lowest_stage =
+            settings["default_lowest_stage"].as<std::string>();
+      }
+      if (settings["max_mild_symptom_tag"]) {
+        stage_settings.max_mild_symptom_tag =
+            settings["max_mild_symptom_tag"].as<std::string>();
+      }
+
+      // Load stage categories
+      auto loadStageList = [](const YAML::Node& node,
+                              std::vector<std::string>& out) {
+        if (node) {
+          for (const auto& item : node) {
+            if (item["name"]) {
+              out.push_back(item["name"].as<std::string>());
+            }
+          }
+        }
+      };
+
+      loadStageList(settings["stay_at_home_stage"],
+                    stage_settings.stay_at_home_stages);
+      loadStageList(settings["severe_symptoms_stay_at_home_stage"],
+                    stage_settings.severe_symptoms_stay_at_home_stages);
+      loadStageList(settings["hospitalised_stage"],
+                    stage_settings.hospitalised_stages);
+      loadStageList(settings["intensive_care_stage"],
+                    stage_settings.intensive_care_stages);
+      loadStageList(settings["fatality_stage"], stage_settings.fatality_stages);
+      loadStageList(settings["recovered_stage"],
+                    stage_settings.recovered_stages);
+    }
+
+    // === Parse Trajectories ===
+    std::vector<TrajectoryDefinition> trajectories;
+    if (config["trajectories"]) {
+      trajectories = parseTrajectories(config["trajectories"]);
+    }
+
+    // === Validate trajectory stage and start_stage references (BUG-S10,
+    // BUG-S11) === Build set of valid symptom tag names from the parsed tags.
+    std::unordered_set<std::string> valid_tags;
+    for (const auto& tag : symptom_tags) {
+      valid_tags.insert(tag.name);
+    }
+    for (size_t ti = 0; ti < trajectories.size(); ++ti) {
+      const auto& traj = trajectories[ti];
+      const std::string traj_label =
+          traj.description.empty()
+              ? ("trajectory[" + std::to_string(ti) + "]")
+              : ("trajectory \"" + traj.description + "\"");
+      // BUG-S10: start_stage must name a defined symptom tag
+      if (traj.start_stage.has_value() &&
+          valid_tags.find(*traj.start_stage) == valid_tags.end()) {
+        throw std::runtime_error("Disease config error: " + traj_label +
+                                 " has start_stage \"" + *traj.start_stage +
+                                 "\" which is not a defined symptom tag.");
+      }
+      // BUG-S11: every stage symptom_tag must name a defined symptom tag
+      for (size_t si = 0; si < traj.stages.size(); ++si) {
+        const auto& stage = traj.stages[si];
+        if (valid_tags.find(stage.symptom_tag) == valid_tags.end()) {
+          throw std::runtime_error("Disease config error: " + traj_label +
+                                   " stage[" + std::to_string(si) +
+                                   "] has symptom_tag \"" + stage.symptom_tag +
+                                   "\" which is not a defined symptom tag.");
+        }
+      }
+    }
+
+    // === Load Outcome Rates CSV ===
+    OutcomeRates outcome_rates;
+    if (config["outcome_rates_csv"]) {
+      const auto& csv_node = config["outcome_rates_csv"];
+
+      // Accept either a scalar path ("outcome_rates_csv: path/to/file.csv")
+      // or a mapping with a "file:" key (legacy format).
+      std::string csv_rel_path;
+      if (csv_node.IsScalar()) {
+        csv_rel_path = csv_node.as<std::string>();
+      } else if (csv_node["file"]) {
+        csv_rel_path = csv_node["file"].as<std::string>();
+      } else {
+        throw std::runtime_error(
+            "outcome_rates_csv must be a file path or a mapping with a 'file:' "
+            "key");
+      }
+
+      std::string yaml_dir =
+          yaml_path.substr(0, yaml_path.find_last_of("/\\") + 1);
+      std::string csv_full_path = yaml_dir + csv_rel_path;
+
+      outcome_rates = loadOutcomeRatesFromCSV(csv_full_path);
+    }
+
+    // === Load Transmission Parameters ===
+    TransmissionParams transmission;
+    if (config["transmission"]) {
+      auto trans_node = config["transmission"];
+
+      // Detect mode (default to Trajectory-Driven)
+      std::string mode_str = trans_node["mode"]
+                                 ? trans_node["mode"].as<std::string>()
+                                 : "Trajectory-Driven";
+      if (mode_str == "Stage-Driven") {
+        transmission.mode = InfectiousnessMode::STAGE_DRIVEN;
+      } else {
+        transmission.mode = InfectiousnessMode::TRAJECTORY_DRIVEN;
+      }
+
+      if (transmission.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
+        if (trans_node["type"]) {
+          transmission.type = trans_node["type"].as<std::string>();
+        } else {
+          transmission.type = "gamma";
+        }
+
+        // Load infectiousness distribution parameters
+        if (trans_node["max_infectiousness"]) {
+          transmission.max_infectiousness =
+              parseDistribution(trans_node["max_infectiousness"]);
+        }
+        if (trans_node["shape"]) {
+          transmission.shape = parseDistribution(trans_node["shape"]);
+        }
+        if (trans_node["rate"]) {
+          transmission.rate = parseDistribution(trans_node["rate"]);
+        }
+        if (trans_node["shift"]) {
+          transmission.shift = parseDistribution(trans_node["shift"]);
+        }
+
+        // Note: symptom-specific infectiousness scaling is now handled via
+        // infectiousness_factor on each TrajectoryDefinition, applied once at
+        // infection creation (matching original JUNE behaviour).
+
+        // Multi-mode support for TRAJECTORY_DRIVEN: parse optional modes list
+        // for mode names and susceptibility multipliers. No per-mode curves
+        // are loaded — getInfectiousness(m, t) returns the same scalar for all
+        // modes; the multipliers scale susceptibility per-mode at the FOI step.
+        if (trans_node["modes"]) {
+          for (const auto& mode_node : trans_node["modes"]) {
+            TransmissionMode tmode;
+            tmode.name = mode_node["name"] ? mode_node["name"].as<std::string>()
+                                           : "default";
+            tmode.susceptibility_multiplier =
+                mode_node["susceptibility_multiplier"]
+                    ? mode_node["susceptibility_multiplier"].as<double>()
+                    : 1.0;
+            transmission.modes.push_back(std::move(tmode));
+          }
+        } else {
+          TransmissionMode tmode;
+          tmode.name = "default";
+          transmission.modes.push_back(std::move(tmode));
+        }
+      } else {
+        // STAGE-DRIVEN
+        if (trans_node["modes"]) {
+          // Multi-mode: parse modes list with per-mode stage_curves
+          const auto& modes_node = trans_node["modes"];
+          for (const auto& mode_node : modes_node) {
+            TransmissionMode tmode;
+            tmode.name = mode_node["name"] ? mode_node["name"].as<std::string>()
+                                           : "default";
+            tmode.susceptibility_multiplier =
+                mode_node["susceptibility_multiplier"]
+                    ? mode_node["susceptibility_multiplier"].as<double>()
+                    : 1.0;
+
+            std::string mode_type =
+                mode_node["type"] ? mode_node["type"].as<std::string>() : "";
+            int mode_idx = static_cast<int>(transmission.modes.size());
+
+            if (mode_type == "fomite") {
+              tmode.type = TransmissionModeType::Fomite;
+              FomiteConfig fcfg;
+              fcfg.mode_index = mode_idx;
+              fcfg.max_age = mode_node["max_age"]
+                                 ? mode_node["max_age"].as<double>()
+                                 : 14.0;
+              fcfg.sub_bin_time = mode_node["sub_bin_time"]
+                                      ? mode_node["sub_bin_time"].as<double>()
+                                      : 0.0;
+              if (mode_node["fomite_curve"]) {
+                fcfg.infectiousness_curve = parseCurve(
+                    mode_node["fomite_curve"],
+                    "fomite / " + tmode.name + " / fomite_curve", verbose);
+              } else {
+                fcfg.infectiousness_curve =
+                    std::make_shared<ConstantCurve>(0.0);
+              }
+              fcfg.deposition_by_symptom.resize(symptom_tags.size(), nullptr);
+              if (mode_node["deposition_stages"]) {
+                for (auto it = mode_node["deposition_stages"].begin();
+                     it != mode_node["deposition_stages"].end(); ++it) {
+                  std::string stage_name = it->first.as<std::string>();
+                  auto curve = parseCurve(
+                      it->second, "fomite / " + tmode.name + " / " + stage_name,
+                      verbose);
+                  for (const auto& tag : symptom_tags) {
+                    if (tag.name == stage_name) {
+                      fcfg.deposition_by_symptom[tag.id] = curve;
+                      break;
+                    }
+                  }
+                }
+              }
+              tmode.config = std::move(fcfg);
+              std::cout << "[DiseaseLoader] Fomite mode '" << tmode.name
+                        << "' registered at index " << mode_idx << std::endl;
+
+            } else if (mode_type == "compartmental_uptake") {
+              tmode.type = TransmissionModeType::CompartmentalUptake;
+              CompartmentalUptakeConfig ucfg;
+              ucfg.mode_index = mode_idx;
+              tmode.config = ucfg;
+              std::cout << "[DiseaseLoader] Compartmental uptake mode '"
+                        << tmode.name << "' registered at index " << mode_idx
+                        << std::endl;
+
+            } else if (mode_type == "compartmental_deposition") {
+              tmode.type = TransmissionModeType::CompartmentalDeposition;
+              CompartmentalDepositionConfig dcfg;
+              dcfg.mode_index = mode_idx;
+              dcfg.deposition_by_symptom.resize(symptom_tags.size(), nullptr);
+              if (mode_node["deposition_stages"]) {
+                for (auto it = mode_node["deposition_stages"].begin();
+                     it != mode_node["deposition_stages"].end(); ++it) {
+                  std::string stage_name = it->first.as<std::string>();
+                  auto curve = parseCurve(it->second,
+                                          "compartmental_deposition / " +
+                                              tmode.name + " / " + stage_name,
+                                          verbose);
+                  for (const auto& tag : symptom_tags) {
+                    if (tag.name == stage_name) {
+                      dcfg.deposition_by_symptom[tag.id] = curve;
+                      break;
+                    }
+                  }
+                }
+              }
+              tmode.config = std::move(dcfg);
+              std::cout << "[DiseaseLoader] Compartmental deposition mode '"
+                        << tmode.name << "' registered at index " << mode_idx
+                        << std::endl;
+            }
+
+            transmission.modes.push_back(std::move(tmode));
+          }
+
+          // Parse stage_curves as nested: stage_curves[mode_name][symptom_name]
+          if (trans_node["stage_curves"]) {
+            for (const auto& mode_kv : trans_node["stage_curves"]) {
+              std::string mname = mode_kv.first.as<std::string>();
+              std::vector<std::shared_ptr<InfectiousnessCurve>> mode_curves(
+                  symptom_tags.size(), nullptr);
+              for (auto it = mode_kv.second.begin(); it != mode_kv.second.end();
+                   ++it) {
+                std::string stage_name = it->first.as<std::string>();
+                auto curve =
+                    parseCurve(it->second, mname + " / " + stage_name, verbose);
+                transmission.stage_curves[stage_name] = curve;
+                for (const auto& tag : symptom_tags) {
+                  if (tag.name == stage_name) {
+                    mode_curves[tag.id] = curve;
+                    break;
+                  }
+                }
+              }
+              // Find mode index by name and store symptom_curves on the mode.
+              for (auto& tmode : transmission.modes) {
+                if (tmode.name == mname) {
+                  for (const auto& tag : symptom_tags) {
+                    if (tag.id < mode_curves.size() && !mode_curves[tag.id]) {
+                      if (tag.value > 0) {
+                        std::cerr << "[DiseaseLoader] Warning: mode '" << mname
+                                  << "' has no stage_curve for symptom '"
+                                  << tag.name << "'; using zero infectiousness."
+                                  << std::endl;
+                      }
+                      mode_curves[tag.id] =
+                          std::make_shared<ConstantCurve>(0.0);
+                    }
+                  }
+                  tmode.symptom_curves = mode_curves;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Fill zero symptom_curves for modes without explicit stage_curves
+          // (fomite, compartmental modes have no person-to-person
+          // infectiousness).
+          std::vector<std::shared_ptr<InfectiousnessCurve>> zero_curves(
+              symptom_tags.size(), std::make_shared<ConstantCurve>(0.0));
+          for (auto& tmode : transmission.modes) {
+            if (tmode.symptom_curves.empty()) {
+              tmode.symptom_curves = zero_curves;
+            }
+          }
+
+          // Populate flat symptom_id_curves from first Standard mode.
+          transmission.symptom_id_curves.resize(symptom_tags.size(), nullptr);
+          for (const auto& tmode : transmission.modes) {
+            if (tmode.type == TransmissionModeType::Standard) {
+              transmission.symptom_id_curves = tmode.symptom_curves;
+              break;
+            }
+          }
+        } else {
+          // Flat stage_curves at top level — single Standard mode.
+          if (trans_node["stage_curves"]) {
+            for (auto it = trans_node["stage_curves"].begin();
+                 it != trans_node["stage_curves"].end(); ++it) {
+              std::string stage_name = it->first.as<std::string>();
+              transmission.stage_curves[stage_name] = parseCurve(
+                  it->second, "stage_curves / " + stage_name, verbose);
+            }
+          }
+
+          // Populate hot-path vector for ID-based lookups.
+          transmission.symptom_id_curves.resize(symptom_tags.size(), nullptr);
+          for (const auto& tag : symptom_tags) {
+            auto it = transmission.stage_curves.find(tag.name);
+            if (it != transmission.stage_curves.end()) {
+              transmission.symptom_id_curves[tag.id] = it->second;
+            }
+          }
+
+          // Single Standard mode.
+          TransmissionMode tmode;
+          tmode.name = "default";
+          tmode.symptom_curves = transmission.symptom_id_curves;
+          transmission.modes.push_back(std::move(tmode));
+        }
+      }
+    }
+
+    // === Load Natural Immunity Parameters ===
+    if (config["immunity"]) {
+      auto immunity_node = config["immunity"];
+      transmission.natural_immunity.level =
+          immunity_node["level"] ? immunity_node["level"].as<double>() : 0.95;
+      transmission.natural_immunity.waning_rate =
+          immunity_node["waning_rate"]
+              ? immunity_node["waning_rate"].as<double>()
+              : 0.001;
+    }
+
+    // Validate that each outcome row sums to ~1.0 across trajectory columns.
+    for (size_t row_i = 0; row_i < outcome_rates.rows.size(); ++row_i) {
+      double row_sum = 0.0;
+      for (const auto& [key, prob] : outcome_rates.rows[row_i].probabilities) {
+        row_sum += prob;
+      }
+      if (!outcome_rates.rows[row_i].probabilities.empty() &&
+          std::abs(row_sum - 1.0) > 0.01) {
+        std::cerr << "WARNING: Outcome rates row " << row_i << " sums to "
+                  << row_sum << " (expected 1.0)" << std::endl;
+      }
+    }
+
+    // Create and return Disease object
+    return Disease(disease_name, symptom_tags, stage_settings, trajectories,
+                   outcome_rates, transmission);
+
+  } catch (const YAML::Exception& e) {
+    throw std::runtime_error("Failed to load disease config from " + yaml_path +
+                             ": " + e.what());
+  } catch (const std::exception& e) {
+    throw std::runtime_error("Error loading disease config: " +
+                             std::string(e.what()));
+  }
+}
+
+// =============================================================================
+// Parse an infectiousness curve from YAML
+// =============================================================================
+
+std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
+    const YAML::Node& curve_node, const std::string& context_label,
+    bool verbose) {
+  if (!curve_node || !curve_node["type"]) {
+    return std::make_shared<ConstantCurve>(0.0);
+  }
+
+  std::string type = curve_node["type"].as<std::string>();
+
+  static constexpr double kTableMaxDays = 90.0;
+  static constexpr int kTableNPoints = 2700;
+
+  if (type == "constant") {
+    double value = curve_node["value"] ? curve_node["value"].as<double>() : 1.0;
+    auto curve = std::make_shared<ConstantCurve>(value);
+    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+    return curve;
+  } else if (type == "gamma") {
+    double max_inf = curve_node["max_infectiousness"]
+                         ? curve_node["max_infectiousness"].as<double>()
+                         : 1.0;
+    double shape =
+        curve_node["shape"] ? curve_node["shape"].as<double>() : 1.56;
+    double rate = curve_node["rate"] ? curve_node["rate"].as<double>() : 0.53;
+    double shift = curve_node["shift"] ? curve_node["shift"].as<double>() : 0.0;
+    auto curve = std::make_shared<GammaCurve>(max_inf, shape, rate, shift);
+    if (verbose) {
+      double factor = curve->peakScalingFactor();
+      std::cout << "[DEBUG] Curve (" << context_label << "): type=gamma"
+                << "  old_peak=" << max_inf * factor
+                << "  max_infectiousness=" << max_inf
+                << "  rescale_factor=" << factor
+                << "  (set max_infectiousness: " << max_inf * factor
+                << " in YAML to match previous behaviour)\n";
+    }
+    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+    return curve;
+  } else if (type == "exponential_decay") {
+    double initial = curve_node["initial_value"]
+                         ? curve_node["initial_value"].as<double>()
+                         : 1.0;
+    double decay =
+        curve_node["decay_rate"] ? curve_node["decay_rate"].as<double>() : 0.5;
+    double delay = curve_node["delay"] ? curve_node["delay"].as<double>() : 0.0;
+    auto curve = std::make_shared<ExponentialDecayCurve>(initial, decay, delay);
+    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+    return curve;
+  } else if (type == "linear_ramp") {
+    double start = curve_node["start_value"]
+                       ? curve_node["start_value"].as<double>()
+                       : 0.0;
+    double end =
+        curve_node["end_value"] ? curve_node["end_value"].as<double>() : 1.0;
+    double duration = curve_node["ramp_duration"]
+                          ? curve_node["ramp_duration"].as<double>()
+                          : 1.0;
+    auto curve = std::make_shared<LinearRampCurve>(start, end, duration);
+    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+    return curve;
+  } else if (type == "lognormal") {
+    double max_inf = curve_node["max_infectiousness"]
+                         ? curve_node["max_infectiousness"].as<double>()
+                         : 1.0;
+    double mu = curve_node["mu"] ? curve_node["mu"].as<double>() : 0.0;
+
+    double sigma = curve_node["sigma"] ? curve_node["sigma"].as<double>() : 1.0;
+    auto curve = std::make_shared<LognormalCurve>(max_inf, mu, sigma);
+    if (verbose) {
+      double factor = curve->peakScalingFactor();
+      std::cout << "[DEBUG] Curve (" << context_label << "): type=lognormal"
+                << "  old_peak=" << max_inf * factor
+                << "  max_infectiousness=" << max_inf
+                << "  rescale_factor=" << factor
+                << "  (set max_infectiousness: " << max_inf * factor
+                << " in YAML to match previous behaviour)\n";
+    }
+    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+    return curve;
+
+  } else if (type == "beta") {
+    double max_inf = curve_node["max_infectiousness"]
+                         ? curve_node["max_infectiousness"].as<double>()
+                         : 1.0;
+    double alpha = curve_node["alpha"] ? curve_node["alpha"].as<double>() : 2.0;
+    double beta = curve_node["beta"] ? curve_node["beta"].as<double>() : 2.0;
+    double duration =
+        curve_node["duration"] ? curve_node["duration"].as<double>() : 1.0;
+    auto curve = std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
+    if (verbose) {
+      double factor = curve->peakScalingFactor();
+      std::cout << "[DEBUG] Curve (" << context_label << "): type=beta"
+                << "  old_peak=" << max_inf * factor
+                << "  max_infectiousness=" << max_inf
+                << "  rescale_factor=" << factor
+                << "  (set max_infectiousness: " << max_inf * factor
+                << " in YAML to match previous behaviour)\n";
+    }
+    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+    return curve;
+  }
+
+  throw std::runtime_error("Unknown infectiousness curve type: " + type);
+}
+
+}  // namespace june
