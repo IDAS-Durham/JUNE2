@@ -57,6 +57,20 @@ inline void broadcastRunId(std::string& run_id) {
 #endif
 }
 
+// Broadcast the resolved RNG seed from rank 0 to all ranks. No-op without MPI.
+// Ensures every rank (and any future checkpoint resume) uses the identical
+// stream even when the seed was auto-generated on rank 0.
+inline void broadcastSeed(unsigned int& seed) {
+#ifdef USE_MPI
+  int initialized = 0;
+  MPI_Initialized(&initialized);
+  if (!initialized) return;
+  MPI_Bcast(&seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+#else
+  (void)seed;
+#endif
+}
+
 // Collect every config / data file path referenced by a loaded Config plus
 // the simulation.yaml that anchors it. Order is stable; duplicates removed.
 inline std::vector<std::string> collectConfigPaths(
@@ -124,8 +138,9 @@ inline std::filesystem::path snapshotDestination(
 // any I/O failure (no silent fallback).
 inline void snapshotRun(const std::filesystem::path& run_dir,
                         const std::string& sim_yaml_path, const Config& config,
-                        int mpi_size,
-                        const std::vector<std::string>& cli_args) {
+                        int mpi_size, const std::vector<std::string>& cli_args,
+                        unsigned int effective_random_seed,
+                        const std::string& world_path) {
   namespace fs = std::filesystem;
   fs::create_directories(run_dir);
 
@@ -189,6 +204,17 @@ inline void snapshotRun(const std::filesystem::path& run_dir,
   manifest << YAML::EndSeq;
 
   manifest << YAML::Key << "config_root" << YAML::Value << config_root.string();
+
+  // Lineage: everything needed to reproduce or resume this run. The effective
+  // seed is the resolved value actually fed to the RNG (incl. the
+  // auto-generated case), so a checkpoint restart can reuse the identical
+  // stream. resumed_from is null for an original run; populated on restart.
+  manifest << YAML::Key << "lineage" << YAML::Value << YAML::BeginMap;
+  manifest << YAML::Key << "world_path" << YAML::Value << world_path;
+  manifest << YAML::Key << "effective_random_seed" << YAML::Value
+           << static_cast<unsigned long long>(effective_random_seed);
+  manifest << YAML::Key << "resumed_from" << YAML::Value << YAML::Null;
+  manifest << YAML::EndMap;
 
   manifest << YAML::Key << "files" << YAML::Value << YAML::BeginSeq;
   for (const auto& src : sources) {

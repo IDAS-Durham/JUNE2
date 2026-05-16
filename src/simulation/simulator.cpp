@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 
 #include "utils/event_logging/event_writer.h"
 
@@ -31,6 +32,18 @@ Simulator::Simulator(WorldState& world, const Config& config,
       current_simulation_time_(0.0) {
   // GlobalRNG is seeded in main.cpp before any components are created
   // This ensures Domain, ActivityManager, etc. can use RNG during construction
+
+  // Checkpointing is incompatible with the compartmental-model plugin: the
+  // external ODE plugin's internal state is opaque to the engine, so a
+  // resume would silently diverge. Fail fast on all ranks (no silent
+  // fallback).
+  if (config_.simulation.checkpoint.enabled &&
+      !config_.simulation.compartmental_model_sidecar.empty()) {
+    throw std::runtime_error(
+        "Checkpointing is not supported for compartmental-model scenarios "
+        "(compartmental_model_sidecar is set). Disable 'checkpoint.enabled' "
+        "or remove the sidecar.");
+  }
 
   // Parse start date
   if (!config_.simulation.start_date.empty()) {
@@ -382,9 +395,47 @@ void Simulator::run() {
 
     // Enable wall-clock profiling for high-level phases
     Profiler::instance().enable();
+
+    // Checkpoint cadence: validate + announce the active mode once.
+    const auto& cp = config_.simulation.checkpoint;
+    if (cp.enabled) {
+      if (cp.usesDates()) {
+        if (cp.every_n_days.has_value()) {
+          std::cout << "[checkpoint] on_dates is set; every_n_days ("
+                    << *cp.every_n_days
+                    << ") is IGNORED (dates take precedence)" << std::endl;
+        }
+        const std::string& sd = config_.simulation.start_date;
+        const std::string& ed = config_.simulation.end_date;
+        for (const auto& d : *cp.on_dates) {
+          if (d < sd || d > ed) {
+            std::cout << "[checkpoint] WARNING: on_dates entry '" << d
+                      << "' is outside the simulation window [" << sd << ", "
+                      << ed << "] and will never fire" << std::endl;
+          }
+        }
+        std::cout << "[checkpoint] enabled: date-based cadence, "
+                  << cp.on_dates->size() << " date(s), output_dir='"
+                  << cp.output_dir << "', keep_last=" << cp.keep_last
+                  << std::endl;
+      } else if (cp.every_n_days.has_value() && *cp.every_n_days > 0) {
+        std::cout << "[checkpoint] enabled: every " << *cp.every_n_days
+                  << " day(s), output_dir='" << cp.output_dir
+                  << "', keep_last=" << cp.keep_last << std::endl;
+      } else {
+        std::cout << "[checkpoint] enabled but no cadence configured "
+                     "(every_n_days and on_dates both absent) — no "
+                     "checkpoints will be written"
+                  << std::endl;
+      }
+    }
   }
 
-  for (int day = 0; day < total_days_; ++day) {
+  if (resume_from_day_ > 0 && rank == 0) {
+    std::cout << "[checkpoint] resuming simulation at day " << resume_from_day_
+              << " of " << total_days_ << std::endl;
+  }
+  for (int day = resume_from_day_; day < total_days_; ++day) {
     current_day_num_ = day;
     current_date_ = addDays(parseDate(config_.simulation.start_date), day);
 
@@ -600,6 +651,23 @@ void Simulator::run() {
 
     // End-of-day flush check (triggers flush_interval_days)
     checkAndFlushEvents(true);
+
+    // Checkpoint trigger (P2: detection only — P3 will write the delta).
+    // Placed after the end-of-day flush so disease progression is done,
+    // events are flushed, and cross-rank buffers are empty.
+    if (config_.simulation.checkpoint.triggersOnDay(
+            day, formatDate(current_date_))) {
+      if (rank == 0) {
+        const auto& cp = config_.simulation.checkpoint;
+        std::cout << "[checkpoint] TRIGGER at end of day " << day << " ("
+                  << formatDate(current_date_)
+                  << "), sim_time=" << current_simulation_time_
+                  << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
+                  << std::endl;
+      }
+      ScopedTimer timer("06_Checkpoint");
+      writeCheckpoint(day, formatDate(current_date_));
+    }
   }
 
   if (rank == 0) {

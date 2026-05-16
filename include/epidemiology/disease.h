@@ -356,6 +356,30 @@ class Infection {
   double getInfectionTime() const { return infection_time_; }
   const InfectionTrajectory& getTrajectory() const { return trajectory_; }
 
+  // --- Checkpoint serialization accessors (read-only) ---
+  // Expose the privately-sampled transmission params + stage cache so a
+  // checkpoint can reconstruct an Infection without re-sampling from RNG.
+  // (Restore path added in P4.)
+  double ckptMaxInfectiousness() const { return max_infectiousness_; }
+  double ckptTransmissionShape() const { return transmission_shape_; }
+  double ckptTransmissionRate() const { return transmission_rate_; }
+  double ckptTransmissionShift() const { return transmission_shift_; }
+  double ckptLastCheckedTime() const { return last_checked_time_; }
+  uint16_t ckptCachedSymptomId() const { return cached_symptom_id_; }
+  double ckptCachedSymptomStartTime() const {
+    return cached_symptom_start_time_;
+  }
+
+  // Reconstruct an Infection from checkpoint state WITHOUT re-sampling any
+  // RNG — every behaviour-defining field is restored verbatim so a resumed
+  // run is bit-identical.
+  static std::unique_ptr<Infection> fromCheckpoint(
+      const Disease* disease, double infection_time,
+      const InfectionTrajectory& trajectory, double max_infectiousness,
+      double transmission_shape, double transmission_rate,
+      double transmission_shift, double last_checked_time,
+      uint16_t cached_symptom_id, double cached_symptom_start_time);
+
   // Check status
   bool isInfectious(double current_time) const;
   bool isSymptomatic(double current_time) const;
@@ -388,6 +412,10 @@ class Infection {
   std::optional<double> getNextTransitionTime(double current_time) const;
 
  private:
+  // Tag ctor for checkpoint restore: sets only disease_, skips all sampling.
+  struct RestoreTag {};
+  Infection(const Disease* disease, RestoreTag) : disease_(disease) {}
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;

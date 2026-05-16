@@ -198,6 +198,29 @@ inline SimulationConfig ConfigLoader::loadSimulation(
     }
   }
 
+  // Checkpoint / restart settings (optional). Cadence is mutually exclusive:
+  // on_dates (non-null, non-empty) takes precedence over every_n_days. A
+  // null YAML value leaves the corresponding optional empty.
+  if (root["checkpoint"]) {
+    auto cp = root["checkpoint"];
+    if (cp["enabled"]) {
+      config.checkpoint.enabled = cp["enabled"].as<bool>();
+    }
+    if (cp["output_dir"]) {
+      config.checkpoint.output_dir = cp["output_dir"].as<std::string>();
+    }
+    if (cp["every_n_days"] && !cp["every_n_days"].IsNull()) {
+      config.checkpoint.every_n_days = cp["every_n_days"].as<int>();
+    }
+    if (cp["on_dates"] && !cp["on_dates"].IsNull()) {
+      config.checkpoint.on_dates =
+          cp["on_dates"].as<std::vector<std::string>>();
+    }
+    if (cp["keep_last"]) {
+      config.checkpoint.keep_last = cp["keep_last"].as<int>();
+    }
+  }
+
   return config;
 }
 

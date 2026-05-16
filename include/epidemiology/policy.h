@@ -289,6 +289,18 @@ class PolicyManager {
   // Set base seed for deterministic RNG (MPI reproducibility)
   void setBaseSeed(uint64_t seed) { base_seed_ = seed; }
 
+  // --- Checkpoint serialization ---
+  // frozen_states_ pins the small set of persons mid policy-hop. It must be
+  // saved/restored so an interrupted hop resumes correctly on restart.
+  const std::unordered_map<PersonId, FrozenPersonState>& getFrozenStates()
+      const {
+    return frozen_states_;
+  }
+  void setFrozenStates(
+      const std::unordered_map<PersonId, FrozenPersonState>& s) {
+    frozen_states_ = s;
+  }
+
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);
   void addTemporalPolicy(const TemporalPolicy& policy);
