@@ -593,6 +593,39 @@ struct SimulationConfig {
     std::string regional_risk_file = "";
   } regional_risk;
 
+  // Checkpoint / restart. Cadence is MUTUALLY EXCLUSIVE: if on_dates is
+  // present (non-null, non-empty) it takes precedence and every_n_days is
+  // ignored. A null YAML value leaves the corresponding optional empty.
+  struct CheckpointConfig {
+    bool enabled = false;
+    std::string output_dir = "checkpoints/";  // resolved under run dir
+    std::optional<int> every_n_days;          // null => absent
+    std::optional<std::vector<std::string>>
+        on_dates;       // ISO YYYY-MM-DD; null => absent
+    int keep_last = 0;  // 0 => keep all
+
+    // True when date-based cadence is the active mode.
+    bool usesDates() const {
+      return on_dates.has_value() && !on_dates->empty();
+    }
+
+    // Decide whether to checkpoint at the end of a completed day.
+    //   completed_day_index : 0-based index of the day just finished
+    //   current_date_iso    : that day's date, "YYYY-MM-DD"
+    bool triggersOnDay(int completed_day_index,
+                       const std::string& current_date_iso) const {
+      if (!enabled) return false;
+      if (usesDates()) {
+        for (const auto& d : *on_dates)
+          if (d == current_date_iso) return true;
+        return false;
+      }
+      if (every_n_days.has_value() && *every_n_days > 0)
+        return ((completed_day_index + 1) % *every_n_days) == 0;
+      return false;
+    }
+  } checkpoint;
+
   void resolve(const WorldState& /*world*/) {}
 };
 
