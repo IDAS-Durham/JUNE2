@@ -26,8 +26,9 @@ class Epidemiology {
 
   // Update infection states (symptom changes, recoveries, deaths) for all
   // actively infected people
-  EpiSlotStats updateInfectionStates(double current_simulation_time,
-                             const std::vector<PersonLocation>& locations);
+  EpiSlotStats updateInfectionStates(
+      double current_simulation_time,
+      const std::vector<PersonLocation>& locations);
 
   // Apply decay to venue fomite loads based on time elapsed
   void updateVenueFomites(double current_simulation_time, double delta_hours);

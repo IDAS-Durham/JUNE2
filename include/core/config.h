@@ -673,7 +673,7 @@ struct CoordinatedEncounterDef {
   // Pre-resolved caches (populated by CoordinatedEncounterConfig::resolve)
   ActivityMask trigger_mask = 0;        // Bitmask of trigger activity indices
   ActivityMask allowed_venue_mask = 0;  // Bitmask of allowed venue type indices
-  int cached_network_idx = -1;             // Resolved network type index
+  int cached_network_idx = -1;          // Resolved network type index
   uint8_t cached_encounter_type_id = 255;  // Resolved encounter type ID
   int cached_virtual_venue_type_id = 255;  // Resolved virtual venue type ID
 };
