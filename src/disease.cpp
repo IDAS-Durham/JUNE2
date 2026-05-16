@@ -286,6 +286,27 @@ Infection::Infection(const Disease* disease, double infection_time,
   }
 }
 
+std::unique_ptr<Infection> Infection::fromCheckpoint(
+    const Disease* disease, double infection_time,
+    const InfectionTrajectory& trajectory, double max_infectiousness,
+    double transmission_shape, double transmission_rate,
+    double transmission_shift, double last_checked_time,
+    uint16_t cached_symptom_id, double cached_symptom_start_time) {
+  // Bypass the sampling constructor entirely — restore every
+  // behaviour-defining field verbatim so the resumed run is bit-identical.
+  std::unique_ptr<Infection> inf(new Infection(disease, RestoreTag{}));
+  inf->infection_time_ = infection_time;
+  inf->trajectory_ = trajectory;
+  inf->max_infectiousness_ = max_infectiousness;
+  inf->transmission_shape_ = transmission_shape;
+  inf->transmission_rate_ = transmission_rate;
+  inf->transmission_shift_ = transmission_shift;
+  inf->last_checked_time_ = last_checked_time;
+  inf->cached_symptom_id_ = cached_symptom_id;
+  inf->cached_symptom_start_time_ = cached_symptom_start_time;
+  return inf;
+}
+
 std::string Infection::getCurrentSymptom(double current_time) const {
   uint16_t id = trajectory_.getCurrentSymptomId(current_time);
   return disease_->getSymptomName(id);

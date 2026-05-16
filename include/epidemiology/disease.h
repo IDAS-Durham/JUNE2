@@ -370,6 +370,16 @@ class Infection {
     return cached_symptom_start_time_;
   }
 
+  // Reconstruct an Infection from checkpoint state WITHOUT re-sampling any
+  // RNG — every behaviour-defining field is restored verbatim so a resumed
+  // run is bit-identical. See CHECKPOINT_DESIGN.md (P4).
+  static std::unique_ptr<Infection> fromCheckpoint(
+      const Disease* disease, double infection_time,
+      const InfectionTrajectory& trajectory, double max_infectiousness,
+      double transmission_shape, double transmission_rate,
+      double transmission_shift, double last_checked_time,
+      uint16_t cached_symptom_id, double cached_symptom_start_time);
+
   // Check status
   bool isInfectious(double current_time) const;
   bool isSymptomatic(double current_time) const;
@@ -402,6 +412,10 @@ class Infection {
   std::optional<double> getNextTransitionTime(double current_time) const;
 
  private:
+  // Tag ctor for checkpoint restore: sets only disease_, skips all sampling.
+  struct RestoreTag {};
+  Infection(const Disease* disease, RestoreTag) : disease_(disease) {}
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;

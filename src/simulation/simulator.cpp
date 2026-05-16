@@ -418,7 +418,11 @@ void Simulator::run() {
     }
   }
 
-  for (int day = 0; day < total_days_; ++day) {
+  if (resume_from_day_ > 0 && rank == 0) {
+    std::cout << "[checkpoint] resuming simulation at day " << resume_from_day_
+              << " of " << total_days_ << std::endl;
+  }
+  for (int day = resume_from_day_; day < total_days_; ++day) {
     current_day_num_ = day;
     current_date_ = addDays(parseDate(config_.simulation.start_date), day);
 

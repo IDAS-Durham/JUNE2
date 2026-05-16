@@ -302,6 +302,46 @@ void Simulator::writeCheckpoint(int completed_day,
     writeVec(f, "/venue_fomite/counts", fo_cnt, I32, comp);
     writeVec(f, "/venue_fomite/deposit_time", fo_time, F64, comp);
     writeVec(f, "/venue_fomite/deposit_amount", fo_amt, F64, comp);
+
+    // Per-rank, global-id-keyed manager state lives in the shard (NOT rank-0
+    // state.h5) so it survives a resume at a different rank count.
+    // last_processed_transition_time_ (this rank's infected people):
+    std::vector<int32_t> lpt_pid;
+    std::vector<double> lpt_t;
+    if (epidemiology_) {
+      for (const auto& [pid, t] :
+           epidemiology_->getLastProcessedTransitionTimes()) {
+        lpt_pid.push_back(pid);
+        lpt_t.push_back(t);
+      }
+    }
+    f.createGroup("/epidemiology");
+    writeVec(f, "/epidemiology/lpt_person_id", lpt_pid, I32, comp);
+    writeVec(f, "/epidemiology/lpt_time", lpt_t, F64, comp);
+
+    // frozen_states_ (this rank's persons mid policy-hop):
+    std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
+    std::vector<uint8_t> fz_pol;
+    if (policy_manager_) {
+      for (const auto& [pid, st] : policy_manager_->getFrozenStates()) {
+        fz_pid.push_back(pid);
+        fz_pol.push_back(st.triggering_policy_index);
+        fz_hop.push_back(st.paused_hopped_schedule_id);
+        fz_ret.push_back(st.paused_return_schedule_id);
+        fz_venue.push_back(st.pin_venue_id);
+        fz_subset.push_back(st.pin_subset_index);
+      }
+    }
+    f.createGroup("/policy_frozen_states");
+    writeVec(f, "/policy_frozen_states/person_id", fz_pid, I32, comp);
+    writeVec(f, "/policy_frozen_states/triggering_policy_index", fz_pol, U8,
+             comp);
+    writeVec(f, "/policy_frozen_states/paused_hopped_schedule_id", fz_hop, I32,
+             comp);
+    writeVec(f, "/policy_frozen_states/paused_return_schedule_id", fz_ret, I32,
+             comp);
+    writeVec(f, "/policy_frozen_states/pin_venue_id", fz_venue, I32, comp);
+    writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
     f.close();
   }
 
@@ -318,8 +358,6 @@ void Simulator::writeCheckpoint(int completed_day,
     f.createGroup("/infection_seeder");
     f.createGroup("/event_log");
     const auto I32 = H5::PredType::NATIVE_INT32;
-    const auto U8 = H5::PredType::NATIVE_UINT8;
-    const auto I16 = H5::PredType::NATIVE_INT32;
 
     writeVec(f, "/scalars/completed_day", std::vector<int32_t>{completed_day},
              I32, 0);
@@ -341,29 +379,10 @@ void Simulator::writeCheckpoint(int completed_day,
       for (const auto& s : infection_seeder_->getAppliedSeeds())
         seeds.push_back(s);
     writeStrs(f, "/infection_seeder/applied_seeds", seeds);
-
-    // frozen_states_ (persons mid policy-hop)
-    std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
-    std::vector<uint8_t> fz_pol;
-    if (policy_manager_) {
-      for (const auto& [pid, st] : policy_manager_->getFrozenStates()) {
-        fz_pid.push_back(pid);
-        fz_pol.push_back(st.triggering_policy_index);
-        fz_hop.push_back(st.paused_hopped_schedule_id);
-        fz_ret.push_back(st.paused_return_schedule_id);
-        fz_venue.push_back(st.pin_venue_id);
-        fz_subset.push_back(st.pin_subset_index);
-      }
-    }
-    f.createGroup("/policy_frozen_states");
-    writeVec(f, "/policy_frozen_states/person_id", fz_pid, I32, 0);
-    writeVec(f, "/policy_frozen_states/triggering_policy_index", fz_pol, U8, 0);
-    writeVec(f, "/policy_frozen_states/paused_hopped_schedule_id", fz_hop, I16,
-             0);
-    writeVec(f, "/policy_frozen_states/paused_return_schedule_id", fz_ret, I16,
-             0);
-    writeVec(f, "/policy_frozen_states/pin_venue_id", fz_venue, I32, 0);
-    writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, 0);
+    // NOTE: frozen_states_ and last_processed_transition_time_ are per-rank,
+    // global-id-partitioned state — they live in each delta_rank<r>.h5 shard
+    // (written above), NOT here, so a resume at a different rank count keeps
+    // every rank's entries. Only replicated/global state lives in state.h5.
 
     // event-log on-disk durability marker (rank-0 logger record counts)
     std::vector<int64_t> ec = {
@@ -466,6 +485,282 @@ void Simulator::writeCheckpoint(int completed_day,
   std::cout << "[checkpoint] wrote " << cp_root.string() << " (day "
             << completed_day << ", " << date_iso << ", " << nranks
             << " shard(s))" << std::endl;
+}
+
+namespace {
+
+template <typename T>
+std::vector<T> readVec(H5::H5File& f, const std::string& n,
+                       const H5::PredType& t) {
+  if (!H5Lexists(f.getId(), n.c_str(), H5P_DEFAULT)) return {};
+  H5::DataSet d = f.openDataSet(n);
+  hsize_t dim[1];
+  d.getSpace().getSimpleExtentDims(dim);
+  std::vector<T> v(dim[0]);
+  if (dim[0]) d.read(v.data(), t);
+  return v;
+}
+
+std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
+  if (!H5Lexists(f.getId(), n.c_str(), H5P_DEFAULT)) return {};
+  H5::DataSet d = f.openDataSet(n);
+  hsize_t dim[1];
+  d.getSpace().getSimpleExtentDims(dim);
+  std::vector<std::string> out;
+  if (!dim[0]) return out;
+  H5::StrType st(H5::PredType::C_S1, H5T_VARIABLE);
+  std::vector<char*> raw(dim[0]);
+  d.read(raw.data(), st);
+  for (hsize_t i = 0; i < dim[0]; ++i) out.emplace_back(raw[i] ? raw[i] : "");
+  H5::DataSpace sp = d.getSpace();
+  H5Dvlen_reclaim(st.getId(), sp.getId(), H5P_DEFAULT, raw.data());
+  return out;
+}
+
+}  // namespace
+
+void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
+  int rank = 0;
+#ifdef USE_MPI
+  if (domain_mgr_) rank = domain_mgr_->getRank();
+#endif
+  fs::path cp = fs::canonical(checkpoint_dir);  // resolves 'latest' symlink
+  if (!fs::exists(cp / "manifest.yaml"))
+    throw std::runtime_error(
+        "restoreFromCheckpoint: no manifest.yaml (incomplete/invalid "
+        "checkpoint): " +
+        cp.string());
+
+  YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
+  int completed_day = man["completed_day"].as<int>();
+  unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
+  if (cp_seed != config_.simulation.random_seed) {
+    throw std::runtime_error(
+        "restoreFromCheckpoint: effective_random_seed mismatch (checkpoint=" +
+        std::to_string(cp_seed) +
+        ", config=" + std::to_string(config_.simulation.random_seed) +
+        "). Resume with the checkpoint's seed (no silent override).");
+  }
+
+  // ---- state.h5: scalars + non-derivable manager state ----
+  std::unordered_map<PersonId, double> lpt_map;
+  {
+    H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
+    auto F64 = H5::PredType::NATIVE_DOUBLE;
+    auto I32 = H5::PredType::NATIVE_INT32;
+    auto cst = readVec<double>(f, "/scalars/current_simulation_time", F64);
+    if (!cst.empty()) current_simulation_time_ = cst[0];
+    auto ng = readVec<uint64_t>(f, "/scalars/next_encounter_group_id",
+                                H5::PredType::NATIVE_UINT64);
+    if (!ng.empty()) next_encounter_group_id_ = ng[0];
+    auto dtc = readVec<int32_t>(f, "/scalars/day_type_counts", I32);
+    day_type_counts_.assign(dtc.begin(), dtc.end());
+
+    if (infection_seeder_) {
+      auto seeds = readStrs(f, "/infection_seeder/applied_seeds");
+      std::set<std::string> s(seeds.begin(), seeds.end());
+      infection_seeder_->setAppliedSeeds(s);
+    }
+    // frozen_states_ + lpt are per-rank: accumulated from the shards below.
+  }
+  std::unordered_map<PersonId, FrozenPersonState> frozen_accum;
+
+  // ---- delta shards: overlay onto this rank's owned world_ by global id ----
+  YAML::Node si = YAML::LoadFile((cp / "shard_index.yaml").string());
+  int n_shards = si["num_ranks"].as<int>();
+  auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto I32 = H5::PredType::NATIVE_INT32;
+  auto I64 = H5::PredType::NATIVE_INT64;
+  auto U16 = H5::PredType::NATIVE_UINT16;
+  auto U8 = H5::PredType::NATIVE_UINT8;
+  auto U32 = H5::PredType::NATIVE_UINT32;
+  size_t n_people = 0, n_inf = 0, n_vax = 0, n_fom = 0;
+
+  for (int s = 0; s < n_shards; ++s) {
+    fs::path sf = cp / ("delta_rank" + std::to_string(s) + ".h5");
+    if (!fs::exists(sf)) continue;
+    H5::H5File f(sf.string(), H5F_ACC_RDONLY);
+
+    auto ids = readVec<int32_t>(f, "/population/ids", I32);
+    auto imm_l = readVec<double>(f, "/population/immunity_natural_level", F64);
+    auto imm_a = readVec<double>(
+        f, "/population/immunity_natural_acquisition_time", F64);
+    auto imm_w =
+        readVec<double>(f, "/population/immunity_natural_waning_rate", F64);
+    auto dead = readVec<uint8_t>(f, "/population/is_dead", U8);
+    auto dt = readVec<double>(f, "/population/death_time", F64);
+    auto m_as =
+        readVec<uint32_t>(f, "/population/applicable_symptom_policy_mask", U32);
+    auto m_at = readVec<uint32_t>(
+        f, "/population/applicable_temporal_policy_mask", U32);
+    auto m_ps = readVec<uint32_t>(
+        f, "/population/active_symptom_policy_participation", U32);
+    auto m_pt = readVec<uint32_t>(
+        f, "/population/active_temporal_policy_participation", U32);
+    auto m_ds =
+        readVec<uint32_t>(f, "/population/symptom_policy_decisions", U32);
+    auto m_dt =
+        readVec<uint32_t>(f, "/population/temporal_policy_decisions", U32);
+    auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
+    auto ret = readVec<int32_t>(f, "/population/return_schedule_id", I32);
+    auto tsl = readVec<int32_t>(f, "/population/temp_slot_progress", I32);
+
+    for (size_t i = 0; i < ids.size(); ++i) {
+      Person* p = world_.getPerson(ids[i]);
+      if (!p) continue;  // not owned by this rank
+      ++n_people;
+      p->immunity.natural_level = imm_l[i];
+      p->immunity.natural_acquisition_time = imm_a[i];
+      p->immunity.natural_waning_rate = imm_w[i];
+      p->is_dead = dead[i] != 0;
+      p->death_time = dt[i];
+      p->applicable_symptom_policy_mask = m_as[i];
+      p->applicable_temporal_policy_mask = m_at[i];
+      p->active_symptom_policy_participation = m_ps[i];
+      p->active_temporal_policy_participation = m_pt[i];
+      p->symptom_policy_decisions = m_ds[i];
+      p->temporal_policy_decisions = m_dt[i];
+      p->hopped_schedule_id = static_cast<int16_t>(hop[i]);
+      p->return_schedule_id = static_cast<int16_t>(ret[i]);
+      p->temp_slot_progress = static_cast<int16_t>(tsl[i]);
+      // Clear any default-constructed infection/vaccine; reinstated below.
+      p->infection.reset();
+      p->vaccine_trajectory.reset();
+    }
+
+    // sparse infection
+    auto ip = readVec<int32_t>(f, "/infection/person_id", I32);
+    auto it_ = readVec<double>(f, "/infection/infection_time", F64);
+    auto mi = readVec<double>(f, "/infection/max_infectiousness", F64);
+    auto sh = readVec<double>(f, "/infection/transmission_shape", F64);
+    auto ra = readVec<double>(f, "/infection/transmission_rate", F64);
+    auto sft = readVec<double>(f, "/infection/transmission_shift", F64);
+    auto tt = readVec<double>(f, "/infection/traj_infection_time", F64);
+    auto tf = readVec<double>(f, "/infection/traj_infectiousness_factor", F64);
+    auto lc = readVec<double>(f, "/infection/last_checked_time", F64);
+    auto csy = readVec<uint16_t>(f, "/infection/cached_symptom_id", U16);
+    auto css = readVec<double>(f, "/infection/cached_symptom_start_time", F64);
+    auto toff = readVec<int64_t>(f, "/infection/traj_offsets", I64);
+    auto tcnt = readVec<int32_t>(f, "/infection/traj_counts", I32);
+    auto ttime = readVec<double>(f, "/infection/traj_times", F64);
+    auto tsym = readVec<uint16_t>(f, "/infection/traj_symptom_ids", U16);
+    for (size_t i = 0; i < ip.size(); ++i) {
+      Person* p = world_.getPerson(ip[i]);
+      if (!p) continue;
+      InfectionTrajectory tr;
+      tr.infection_time = tt[i];
+      tr.infectiousness_factor = tf[i];
+      int64_t off = toff[i];
+      int32_t cnt = tcnt[i];
+      tr.transitions.reserve(cnt);
+      for (int32_t k = 0; k < cnt; ++k)
+        tr.transitions.emplace_back(ttime[off + k], tsym[off + k]);
+      p->infection =
+          Infection::fromCheckpoint(disease_.get(), it_[i], tr, mi[i], sh[i],
+                                    ra[i], sft[i], lc[i], csy[i], css[i]);
+      ++n_inf;
+    }
+
+    // sparse vaccine — efficacy maps re-derived from config by dose position
+    auto vp = readVec<int32_t>(f, "/vaccine/person_id", I32);
+    auto vname = readStrs(f, "/vaccine/vaccine_name");
+    auto doff = readVec<int64_t>(f, "/vaccine/dose_offsets", I64);
+    auto dcnt = readVec<int32_t>(f, "/vaccine/dose_counts", I32);
+    auto dnum = readVec<int32_t>(f, "/vaccine/dose_number", I32);
+    auto dad = readVec<double>(f, "/vaccine/dose_day_administered", F64);
+    auto deff = readVec<double>(f, "/vaccine/dose_days_to_effective", F64);
+    auto dwan = readVec<double>(f, "/vaccine/dose_days_to_waning", F64);
+    auto dfin = readVec<double>(f, "/vaccine/dose_days_to_finished", F64);
+    auto dwf = readVec<double>(f, "/vaccine/dose_waning_factor", F64);
+    for (size_t i = 0; i < vp.size(); ++i) {
+      Person* p = world_.getPerson(vp[i]);
+      if (!p) continue;
+      p->vaccine_trajectory = std::make_unique<VaccineTrajectory>();
+      p->vaccine_trajectory->vaccine_name = vname[i];
+      auto vit = config_.vaccination.vaccines.find(vname[i]);
+      int64_t off = doff[i];
+      int32_t cnt = dcnt[i];
+      for (int32_t k = 0; k < cnt; ++k) {
+        Dose d;
+        d.number = dnum[off + k];
+        d.day_administered = dad[off + k];
+        d.days_to_effective = deff[off + k];
+        d.days_to_waning = dwan[off + k];
+        d.days_to_finished = dfin[off + k];
+        d.waning_factor = dwf[off + k];
+        if (vit != config_.vaccination.vaccines.end() &&
+            k < static_cast<int32_t>(vit->second.doses.size())) {
+          d.infection_efficacy = vit->second.doses[k].infection_efficacy;
+          d.symptom_efficacy = vit->second.doses[k].symptom_efficacy;
+        }
+        p->vaccine_trajectory->addDose(d);
+      }
+      ++n_vax;
+    }
+
+    // sparse venue fomite history
+    auto fv = readVec<int32_t>(f, "/venue_fomite/venue_id", I32);
+    auto fm = readVec<int32_t>(f, "/venue_fomite/mode_index", I32);
+    auto fo = readVec<int64_t>(f, "/venue_fomite/offsets", I64);
+    auto fc = readVec<int32_t>(f, "/venue_fomite/counts", I32);
+    auto ftime = readVec<double>(f, "/venue_fomite/deposit_time", F64);
+    auto famt = readVec<double>(f, "/venue_fomite/deposit_amount", F64);
+    for (size_t i = 0; i < fv.size(); ++i) {
+      Venue* v = world_.getVenue(fv[i]);
+      if (!v) continue;
+      int m = fm[i];
+      if (static_cast<int>(v->fomite_history.size()) <= m)
+        v->fomite_history.resize(m + 1);
+      auto& dq = v->fomite_history[m];
+      dq.clear();
+      for (int32_t k = 0; k < fc[i]; ++k)
+        dq.push_back({ftime[fo[i] + k], famt[fo[i] + k]});
+      ++n_fom;
+    }
+
+    // per-rank manager state: keep only entries for people THIS rank owns
+    // (rank-count independent — keyed on global PersonId).
+    auto lp = readVec<int32_t>(f, "/epidemiology/lpt_person_id", I32);
+    auto lt = readVec<double>(f, "/epidemiology/lpt_time", F64);
+    for (size_t i = 0; i < lp.size(); ++i)
+      if (world_.getPerson(lp[i])) lpt_map[lp[i]] = lt[i];
+
+    auto fzp = readVec<int32_t>(f, "/policy_frozen_states/person_id", I32);
+    auto fzpol = readVec<uint8_t>(
+        f, "/policy_frozen_states/triggering_policy_index", U8);
+    auto fzh = readVec<int32_t>(
+        f, "/policy_frozen_states/paused_hopped_schedule_id", I32);
+    auto fzr = readVec<int32_t>(
+        f, "/policy_frozen_states/paused_return_schedule_id", I32);
+    auto fzv = readVec<int32_t>(f, "/policy_frozen_states/pin_venue_id", I32);
+    auto fzs =
+        readVec<int32_t>(f, "/policy_frozen_states/pin_subset_index", I32);
+    for (size_t i = 0; i < fzp.size(); ++i) {
+      if (!world_.getPerson(fzp[i])) continue;
+      FrozenPersonState st;
+      st.triggering_policy_index = fzpol[i];
+      st.paused_hopped_schedule_id = static_cast<int16_t>(fzh[i]);
+      st.paused_return_schedule_id = static_cast<int16_t>(fzr[i]);
+      st.pin_venue_id = fzv[i];
+      st.pin_subset_index = fzs[i];
+      frozen_accum[fzp[i]] = st;
+    }
+  }
+
+  if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
+
+  // ---- rebuild derived caches; set resume point ----
+  if (epidemiology_) epidemiology_->restoreAfterCheckpoint(lpt_map);
+  resume_from_day_ = completed_day + 1;
+
+  if (rank == 0) {
+    std::cout << "[checkpoint] restored from " << cp.string()
+              << ": day=" << completed_day
+              << " sim_time=" << current_simulation_time_
+              << " people=" << n_people << " infections=" << n_inf
+              << " vaccinated=" << n_vax << " fomite_venues=" << n_fom
+              << " — resuming at day " << resume_from_day_ << std::endl;
+  }
 }
 
 }  // namespace june

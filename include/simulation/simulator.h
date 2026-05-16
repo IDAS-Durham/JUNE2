@@ -60,6 +60,12 @@ class Simulator {
   // checkpoint rank-count independent. See CHECKPOINT_DESIGN.md.
   void writeCheckpoint(int completed_day, const std::string& date_iso);
 
+  // Restore all mutable state from a checkpoint directory (P4). Overlays the
+  // delta onto the already-loaded world by global id, restores manager +
+  // scalar state, rebuilds derived caches, and makes run() resume at
+  // completed_day + 1. Rank-count independent. See CHECKPOINT_DESIGN.md.
+  void restoreFromCheckpoint(const std::string& checkpoint_dir);
+
  private:
   WorldState& world_;
   const Config& config_;
@@ -89,6 +95,10 @@ class Simulator {
   // so every pair-row of the same real encounter shares the same id. Rank is
   // packed into the high 16 bits at stamping time for cross-rank uniqueness.
   uint64_t next_encounter_group_id_ = 0;
+
+  // Day to resume the main loop at (set by restoreFromCheckpoint; 0 = fresh
+  // run). Equals checkpoint completed_day + 1.
+  int resume_from_day_ = 0;
 
   // Current simulation state
   std::tm current_date_;

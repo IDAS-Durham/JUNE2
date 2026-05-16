@@ -49,6 +49,27 @@ class Epidemiology {
     return active_infections_;
   }
 
+  // --- Checkpoint serialization ---
+  // last_processed_transition_time_ is NOT derivable from per-person state:
+  // the baseline processes some transitions lazily after their scheduled
+  // time, so it must be saved and restored verbatim or those transitions are
+  // lost across a resume. See CHECKPOINT_DESIGN.md (P4).
+  const std::unordered_map<PersonId, double>& getLastProcessedTransitionTimes()
+      const {
+    return last_processed_transition_time_;
+  }
+
+  // Rebuild derived caches after a checkpoint restore. active_infections_ is
+  // reconstructed by scanning who currently carries an Infection;
+  // last_processed_transition_time_ is restored verbatim from the checkpoint.
+  void restoreAfterCheckpoint(
+      const std::unordered_map<PersonId, double>& last_processed) {
+    active_infections_.clear();
+    for (const auto& p : world_.people)
+      if (p.infection) active_infections_.insert(p.id);
+    last_processed_transition_time_ = last_processed;
+  }
+
  private:
   WorldState& world_;
   const Disease* disease_;

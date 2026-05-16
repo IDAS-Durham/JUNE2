@@ -1,3 +1,5 @@
+#include <yaml-cpp/yaml.h>
+
 #include <algorithm>
 #include <filesystem>
 #include <iomanip>
@@ -227,6 +229,7 @@ int main(int argc, char* argv[]) {
   bool infection_seeds_cli_override = false;
   std::string runs_dir = "runs";
   std::string run_id_override = "";
+  std::string restart_from = "";  // checkpoint dir to resume from (P4)
   int days_override = -1;
   // Wide enough to hold the full unsigned 32-bit seed range while keeping -1
   // as the "not provided" sentinel. Auto-generated seeds routinely exceed
@@ -267,6 +270,8 @@ int main(int argc, char* argv[]) {
       runs_dir = argv[++i];
     } else if (arg == "--run-id" && i + 1 < argc) {
       run_id_override = argv[++i];
+    } else if (arg == "--restart-from" && i + 1 < argc) {
+      restart_from = argv[++i];
     } else if (arg == "--days" && i + 1 < argc) {
       try {
         days_override = std::stoi(argv[++i]);
@@ -316,6 +321,23 @@ int main(int argc, char* argv[]) {
     run_dir::broadcastRunId(run_id);
     std::filesystem::path run_path = std::filesystem::path(runs_dir) / run_id;
     std::string output_path = (run_path / "simulation_events.h5").string();
+
+    // Checkpoint resume: the checkpoint's recorded effective seed is
+    // authoritative. Adopt it (unless an explicit --seed was given, in which
+    // case a mismatch is rejected later in restoreFromCheckpoint — no silent
+    // override). Path is normalised here ('latest' symlink resolved).
+    if (!restart_from.empty()) {
+      std::filesystem::path cpdir = std::filesystem::canonical(restart_from);
+      YAML::Node cman = YAML::LoadFile((cpdir / "manifest.yaml").string());
+      unsigned int cseed = cman["effective_random_seed"].as<unsigned int>();
+      if (seed_override < 0) {
+        seed_override = static_cast<long long>(cseed);
+        if (rank == 0)
+          std::cout << "Resuming from checkpoint " << cpdir << " (seed "
+                    << cseed << ")" << std::endl;
+      }
+      restart_from = cpdir.string();
+    }
 
     // Resolve the effective RNG seed exactly once, before snapshotting, so it
     // is recorded for reproducible restart. Precedence: CLI --seed overrides
@@ -442,6 +464,8 @@ int main(int argc, char* argv[]) {
       Simulator simulator(*domain.world, config, &domain_mgr,
                           infection_seeds_file, output_path);
 
+      if (!restart_from.empty()) simulator.restoreFromCheckpoint(restart_from);
+
       // Start CPU profiling (like cProfile)
       // Start CPU profiling
 #ifdef USE_GPERFTOOLS
@@ -544,9 +568,15 @@ int main(int argc, char* argv[]) {
         Simulator simulator(world, config, nullptr, infection_seeds_file,
                             output_path);
 
-        // Apply configured infection seeds
-        std::string start_dt = config.simulation.start_date + " 00:00";
-        simulator.applyInfectionSeeds(start_dt);
+        if (!restart_from.empty()) {
+          // Resume: state (incl. applied_seeds_) comes from the checkpoint.
+          // Do NOT re-apply the start-of-sim seeds.
+          simulator.restoreFromCheckpoint(restart_from);
+        } else {
+          // Apply configured infection seeds
+          std::string start_dt = config.simulation.start_date + " 00:00";
+          simulator.applyInfectionSeeds(start_dt);
+        }
 
         // Start CPU profiling
 #ifdef USE_GPERFTOOLS
