@@ -57,13 +57,13 @@ class Simulator {
   // Write a checkpoint of all mutable simulation state (P3). Atomic: state
   // is written into "<root>.tmp/", then renamed; manifest.yaml is written
   // last as the commit marker. Per-rank shards keyed on global ids make the
-  // checkpoint rank-count independent. See CHECKPOINT_DESIGN.md.
+  // checkpoint rank-count independent.
   void writeCheckpoint(int completed_day, const std::string& date_iso);
 
   // Restore all mutable state from a checkpoint directory (P4). Overlays the
   // delta onto the already-loaded world by global id, restores manager +
   // scalar state, rebuilds derived caches, and makes run() resume at
-  // completed_day + 1. Rank-count independent. See CHECKPOINT_DESIGN.md.
+  // completed_day + 1. Rank-count independent.
   void restoreFromCheckpoint(const std::string& checkpoint_dir);
 
  private:

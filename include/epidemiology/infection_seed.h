@@ -137,7 +137,7 @@ class InfectionSeeder {
   // --- Checkpoint serialization ---
   // applied_seeds_ tracks which seed events have already fired. It MUST be
   // saved and restored across a checkpoint, otherwise a resume re-fires
-  // already-applied seeds and double-infects. See CHECKPOINT_DESIGN.md.
+  // already-applied seeds and double-infects.
   const std::set<std::string>& getAppliedSeeds() const {
     return applied_seeds_;
   }

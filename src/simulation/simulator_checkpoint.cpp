@@ -1,6 +1,6 @@
 // Checkpoint writer (P3). Serializes all mutable simulation state into an
-// atomic, rank-count-independent checkpoint directory. See
-// CHECKPOINT_DESIGN.md. The restore/overlay path lands in P4.
+// atomic, rank-count-independent checkpoint directory. The restore/overlay
+// path lands in P4.
 
 #include <H5Cpp.h>
 #include <yaml-cpp/yaml.h>
@@ -752,6 +752,28 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   // ---- rebuild derived caches; set resume point ----
   if (epidemiology_) epidemiology_->restoreAfterCheckpoint(lpt_map);
   resume_from_day_ = completed_day + 1;
+
+  // --days / end_date is anchored to the ORIGINAL start_date, not to the
+  // checkpoint. If the requested end is at or before the resume day the
+  // run loop would simply do nothing — fail loudly instead of a silent
+  // no-op. To run M more days after a checkpoint completed at day D, use
+  // --days (D + 1 + M)  (i.e. total_days must exceed completed_day + 1).
+  if (resume_from_day_ >= total_days_) {
+    throw std::runtime_error(
+        "checkpoint resume: requested simulation length leaves nothing to "
+        "simulate. Checkpoint completed day " +
+        std::to_string(completed_day) + " so the run resumes at day " +
+        std::to_string(resume_from_day_) +
+        ", but the configured end is total_days=" +
+        std::to_string(total_days_) +
+        " (end_date=" + config_.simulation.end_date +
+        "). --days/end_date counts from the original start_date, not from "
+        "the checkpoint. To run M more day(s) after this checkpoint, pass "
+        "--days " +
+        std::to_string(completed_day + 2) +
+        " or greater (= "
+        "completed_day + 1 + M).");
+  }
 
   if (rank == 0) {
     std::cout << "[checkpoint] restored from " << cp.string()

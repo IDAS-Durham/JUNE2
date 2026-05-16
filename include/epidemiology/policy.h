@@ -292,7 +292,6 @@ class PolicyManager {
   // --- Checkpoint serialization ---
   // frozen_states_ pins the small set of persons mid policy-hop. It must be
   // saved/restored so an interrupted hop resumes correctly on restart.
-  // See CHECKPOINT_DESIGN.md.
   const std::unordered_map<PersonId, FrozenPersonState>& getFrozenStates()
       const {
     return frozen_states_;

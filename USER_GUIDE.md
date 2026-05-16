@@ -724,6 +724,15 @@ effective seed is authoritative; passing a conflicting `--seed` is
 rejected (no silent override). Start-of-simulation infection seeding is
 not re-applied on resume.
 
+**Run length on resume.** You may combine `--restart-from` with
+`--days` (or change `end_date`) to extend/shorten the continued run,
+**but `--days N`/`end_date` is anchored to the original `start_date`,
+not to the checkpoint.** It sets the absolute end (day index from
+start); the resumed run fills `[completed_day + 1, total_days)`. To run
+**M more days** after a checkpoint that completed at day **D**, pass
+`--days (D + 1 + M)`. Requesting an end at or before the resume day is
+**rejected with a descriptive error** (not a silent no-op).
+
 ### 17.4 Limitations
 
 - **Compartmental-model scenarios are not supported.** If a

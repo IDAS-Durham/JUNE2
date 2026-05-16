@@ -1,6 +1,6 @@
 time:
     start_date : "2024-01-01"
-    end_date : "2024-01-31"
+    end_date : "2024-03-01"
 
 config_paths:
 # Configuration paths
@@ -27,3 +27,11 @@ output:
 regional_risk:
     enabled: false
     regional_risk_file: "data/regional_risk.csv"
+
+#Checkpoint / restart (resume with: --restart-from runs/<id>/checkpoints/latest)
+checkpoint:
+    enabled: true
+    output_dir: checkpoints/
+    every_n_days: null          # checkpoint weekly; ignored if on_dates is set
+    on_dates: ["2024-02-05"]           # or a list, e.g. ["2024-01-10", "2024-01-20"]
+    keep_last: 3             # 0 = keep all

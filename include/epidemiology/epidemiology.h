@@ -53,7 +53,7 @@ class Epidemiology {
   // last_processed_transition_time_ is NOT derivable from per-person state:
   // the baseline processes some transitions lazily after their scheduled
   // time, so it must be saved and restored verbatim or those transitions are
-  // lost across a resume. See CHECKPOINT_DESIGN.md (P4).
+  // lost across a resume.
   const std::unordered_map<PersonId, double>& getLastProcessedTransitionTimes()
       const {
     return last_processed_transition_time_;

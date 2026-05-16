@@ -359,7 +359,7 @@ class Infection {
   // --- Checkpoint serialization accessors (read-only) ---
   // Expose the privately-sampled transmission params + stage cache so a
   // checkpoint can reconstruct an Infection without re-sampling from RNG.
-  // See CHECKPOINT_DESIGN.md. (Restore path added in P4.)
+  // (Restore path added in P4.)
   double ckptMaxInfectiousness() const { return max_infectiousness_; }
   double ckptTransmissionShape() const { return transmission_shape_; }
   double ckptTransmissionRate() const { return transmission_rate_; }
@@ -372,7 +372,7 @@ class Infection {
 
   // Reconstruct an Infection from checkpoint state WITHOUT re-sampling any
   // RNG — every behaviour-defining field is restored verbatim so a resumed
-  // run is bit-identical. See CHECKPOINT_DESIGN.md (P4).
+  // run is bit-identical.
   static std::unique_ptr<Infection> fromCheckpoint(
       const Disease* disease, double infection_time,
       const InfectionTrajectory& trajectory, double max_infectiousness,
