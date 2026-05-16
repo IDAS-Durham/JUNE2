@@ -327,6 +327,28 @@ if(BUILD_TESTING)
       set_tests_properties(test_mpi_full_reproducibility PROPERTIES
                            ENVIRONMENT "BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR};DAYS=5"
                            TIMEOUT 600)
+
+      # Checkpoint/restart determinism gate: a checkpoint leg + resume leg
+      # must be set-identical to an uninterrupted baseline across a
+      # (write_ranks -> resume_ranks) matrix, incl. asymmetric resume. Skips
+      # cleanly (exit 77) if the world file or venv python is unavailable
+      # (e.g. CI without data). Opt out via: ctest -E checkpoint_determinism.
+      find_program(JUNE_VENV_PYTHON
+                   NAMES python3
+                   PATHS ${CMAKE_SOURCE_DIR}/.venv/bin NO_DEFAULT_PATH)
+      if(JUNE_VENV_PYTHON)
+        add_test(NAME test_checkpoint_determinism
+                 COMMAND ${JUNE_VENV_PYTHON}
+                         ${CMAKE_SOURCE_DIR}/tests/checkpoint_determinism_check.py
+                         --bin ${CMAKE_CURRENT_BINARY_DIR}/disease_sim
+                         --config configs/config_1911/simulation.yaml
+                         --world worlds/1911_durham_world.h5
+                         --days 4 --ckpt-day 2
+                         --matrix 1:1,2:2,2:1
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        set_tests_properties(test_checkpoint_determinism PROPERTIES
+                             SKIP_RETURN_CODE 77 TIMEOUT 900)
+      endif()
     endif()
   endif()
 endif()
