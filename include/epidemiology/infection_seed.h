@@ -134,6 +134,15 @@ class InfectionSeeder {
   // WorldState. Called after the world is fully loaded.
   void resolveConfig(const WorldState& world) { config_.resolve(world); }
 
+  // --- Checkpoint serialization ---
+  // applied_seeds_ tracks which seed events have already fired. It MUST be
+  // saved and restored across a checkpoint, otherwise a resume re-fires
+  // already-applied seeds and double-infects. See CHECKPOINT_DESIGN.md.
+  const std::set<std::string>& getAppliedSeeds() const {
+    return applied_seeds_;
+  }
+  void setAppliedSeeds(const std::set<std::string>& s) { applied_seeds_ = s; }
+
  private:
   WorldState& world_;
   const Disease* disease_;

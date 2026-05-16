@@ -143,6 +143,7 @@ set(JUNE_CORE_SOURCES
     src/utils/event_logging/event_merger.cpp
     src/epidemiology/epidemiology.cpp
     src/simulation/simulator.cpp
+    src/simulation/simulator_checkpoint.cpp
     src/simulation/compartmental_model_manager.cpp)
 
 if(MPI_FOUND)

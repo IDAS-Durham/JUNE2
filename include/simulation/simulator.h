@@ -54,6 +54,12 @@ class Simulator {
   // Get event logger for external access
   EventLogger* getEventLogger() { return &event_logger_; }
 
+  // Write a checkpoint of all mutable simulation state (P3). Atomic: state
+  // is written into "<root>.tmp/", then renamed; manifest.yaml is written
+  // last as the commit marker. Per-rank shards keyed on global ids make the
+  // checkpoint rank-count independent. See CHECKPOINT_DESIGN.md.
+  void writeCheckpoint(int completed_day, const std::string& date_iso);
+
  private:
   WorldState& world_;
   const Config& config_;

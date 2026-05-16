@@ -356,6 +356,20 @@ class Infection {
   double getInfectionTime() const { return infection_time_; }
   const InfectionTrajectory& getTrajectory() const { return trajectory_; }
 
+  // --- Checkpoint serialization accessors (read-only) ---
+  // Expose the privately-sampled transmission params + stage cache so a
+  // checkpoint can reconstruct an Infection without re-sampling from RNG.
+  // See CHECKPOINT_DESIGN.md. (Restore path added in P4.)
+  double ckptMaxInfectiousness() const { return max_infectiousness_; }
+  double ckptTransmissionShape() const { return transmission_shape_; }
+  double ckptTransmissionRate() const { return transmission_rate_; }
+  double ckptTransmissionShift() const { return transmission_shift_; }
+  double ckptLastCheckedTime() const { return last_checked_time_; }
+  uint16_t ckptCachedSymptomId() const { return cached_symptom_id_; }
+  double ckptCachedSymptomStartTime() const {
+    return cached_symptom_start_time_;
+  }
+
   // Check status
   bool isInfectious(double current_time) const;
   bool isSymptomatic(double current_time) const;

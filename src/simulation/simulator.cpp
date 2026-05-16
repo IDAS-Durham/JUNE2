@@ -646,9 +646,10 @@ void Simulator::run() {
                   << formatDate(current_date_)
                   << "), sim_time=" << current_simulation_time_
                   << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
-                  << " — would write checkpoint to '" << cp.output_dir
-                  << "' (writer lands in P3)" << std::endl;
+                  << std::endl;
       }
+      ScopedTimer timer("06_Checkpoint");
+      writeCheckpoint(day, formatDate(current_date_));
     }
   }
 
