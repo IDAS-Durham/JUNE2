@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 
 #include "utils/event_logging/event_writer.h"
 
@@ -31,6 +32,18 @@ Simulator::Simulator(WorldState& world, const Config& config,
       current_simulation_time_(0.0) {
   // GlobalRNG is seeded in main.cpp before any components are created
   // This ensures Domain, ActivityManager, etc. can use RNG during construction
+
+  // Checkpointing is incompatible with the compartmental-model plugin: the
+  // external ODE plugin's internal state is opaque to the engine, so a
+  // resume would silently diverge. Fail fast on all ranks (no silent
+  // fallback). See CHECKPOINT_DESIGN.md.
+  if (config_.simulation.checkpoint.enabled &&
+      !config_.simulation.compartmental_model_sidecar.empty()) {
+    throw std::runtime_error(
+        "Checkpointing is not supported for compartmental-model scenarios "
+        "(compartmental_model_sidecar is set). Disable 'checkpoint.enabled' "
+        "or remove the sidecar.");
+  }
 
   // Parse start date
   if (!config_.simulation.start_date.empty()) {

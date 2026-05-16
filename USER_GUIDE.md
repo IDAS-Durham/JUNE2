@@ -654,7 +654,100 @@ The fastest path:
 
 ---
 
-## 17. Quick troubleshooting
+## 17. Checkpoint / restart
+
+A run can be snapshotted at configurable points and later resumed. The
+continuation is **bit-identical to the uninterrupted run, regardless of
+the MPI rank count** used for either the checkpoint or the resume
+(set-identical events; the only cross-rank difference is the documented
+rank-stamped `coordinated_encounters.group_id`).
+
+### 17.1 Enabling checkpoints
+
+Add a `checkpoint:` block to `simulation.yaml`:
+
+```yaml
+checkpoint:
+  enabled: true
+  output_dir: checkpoints/   # resolved under the run directory
+  every_n_days: 30           # interval cadence
+  on_dates: null             # OR an explicit list of "YYYY-MM-DD"
+  keep_last: 3               # 0 = keep all; otherwise rotate oldest
+```
+
+**Cadence is mutually exclusive.** If `on_dates` is a non-null,
+non-empty list it takes precedence and `every_n_days` is **ignored**
+(a one-line notice is printed at startup). Use `null` to mark a field
+absent. With neither set, no checkpoints are written.
+
+- `every_n_days: N` → checkpoint at the end of every `N`-th completed
+  day (`(day+1) % N == 0`).
+- `on_dates: ["2026-03-01", "2026-06-15"]` → checkpoint at the end of
+  exactly those calendar days. Dates outside the simulation window are
+  warned about at startup and never fire.
+
+Checkpoint frequency has **zero effect on results** — it is purely an
+operational knob (the snapshot is read-only and the RNG is stateless).
+
+### 17.2 What a checkpoint looks like
+
+```
+runs/<run-id>/checkpoints/
+  checkpoint_20260301_day045/
+    delta_rank0.h5 …          # per-rank mutable-state shard
+    shard_index.yaml          # geo_unit -> (shard, offset, count)
+    state.h5                  # global scalars, applied seeds, …
+    manifest.yaml             # written LAST = commit marker
+  latest -> checkpoint_20260301_day045
+```
+
+Writes are atomic: a checkpoint is built in `*.tmp/` and renamed only
+once complete, and `manifest.yaml` is written last — a crash mid-write
+never leaves a selectable, corrupt checkpoint. The 25 GB world is **not**
+copied; the checkpoint stores only the small mutable delta and is
+restored on top of the normal (fast) world load.
+
+### 17.3 Resuming
+
+```bash
+# resume the newest checkpoint of a previous run (any rank count)
+mpirun -np 8 ./build/disease_sim \
+  --config configs/config_2021/simulation.yaml \
+  --world worlds/world_2021.h5 \
+  --restart-from runs/20260301-120000/checkpoints/latest
+```
+
+`--restart-from` accepts a checkpoint directory or the `latest`
+symlink. The resume is a **new run directory** (the original is left
+untouched, so the two can be diffed). The checkpoint's recorded
+effective seed is authoritative; passing a conflicting `--seed` is
+rejected (no silent override). Start-of-simulation infection seeding is
+not re-applied on resume.
+
+### 17.4 Limitations
+
+- **Compartmental-model scenarios are not supported.** If a
+  `compartmental_model_sidecar` is configured together with
+  checkpointing, the run aborts with a clear error — the external ODE
+  plugin's internal state is opaque to the engine. (Plugin
+  serialize/deserialize hooks are a planned follow-up.)
+- Checkpoints are valid only against the exact world they were taken
+  from.
+
+### 17.5 Verifying determinism
+
+`tests/checkpoint_determinism_check.py` drives the binary through a
+`(write_ranks -> resume_ranks)` matrix and asserts set-identical events
+versus an uninterrupted baseline. It is wired as the CTest
+`test_checkpoint_determinism` (skips cleanly without the world file):
+
+```bash
+ctest -R test_checkpoint_determinism --output-on-failure
+```
+
+---
+
+## 18. Quick troubleshooting
 
 | Symptom | Most likely cause |
 |---|---|
@@ -662,6 +755,8 @@ The fastest path:
 | HDF5 read aborts with "file is locked" | Two `disease_sim` runs against the same world in parallel — don't. Run sequentially or copy the world. |
 | Many "encounter_type=255" events | Normal: sentinel for non-coordinated venue infections (typically ~87%). |
 | Low/zero infections despite seeds | Check `contact_matrices.yaml` betas, not seed counts. β is the dominant knob. |
+| `--restart-from` aborts on seed mismatch | The checkpoint's effective seed is authoritative; drop the conflicting `--seed`. |
+| Checkpointing aborts immediately | A `compartmental_model_sidecar` is set — checkpointing is unsupported for compartmental scenarios. |
 
 ---
 
