@@ -71,6 +71,51 @@ inline void broadcastSeed(unsigned int& seed) {
 #endif
 }
 
+// Extract a CSV path referenced *inside* a top-level YAML so the snapshot
+// captures data files the authoritative loaders read but never surface as
+// Config fields. Resolution must match the owning loader exactly:
+//   disease.yaml -> disease.outcome_rates_csv, resolved relative to the
+//   disease.yaml directory (see disease_loader.cpp:273-275); may be a scalar
+//   path or a {file: ...} mapping.
+// Best-effort: a malformed YAML or absent key is left for the authoritative
+// loader to report with its proper diagnostics; we only contribute a path when
+// one can be read. snapshotRun() still hard-throws if the resolved path is
+// missing, so a present-but-broken reference cannot silently drop the file.
+inline std::string nestedDiseaseOutcomeCsv(const std::string& disease_yaml) {
+  if (disease_yaml.empty()) return "";
+  try {
+    YAML::Node root = YAML::LoadFile(disease_yaml);
+    if (!root["disease"]) return "";
+    YAML::Node node = root["disease"]["outcome_rates_csv"];
+    if (!node) return "";
+    std::string rel;
+    if (node.IsScalar()) {
+      rel = node.as<std::string>();
+    } else if (node["file"]) {
+      rel = node["file"].as<std::string>();
+    }
+    if (rel.empty()) return "";
+    return (std::filesystem::path(disease_yaml).parent_path() / rel).string();
+  } catch (const std::exception&) {
+    return "";
+  }
+}
+
+// Extract the bulk-seed CSV referenced inside infection_seeds.yaml. Unlike the
+// disease outcome CSV, the infection-seed loader passes bulk_csv verbatim to
+// the CSV reader (infection_seed.cpp:256), i.e. it is CWD-relative — so we
+// must NOT prefix it with the YAML's directory.
+inline std::string nestedBulkSeedCsv(const std::string& seeds_yaml) {
+  if (seeds_yaml.empty()) return "";
+  try {
+    YAML::Node root = YAML::LoadFile(seeds_yaml);
+    if (!root["bulk_csv"]) return "";
+    return root["bulk_csv"].as<std::string>();
+  } catch (const std::exception&) {
+    return "";
+  }
+}
+
 // Collect every config / data file path referenced by a loaded Config plus
 // the simulation.yaml that anchors it. Order is stable; duplicates removed.
 inline std::vector<std::string> collectConfigPaths(
@@ -99,12 +144,24 @@ inline std::vector<std::string> collectConfigPaths(
   push(sim.policies_file);
   push(sim.infection_seeds_file);
 
-  // Referenced data / CSV files.
-  push(sim.regional_risk.regional_risk_file);
+  // Referenced data / CSV files. The regional-risk CSV is only consumed when
+  // the feature is enabled (main.cpp gates loadRegionalRiskFactors on it), so
+  // snapshot it only then — otherwise a disabled-but-stale path bloats the run
+  // dir and can even hard-fail snapshotRun's existence check.
+  if (sim.regional_risk.enabled) {
+    push(sim.regional_risk.regional_risk_file);
+  }
   push(config.schedule.csv_path);
   for (const auto& [_, fg] : config.coordinated_encounters.frequency_groups) {
     push(fg.csv_path);
   }
+
+  // Data CSVs nested inside top-level YAMLs that the loaders never expose as
+  // Config fields. Without these the manifest's "everything needed to
+  // reproduce or resume" guarantee is false: a replayed run would silently
+  // differ (no seeded infections / wrong outcome severities).
+  push(nestedDiseaseOutcomeCsv(sim.disease_file));
+  push(nestedBulkSeedCsv(sim.infection_seeds_file));
 
   return out;
 }

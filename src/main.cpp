@@ -478,10 +478,11 @@ int main(int argc, char* argv[]) {
         // By default, only profile Rank 0 to avoid massive IO and file
         // contention
         if (rank == 0) {
-          std::string prof_file = "cpu_profile.prof";
+          std::string prof_name = "cpu_profile.prof";
 #ifdef USE_MPI
-          if (size > 1) prof_file = "cpu_profile_rank0.prof";
+          if (size > 1) prof_name = "cpu_profile_rank0.prof";
 #endif
+          std::string prof_file = (run_path / prof_name).string();
           std::cout << "\n[Starting CPU profiling for Rank 0 to " << prof_file
                     << "...]" << std::endl;
           ProfilerStart(prof_file.c_str());
@@ -503,10 +504,11 @@ int main(int argc, char* argv[]) {
         Profiler::instance().printByTotalTime(std::cout, 20);
 #ifdef USE_GPERFTOOLS
         ProfilerStop();
-        std::string prof_file = "cpu_profile.prof";
+        std::string prof_name = "cpu_profile.prof";
 #ifdef USE_MPI
-        if (size > 1) prof_file = "cpu_profile_rank0.prof";
+        if (size > 1) prof_name = "cpu_profile_rank0.prof";
 #endif
+        std::string prof_file = (run_path / prof_name).string();
         std::cout << "[Profiling stopped. Saved to " << prof_file << "]"
                   << std::endl;
 #endif
@@ -585,9 +587,10 @@ int main(int argc, char* argv[]) {
           std::cout << "\n[CPU profiling active (via CPUPROFILE env var): "
                     << profile_env << "]" << std::endl;
         } else {
-          std::cout << "\n[Starting CPU profiling to cpu_profile.prof...]"
+          std::string prof_file = (run_path / "cpu_profile.prof").string();
+          std::cout << "\n[Starting CPU profiling to " << prof_file << "...]"
                     << std::endl;
-          ProfilerStart("cpu_profile.prof");
+          ProfilerStart(prof_file.c_str());
         }
 #endif
 
@@ -597,7 +600,8 @@ int main(int argc, char* argv[]) {
         // Stop profiling
 #ifdef USE_GPERFTOOLS
         ProfilerStop();
-        std::cout << "\n[Profiling stopped. Saved to cpu_profile.prof]"
+        std::cout << "\n[Profiling stopped. Saved to "
+                  << (run_path / "cpu_profile.prof").string() << "]"
                   << std::endl;
 #endif
       }
