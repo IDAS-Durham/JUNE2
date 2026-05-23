@@ -147,7 +147,8 @@ set(JUNE_CORE_SOURCES
     src/simulation/simulator.cpp
     src/simulation/simulator_checkpoint.cpp
     src/simulation/compartmental_model_manager.cpp
-    src/loaders/hdf5_loader.cpp)
+    src/loaders/hdf5_loader.cpp
+    src/loaders/config_loader.cpp)
 
 if(MPI_FOUND)
   list(APPEND JUNE_CORE_SOURCES
