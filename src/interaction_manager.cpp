@@ -1364,39 +1364,38 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
-int InteractionManager::processPartialPresenceVenue(
+InteractionManager::PartialPresenceLambdaResult
+InteractionManager::computePartialPresenceLambda(
     const std::vector<InteractionMember>& members, Venue* venue,
     VenueId actual_venue_id, double current_time, double delta_hours,
-    std::unordered_set<PersonId>* active_infections,
-    const std::unordered_set<PersonId>* /*visitor_ids*/,
-    std::vector<PendingInfection>* pending_infections,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
-    uint8_t encounter_type_id,
-    const CompartmentalModelManager* /*comp_model*/) {
+    uint8_t encounter_type_id) {
+  PartialPresenceLambdaResult result;
+
   // v1 preconditions. Throw rather than silently fall through.
   if (actual_venue_id < 0)
     throw std::runtime_error(
-        "processPartialPresenceVenue: virtual encounter venues not supported");
+        "computePartialPresenceLambda: virtual encounter venues not supported");
   if (!venue)
-    throw std::runtime_error("processPartialPresenceVenue: null venue");
+    throw std::runtime_error("computePartialPresenceLambda: null venue");
   if (encounter_type_id != 255)
     throw std::runtime_error(
-        "processPartialPresenceVenue: coordinated-encounter venues not "
+        "computePartialPresenceLambda: coordinated-encounter venues not "
         "supported on partial-presence types in v1");
   if (venue->parent_id >= 0)
     throw std::runtime_error(
-        "processPartialPresenceVenue: parent-venue mixing not supported on "
+        "computePartialPresenceLambda: parent-venue mixing not supported on "
         "partial-presence types in v1");
   if (!runtime_bin_allocator_)
     throw std::runtime_error(
-        "processPartialPresenceVenue: runtime_bin_allocator_ is null (gate "
+        "computePartialPresenceLambda: runtime_bin_allocator_ is null (gate "
         "should have prevented this call)");
 
   const uint8_t venue_type_id = venue->type_id;
   const ContactMatrix* matrix = contact_matrices_.getMatrix(venue_type_id);
   if (!matrix)
     throw std::runtime_error(
-        "processPartialPresenceVenue: no contact matrix for venue_type_id=" +
+        "computePartialPresenceLambda: no contact matrix for venue_type_id=" +
         std::to_string(static_cast<int>(venue_type_id)));
   const int num_bins_needed =
       std::max(1, static_cast<int>(matrix->bins.size()));
@@ -1406,14 +1405,14 @@ int InteractionManager::processPartialPresenceVenue(
   const auto& trans_params = disease_->getTransmissionParams();
 
   const float slot_duration_min = static_cast<float>(delta_hours * 60.0);
-  if (!(slot_duration_min > 0.0f)) return 0;
+  if (!(slot_duration_min > 0.0f)) return result;
 
   // Presence windows live on the allocator. It computes them on each
   // rider's home rank (proportional vs clamped policy applied to the full
   // leg list) and broadcasts globally, so a cross-rank visitor's window is
   // identical to what the home rank would have computed locally.
   const uint16_t num_bins = runtime_bin_allocator_->getNumBins(actual_venue_id);
-  if (num_bins == 0) return 0;
+  if (num_bins == 0) return result;
 
   // ---------------------------------------------------------------------------
   // Step 1: resolve each member's (carriage, matrix_bin, eff_board, eff_alight)
@@ -1481,13 +1480,9 @@ int InteractionManager::processPartialPresenceVenue(
   // Step 2: walk (carriage × sub-interval), accumulate per-susceptible λ and
   // per-source attribution weights.
   // ---------------------------------------------------------------------------
-  struct AccumSource {
-    int mode;
-    PersonId infector;
-    double weighted;
-  };
-  std::unordered_map<PersonId, double> susc_lambda;
-  std::unordered_map<PersonId, std::vector<AccumSource>> susc_sources;
+  using AccumSource = PartialPresenceAccumSource;
+  auto& susc_lambda = result.susc_lambda;
+  auto& susc_sources = result.susc_sources;
 
   // Per-bin scratch reused across sub-intervals (cleared per sub-interval).
   struct SubBin {
@@ -1653,6 +1648,27 @@ int InteractionManager::processPartialPresenceVenue(
       }
     }
   }
+
+  return result;
+}
+
+int InteractionManager::processPartialPresenceVenue(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* /*visitor_ids*/,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id,
+    const CompartmentalModelManager* /*comp_model*/) {
+  PartialPresenceLambdaResult acc = computePartialPresenceLambda(
+      members, venue, actual_venue_id, current_time, delta_hours, visitor_data,
+      encounter_type_id);
+  auto& susc_lambda = acc.susc_lambda;
+  auto& susc_sources = acc.susc_sources;
+
+  const uint8_t venue_type_id = venue->type_id;
+  using AccumSource = PartialPresenceAccumSource;
 
   // ---------------------------------------------------------------------------
   // Step 3: per-susceptible Bernoulli draw + infector sampling.

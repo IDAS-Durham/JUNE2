@@ -194,6 +194,38 @@ class InteractionManager {
     runtime_bin_allocator_ = a;
   }
 
+  // Per-susceptible accumulated λ + source attribution from a single
+  // partial-presence venue. Output of computePartialPresenceLambda; consumed
+  // by processPartialPresenceVenue's Bernoulli step. Exposed publicly so
+  // engine tests can assert the FOI math without driving the stochastic
+  // infection draw.
+  struct PartialPresenceAccumSource {
+    int mode;
+    PersonId infector;
+    double weighted;
+  };
+  struct PartialPresenceLambdaResult {
+    std::unordered_map<PersonId, double> susc_lambda;
+    std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>
+        susc_sources;
+  };
+
+  // Steps 1–2 of partial-presence transmission processing, extracted as a
+  // pure accumulator: bucket members into runtime bins ("carriages"), walk
+  // sub-intervals delimited by effective presence windows, accumulate
+  // per-susceptible λ and per-source attribution weights. No infection
+  // side-effects, no RNG. Preconditions are enforced here (throws on
+  // violation) so callers can't accidentally bypass them.
+  //
+  // The wrapping processPartialPresenceVenue calls this then performs the
+  // single Bernoulli draw + infection write per susceptible. Tests call
+  // this directly to assert λ deterministically.
+  PartialPresenceLambdaResult computePartialPresenceLambda(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      VenueId actual_venue_id, double current_time, double delta_hours,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      uint8_t encounter_type_id);
+
  private:
   WorldState& world_;
   const ContactMatrixConfig& contact_matrices_;

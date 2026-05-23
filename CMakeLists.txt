@@ -310,6 +310,8 @@ if(BUILD_TESTING)
   add_june_test(test_deterministic_rng "tests/test_deterministic_rng.cpp")
   add_june_test(test_transmission_determinism "tests/test_transmission_determinism.cpp;src/disease_loader.cpp")
   add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/disease_loader.cpp")
+  add_june_test(test_presence_window "tests/test_presence_window.cpp")
+  add_june_test(test_partial_presence_foi "tests/test_partial_presence_foi.cpp;src/disease_loader.cpp")
 
   if(MPI_FOUND)
     add_june_mpi_test(test_mpi_communication "tests/test_mpi_communication.cpp")
