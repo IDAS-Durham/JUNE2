@@ -1,4 +1,6 @@
 #include "simulation/simulator.h"
+
+#include "activity/runtime_bin_allocator.h"
 #ifdef USE_MPI
 #include "parallel/domain_manager.h"
 #endif
@@ -28,6 +30,8 @@ Simulator::Simulator(WorldState& world, const Config& config,
       config_(config),
       domain_mgr_(domain_mgr),
       activity_manager_(world, config),
+      runtime_bin_allocator_(
+          std::make_unique<RuntimeBinAllocator>(world, config)),
       current_day_num_(0),
       current_simulation_time_(0.0) {
   // GlobalRNG is seeded in main.cpp before any components are created
@@ -35,8 +39,7 @@ Simulator::Simulator(WorldState& world, const Config& config,
 
   // Checkpointing is incompatible with the compartmental-model plugin: the
   // external ODE plugin's internal state is opaque to the engine, so a
-  // resume would silently diverge. Fail fast on all ranks (no silent
-  // fallback).
+  // resume would silently diverge. Fail fast on all ranks.
   if (config_.simulation.checkpoint.enabled &&
       !config_.simulation.compartmental_model_sidecar.empty()) {
     throw std::runtime_error(
@@ -288,6 +291,9 @@ Simulator::Simulator(WorldState& world, const Config& config,
   interaction_manager_ = std::make_unique<InteractionManager>(
       world_, config_.contact_matrices, config_.simulation, config_.parallel,
       disease_.get(), &event_logger_);
+  // Wire the runtime bin allocator so processPartialPresenceVenue can
+  // consult carriage assignments. Allocator already constructed above.
+  interaction_manager_->setRuntimeBinAllocator(runtime_bin_allocator_.get());
 
   // Initialize coordinated encounter manager
   int rank = 0;
@@ -794,6 +800,12 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
     activity_manager_.setCurrentTime(current_simulation_time_);
     activity_manager_.assignActivitiesFromSchedule(time_slot_index,
                                                    day_type_idx, locations_);
+    // Runtime bin allocation for partial-presence venues (e.g. train
+    // carriages). One-test no-op when SimulationConfig::partial_presence is
+    // empty, so non-commute scenarios pay nothing here.
+    runtime_bin_allocator_->allocateForSlot(time_slot_index, day_type_idx, slot,
+                                            current_simulation_time_,
+                                            delta_hours, locations_);
   }
 
 #ifdef USE_MPI

@@ -8,6 +8,8 @@
 #include <iostream>
 #include <numeric>
 
+#include "activity/presence_window.h"
+#include "activity/runtime_bin_allocator.h"
 #include "simulation/compartmental_model_manager.h"
 #include "utils/deterministic_rng.h"
 #include "utils/event_logging/event_types.h"
@@ -441,6 +443,23 @@ int InteractionManager::processVenueTransmissions(
     std::vector<PendingInfection>* pending_infections,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
     uint8_t encounter_type_id, const CompartmentalModelManager* comp_model) {
+  // Partial-presence venues (commute lines, etc.) take a different FOI path:
+  // sub-interval-aware, carriage-grouped, with per-rider effective presence
+  // windows. The gate is a single bit-mask test; venue types not declared in
+  // SimulationConfig::partial_presence pay no cost here. The existing
+  // function body below is unchanged for every other venue type.
+  if (runtime_bin_allocator_ && actual_venue_id >= 0 && venue) {
+    const uint8_t vt = venue->type_id;
+    const uint64_t mask =
+        simulation_config_.partial_presence.enabled_venue_type_mask;
+    if (vt < 64 && ((mask >> vt) & 1ULL) != 0) {
+      return processPartialPresenceVenue(
+          members, venue, actual_venue_id, current_time, delta_hours,
+          active_infections, visitor_ids, pending_infections, visitor_data,
+          encounter_type_id, comp_model);
+    }
+  }
+
   int new_infections = 0;
 
   // Determine venue type for parameters
@@ -1323,6 +1342,463 @@ int InteractionManager::processVenueTransmissions(
     bins_buffer_[b].clearAfterUse(num_modes);
   }
   used_bins_.clear();
+
+  return new_infections;
+}
+
+// =============================================================================
+// processPartialPresenceVenue — sub-interval FOI for partial-presence venues.
+// =============================================================================
+//
+// Architecture: each partial-presence venue (e.g. a train line) is partitioned
+// into runtime bins ("carriages") by RuntimeBinAllocator. Within each carriage,
+// FOI is computed over sub-intervals delimited by riders' effective
+// (eff_board, eff_alight) windows so that two riders share air only on the
+// overlap of their journeys.
+//
+// Effective presence windows come from the membership_metadata side-table
+// (per-leg t_board_min / t_alight_min) routed through computePresenceWindows,
+// which applies the proportional policy for long-distance commuters whose
+// raw journey doesn't fit the slot.
+//
+// Single Bernoulli draw per susceptible at slot end; sources are accumulated
+// across all (carriage × sub-interval) contributions and sampled once.
+InteractionManager::PartialPresenceLambdaResult
+InteractionManager::computePartialPresenceLambda(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id) {
+  PartialPresenceLambdaResult result;
+
+  // v1 preconditions. Throw rather than silently fall through.
+  if (actual_venue_id < 0)
+    throw std::runtime_error(
+        "computePartialPresenceLambda: virtual encounter venues not supported");
+  if (!venue)
+    throw std::runtime_error("computePartialPresenceLambda: null venue");
+  if (encounter_type_id != 255)
+    throw std::runtime_error(
+        "computePartialPresenceLambda: coordinated-encounter venues not "
+        "supported on partial-presence types in v1");
+  if (venue->parent_id >= 0)
+    throw std::runtime_error(
+        "computePartialPresenceLambda: parent-venue mixing not supported on "
+        "partial-presence types in v1");
+  if (!runtime_bin_allocator_)
+    throw std::runtime_error(
+        "computePartialPresenceLambda: runtime_bin_allocator_ is null (gate "
+        "should have prevented this call)");
+
+  const uint8_t venue_type_id = venue->type_id;
+  const ContactMatrix* matrix = contact_matrices_.getMatrix(venue_type_id);
+  if (!matrix)
+    throw std::runtime_error(
+        "computePartialPresenceLambda: no contact matrix for venue_type_id=" +
+        std::to_string(static_cast<int>(venue_type_id)));
+  const int num_bins_needed =
+      std::max(1, static_cast<int>(matrix->bins.size()));
+
+  int num_modes = disease_->numModes();
+  if (num_modes == 0) num_modes = 1;
+  const auto& trans_params = disease_->getTransmissionParams();
+
+  const float slot_duration_min = static_cast<float>(delta_hours * 60.0);
+  if (!(slot_duration_min > 0.0f)) return result;
+
+  // Presence windows live on the allocator. It computes them on each
+  // rider's home rank (proportional vs clamped policy applied to the full
+  // leg list) and broadcasts globally, so a cross-rank visitor's window is
+  // identical to what the home rank would have computed locally.
+  const uint16_t num_bins = runtime_bin_allocator_->getNumBins(actual_venue_id);
+  if (num_bins == 0) return result;
+
+  // ---------------------------------------------------------------------------
+  // Step 1: resolve each member's (carriage, matrix_bin, eff_board, eff_alight)
+  // and group by carriage.
+  // ---------------------------------------------------------------------------
+  struct CarriageMember {
+    PersonId pid;
+    size_t array_index;
+    SubsetIndex subset_index;
+    uint8_t enc_type_id;
+    Person* person;  // null for visitors
+    const VisitorInfo* visitor;
+    float eff_board;
+    float eff_alight;
+    int matrix_bin;
+  };
+
+  std::vector<std::vector<CarriageMember>> carriages(num_bins);
+
+  for (const auto& m : members) {
+    const uint16_t carriage =
+        runtime_bin_allocator_->getBinIndex(actual_venue_id, m.id);
+    if (carriage == RuntimeBinAllocator::kNoBin || carriage >= num_bins)
+      continue;
+
+    Person* person = nullptr;
+    if (m.array_index < world_.people.size()) {
+      person = &world_.people[m.array_index];
+      if (person->id != m.id) person = world_.getPerson(m.id);
+    } else {
+      person = world_.getPerson(m.id);
+    }
+
+    const VisitorInfo* visitor = nullptr;
+    if (!person && visitor_data) {
+      auto it = visitor_data->find(m.id);
+      if (it != visitor_data->end()) visitor = &it->second;
+    }
+    if (!person && !visitor) continue;
+
+    // Window from the allocator's global broadcast — identical on every
+    // rank for the same (venue, person) pair.
+    const EffectiveWindow win =
+        runtime_bin_allocator_->getPresenceWindow(actual_venue_id, m.id);
+
+    int matrix_bin =
+        computeBinIndexForMatrix(person, venue, m.subset_index,
+                                 m.encounter_type_id, matrix, num_bins_needed);
+    if (matrix_bin < 0 || matrix_bin >= num_bins_needed) matrix_bin = 0;
+
+    carriages[carriage].push_back(CarriageMember{
+        m.id, m.array_index, m.subset_index, m.encounter_type_id, person,
+        visitor, win.eff_board, win.eff_alight, matrix_bin});
+  }
+
+  // Deterministic per-carriage order (FP-stable accumulation across ranks).
+  for (auto& car : carriages) {
+    std::sort(car.begin(), car.end(),
+              [](const CarriageMember& a, const CarriageMember& b) {
+                return a.pid < b.pid;
+              });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 2: walk (carriage × sub-interval), accumulate per-susceptible λ and
+  // per-source attribution weights.
+  // ---------------------------------------------------------------------------
+  using AccumSource = PartialPresenceAccumSource;
+  auto& susc_lambda = result.susc_lambda;
+  auto& susc_sources = result.susc_sources;
+
+  // Per-bin scratch reused across sub-intervals (cleared per sub-interval).
+  struct SubBin {
+    std::vector<double> total_inf_by_mode;  // size num_modes
+    std::vector<PersonId> infectious_ids;
+    // Per (mode) → flat list aligned with infectious_ids for sampling.
+    std::vector<std::vector<double>> inf_per_person_by_mode;  // [mode][i]
+    int total_size = 0;
+    void reset(int num_modes_) {
+      total_inf_by_mode.assign(num_modes_, 0.0);
+      infectious_ids.clear();
+      inf_per_person_by_mode.assign(num_modes_, {});
+      total_size = 0;
+    }
+  };
+  std::vector<SubBin> sub_bins(num_bins_needed);
+
+  for (uint16_t c = 0; c < num_bins; ++c) {
+    const auto& car = carriages[c];
+    if (car.empty()) continue;
+
+    // Collect unique event times in this carriage.
+    std::vector<float> events;
+    events.reserve(2 * car.size() + 2);
+    events.push_back(0.0f);
+    events.push_back(slot_duration_min);
+    for (const auto& m : car) {
+      if (m.eff_board > 0.0f && m.eff_board < slot_duration_min)
+        events.push_back(m.eff_board);
+      if (m.eff_alight > 0.0f && m.eff_alight < slot_duration_min)
+        events.push_back(m.eff_alight);
+    }
+    std::sort(events.begin(), events.end());
+    events.erase(
+        std::unique(events.begin(), events.end(),
+                    [](float a, float b) { return std::abs(a - b) < 1e-5f; }),
+        events.end());
+    if (events.size() < 2) continue;
+
+    for (size_t si = 0; si + 1 < events.size(); ++si) {
+      const float t0 = events[si];
+      const float t1 = events[si + 1];
+      const float sub_dur = t1 - t0;
+      if (!(sub_dur > 0.0f)) continue;
+      const double scale = static_cast<double>(sub_dur) / slot_duration_min;
+
+      for (auto& sb : sub_bins) sb.reset(num_modes);
+
+      // Track per-bin susceptibles in this sub-interval (rebuilt each pass).
+      std::vector<std::vector<const CarriageMember*>> susc_by_bin(
+          num_bins_needed);
+
+      for (const auto& m : car) {
+        // Present iff [eff_board, eff_alight) covers [t0, t1).
+        if (!(m.eff_board <= t0 + 1e-5f && m.eff_alight + 1e-5f >= t1))
+          continue;
+
+        const int bin = m.matrix_bin;
+        const bool dead = (m.person && m.person->is_dead);
+        if (!dead) sub_bins[bin].total_size++;
+
+        // Infectious?
+        bool added_inf = false;
+        if (m.visitor && m.visitor->is_infectious) {
+          for (int mode = 0; mode < num_modes; ++mode) {
+            double inf_full = (mode < VisitorInfo::MAX_MODES)
+                                  ? m.visitor->integrated_infectiousness[mode]
+                                  : 0.0;
+            double inf_sub = inf_full * scale;
+            if (inf_sub > 0.0) {
+              if (!added_inf) {
+                sub_bins[bin].infectious_ids.push_back(m.pid);
+                added_inf = true;
+              }
+              sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
+              sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
+            } else if (added_inf) {
+              // Keep arrays aligned across modes.
+              sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
+            }
+          }
+        } else if (m.person && m.person->infection &&
+                   m.person->infection->isInfectious(current_time)) {
+          const double t_end_d = current_time + delta_hours / 24.0;
+          for (int mode = 0; mode < num_modes; ++mode) {
+            double inf_full = m.person->infection->getIntegratedInfectiousness(
+                mode, current_time, t_end_d);
+            double inf_sub = inf_full * scale;
+            if (inf_sub > 0.0) {
+              if (!added_inf) {
+                sub_bins[bin].infectious_ids.push_back(m.pid);
+                added_inf = true;
+              }
+              sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
+              sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
+            } else if (added_inf) {
+              sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
+            }
+          }
+        } else if (m.person && !m.person->infection && !dead) {
+          double susc =
+              m.person->getSusceptibility(current_time, disease_->getName());
+          if (susc > 0.0) susc_by_bin[bin].push_back(&m);
+        } else if (m.visitor && !m.visitor->is_infected &&
+                   m.visitor->immunity_level < 1.0) {
+          susc_by_bin[bin].push_back(&m);
+        }
+      }
+
+      // Per-susceptible bin: accumulate λ contributions over (mode, inf_bin).
+      for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
+        if (susc_by_bin[susc_bin].empty()) continue;
+
+        for (int mode = 0; mode < num_modes; ++mode) {
+          const ContactMatrix* mode_matrix =
+              contact_matrices_.getMatrix(venue_type_id, mode);
+          double mode_susc_mult =
+              (mode < static_cast<int>(trans_params.modes.size()))
+                  ? trans_params.modes[mode].susceptibility_multiplier
+                  : 1.0;
+
+          for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
+            double total_inf = sub_bins[inf_bin].total_inf_by_mode[mode];
+            if (!(total_inf > 0.0)) continue;
+
+            double contacts = contact_matrices_.default_contacts;
+            if (mode_matrix &&
+                susc_bin < static_cast<int>(mode_matrix->contacts.size()) &&
+                inf_bin <
+                    static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
+              contacts = mode_matrix->contacts[susc_bin][inf_bin];
+            } else if (susc_bin < static_cast<int>(matrix->contacts.size()) &&
+                       inf_bin < static_cast<int>(
+                                     matrix->contacts[susc_bin].size())) {
+              contacts = matrix->getContacts(susc_bin, inf_bin);
+            }
+            if (!(contacts > 0.0)) continue;
+
+            int bin_size = sub_bins[inf_bin].total_size;
+            if (susc_bin == inf_bin) bin_size = std::max(1, bin_size - 1);
+            double omega = contacts / bin_size;
+            double contrib = omega * total_inf * mode_susc_mult;
+            if (!(contrib > 0.0)) continue;
+
+            for (const CarriageMember* sm : susc_by_bin[susc_bin]) {
+              susc_lambda[sm->pid] += contrib;
+              // Pick an infector for this contribution by weight-sampling
+              // proportional to per-person infectiousness in this sub-interval.
+              // We record one AccumSource per (susc, mode, inf_bin, sub) with
+              // the FULL bin contribution; per-person sampling happens at
+              // the single Bernoulli site below.
+              const auto& ids = sub_bins[inf_bin].infectious_ids;
+              const auto& per = sub_bins[inf_bin].inf_per_person_by_mode[mode];
+              for (size_t pi = 0; pi < ids.size(); ++pi) {
+                if (pi >= per.size() || !(per[pi] > 0.0)) continue;
+                double w = omega * per[pi] * mode_susc_mult;
+                if (!(w > 0.0)) continue;
+                susc_sources[sm->pid].push_back(AccumSource{mode, ids[pi], w});
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+int InteractionManager::processPartialPresenceVenue(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* /*visitor_ids*/,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id,
+    const CompartmentalModelManager* /*comp_model*/) {
+  PartialPresenceLambdaResult acc = computePartialPresenceLambda(
+      members, venue, actual_venue_id, current_time, delta_hours, visitor_data,
+      encounter_type_id);
+  auto& susc_lambda = acc.susc_lambda;
+  auto& susc_sources = acc.susc_sources;
+
+  const uint8_t venue_type_id = venue->type_id;
+  using AccumSource = PartialPresenceAccumSource;
+
+  // ---------------------------------------------------------------------------
+  // Step 3: per-susceptible Bernoulli draw + infector sampling.
+  // ---------------------------------------------------------------------------
+  // Iterate susceptibles in person_id order for deterministic per-call work.
+  std::vector<PersonId> ordered_susc;
+  ordered_susc.reserve(susc_lambda.size());
+  for (auto& kv : susc_lambda) ordered_susc.push_back(kv.first);
+  std::sort(ordered_susc.begin(), ordered_susc.end());
+
+  int new_infections = 0;
+  const uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);
+  const uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
+
+  for (PersonId susc_id : ordered_susc) {
+    double lambda = susc_lambda[susc_id];
+    if (!(lambda > 0.0)) continue;
+
+    Person* susc_person = world_.getPerson(susc_id);
+    const VisitorInfo* visitor = nullptr;
+    if (!susc_person && visitor_data) {
+      auto it = visitor_data->find(susc_id);
+      if (it != visitor_data->end()) visitor = &it->second;
+    }
+
+    double susceptibility = 0.0;
+    if (susc_person) {
+      susceptibility =
+          susc_person->getSusceptibility(current_time, disease_->getName());
+    } else if (visitor) {
+      susceptibility = 1.0 - visitor->immunity_level;
+    } else {
+      continue;
+    }
+    if (!(susceptibility > 0.0)) continue;
+
+    double total_risk = lambda;
+    if (simulation_config_.regional_risk.enabled && venue) {
+      total_risk *= venue->transmission_factor;
+    }
+    double prob = 1.0 - std::exp(-total_risk * susceptibility);
+    if (!(prob > 1e-12)) continue;
+
+    SplitMix64 susc_rng(mix_seed(base_seed_, susc_id, venue_key, time_bits));
+    double rng_roll = uniform_dist_(susc_rng);
+    if (!(rng_roll < prob)) continue;
+
+    // Source attribution: weight-sample from accumulated AccumSource entries.
+    auto src_it = susc_sources.find(susc_id);
+    int sampled_mode = 0;
+    PersonId infector_id = -1;
+    if (src_it != susc_sources.end() && !src_it->second.empty()) {
+      // Sort for determinism, then cumulative-sample.
+      auto& srcs = src_it->second;
+      std::sort(srcs.begin(), srcs.end(),
+                [](const AccumSource& a, const AccumSource& b) {
+                  if (a.mode != b.mode) return a.mode < b.mode;
+                  return a.infector < b.infector;
+                });
+      std::vector<double> cum;
+      cum.reserve(srcs.size());
+      double acc = 0.0;
+      for (const auto& s : srcs) {
+        acc += s.weighted;
+        cum.push_back(acc);
+      }
+      int sampled = (acc > 0.0) ? sampleFromCumulative(cum, susc_rng) : 0;
+      if (sampled < 0) sampled = 0;
+      if (sampled < static_cast<int>(srcs.size())) {
+        sampled_mode = srcs[sampled].mode;
+        infector_id = srcs[sampled].infector;
+      }
+    }
+
+    uint16_t infector_symptom_id = 0;
+    if (infector_id >= 0) {
+      Person* infp = world_.getPerson(infector_id);
+      if (infp && infp->infection) {
+        infector_symptom_id =
+            infp->infection->getTrajectory().getCurrentSymptomId(current_time);
+      } else if (!infp && visitor_data) {
+        auto vit = visitor_data->find(infector_id);
+        if (vit != visitor_data->end())
+          infector_symptom_id = vit->second.symptom_id;
+      }
+    }
+
+    const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
+    const bool is_visitor_susc = (visitor != nullptr);
+
+    if (is_visitor_susc && pending_infections != nullptr) {
+      PendingInfection pending;
+      pending.person_id = susc_id;
+      pending.infector_id = infector_id;
+      pending.infection_time = current_time;
+      pending.venue_type_id = venue_type_id;
+      pending.encounter_type_id = 255;
+      pending.venue_id = actual_venue_id;
+      pending.infector_symptom_id = infector_symptom_id;
+      pending.transmission_mode_index = transmission_mode_index;
+      if (visitor) pending.home_array_index = visitor->home_array_index;
+      pending_infections->push_back(pending);
+    } else if (susc_person && !susc_person->infection && disease_ != nullptr) {
+      float severity_factor = 1.0f;
+      auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
+      if (gu) severity_factor = gu->severity_factor;
+
+      std::string venue_type_name;
+      if (venue_type_id < world_.venue_type_names.size())
+        venue_type_name = world_.venue_type_names[venue_type_id];
+
+      uint64_t infection_seed =
+          mix_seed(base_seed_, susc_id,
+                   static_cast<uint64_t>(current_time * 1000), venue_key);
+      susc_person->infection = std::make_unique<Infection>(
+          disease_, current_time, susc_person,
+          static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
+          actual_venue_id, severity_factor, infector_symptom_id, "", "",
+          transmission_mode_index);
+
+      if (event_logger_ != nullptr) {
+        event_logger_->logInfection(
+            susc_id, infector_id, actual_venue_id, current_time,
+            /*encounter_type_id*/ 255, infector_symptom_id,
+            transmission_mode_index, InfectionSource::Person);
+      }
+
+      if (active_infections != nullptr) active_infections->insert(susc_id);
+    }
+    new_infections++;
+  }
 
   return new_infections;
 }

@@ -84,17 +84,29 @@ schedule_types:
         weekend: 1.0
 
   # -------------------------------------------------------------------------
+  # Has primary_activity (workers). Split into three priority-ordered variants
+  # selected by `properties.work_mode` so attendance can be tuned per mode.
+  # MAY's distributors place EVERY worker
+  # with a workplace_sgu into a primary_activity venue regardless of
+  # work_mode; the schedule layer gates whether the worker actually attends.
+  # work_mode values emitted by MAY: Normal, Hybrid, From_Home, Other, "" (non-
+  # workers fall to no_primary_activity at priority 10).
+  #
+  # All variants share identical slot lists (anchored on this fallback type).
+  # Only `participation` differs — Normal 1.0, Hybrid 0.6, From_Home 0.
+  # -------------------------------------------------------------------------
   has_primary_activity:
     priority: 0
 
     # No selection criteria = matches everyone as fallback
+    # (Normal workers, Other, and any worker without a work_mode override).
     selection: []
 
-    weekday:
-      - name: "morning"
+    weekday: &has_primary_activity_weekday
+      - name: "morning_commute"
         start: "08:00"
         end: "09:00"
-        allowed_activities: ["residence"]
+        allowed_activities: ["commute", "no_venue", "residence"]
 
       - name: "primary_activity"
         start: "09:00"
@@ -104,7 +116,7 @@ schedule_types:
       - name: "evening_commute"
         start: "17:00"
         end: "18:00"
-        allowed_activities: ["residence"]
+        allowed_activities: ["commute", "no_venue", "residence"]
 
       - name: "evening"
         start: "18:00"
@@ -116,7 +128,7 @@ schedule_types:
         end: "08:00"
         allowed_activities: ["residence"]
 
-    weekend:
+    weekend: &has_primary_activity_weekend
       - name: "morning"
         start: "08:00"
         end: "12:00"
@@ -145,6 +157,82 @@ schedule_types:
     participation:
       primary_activity:
         weekday: 1.0
+        weekend: 0.0
+      commute:
+        weekday: 1.0
+        weekend: 0.0
+      # Individual-mode commuters (walk/bike/car/etc) have no transport_line
+      # venue, so `commute` is unavailable for them; they pass through to
+      # `no_venue` (in transit, no FOI) instead of going home.
+      no_venue:
+        weekday: 1.0
+        weekend: 0.0
+      leisure:
+        weekday: 0.3
+        weekend: 0.5
+      residence:
+        weekday: 1.0
+        weekend: 1.0
+
+  # Hybrid workers: attend office (and therefore commute) ~60% of weekdays.
+  # 0.6 is a starting guess — calibrate against empirical hybrid-work
+  # attendance data.
+  has_primary_activity_hybrid:
+    priority: 2
+    selection:
+      - property: "properties.work_mode"
+        operator: "=="
+        value: "Hybrid"
+
+    # Link commute / no_venue / primary_activity via a single per-day dice
+    # roll. If a Hybrid worker is "in" today they commute (or transit
+    # individually) AND attend the office; if not, they stay at residence all
+    # weekday. Implies hybrid (re-rolled at runtime, not frozen by the
+    # precomputed-schedule fast path used by Normal workers).
+    linked_activities: ["commute", "no_venue", "primary_activity"]
+
+    weekday: *has_primary_activity_weekday
+    weekend: *has_primary_activity_weekend
+
+    participation:
+      primary_activity:
+        weekday: 0.6
+        weekend: 0.0
+      commute:
+        weekday: 0.6
+        weekend: 0.0
+      no_venue:
+        weekday: 0.6
+        weekend: 0.0
+      leisure:
+        weekday: 0.3
+        weekend: 0.5
+      residence:
+        weekday: 1.0
+        weekend: 1.0
+
+  # From_Home workers: never attend their assigned workplace, never commute.
+  # MAY still assigns them a primary_activity venue — this schedule simply
+  # zeroes participation so they remain at residence on weekdays.
+  has_primary_activity_from_home:
+    priority: 3
+    selection:
+      - property: "properties.work_mode"
+        operator: "=="
+        value: "From_Home"
+
+    weekday: *has_primary_activity_weekday
+    weekend: *has_primary_activity_weekend
+
+    participation:
+      primary_activity:
+        weekday: 0.0
+        weekend: 0.0
+      commute:
+        weekday: 0.0
+        weekend: 0.0
+      no_venue:
+        weekday: 0.0
         weekend: 0.0
       leisure:
         weekday: 0.3

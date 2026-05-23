@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "../activity/coordinated_encounter_manager.h"
+#include "../activity/runtime_bin_allocator.h"
 #include "../core/config.h"
 #include "../core/world_state.h"
 #include "../epidemiology/disease.h"
@@ -78,6 +79,10 @@ class Simulator {
 
   // Activity management
   ActivityManager activity_manager_;
+
+  // Runtime bin allocator (carriages on transport_line venues etc.). Cheap
+  // no-op when SimulationConfig::partial_presence is empty.
+  std::unique_ptr<RuntimeBinAllocator> runtime_bin_allocator_;
 
   // Policy management (symptom-based behavior, lockdowns, etc.)
   std::unique_ptr<PolicyManager> policy_manager_;

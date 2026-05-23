@@ -12,6 +12,7 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -1300,6 +1301,58 @@ inline WorldState HDF5Loader::loadDomainChunked(
       }
     }
 
+  }
+
+  // Optional per-(person, venue) membership metadata (Design B side-table).
+  // Carries per-leg fields (e.g. boarding/alighting times for route
+  // activities) when present. Backward-compatible — old worlds without this
+  // dataset simply have no per-membership metadata, and partial_presence
+  // venues degrade to full-slot presence in the FOI loop.
+  if (loader.groupExists("/activity_mappings/membership_metadata")) {
+    const std::string base = "/activity_mappings/membership_metadata";
+    std::vector<std::string> field_names =
+        loader.readStringDataset(base + "/field_names");
+    auto pids = loader.readNumericDataset<int32_t>(base + "/person_ids");
+    auto vids = loader.readNumericDataset<int32_t>(base + "/venue_ids");
+
+    if (pids.size() == vids.size() && !field_names.empty()) {
+      loader.world_.membership_field_names = field_names;
+      loader.world_.membership_field_values.assign(field_names.size(), {});
+
+      // Locate each side-table row in this rank's activity_venues. Rows that
+      // belong to a non-local person are kept as kAbsent and skipped later.
+      const uint32_t kAbsent = std::numeric_limits<uint32_t>::max();
+      std::vector<uint32_t> row_flat_idx(pids.size(), kAbsent);
+      for (size_t i = 0; i < pids.size(); ++i) {
+        auto pit = local_person_idx_map.find(pids[i]);
+        if (pit == local_person_idx_map.end()) continue;
+        const Person& person = loader.world_.people[pit->second];
+        for (const auto& meta : loader.world_.getActivityMetas(person)) {
+          auto venues = loader.world_.getActivityVenues(meta);
+          for (size_t k = 0; k < venues.size(); ++k) {
+            if (venues[k].first == vids[i]) {
+              row_flat_idx[i] =
+                  meta.venue_start + static_cast<uint32_t>(k);
+              break;
+            }
+          }
+          if (row_flat_idx[i] != kAbsent) break;
+        }
+      }
+
+      for (size_t f = 0; f < field_names.size(); ++f) {
+        auto vals =
+            loader.readNumericDataset<float>(base + "/" + field_names[f]);
+        if (vals.size() != pids.size()) continue;
+        auto& sink = loader.world_.membership_field_values[f];
+        sink.reserve(vals.size() / 4);
+        for (size_t i = 0; i < vals.size(); ++i) {
+          if (row_flat_idx[i] == kAbsent) continue;
+          if (vals[i] == WorldState::kMembershipFieldAbsent) continue;
+          sink[row_flat_idx[i]] = vals[i];
+        }
+      }
+    }
   }
 
   // Build venue index before loading subsets so getVenue() works

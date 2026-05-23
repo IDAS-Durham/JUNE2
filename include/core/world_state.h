@@ -133,6 +133,36 @@ class WorldState {
   std::vector<Person::ActivityMeta> activity_meta;
   std::vector<std::pair<VenueId, SubsetIndex>> activity_venues;
 
+  // Optional per-(person, venue) membership metadata (Design B side-table,
+  // /activity_mappings/membership_metadata in HDF5). Carries per-leg fields
+  // such as boarding/alighting times for route activities. Keyed by flat
+  // index into activity_venues. Sparse — most assignments carry no metadata.
+  std::vector<std::string> membership_field_names;
+  std::vector<std::unordered_map<uint32_t, float>> membership_field_values;
+
+  int getMembershipFieldIndex(const std::string& name) const {
+    auto it = std::find(membership_field_names.begin(),
+                        membership_field_names.end(), name);
+    return (it != membership_field_names.end())
+               ? static_cast<int>(
+                     std::distance(membership_field_names.begin(), it))
+               : -1;
+  }
+
+  // Sentinel for "field absent for this membership". Matches the value MAY
+  // writes when a (person, venue) row has no value for a given field.
+  static constexpr float kMembershipFieldAbsent = -1.0f;
+
+  float getMembershipField(uint32_t activity_venue_flat_idx,
+                           int field_idx) const {
+    if (field_idx < 0 ||
+        field_idx >= static_cast<int>(membership_field_values.size()))
+      return kMembershipFieldAbsent;
+    const auto& m = membership_field_values[field_idx];
+    auto it = m.find(activity_venue_flat_idx);
+    return (it == m.end()) ? kMembershipFieldAbsent : it->second;
+  }
+
   // Dynamic Properties: person.properties_start -> person_properties
   // Stores interned IDs for categorical properties and raw ints for others
   std::vector<int32_t> person_properties;
