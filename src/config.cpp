@@ -14,6 +14,27 @@
 
 namespace june {
 
+DistributionType parseDistributionType(const std::string& s) {
+  if (s == "poisson") return DistributionType::POISSON;
+  if (s == "binomial") return DistributionType::BINOMIAL;
+  if (s == "fixed") return DistributionType::FIXED;
+  throw std::runtime_error("Unknown distribution type: '" + s +
+                           "'. Must be 'poisson', 'binomial', or 'fixed'.");
+}
+
+const char* distributionTypeToString(DistributionType t) {
+  switch (t) {
+    case DistributionType::POISSON:
+      return "poisson";
+    case DistributionType::BINOMIAL:
+      return "binomial";
+    case DistributionType::FIXED:
+      return "fixed";
+    default:
+      return "unknown";
+  }
+}
+
 void SelectionCriterion::resolve(const WorldState& world) {
   // 1. First ensure type is cached
   if (cached_type == PropertyType::UNKNOWN) {

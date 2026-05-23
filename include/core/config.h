@@ -688,26 +688,8 @@ struct SimulationConfig {
 // comparison)
 enum class DistributionType : uint8_t { POISSON = 0, BINOMIAL, FIXED };
 
-inline DistributionType parseDistributionType(const std::string& s) {
-  if (s == "poisson") return DistributionType::POISSON;
-  if (s == "binomial") return DistributionType::BINOMIAL;
-  if (s == "fixed") return DistributionType::FIXED;
-  throw std::runtime_error("Unknown distribution type: '" + s +
-                           "'. Must be 'poisson', 'binomial', or 'fixed'.");
-}
-
-inline const char* distributionTypeToString(DistributionType t) {
-  switch (t) {
-    case DistributionType::POISSON:
-      return "poisson";
-    case DistributionType::BINOMIAL:
-      return "binomial";
-    case DistributionType::FIXED:
-      return "fixed";
-    default:
-      return "unknown";
-  }
-}
+DistributionType parseDistributionType(const std::string& s);
+const char* distributionTypeToString(DistributionType t);
 struct InviteDistribution {
   DistributionType type = DistributionType::FIXED;
   double mean = 1.0;  // For poisson: λ (expected number of invites)
