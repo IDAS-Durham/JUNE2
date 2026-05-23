@@ -1354,12 +1354,11 @@ int InteractionManager::processVenueTransmissions(
 // into runtime bins ("carriages") by RuntimeBinAllocator. Within each carriage,
 // FOI is computed over sub-intervals delimited by riders' effective
 // (eff_board, eff_alight) windows so that two riders share air only on the
-// overlap of their journeys (the Chester-le-Street physics from
-// COMMUTE_PLAN §6.4).
+// overlap of their journeys.
 //
 // Effective presence windows come from the membership_metadata side-table
 // (per-leg t_board_min / t_alight_min) routed through computePresenceWindows,
-// which applies the D14 proportional policy for long-distance commuters whose
+// which applies the proportional policy for long-distance commuters whose
 // raw journey doesn't fit the slot.
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated

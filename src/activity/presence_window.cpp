@@ -61,7 +61,7 @@ std::vector<EffectiveWindow> computePresenceWindows(const float* t_board_min,
   });
 
   // If total_leg_dur is zero (all degenerate), fall back to equal slots so
-  // every leg still gets a positive window (no leg-drop per D14).
+  // every leg still gets a positive window.
   const bool zero_total = !(total_leg_dur > 0.0f);
 
   out.assign(n_legs, EffectiveWindow{0.0f, 0.0f});

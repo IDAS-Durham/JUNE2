@@ -100,7 +100,7 @@ void RuntimeBinAllocator::allocateForSlot(
     // Gather every partial-presence leg this rider has on this slot's
     // activity. We pass the full leg list (across all venues) to
     // computePresenceWindows so the proportional policy sees the rider's
-    // total journey, not just one venue's piece. The Chester-le-Street
+    // total journey, not just one venue's piece. The
     // partial-overlap branch and the long-distance compressed branch are
     // both decided here, on the rider's home rank.
     raw_legs.clear();

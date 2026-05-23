@@ -39,8 +39,7 @@ Simulator::Simulator(WorldState& world, const Config& config,
 
   // Checkpointing is incompatible with the compartmental-model plugin: the
   // external ODE plugin's internal state is opaque to the engine, so a
-  // resume would silently diverge. Fail fast on all ranks (no silent
-  // fallback).
+  // resume would silently diverge. Fail fast on all ranks.
   if (config_.simulation.checkpoint.enabled &&
       !config_.simulation.compartmental_model_sidecar.empty()) {
     throw std::runtime_error(
