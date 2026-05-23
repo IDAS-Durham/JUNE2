@@ -12,6 +12,155 @@
 
 namespace june {
 
+namespace {
+
+using GeoPartitionMap =
+    std::unordered_map<GeoUnitId, std::pair<size_t, size_t>>;
+
+// Load an HDF5 partition index (geo_unit_ids / start_indices / counts) into a
+// map from GeoUnitId to (start, count).
+GeoPartitionMap buildPartitionMap(HDF5Loader& loader,
+                                  const std::string& path_prefix) {
+  auto gu_ids =
+      loader.readNumericDataset<int32_t>(path_prefix + "/geo_unit_ids");
+  auto starts =
+      loader.readNumericDataset<int32_t>(path_prefix + "/start_indices");
+  auto counts =
+      loader.readNumericDataset<int32_t>(path_prefix + "/counts");
+
+  GeoPartitionMap map;
+  for (size_t i = 0; i < gu_ids.size(); ++i) {
+    map[gu_ids[i]] = {static_cast<size_t>(starts[i]),
+                      static_cast<size_t>(counts[i])};
+  }
+  return map;
+}
+
+// Ensure world.activity_names contains internal system activities plus every
+// activity referenced by any time slot in the schedule config. Idempotent.
+void registerSystemAndConfigActivities(WorldState& world,
+                                       const Config& config) {
+  auto register_activity = [&](const std::string& name) {
+    if (!name.empty() &&
+        std::find(world.activity_names.begin(), world.activity_names.end(),
+                  name) == world.activity_names.end()) {
+      world.activity_names.push_back(name);
+    }
+  };
+  register_activity("dead");
+  register_activity("none");
+  register_activity("visiting");
+  register_activity("no_venue");
+  for (const auto& sched_type : config.schedule.schedule_types) {
+    for (const auto& [dt_name, dt_slots] : sched_type.slots_by_day_type) {
+      for (const auto& slot : dt_slots) {
+        for (const auto& act : slot.allowed_activities)
+          register_activity(act);
+        for (const auto& act : slot.coordinated_only_activities)
+          register_activity(act);
+      }
+    }
+  }
+}
+
+// Append schedule type names from config that are not already in
+// world.schedule_type_names, preserving config order.
+void syncScheduleTypeNames(WorldState& world, const Config& config) {
+  for (const auto& st : config.schedule.schedule_types) {
+    if (std::find(world.schedule_type_names.begin(),
+                  world.schedule_type_names.end(),
+                  st.name) == world.schedule_type_names.end()) {
+      world.schedule_type_names.push_back(st.name);
+    }
+  }
+}
+
+// Walk /venues/properties/<venue_type>/<prop_name> and return a map from
+// venue type name to its list of property dataset names. Empty if the group
+// does not exist.
+std::unordered_map<std::string, std::vector<std::string>>
+discoverVenuePropertyNames(HDF5Loader& loader) {
+  std::unordered_map<std::string, std::vector<std::string>> result;
+  const std::string base = "/venues/properties";
+  if (!loader.groupExists(base)) return result;
+  for (const auto& v_type : loader.getGroupNames(base)) {
+    result[v_type] = loader.getDatasetNames(base + "/" + v_type);
+  }
+  return result;
+}
+
+// Optional per-(person, venue) membership metadata (Design B side-table).
+// Carries per-leg fields (e.g. boarding/alighting times for route activities)
+// when present. Backward-compatible — old worlds without this dataset simply
+// have no per-membership metadata, and partial_presence venues degrade to
+// full-slot presence in the FOI loop.
+void loadMembershipMetadata(
+    HDF5Loader& loader,
+    const std::unordered_map<PersonId, size_t>& local_person_idx_map) {
+  if (!loader.groupExists("/activity_mappings/membership_metadata")) return;
+
+  const std::string base = "/activity_mappings/membership_metadata";
+  std::vector<std::string> field_names =
+      loader.readStringDataset(base + "/field_names");
+  auto pids = loader.readNumericDataset<int32_t>(base + "/person_ids");
+  auto vids = loader.readNumericDataset<int32_t>(base + "/venue_ids");
+
+  if (pids.size() != vids.size() || field_names.empty()) return;
+
+  loader.world_.membership_field_names = field_names;
+  loader.world_.membership_field_values.assign(field_names.size(), {});
+
+  // Locate each side-table row in this rank's activity_venues. Rows that
+  // belong to a non-local person are kept as kAbsent and skipped later.
+  const uint32_t kAbsent = std::numeric_limits<uint32_t>::max();
+  std::vector<uint32_t> row_flat_idx(pids.size(), kAbsent);
+  for (size_t i = 0; i < pids.size(); ++i) {
+    auto pit = local_person_idx_map.find(pids[i]);
+    if (pit == local_person_idx_map.end()) continue;
+    const Person& person = loader.world_.people[pit->second];
+    for (const auto& meta : loader.world_.getActivityMetas(person)) {
+      auto venues = loader.world_.getActivityVenues(meta);
+      for (size_t k = 0; k < venues.size(); ++k) {
+        if (venues[k].first == vids[i]) {
+          row_flat_idx[i] = meta.venue_start + static_cast<uint32_t>(k);
+          break;
+        }
+      }
+      if (row_flat_idx[i] != kAbsent) break;
+    }
+  }
+
+  for (size_t f = 0; f < field_names.size(); ++f) {
+    auto vals =
+        loader.readNumericDataset<float>(base + "/" + field_names[f]);
+    if (vals.size() != pids.size()) continue;
+    auto& sink = loader.world_.membership_field_values[f];
+    sink.reserve(vals.size() / 4);
+    for (size_t i = 0; i < vals.size(); ++i) {
+      if (row_flat_idx[i] == kAbsent) continue;
+      if (vals[i] == WorldState::kMembershipFieldAbsent) continue;
+      sink[row_flat_idx[i]] = vals[i];
+    }
+  }
+}
+
+// Read ALL venue IDs and type_ids from HDF5 into world.global_venue_type_map.
+// Needed for cross-domain venue lookups in selectVenue() under MPI — venues
+// owned by other ranks are not in world.venues, but activity mappings may
+// reference them. ~300K entries x 5 bytes ~ 1.5MB.
+void buildGlobalVenueTypeMap(HDF5Loader& loader) {
+  auto all_venue_ids = loader.readNumericDataset<int32_t>("/venues/ids");
+  auto all_venue_types = loader.readNumericDataset<uint8_t>("/venues/types");
+  size_t n = std::min(all_venue_ids.size(), all_venue_types.size());
+  loader.world_.global_venue_type_map.reserve(n);
+  for (size_t i = 0; i < n; ++i) {
+    loader.world_.global_venue_type_map[all_venue_ids[i]] =
+        all_venue_types[i];
+  }
+}
+
+}  // namespace
+
 WorldState HDF5Loader::load(const std::string& filename, const Config& config) {
   // Load entire world using chunked loading
 
@@ -488,81 +637,27 @@ WorldState HDF5Loader::loadDomainChunked(
   }
 
   // Convert partition indexes to maps
-  auto read_partition_map = [&](const std::string& path_prefix) {
-    auto gu_ids =
-        loader.readNumericDataset<int32_t>(path_prefix + "/geo_unit_ids");
-    auto starts =
-        loader.readNumericDataset<int32_t>(path_prefix + "/start_indices");
-    auto counts = loader.readNumericDataset<int32_t>(path_prefix + "/counts");
-
-    std::unordered_map<GeoUnitId, std::pair<size_t, size_t>> map;
-    for (size_t i = 0; i < gu_ids.size(); ++i) {
-      map[gu_ids[i]] = {(size_t)starts[i], (size_t)counts[i]};
-    }
-    return map;
-  };
-
-  auto pop_partition_map = read_partition_map("/population/partition_index");
-  auto venue_partition_map = read_partition_map("/venues/partition_index");
+  auto pop_partition_map =
+      buildPartitionMap(loader, "/population/partition_index");
+  auto venue_partition_map =
+      buildPartitionMap(loader, "/venues/partition_index");
   auto rel_partition_map =
-      read_partition_map("/activity_mappings/activity_map/partition_index");
+      buildPartitionMap(loader, "/activity_mappings/activity_map/partition_index");
 
   // Load activity names (needed for activity mappings)
   loader.world_.activity_names = loader.readStringDataset(
       "/activity_mappings/activity_map/activity_names");
 
-  // Add activities from configuration that might be missing in HDF5 (e.g.
-  // "sex")
-  auto register_activity = [&](const std::string& name) {
-    if (!name.empty() && std::find(loader.world_.activity_names.begin(),
-                                   loader.world_.activity_names.end(), name) ==
-                             loader.world_.activity_names.end()) {
-      loader.world_.activity_names.push_back(name);
-    }
-  };
+  registerSystemAndConfigActivities(loader.world_, config);
+  syncScheduleTypeNames(loader.world_, config);
 
-  // Add internal system activities
-  register_activity("dead");
-  register_activity("none");
-  register_activity("visiting");
-  register_activity("no_venue");
-
-  for (const auto& sched_type : config.schedule.schedule_types) {
-    for (const auto& [dt_name, dt_slots] : sched_type.slots_by_day_type) {
-      for (const auto& slot : dt_slots) {
-        for (const auto& act : slot.allowed_activities) register_activity(act);
-        for (const auto& act : slot.coordinated_only_activities)
-          register_activity(act);
-      }
-    }
-  }
-
-  for (const auto& st : config.schedule.schedule_types) {
-    if (std::find(loader.world_.schedule_type_names.begin(),
-                  loader.world_.schedule_type_names.end(),
-                  st.name) == loader.world_.schedule_type_names.end()) {
-      loader.world_.schedule_type_names.push_back(st.name);
-    }
-  }
-
-  // Discover all population property datasets dynamically
+  // Discover all population property datasets dynamically and register them
   std::vector<std::string> population_property_names =
       loader.getDatasetNames("/population/properties");
-
-  // Register property names in the static registry
   loader.world_.person_property_names = population_property_names;
 
-  // Discover property names only. We will load them lazily per geo-unit.
-  std::string venue_prop_base = "/venues/properties";
-  std::unordered_map<std::string, std::vector<std::string>>
-      venue_type_prop_names;
-  if (loader.groupExists(venue_prop_base)) {
-    auto prop_types = loader.getGroupNames(venue_prop_base);
-    for (const auto& v_type : prop_types) {
-      venue_type_prop_names[v_type] =
-          loader.getDatasetNames(venue_prop_base + "/" + v_type);
-    }
-  }
+  // Discover venue property names per type; values are loaded lazily later.
+  auto venue_type_prop_names = discoverVenuePropertyNames(loader);
 
   // Map to cache person indices incrementally across chunks
   std::unordered_map<PersonId, size_t> local_person_idx_map;
@@ -976,57 +1071,7 @@ WorldState HDF5Loader::loadDomainChunked(
     }
   }
 
-  // Optional per-(person, venue) membership metadata (Design B side-table).
-  // Carries per-leg fields (e.g. boarding/alighting times for route
-  // activities) when present. Backward-compatible — old worlds without this
-  // dataset simply have no per-membership metadata, and partial_presence
-  // venues degrade to full-slot presence in the FOI loop.
-  if (loader.groupExists("/activity_mappings/membership_metadata")) {
-    const std::string base = "/activity_mappings/membership_metadata";
-    std::vector<std::string> field_names =
-        loader.readStringDataset(base + "/field_names");
-    auto pids = loader.readNumericDataset<int32_t>(base + "/person_ids");
-    auto vids = loader.readNumericDataset<int32_t>(base + "/venue_ids");
-
-    if (pids.size() == vids.size() && !field_names.empty()) {
-      loader.world_.membership_field_names = field_names;
-      loader.world_.membership_field_values.assign(field_names.size(), {});
-
-      // Locate each side-table row in this rank's activity_venues. Rows that
-      // belong to a non-local person are kept as kAbsent and skipped later.
-      const uint32_t kAbsent = std::numeric_limits<uint32_t>::max();
-      std::vector<uint32_t> row_flat_idx(pids.size(), kAbsent);
-      for (size_t i = 0; i < pids.size(); ++i) {
-        auto pit = local_person_idx_map.find(pids[i]);
-        if (pit == local_person_idx_map.end()) continue;
-        const Person& person = loader.world_.people[pit->second];
-        for (const auto& meta : loader.world_.getActivityMetas(person)) {
-          auto venues = loader.world_.getActivityVenues(meta);
-          for (size_t k = 0; k < venues.size(); ++k) {
-            if (venues[k].first == vids[i]) {
-              row_flat_idx[i] =
-                  meta.venue_start + static_cast<uint32_t>(k);
-              break;
-            }
-          }
-          if (row_flat_idx[i] != kAbsent) break;
-        }
-      }
-
-      for (size_t f = 0; f < field_names.size(); ++f) {
-        auto vals =
-            loader.readNumericDataset<float>(base + "/" + field_names[f]);
-        if (vals.size() != pids.size()) continue;
-        auto& sink = loader.world_.membership_field_values[f];
-        sink.reserve(vals.size() / 4);
-        for (size_t i = 0; i < vals.size(); ++i) {
-          if (row_flat_idx[i] == kAbsent) continue;
-          if (vals[i] == WorldState::kMembershipFieldAbsent) continue;
-          sink[row_flat_idx[i]] = vals[i];
-        }
-      }
-    }
-  }
+  loadMembershipMetadata(loader, local_person_idx_map);
 
   // Build venue index before loading subsets so getVenue() works
   for (size_t i = 0; i < loader.world_.venues.size(); ++i) {
@@ -1171,20 +1216,7 @@ WorldState HDF5Loader::loadDomainChunked(
     }
   }
 
-  // Build global venue type map: read ALL venue IDs and type_ids from HDF5.
-  // This is needed for cross-domain venue lookups in selectVenue() when
-  // running in MPI mode — venues owned by other ranks are not in world.venues,
-  // but activity mappings may reference them. ~300K entries × 5 bytes ≈ 1.5MB.
-  {
-    auto all_venue_ids = loader.readNumericDataset<int32_t>("/venues/ids");
-    auto all_venue_types = loader.readNumericDataset<uint8_t>("/venues/types");
-    size_t n = std::min(all_venue_ids.size(), all_venue_types.size());
-    loader.world_.global_venue_type_map.reserve(n);
-    for (size_t i = 0; i < n; ++i) {
-      loader.world_.global_venue_type_map[all_venue_ids[i]] =
-          all_venue_types[i];
-    }
-  }
+  buildGlobalVenueTypeMap(loader);
 
   MemoryUtils::logMemory("After loading all chunks, before indexing");
   loader.world_.buildIndices();
