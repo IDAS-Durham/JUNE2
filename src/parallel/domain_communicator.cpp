@@ -19,6 +19,27 @@
 
 namespace {
 
+// Generic field-level pack/unpack: copies sizeof(T) bytes and advances the
+// cursor. Sender and receiver must agree on field order and types; the wire
+// size is `sum of sizeof(field)` per struct. These helpers eliminate the
+// hand-written `memcpy(..., N); ptr += N;` pairs while preserving the exact
+// byte-for-byte wire format the original code produced.
+template <typename T>
+inline char* packField(char* ptr, const T& v) {
+  static_assert(std::is_trivially_copyable_v<T>,
+                "packField requires a trivially copyable type");
+  std::memcpy(ptr, &v, sizeof(T));
+  return ptr + sizeof(T);
+}
+
+template <typename T>
+inline const char* unpackField(const char* ptr, T& v) {
+  static_assert(std::is_trivially_copyable_v<T>,
+                "unpackField requires a trivially copyable type");
+  std::memcpy(&v, ptr, sizeof(T));
+  return ptr + sizeof(T);
+}
+
 // Fixed-size header of the visitor wire format (everything before the
 // integrated_infectiousness payload): 4+4+4+4+1+1+4+1+2+8 = 33 bytes.
 // Total wire size = VISITOR_WIRE_HEADER + num_modes * sizeof(double).
@@ -29,26 +50,16 @@ inline int visitorWireSize(int num_modes) {
 
 char* packVisitor(char* ptr, const june::Domain::VisitorData& v,
                   int num_modes) {
-  memcpy(ptr, &v.person_id, 4);
-  ptr += 4;
-  memcpy(ptr, &v.home_rank, 4);
-  ptr += 4;
-  memcpy(ptr, &v.venue_id, 4);
-  ptr += 4;
-  memcpy(ptr, &v.subset_idx, 4);
-  ptr += 4;
-  memcpy(ptr, &v.is_infected, 1);
-  ptr += 1;
-  memcpy(ptr, &v.is_infectious, 1);
-  ptr += 1;
-  memcpy(ptr, &v.immunity_level, 4);
-  ptr += 4;
-  memcpy(ptr, &v.encounter_type_id, 1);
-  ptr += 1;
-  memcpy(ptr, &v.symptom_id, 2);
-  ptr += 2;
-  memcpy(ptr, &v.time_in_stage, 8);
-  ptr += 8;
+  ptr = packField(ptr, v.person_id);
+  ptr = packField(ptr, v.home_rank);
+  ptr = packField(ptr, v.venue_id);
+  ptr = packField(ptr, v.subset_idx);
+  ptr = packField(ptr, v.is_infected);
+  ptr = packField(ptr, v.is_infectious);
+  ptr = packField(ptr, v.immunity_level);
+  ptr = packField(ptr, v.encounter_type_id);
+  ptr = packField(ptr, v.symptom_id);
+  ptr = packField(ptr, v.time_in_stage);
   // Variable-length per-mode payload. The vector must be exactly num_modes
   // long; sender and receiver agree on this from disease->numModes(), which
   // is loaded identically on every rank. Mismatches indicate a config bug
@@ -60,7 +71,8 @@ char* packVisitor(char* ptr, const june::Domain::VisitorData& v,
         std::to_string(num_modes));
   }
   if (num_modes > 0) {
-    memcpy(ptr, v.integrated_infectiousness.data(), num_modes * sizeof(double));
+    std::memcpy(ptr, v.integrated_infectiousness.data(),
+                num_modes * sizeof(double));
     ptr += num_modes * sizeof(double);
   }
   return ptr;
@@ -68,29 +80,20 @@ char* packVisitor(char* ptr, const june::Domain::VisitorData& v,
 
 const char* unpackVisitor(const char* ptr, june::Domain::VisitorData& v,
                           int num_modes) {
-  memcpy(&v.person_id, ptr, 4);
-  ptr += 4;
-  memcpy(&v.home_rank, ptr, 4);
-  ptr += 4;
-  memcpy(&v.venue_id, ptr, 4);
-  ptr += 4;
-  memcpy(&v.subset_idx, ptr, 4);
-  ptr += 4;
-  memcpy(&v.is_infected, ptr, 1);
-  ptr += 1;
-  memcpy(&v.is_infectious, ptr, 1);
-  ptr += 1;
-  memcpy(&v.immunity_level, ptr, 4);
-  ptr += 4;
-  memcpy(&v.encounter_type_id, ptr, 1);
-  ptr += 1;
-  memcpy(&v.symptom_id, ptr, 2);
-  ptr += 2;
-  memcpy(&v.time_in_stage, ptr, 8);
-  ptr += 8;
+  ptr = unpackField(ptr, v.person_id);
+  ptr = unpackField(ptr, v.home_rank);
+  ptr = unpackField(ptr, v.venue_id);
+  ptr = unpackField(ptr, v.subset_idx);
+  ptr = unpackField(ptr, v.is_infected);
+  ptr = unpackField(ptr, v.is_infectious);
+  ptr = unpackField(ptr, v.immunity_level);
+  ptr = unpackField(ptr, v.encounter_type_id);
+  ptr = unpackField(ptr, v.symptom_id);
+  ptr = unpackField(ptr, v.time_in_stage);
   v.integrated_infectiousness.assign(num_modes, 0.0);
   if (num_modes > 0) {
-    memcpy(v.integrated_infectiousness.data(), ptr, num_modes * sizeof(double));
+    std::memcpy(v.integrated_infectiousness.data(), ptr,
+                num_modes * sizeof(double));
     ptr += num_modes * sizeof(double);
   }
   return ptr;
@@ -99,90 +102,56 @@ const char* unpackVisitor(const char* ptr, june::Domain::VisitorData& v,
 constexpr int PROPOSAL_WIRE_SIZE = 33;  // 4*8+1
 
 char* packProposal(char* ptr, const june::EncounterProposal& p) {
-  memcpy(ptr, &p.encounter_id, 4);
-  ptr += 4;
-  memcpy(ptr, &p.host_id, 4);
-  ptr += 4;
-  memcpy(ptr, &p.host_rank, 4);
-  ptr += 4;
-  memcpy(ptr, &p.invitee_id, 4);
-  ptr += 4;
-  memcpy(ptr, &p.venue_id, 4);
-  ptr += 4;
-  memcpy(ptr, &p.venue_owner_rank, 4);
-  ptr += 4;
-  memcpy(ptr, &p.venue_type_id, 4);
-  ptr += 4;
-  memcpy(ptr, &p.slot, 4);
-  ptr += 4;
-  memcpy(ptr, &p.encounter_type_id, 1);
-  ptr += 1;
+  ptr = packField(ptr, p.encounter_id);
+  ptr = packField(ptr, p.host_id);
+  ptr = packField(ptr, p.host_rank);
+  ptr = packField(ptr, p.invitee_id);
+  ptr = packField(ptr, p.venue_id);
+  ptr = packField(ptr, p.venue_owner_rank);
+  ptr = packField(ptr, p.venue_type_id);
+  ptr = packField(ptr, p.slot);
+  ptr = packField(ptr, p.encounter_type_id);
   return ptr;
 }
 
 const char* unpackProposal(const char* ptr, june::EncounterProposal& p) {
-  memcpy(&p.encounter_id, ptr, 4);
-  ptr += 4;
-  memcpy(&p.host_id, ptr, 4);
-  ptr += 4;
-  memcpy(&p.host_rank, ptr, 4);
-  ptr += 4;
-  memcpy(&p.invitee_id, ptr, 4);
-  ptr += 4;
-  memcpy(&p.venue_id, ptr, 4);
-  ptr += 4;
-  memcpy(&p.venue_owner_rank, ptr, 4);
-  ptr += 4;
-  memcpy(&p.venue_type_id, ptr, 4);
-  ptr += 4;
-  memcpy(&p.slot, ptr, 4);
-  ptr += 4;
-  memcpy(&p.encounter_type_id, ptr, 1);
-  ptr += 1;
+  ptr = unpackField(ptr, p.encounter_id);
+  ptr = unpackField(ptr, p.host_id);
+  ptr = unpackField(ptr, p.host_rank);
+  ptr = unpackField(ptr, p.invitee_id);
+  ptr = unpackField(ptr, p.venue_id);
+  ptr = unpackField(ptr, p.venue_owner_rank);
+  ptr = unpackField(ptr, p.venue_type_id);
+  ptr = unpackField(ptr, p.slot);
+  ptr = unpackField(ptr, p.encounter_type_id);
   return ptr;
 }
 
 constexpr int REPLY_WIRE_SIZE = 26;  // 4*6+1+1
 
 char* packReply(char* ptr, const june::EncounterReply& r) {
-  memcpy(ptr, &r.encounter_id, 4);
-  ptr += 4;
-  memcpy(ptr, &r.host_id, 4);
-  ptr += 4;
-  memcpy(ptr, &r.invitee_id, 4);
-  ptr += 4;
-  memcpy(ptr, &r.venue_id, 4);
-  ptr += 4;
-  memcpy(ptr, &r.venue_type_id, 4);
-  ptr += 4;
-  memcpy(ptr, &r.slot, 4);
-  ptr += 4;
-  memcpy(ptr, &r.encounter_type_id, 1);
-  ptr += 1;
+  ptr = packField(ptr, r.encounter_id);
+  ptr = packField(ptr, r.host_id);
+  ptr = packField(ptr, r.invitee_id);
+  ptr = packField(ptr, r.venue_id);
+  ptr = packField(ptr, r.venue_type_id);
+  ptr = packField(ptr, r.slot);
+  ptr = packField(ptr, r.encounter_type_id);
   uint8_t status_byte = static_cast<uint8_t>(r.status);
-  memcpy(ptr, &status_byte, 1);
-  ptr += 1;
+  ptr = packField(ptr, status_byte);
   return ptr;
 }
 
 const char* unpackReply(const char* ptr, june::EncounterReply& r) {
-  memcpy(&r.encounter_id, ptr, 4);
-  ptr += 4;
-  memcpy(&r.host_id, ptr, 4);
-  ptr += 4;
-  memcpy(&r.invitee_id, ptr, 4);
-  ptr += 4;
-  memcpy(&r.venue_id, ptr, 4);
-  ptr += 4;
-  memcpy(&r.venue_type_id, ptr, 4);
-  ptr += 4;
-  memcpy(&r.slot, ptr, 4);
-  ptr += 4;
-  memcpy(&r.encounter_type_id, ptr, 1);
-  ptr += 1;
+  ptr = unpackField(ptr, r.encounter_id);
+  ptr = unpackField(ptr, r.host_id);
+  ptr = unpackField(ptr, r.invitee_id);
+  ptr = unpackField(ptr, r.venue_id);
+  ptr = unpackField(ptr, r.venue_type_id);
+  ptr = unpackField(ptr, r.slot);
+  ptr = unpackField(ptr, r.encounter_type_id);
   uint8_t status_byte;
-  memcpy(&status_byte, ptr, 1);
-  ptr += 1;
+  ptr = unpackField(ptr, status_byte);
   r.status = static_cast<june::ReplyStatus>(status_byte);
   return ptr;
 }
