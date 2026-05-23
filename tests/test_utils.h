@@ -1,8 +1,12 @@
 #pragma once
 
+#include <algorithm>
 #include <string>
+#include <tuple>
+#include <unordered_map>
 #include <vector>
 
+#include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
 
@@ -115,5 +119,136 @@ class TestWorldFactory {
     }
   }
 };
+
+// =============================================================================
+// Partial-presence test helpers
+//
+// Build synthetic worlds for partial-presence FOI tests. Tests assert physics
+// properties (overlap-only exposure, bin isolation, gate non-regression) on
+// anonymous IDs — see feedback_tests_name_physics_not_scenarios memory.
+// =============================================================================
+
+// One (rider, leg) entry. Used by addPartialPresenceLegs to populate a
+// person's ActivityMeta + activity_venues + membership_metadata in one call.
+struct PartialPresenceLegSpec {
+  PersonId person_id;
+  VenueId venue_id;
+  float t_board_min;
+  float t_alight_min;
+};
+
+// Register a partial-presence venue type. Appends to world.venue_type_names,
+// sets the type's target_group_size in sim_cfg.partial_presence, and flips
+// the corresponding bit in enabled_venue_type_mask. Returns the new type_id.
+inline uint8_t addPartialPresenceVenueType(WorldState& world,
+                                           SimulationConfig& sim_cfg,
+                                           const std::string& name,
+                                           int target_group_size) {
+  world.venue_type_names.push_back(name);
+  const uint8_t type_id =
+      static_cast<uint8_t>(world.venue_type_names.size() - 1);
+  sim_cfg.partial_presence.target_group_size_by_name[name] = target_group_size;
+  if (sim_cfg.partial_presence.target_group_size_by_type_id.size() <= type_id) {
+    sim_cfg.partial_presence.target_group_size_by_type_id.resize(type_id + 1,
+                                                                 0);
+  }
+  sim_cfg.partial_presence.target_group_size_by_type_id[type_id] =
+      target_group_size;
+  sim_cfg.partial_presence.enabled_venue_type_mask |= (1ULL << type_id);
+  return type_id;
+}
+
+// Create a venue of the given type and append to world. Returns its VenueId.
+inline VenueId addPartialPresenceVenue(WorldState& world, uint8_t type_id) {
+  Venue v;
+  v.id = static_cast<VenueId>(world.venues.size());
+  v.type_id = type_id;
+  v.parent_id = -1;
+  v.geo_unit_id = 0;
+  world.venues.push_back(v);
+  return v.id;
+}
+
+// Attach a single multi-leg presence activity to people. Each person referenced
+// in `legs` gets one ActivityMeta with venue_count = number of their legs.
+// All legs become entries in activity_venues; per-leg t_board_min /
+// t_alight_min are written into membership_field_values (the side-table
+// the RuntimeBinAllocator consults).
+//
+// Pre-condition: each referenced person has activity_meta_count == 0 on entry
+// (helper is for fresh persons; reusing it on the same person would break
+// the contiguous ActivityMeta range assumption).
+inline void addPartialPresenceLegs(
+    WorldState& world, int16_t activity_index,
+    const std::vector<PartialPresenceLegSpec>& legs) {
+  if (world.membership_field_names.empty()) {
+    world.membership_field_names = {"t_board_min", "t_alight_min"};
+    world.membership_field_values.resize(2);
+  }
+  const int tb_idx = world.getMembershipFieldIndex("t_board_min");
+  const int ta_idx = world.getMembershipFieldIndex("t_alight_min");
+
+  // Preserve insertion order per person.
+  std::unordered_map<PersonId, std::vector<const PartialPresenceLegSpec*>>
+      legs_by_pid;
+  std::vector<PersonId> person_order;
+  for (const auto& leg : legs) {
+    auto& bucket = legs_by_pid[leg.person_id];
+    if (bucket.empty()) person_order.push_back(leg.person_id);
+    bucket.push_back(&leg);
+  }
+
+  for (PersonId pid : person_order) {
+    auto pit = std::find_if(world.people.begin(), world.people.end(),
+                            [pid](const Person& p) { return p.id == pid; });
+    if (pit == world.people.end()) continue;
+    Person& person = *pit;
+
+    person.activity_meta_start =
+        static_cast<uint32_t>(world.activity_meta.size());
+    person.activity_meta_count = 1;
+
+    Person::ActivityMeta meta;
+    meta.activity_index = activity_index;
+    meta.venue_start = static_cast<uint32_t>(world.activity_venues.size());
+    meta.venue_count = static_cast<uint16_t>(legs_by_pid[pid].size());
+
+    for (const auto* leg : legs_by_pid[pid]) {
+      const uint32_t flat_idx =
+          static_cast<uint32_t>(world.activity_venues.size());
+      world.activity_venues.push_back({leg->venue_id, /*subset=*/0});
+      world.membership_field_values[tb_idx][flat_idx] = leg->t_board_min;
+      world.membership_field_values[ta_idx][flat_idx] = leg->t_alight_min;
+    }
+    world.activity_meta.push_back(meta);
+  }
+}
+
+// Build the PersonLocation list that drives processTransmissions for a
+// partial-presence scenario. One entry per (rider, leg): venue_id is the
+// leg's venue, activity_index marks the rider as active this slot.
+// (Multi-leg riders appear N times — once per leg — matching the engine's
+// multi-presence behavior.)
+inline std::vector<PersonLocation> makePartialPresenceLocations(
+    const WorldState& world, int16_t activity_index) {
+  std::vector<PersonLocation> locs;
+  for (size_t i = 0; i < world.people.size(); ++i) {
+    const Person& p = world.people[i];
+    for (const auto& meta : world.getActivityMetas(p)) {
+      if (meta.activity_index != activity_index) continue;
+      for (const auto& [vid, subset] : world.getActivityVenues(meta)) {
+        PersonLocation loc;
+        loc.person_id = p.id;
+        loc.venue_id = vid;
+        loc.subset_index = subset;
+        loc.activity_index = activity_index;
+        loc.encounter_type_id = 255;
+        loc.person_array_index = i;
+        locs.push_back(loc);
+      }
+    }
+  }
+  return locs;
+}
 
 }  // namespace june

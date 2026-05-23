@@ -286,6 +286,37 @@ bool SelectionCriterion::evaluate(const Person& person, const WorldState* world,
   return false;
 }
 
+void SimulationConfig::resolve(const WorldState& world) {
+  // Resolve the partial-presence venue type names into a bitmask of
+  // venue_type_ids + a per-id target_group_size lookup. Unknown names are
+  // silently ignored (the world may not contain every declared type — e.g.
+  // tube_line in a Durham-only world has no successful tube routes and is
+  // absent from the registry). Throws if a declared type id exceeds the
+  // bitmask width or if target_group_size is non-positive.
+  partial_presence.enabled_venue_type_mask = 0;
+  partial_presence.target_group_size_by_type_id.assign(
+      world.venue_type_names.size(), 0);
+  for (const auto& [name, tgs] : partial_presence.target_group_size_by_name) {
+    int idx = world.getVenueTypeIndex(name);
+    if (idx < 0) continue;
+    if (idx >= 64) {
+      throw std::runtime_error(
+          "SimulationConfig::resolve: partial_presence venue type id " +
+          std::to_string(idx) + " ('" + name +
+          "') exceeds 64-bit mask width; promote enabled_venue_type_mask to "
+          "a wider bitset.");
+    }
+    if (tgs <= 0) {
+      throw std::runtime_error(
+          "SimulationConfig::resolve: partial_presence target_group_size for "
+          "venue type '" +
+          name + "' must be > 0 (got " + std::to_string(tgs) + ").");
+    }
+    partial_presence.enabled_venue_type_mask |= (uint64_t(1) << idx);
+    partial_presence.target_group_size_by_type_id[idx] = tgs;
+  }
+}
+
 void ContactMatrixConfig::resolve(const WorldState& world) {
   const auto& venue_names = world.venue_type_names;
   betas_by_id.assign(venue_names.size(), default_beta);
@@ -546,6 +577,26 @@ void ScheduleConfig::resolveSlots(const WorldState& world) {
   };
 
   for (auto& sched_type : schedule_types) {
+    // Resolve force_hybrid_mask and linked_activities_mask. Activities listed
+    // in linked_activities are implicitly force-hybrid (must be re-rolled at
+    // runtime to honour the daily cached decision).
+    sched_type.force_hybrid_mask = 0;
+    for (const auto& act_name : sched_type.force_hybrid_activities) {
+      int idx = world.getActivityIndex(act_name);
+      if (idx >= 0) {
+        sched_type.force_hybrid_mask |= (ActivityMask(1) << idx);
+      }
+    }
+    sched_type.linked_activities_mask = 0;
+    for (const auto& act_name : sched_type.linked_activities) {
+      int idx = world.getActivityIndex(act_name);
+      if (idx >= 0) {
+        ActivityMask bit = (ActivityMask(1) << idx);
+        sched_type.linked_activities_mask |= bit;
+        sched_type.force_hybrid_mask |= bit;  // implies force_hybrid
+      }
+    }
+
     // Build participation_by_day_type_id[dt_idx][act_idx]
     sched_type.participation_by_day_type_id.assign(
         num_dt, std::vector<double>(num_acts, 0.0));

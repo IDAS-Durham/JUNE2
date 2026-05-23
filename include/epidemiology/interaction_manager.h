@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../activity/activity_manager.h"
+#include "../activity/runtime_bin_allocator.h"
 #include "../core/config.h"
 #include "../core/world_state.h"
 #include "../utils/age_utils.h"
@@ -184,6 +185,47 @@ class InteractionManager {
   // Set the current day type index (used by EventLogger for per-type stats)
   void setCurrentDayTypeIdx(int idx) { current_day_type_idx_ = idx; }
 
+  // Wire the runtime bin allocator so partial-presence venues (commute lines,
+  // etc.) can resolve per-rider carriage assignments and presence windows.
+  // Caller (the Simulator) sets this once after both objects exist. Null is
+  // a valid state — partial-presence venues degrade to full-slot FOI without
+  // an allocator.
+  void setRuntimeBinAllocator(const RuntimeBinAllocator* a) {
+    runtime_bin_allocator_ = a;
+  }
+
+  // Per-susceptible accumulated λ + source attribution from a single
+  // partial-presence venue. Output of computePartialPresenceLambda; consumed
+  // by processPartialPresenceVenue's Bernoulli step. Exposed publicly so
+  // engine tests can assert the FOI math without driving the stochastic
+  // infection draw.
+  struct PartialPresenceAccumSource {
+    int mode;
+    PersonId infector;
+    double weighted;
+  };
+  struct PartialPresenceLambdaResult {
+    std::unordered_map<PersonId, double> susc_lambda;
+    std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>
+        susc_sources;
+  };
+
+  // Steps 1–2 of partial-presence transmission processing, extracted as a
+  // pure accumulator: bucket members into runtime bins ("carriages"), walk
+  // sub-intervals delimited by effective presence windows, accumulate
+  // per-susceptible λ and per-source attribution weights. No infection
+  // side-effects, no RNG. Preconditions are enforced here (throws on
+  // violation) so callers can't accidentally bypass them.
+  //
+  // The wrapping processPartialPresenceVenue calls this then performs the
+  // single Bernoulli draw + infection write per susceptible. Tests call
+  // this directly to assert λ deterministically.
+  PartialPresenceLambdaResult computePartialPresenceLambda(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      VenueId actual_venue_id, double current_time, double delta_hours,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      uint8_t encounter_type_id);
+
  private:
   WorldState& world_;
   const ContactMatrixConfig& contact_matrices_;
@@ -225,6 +267,29 @@ class InteractionManager {
       uint8_t encounter_type_id = 255,
       const CompartmentalModelManager* comp_model = nullptr);
 
+  // Sibling of processVenueTransmissions for partial-presence venues
+  // (transport_line, etc. — anything declared in
+  // SimulationConfig::partial_presence). Per-rider carriage assignments come
+  // from the runtime_bin_allocator_; per-rider effective presence windows
+  // come from the membership_metadata side-table + presence_window helper.
+  //
+  // v1 scope (assumed and enforced — throws on violation):
+  //   - Physical venue (actual_venue_id >= 0); not a virtual encounter venue.
+  //   - No parent venue (transport lines have none in current MAY output).
+  //   - No coordinated encounter participants (encounter_type_id == 255).
+  //   - Direct-contact FOI only; no fomite / compartmental uptake on
+  //     partial-presence venue types in v1.
+  // Violations throw with a descriptive error rather than silently
+  // falling back, per the project's no-silent-fallbacks rule.
+  int processPartialPresenceVenue(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      VenueId actual_venue_id, double current_time, double delta_hours,
+      std::unordered_set<PersonId>* active_infections,
+      const std::unordered_set<PersonId>* visitor_ids,
+      std::vector<PendingInfection>* pending_infections,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      uint8_t encounter_type_id, const CompartmentalModelManager* comp_model);
+
   PerformanceStats stats_;
 
   // Optimization buffers (reused across calls to avoid allocation)
@@ -263,6 +328,11 @@ class InteractionManager {
   // call. Rank-local by construction: all child venues of a parent share
   // its MGU, so no MPI sync is required.
   std::unordered_map<VenueId, ParentAggregate> parent_aggregates_;
+
+  // Wired by Simulator after construction. Null = no partial-presence
+  // bucketing (sub-interval FOI is skipped; processVenueTransmissions
+  // gate stays a no-op).
+  const RuntimeBinAllocator* runtime_bin_allocator_ = nullptr;
 
   // Cached env-flag enabling verbose parent-mixing debug prints
   // (JUNE_DEBUG_PARENT_MIXING=1). Read once at construction.

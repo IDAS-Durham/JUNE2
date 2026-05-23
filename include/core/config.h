@@ -178,6 +178,25 @@ struct ScheduleType {
   // Pre-resolved: slots_by_day_type_idx[day_type_idx] (nullptr if not defined)
   std::vector<const std::vector<TimeSlot>*> slots_by_day_type_idx;
 
+  // Per-schedule override: activities listed here are demoted from
+  // DETERMINISTIC to HYBRID at precompute time — venue is still pre-cached
+  // (no perf loss on venue lookup) but participation is re-rolled each tick
+  // via the existing hybrid-entry runtime path.
+  std::vector<std::string> force_hybrid_activities;
+  ActivityMask force_hybrid_mask = 0;  // resolved in resolveSlots()
+
+  // Linked activities: activities listed here share ONE dice roll per
+  // (person, sim_day). All listed activities pass or fail together — the
+  // engine caches the first roll on Person.linked_activities_pass and reuses
+  // it for the rest of the day. Implies force_hybrid (these activities must
+  // be re-rolled at runtime, not frozen at precompute), so listing an
+  // activity here automatically adds it to force_hybrid_mask too.
+  // The participation rate used is the rate of the first listed activity in
+  // the schedule's `participation` table — for the coupling to make semantic
+  // sense all listed activities should have the same rate.
+  std::vector<std::string> linked_activities;
+  ActivityMask linked_activities_mask = 0;  // resolved in resolveSlots()
+
   // Check if this schedule type applies to a person
   bool appliesTo(const Person& person,
                  const WorldState* world = nullptr) const {
@@ -199,6 +218,8 @@ struct ScheduleType {
     for (auto& criterion : selection_criteria) {
       criterion.resolve(world);
     }
+    // force_hybrid_mask is resolved in ScheduleConfig::resolveSlots (defined
+    // in config.cpp where WorldState is complete).
   }
 };
 
@@ -626,7 +647,37 @@ struct SimulationConfig {
     }
   } checkpoint;
 
-  void resolve(const WorldState& /*world*/) {}
+  // Partial-presence venues: at each slot, the RuntimeBinAllocator buckets
+  // riders of these venue types into ephemeral runtime bins (e.g. carriages
+  // of a train_line) and the FOI loop drives sub-interval transmission from
+  // each rider's per-membership (t_board_min, t_alight_min).
+  //
+  // Number of bins is emergent — derived at slot time from the global rider
+  // count and the per-venue-type `target_group_size`. There is no hard
+  // capacity; bins differ in size by at most 1 (round-robin deal). Empty
+  // map (default) = feature inactive, zero hot-path overhead.
+  struct PartialPresenceConfig {
+    // YAML-declared: type name → target group size.
+    // Example: {"train_line": 100, "tube_line": 100, "bus_line": 50}.
+    std::unordered_map<std::string, int> target_group_size_by_name;
+
+    // Resolved at world-load time. Bit i set iff venue type id i is a
+    // partial-presence type present in this world. uint64_t fits 64 venue
+    // types; promote to bitset if a world ever exceeds that.
+    uint64_t enabled_venue_type_mask = 0;
+
+    // Resolved at world-load time. Indexed by venue type id; entries for
+    // non-partial-presence types are 0. Lookup-by-id is the hot path.
+    std::vector<int> target_group_size_by_type_id;
+
+    int getTargetGroupSize(uint8_t type_id) const {
+      return type_id < target_group_size_by_type_id.size()
+                 ? target_group_size_by_type_id[type_id]
+                 : 0;
+    }
+  } partial_presence;
+
+  void resolve(const WorldState& world);
 };
 
 // =============================================================================
