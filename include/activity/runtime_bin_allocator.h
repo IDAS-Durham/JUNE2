@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../core/types.h"
+#include "presence_window.h"
 
 namespace june {
 
@@ -72,6 +73,42 @@ class RuntimeBinAllocator {
     return it == bin_by_av_idx_.end() ? kNoBin : it->second;
   }
 
+  // Runtime bin index for a specific (venue, person). Same value as the
+  // av_idx-keyed lookup above, but for callers (e.g. the FOI loop) that
+  // don't have the flat activity_venue index in hand. Returns kNoBin if
+  // the (venue, person) pair wasn't bucketed this slot.
+  uint16_t getBinIndex(VenueId venue_id, PersonId person_id) const {
+    const uint64_t key = (static_cast<uint64_t>(venue_id) << 32) |
+                         static_cast<uint64_t>(person_id);
+    auto it = bin_by_vid_pid_.find(key);
+    return it == bin_by_vid_pid_.end() ? kNoBin : it->second;
+  }
+
+  // Number of bins allocated for a venue this slot. Returns 0 if the venue
+  // isn't partial-presence or has no riders this slot. Used by the FOI loop
+  // to size per-carriage scratch buffers.
+  uint16_t getNumBins(VenueId venue_id) const {
+    auto it = num_bins_by_venue_.find(venue_id);
+    return it == num_bins_by_venue_.end() ? 0 : it->second;
+  }
+
+  // Per-(venue, person) effective presence window for this slot, in minutes
+  // since slot start. Computed on each rider's home rank (so the proportional
+  // policy for long-distance commuters sees the rider's full leg list) and
+  // broadcast globally via the same Allgatherv that distributes bin
+  // assignments, so cross-rank visitors get the SAME window the home rank
+  // computed — required for MPI-deterministic FOI on cross-LGU venues.
+  //
+  // Returns {0, 0} if the (venue, person) wasn't bucketed this slot.
+  EffectiveWindow getPresenceWindow(VenueId venue_id,
+                                    PersonId person_id) const {
+    const uint64_t key = (static_cast<uint64_t>(venue_id) << 32) |
+                         static_cast<uint64_t>(person_id);
+    auto it = windows_by_vid_pid_.find(key);
+    return it == windows_by_vid_pid_.end() ? EffectiveWindow{0.0f, 0.0f}
+                                           : it->second;
+  }
+
   // True iff the SimulationConfig declares any partial-presence venue types
   // that are actually present in this world.
   bool isActive() const { return venue_type_mask_ != 0; }
@@ -89,6 +126,21 @@ class RuntimeBinAllocator {
   // of (rider, leg) pairs on partial-presence venues this slot — small
   // even at national scale (~150k at 60M).
   std::unordered_map<uint32_t, uint16_t> bin_by_av_idx_;
+
+  // Global (venue, person) → bin map, identical on every rank. Same data
+  // as bin_by_av_idx_ but keyed for callers that don't have the flat
+  // av_idx (the FOI loop only carries InteractionMember = {id, ...}).
+  // Key layout: (uint64_t(venue_id) << 32) | uint64_t(person_id).
+  std::unordered_map<uint64_t, uint16_t> bin_by_vid_pid_;
+
+  // Per-venue bin count for this slot. Used by the FOI loop to size
+  // per-carriage scratch buffers without re-deriving from rider counts.
+  std::unordered_map<VenueId, uint16_t> num_bins_by_venue_;
+
+  // Global (venue, person) → presence window. Same broadcast as
+  // bin_by_vid_pid_; the FOI loop consults this for both local and
+  // cross-rank visitor riders so windows are identical on every rank.
+  std::unordered_map<uint64_t, EffectiveWindow> windows_by_vid_pid_;
 };
 
 }  // namespace june

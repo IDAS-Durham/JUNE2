@@ -292,6 +292,9 @@ Simulator::Simulator(WorldState& world, const Config& config,
   interaction_manager_ = std::make_unique<InteractionManager>(
       world_, config_.contact_matrices, config_.simulation, config_.parallel,
       disease_.get(), &event_logger_);
+  // Wire the runtime bin allocator so processPartialPresenceVenue can
+  // consult carriage assignments. Allocator already constructed above.
+  interaction_manager_->setRuntimeBinAllocator(runtime_bin_allocator_.get());
 
   // Initialize coordinated encounter manager
   int rank = 0;

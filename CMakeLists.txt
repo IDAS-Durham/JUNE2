@@ -137,6 +137,7 @@ set(JUNE_CORE_SOURCES
     src/config_checks.cpp
     src/activity/coordinated_encounter_manager.cpp
     src/activity/runtime_bin_allocator.cpp
+    src/activity/presence_window.cpp
     src/utils/event_logger.cpp
     src/utils/filtering.cpp
     src/utils/filtered_csv.cpp
