@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -16,6 +17,109 @@ namespace {
 
 using GeoPartitionMap =
     std::unordered_map<GeoUnitId, std::pair<size_t, size_t>>;
+
+// One contiguous run of HDF5 rows for a chunk: a single hyperslab read can
+// cover multiple geo_units as long as their (start, count) regions are
+// adjacent in the file. gu_indices lists which geo_units (indices into
+// geo_units_vec) this span covers, in order.
+struct ChunkSpan {
+  size_t start;
+  size_t count;
+  std::vector<size_t> gu_indices;
+};
+
+// Walk the geo_units in [start_idx, end_idx) and group those present in
+// `partition_map` into spans of file-adjacent rows. Returns the spans in
+// the order their first geo_unit appears.
+std::vector<ChunkSpan> detectChunkSpans(
+    const GeoPartitionMap& partition_map,
+    const std::vector<GeoUnitId>& geo_units_vec, size_t start_idx,
+    size_t end_idx) {
+  std::vector<ChunkSpan> spans;
+  for (size_t i = start_idx; i < end_idx; ++i) {
+    GeoUnitId gu = geo_units_vec[i];
+    auto it = partition_map.find(gu);
+    if (it == partition_map.end()) continue;
+    auto [start, count] = it->second;
+    if (count == 0) continue;
+    if (!spans.empty() &&
+        start == spans.back().start + spans.back().count) {
+      spans.back().count += count;
+      spans.back().gu_indices.push_back(i);
+    } else {
+      spans.push_back({start, count, {i}});
+    }
+  }
+  return spans;
+}
+
+// Intern a PropertyValue against a per-property string registry and cache.
+// Returns the interned code, or -1 for null/empty values and for strings
+// that are network-encoded (starting with '[' or '{') — those are handled
+// separately by parseNetworkPartnersFromString. Lazily seeds index_cache
+// from registry on first use after a registry was populated elsewhere.
+int32_t internPropertyValue(
+    const PropertyValue& val, std::vector<std::string>& registry,
+    std::unordered_map<std::string, int32_t>& index_cache) {
+  if (std::holds_alternative<int32_t>(val)) return std::get<int32_t>(val);
+  if (std::holds_alternative<double>(val))
+    return static_cast<int32_t>(std::get<double>(val));
+  if (std::holds_alternative<bool>(val))
+    return std::get<bool>(val) ? 1 : 0;
+  if (!std::holds_alternative<std::string>(val)) return -1;
+
+  const std::string& s = std::get<std::string>(val);
+  if (s.empty()) return -1;
+  if (s[0] == '[' || s[0] == '{') return -1;  // network-encoded; handled later
+
+  if (index_cache.empty() && !registry.empty()) {
+    for (size_t r_idx = 0; r_idx < registry.size(); ++r_idx) {
+      index_cache[registry[r_idx]] = static_cast<int32_t>(r_idx);
+    }
+  }
+  auto it = index_cache.find(s);
+  if (it != index_cache.end()) return it->second;
+
+  int32_t code = static_cast<int32_t>(registry.size());
+  registry.push_back(s);
+  index_cache[s] = code;
+  return code;
+}
+
+// Parse a JSON-array-encoded list of integer partner IDs from `s` (e.g.
+// "[1,2,3]") and append them to world.network_partners. Returns a populated
+// NetworkMeta when at least one partner was parsed; returns std::nullopt
+// when `s` is not a network-encoded string or yielded no partners.
+std::optional<Person::NetworkMeta> parseNetworkPartnersFromString(
+    WorldState& world, const std::string& s, uint16_t network_type_id) {
+  if (s.empty() || (s[0] != '[' && s[0] != '{')) return std::nullopt;
+
+  uint32_t partner_start =
+      static_cast<uint32_t>(world.network_partners.size());
+  int32_t current_id = 0;
+  bool has_id = false;
+  for (char c : s) {
+    if (c >= '0' && c <= '9') {
+      current_id = current_id * 10 + (c - '0');
+      has_id = true;
+    } else if (has_id) {
+      world.network_partners.push_back(current_id);
+      current_id = 0;
+      has_id = false;
+    }
+  }
+  if (has_id) world.network_partners.push_back(current_id);
+
+  uint32_t partner_count =
+      static_cast<uint32_t>(world.network_partners.size()) - partner_start;
+  if (partner_count == 0) return std::nullopt;
+
+  Person::NetworkMeta meta;
+  meta.network_type_id = network_type_id;
+  meta.partner_start = partner_start;
+  meta.partner_count = partner_count;
+  return meta;
+}
 
 // Load an HDF5 partition index (geo_unit_ids / start_indices / counts) into a
 // map from GeoUnitId to (start, count).
@@ -673,28 +777,9 @@ WorldState HDF5Loader::loadDomainChunked(
     MemoryUtils::logMemory("Before GeoUnit Chunk " +
                            std::to_string(chunk_idx + 1));
 
-    // Detect contiguous spans for population
-    struct PopSpan {
-      size_t start;
-      size_t count;
-      std::vector<size_t> gu_indices;
-    };
-    std::vector<PopSpan> pop_spans;
-    for (size_t i = start_idx; i < end_idx; ++i) {
-      GeoUnitId gu = geo_units_vec[i];
-      if (pop_partition_map.count(gu)) {
-        auto [start, count] = pop_partition_map.at(gu);
-        if (count > 0) {
-          if (!pop_spans.empty() &&
-              start == pop_spans.back().start + pop_spans.back().count) {
-            pop_spans.back().count += count;
-            pop_spans.back().gu_indices.push_back(i);
-          } else {
-            pop_spans.push_back({start, count, {i}});
-          }
-        }
-      }
-    }
+    auto pop_spans = detectChunkSpans(pop_partition_map, geo_units_vec,
+                                      start_idx, end_idx);
+
     // Initialize network names registry
     loader.world_.network_names = population_property_names;
 
@@ -734,44 +819,10 @@ WorldState HDF5Loader::loadDomainChunked(
           for (size_t k = 0; k < chunk_property_columns.size(); ++k) {
             const auto& prop_name = population_property_names[k];
             const auto& prop_val = chunk_property_columns[k][j_off];
-
-            int32_t interned_val = -1;
-            if (std::holds_alternative<int32_t>(prop_val)) {
-              interned_val = std::get<int32_t>(prop_val);
-            } else if (std::holds_alternative<double>(prop_val)) {
-              interned_val = static_cast<int32_t>(std::get<double>(prop_val));
-            } else if (std::holds_alternative<bool>(prop_val)) {
-              interned_val = std::get<bool>(prop_val) ? 1 : 0;
-            } else if (std::holds_alternative<std::string>(prop_val)) {
-              const std::string& s = std::get<std::string>(prop_val);
-              if (!s.empty() && (s[0] == '[' || s[0] == '{')) {
-                // Handle as network below
-                interned_val = -1;
-              } else if (!s.empty()) {
-                // Categorical interning
-                auto& registry =
-                    loader.world_.person_property_value_registries[prop_name];
-                auto& index_cache = property_indices_cache[prop_name];
-
-                // Initialize cache if needed (e.g. if loaded from previous
-                // ranks or chunks)
-                if (index_cache.empty() && !registry.empty()) {
-                  for (size_t r_idx = 0; r_idx < registry.size(); ++r_idx) {
-                    index_cache[registry[r_idx]] = static_cast<int32_t>(r_idx);
-                  }
-                }
-
-                auto it_idx = index_cache.find(s);
-                if (it_idx == index_cache.end()) {
-                  interned_val = static_cast<int32_t>(registry.size());
-                  registry.push_back(s);
-                  index_cache[s] = interned_val;
-                } else {
-                  interned_val = it_idx->second;
-                }
-              }
-            }
-            loader.world_.person_properties.push_back(interned_val);
+            loader.world_.person_properties.push_back(internPropertyValue(
+                prop_val,
+                loader.world_.person_property_value_registries[prop_name],
+                property_indices_cache[prop_name]));
           }
 
           // Network parsing
@@ -779,41 +830,13 @@ WorldState HDF5Loader::loadDomainChunked(
               static_cast<uint32_t>(loader.world_.network_meta.size());
           for (size_t k = 0; k < population_property_names.size(); ++k) {
             const auto& prop_val = chunk_property_columns[k][j_off];
-            if (std::holds_alternative<std::string>(prop_val)) {
-              const std::string& s = std::get<std::string>(prop_val);
-              if (!s.empty() && (s[0] == '[' || s[0] == '{')) {
-                uint32_t partner_start = static_cast<uint32_t>(
-                    loader.world_.network_partners.size());
-                int32_t current_id = 0;
-                bool has_id = false;
-                for (char c : s) {
-                  if (c >= '0' && c <= '9') {
-                    current_id = current_id * 10 + (c - '0');
-                    has_id = true;
-                  } else if (has_id) {
-                    loader.world_.network_partners.push_back(current_id);
-                    current_id = 0;
-                    has_id = false;
-                  }
-                }
-                if (has_id)
-                  loader.world_.network_partners.push_back(current_id);
-
-                uint32_t partner_count =
-                    static_cast<uint32_t>(
-                        loader.world_.network_partners.size()) -
-                    partner_start;
-                if (partner_count > 0) {
-                  Person::NetworkMeta meta;
-                  meta.network_type_id = static_cast<uint16_t>(
-                      k);  // Match population_property_names index
-                  meta.partner_start = partner_start;
-                  meta.partner_count = partner_count;
-                  loader.world_.network_meta.push_back(meta);
-                  p.network_meta_count++;
-                }
-              }
-            }
+            if (!std::holds_alternative<std::string>(prop_val)) continue;
+            auto meta = parseNetworkPartnersFromString(
+                loader.world_, std::get<std::string>(prop_val),
+                static_cast<uint16_t>(k));
+            if (!meta) continue;
+            loader.world_.network_meta.push_back(*meta);
+            p.network_meta_count++;
           }
 
           loader.world_.people.push_back(std::move(p));
@@ -822,28 +845,8 @@ WorldState HDF5Loader::loadDomainChunked(
       }
     }
 
-    // Detect contiguous spans for venues
-    struct VenueSpan {
-      size_t start;
-      size_t count;
-      std::vector<size_t> gu_indices;
-    };
-    std::vector<VenueSpan> venue_spans;
-    for (size_t i = start_idx; i < end_idx; ++i) {
-      GeoUnitId gu = geo_units_vec[i];
-      if (venue_partition_map.count(gu)) {
-        auto [start, count] = venue_partition_map.at(gu);
-        if (count > 0) {
-          if (!venue_spans.empty() &&
-              start == venue_spans.back().start + venue_spans.back().count) {
-            venue_spans.back().count += count;
-            venue_spans.back().gu_indices.push_back(i);
-          } else {
-            venue_spans.push_back({start, count, {i}});
-          }
-        }
-      }
-    }
+    auto venue_spans = detectChunkSpans(venue_partition_map, geo_units_vec,
+                                        start_idx, end_idx);
 
     for (const auto& span : venue_spans) {
       auto chunk_ids = loader.readNumericDatasetRange<int32_t>(
@@ -952,43 +955,18 @@ WorldState HDF5Loader::loadDomainChunked(
               auto p_vals = loader.readPropertyDatasetRange(
                   p_path, span_p.start_r, span_p.count, p_name);
               for (size_t k = 0; k < span_p.count; ++k) {
-                if (k < p_vals.size() &&
-                    !std::holds_alternative<std::monostate>(p_vals[k])) {
-                  int32_t interned_val = -1;
-                  const auto& val = p_vals[k];
+                if (k >= p_vals.size()) continue;
+                if (std::holds_alternative<std::monostate>(p_vals[k])) continue;
 
-                  if (std::holds_alternative<int32_t>(val)) {
-                    interned_val = std::get<int32_t>(val);
-                  } else if (std::holds_alternative<double>(val)) {
-                    interned_val = static_cast<int32_t>(std::get<double>(val));
-                  } else if (std::holds_alternative<bool>(val)) {
-                    interned_val = std::get<bool>(val) ? 1 : 0;
-                  } else if (std::holds_alternative<std::string>(val)) {
-                    const std::string& s = std::get<std::string>(val);
-                    auto& registry =
-                        loader.world_.venue_property_value_registries[p_name];
-                    auto& cache = venue_property_indices_cache[p_name];
+                int32_t interned_val = internPropertyValue(
+                    p_vals[k],
+                    loader.world_.venue_property_value_registries[p_name],
+                    venue_property_indices_cache[p_name]);
 
-                    if (cache.empty() && !registry.empty()) {
-                      for (size_t r = 0; r < registry.size(); ++r)
-                        cache[registry[r]] = r;
-                    }
-
-                    auto it = cache.find(s);
-                    if (it == cache.end()) {
-                      interned_val = registry.size();
-                      registry.push_back(s);
-                      cache[s] = interned_val;
-                    } else {
-                      interned_val = it->second;
-                    }
-                  }
-
-                  size_t global_v_idx = span_p.internal_indices[k];
-                  uint32_t flat_idx =
-                      span_venues[global_v_idx].properties_start + p_idx;
-                  loader.world_.venue_properties[flat_idx] = interned_val;
-                }
+                size_t global_v_idx = span_p.internal_indices[k];
+                uint32_t flat_idx =
+                    span_venues[global_v_idx].properties_start + p_idx;
+                loader.world_.venue_properties[flat_idx] = interned_val;
               }
             }
           }
@@ -1006,27 +984,8 @@ WorldState HDF5Loader::loadDomainChunked(
 
     // Detect contiguous spans for activity mappings
     if (loader.groupExists("/activity_mappings/activity_map")) {
-      struct RelSpan {
-        size_t start;
-        size_t count;
-        std::vector<size_t> gu_indices;
-      };
-      std::vector<RelSpan> rel_spans;
-      for (size_t i = start_idx; i < end_idx; ++i) {
-        GeoUnitId gu = geo_units_vec[i];
-        if (rel_partition_map.count(gu)) {
-          auto [start, count] = rel_partition_map.at(gu);
-          if (count > 0) {
-            if (!rel_spans.empty() &&
-                start == rel_spans.back().start + rel_spans.back().count) {
-              rel_spans.back().count += count;
-              rel_spans.back().gu_indices.push_back(i);
-            } else {
-              rel_spans.push_back({start, count, {i}});
-            }
-          }
-        }
-      }
+      auto rel_spans = detectChunkSpans(rel_partition_map, geo_units_vec,
+                                        start_idx, end_idx);
 
       for (const auto& span : rel_spans) {
         auto span_activity_data = loader.read2DNumericDatasetRange<int32_t>(
