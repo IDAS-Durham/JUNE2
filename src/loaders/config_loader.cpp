@@ -4,9 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -34,69 +32,7 @@ bool config_loader_log_rank0() {
 #endif
 }
 
-// Parse a single CSV file into rows of string vectors, returning header + data
-std::pair<std::vector<std::string>, std::vector<std::vector<std::string>>>
-parseCSVFile(const std::string& filepath) {
-  std::ifstream file(filepath);
-  if (!file.is_open()) {
-    throw std::runtime_error("Cannot open CSV file: " + filepath);
-  }
-
-  std::vector<std::string> headers;
-  std::vector<std::vector<std::string>> rows;
-
-  std::string line;
-  // Parse header
-  if (std::getline(file, line)) {
-    std::stringstream ss(line);
-    std::string col;
-    while (std::getline(ss, col, ',')) {
-      auto start = col.find_first_not_of(" \t\r\n");
-      auto end = col.find_last_not_of(" \t\r\n");
-      if (start != std::string::npos)
-        headers.push_back(col.substr(start, end - start + 1));
-      else
-        headers.push_back("");
-    }
-  }
-
-  // Parse data rows
-  while (std::getline(file, line)) {
-    if (line.empty() || line[0] == '#') continue;
-    std::stringstream ss(line);
-    std::string cell;
-    std::vector<std::string> row;
-    while (std::getline(ss, cell, ',')) {
-      auto start = cell.find_first_not_of(" \t\r\n");
-      auto end = cell.find_last_not_of(" \t\r\n");
-      if (start != std::string::npos)
-        row.push_back(cell.substr(start, end - start + 1));
-      else
-        row.push_back("");
-    }
-    if (!row.empty()) rows.push_back(std::move(row));
-  }
-
-  return {headers, rows};
-}
-
-// Find column index by name, returns -1 if not found
-int findColumn(const std::vector<std::string>& headers,
-               const std::string& name) {
-  for (size_t i = 0; i < headers.size(); ++i) {
-    if (headers[i] == name) return static_cast<int>(i);
-  }
-  return -1;
-}
-
 }  // namespace
-
-std::string ConfigLoader::trimStr(const std::string& s) {
-  auto start = s.find_first_not_of(" \t\r\n");
-  if (start == std::string::npos) return "";
-  auto end = s.find_last_not_of(" \t\r\n");
-  return s.substr(start, end - start + 1);
-}
 
 Config ConfigLoader::loadAll(const std::string& simulation_file) {
   Config config;

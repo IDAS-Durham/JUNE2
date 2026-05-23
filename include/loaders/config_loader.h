@@ -24,9 +24,6 @@ class ConfigLoader {
   static ParallelConfig loadParallel(const std::string& filename);
   static ActivityPreferenceConfig loadActivityPreferences(
       const std::string& filename);
-
-  // CSV parsing utility: trims whitespace from a string
-  static std::string trimStr(const std::string& s);
 };
 
 }  // namespace june
