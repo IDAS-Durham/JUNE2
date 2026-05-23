@@ -132,11 +132,6 @@ void EventLogger::printEncounterStats(
   std::cout << "============================" << std::endl;
 }
 
-void EventLogger::saveToHDF5(const std::string& filename,
-                             const Config& config) {
-  EventWriter::saveToHDF5(*this, filename, config);
-}
-
 void EventLogger::saveToHDF5WithLookups(
     const std::string& filename, const WorldState& world, const Config& config,
     const std::unordered_set<PersonId>* person_ids_filter) {

@@ -49,9 +49,6 @@ class EventLogger {
                                double time, uint8_t encounter_type_id, int slot,
                                uint64_t group_id);
 
-  // Save all events to HDF5 file
-  void saveToHDF5(const std::string& filename, const Config& config);
-
   // Save all events + lookup tables to HDF5 file (with config-based selective
   // saving)
   void saveToHDF5WithLookups(

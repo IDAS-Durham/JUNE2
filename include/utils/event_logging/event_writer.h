@@ -17,8 +17,6 @@ class EventLogger;
 
 class EventWriter {
  public:
-  static void saveToHDF5(const EventLogger& logger, const std::string& filename,
-                         const Config& config);
   static void saveToHDF5WithLookups(
       const EventLogger& logger, const std::string& filename,
       const WorldState& world, const Config& config,

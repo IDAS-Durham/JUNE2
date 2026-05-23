@@ -28,50 +28,34 @@ bool isLogRank() {
 #endif
   return true;
 }
+
+// Write a string-registry vector as a chunked variable-length string dataset.
+// No-op when the registry is empty or the dataset already exists.
+void writeStringRegistry(H5::Group& registries_group,
+                         const std::string& dataset_name,
+                         const std::vector<std::string>& names) {
+  if (names.empty()) return;
+  if (H5Lexists(registries_group.getId(), dataset_name.c_str(), H5P_DEFAULT))
+    return;
+
+  hsize_t dims[1] = {names.size()};
+  H5::DataSpace space(1, dims);
+  H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
+  H5::DSetCreatPropList plist;
+  hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
+  if (chunk_dims[0] == 0) chunk_dims[0] = 1;
+  plist.setChunk(1, chunk_dims);
+
+  H5::DataSet ds = registries_group.createDataSet(dataset_name, type, space,
+                                                  plist);
+  std::vector<const char*> c_strs;
+  c_strs.reserve(names.size());
+  for (const auto& s : names) c_strs.push_back(s.c_str());
+  ds.write(c_strs.data(), type);
+}
 }  // namespace
 
 namespace june {
-
-void EventWriter::saveToHDF5(const EventLogger& logger,
-                             const std::string& filename,
-                             const Config& config) {
-  std::cout << "\n=== Saving Events to HDF5: " << filename
-            << " ===" << std::endl;
-  std::cout << "  Compression level: " << config.simulation.compression_level
-            << std::endl;
-  std::cout << "  Infection events: " << logger.infections_.size() << std::endl;
-  // ... other counts ...
-
-  try {
-    bool exists = std::filesystem::exists(filename);
-    H5::H5File file;
-    if (exists) {
-      file = H5::H5File(filename, H5F_ACC_RDWR);
-    } else {
-      file = H5::H5File(filename, H5F_ACC_TRUNC);
-      file.createGroup("/events");
-    }
-
-    writeInfectionEvents(file, logger, config.simulation.compression_level);
-    writeSymptomChangeEvents(file, logger, config.simulation.compression_level);
-    writeDeathEvents(file, logger, config.simulation.compression_level);
-    writeHospitalAdmissionEvents(file, logger,
-                                 config.simulation.compression_level);
-    writeICUAdmissionEvents(file, logger, config.simulation.compression_level);
-    writeHospitalDischargeEvents(file, logger,
-                                 config.simulation.compression_level);
-    writeVaccinationEvents(file, logger, config.simulation.compression_level);
-    writeRelationshipEvents(file, logger, config.simulation.compression_level);
-    writeCoordinatedEncounterEvents(file, logger,
-                                    config.simulation.compression_level);
-
-    std::cout << "Events saved successfully!" << std::endl;
-  } catch (const H5::Exception& e) {
-    std::cerr << "HDF5 error while saving events: " << e.getDetailMsg()
-              << std::endl;
-    throw std::runtime_error("Failed to save events to HDF5 file");
-  }
-}
 
 void EventWriter::saveToHDF5WithLookups(
     const EventLogger& logger, const std::string& filename,
@@ -144,54 +128,10 @@ void EventWriter::saveToHDF5WithLookups(
       registries_group = metadata_group.createGroup("registries");
     }
 
-    if (!world.encounter_type_names.empty() &&
-        !H5Lexists(registries_group.getId(), "encounter_types", H5P_DEFAULT)) {
-      hsize_t dims[1] = {world.encounter_type_names.size()};
-      H5::DataSpace space(1, dims);
-      H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-      H5::DataSet ds =
-          registries_group.createDataSet("encounter_types", type, space, plist);
-      std::vector<const char*> c_strs;
-      for (const auto& s : world.encounter_type_names)
-        c_strs.push_back(s.c_str());
-      ds.write(c_strs.data(), type);
-    }
-
-    if (!world.activity_names.empty() &&
-        !H5Lexists(registries_group.getId(), "activities", H5P_DEFAULT)) {
-      hsize_t dims[1] = {world.activity_names.size()};
-      H5::DataSpace space(1, dims);
-      H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-      H5::DataSet ds =
-          registries_group.createDataSet("activities", type, space, plist);
-      std::vector<const char*> c_strs;
-      for (const auto& s : world.activity_names) c_strs.push_back(s.c_str());
-      ds.write(c_strs.data(), type);
-    }
-
-    if (!world.symptom_names.empty() &&
-        !H5Lexists(registries_group.getId(), "symptoms", H5P_DEFAULT)) {
-      hsize_t dims[1] = {world.symptom_names.size()};
-      H5::DataSpace space(1, dims);
-      H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-      H5::DataSet ds =
-          registries_group.createDataSet("symptoms", type, space, plist);
-      std::vector<const char*> c_strs;
-      for (const auto& s : world.symptom_names) c_strs.push_back(s.c_str());
-      ds.write(c_strs.data(), type);
-    }
+    writeStringRegistry(registries_group, "encounter_types",
+                        world.encounter_type_names);
+    writeStringRegistry(registries_group, "activities", world.activity_names);
+    writeStringRegistry(registries_group, "symptoms", world.symptom_names);
 
     if (isLogRank()) {
       std::cout << "Events and lookup tables saved successfully!" << std::endl;
