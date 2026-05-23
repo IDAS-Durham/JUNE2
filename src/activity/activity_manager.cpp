@@ -338,9 +338,58 @@ int16_t ActivityManager::selectActivity(const Person& person,
   const auto& participation_by_id =
       participation_ptr ? *participation_ptr : empty_participation;
 
+  // Linked activities: if the schedule type opts in via `linked_activities`
+  // AND this slot's allowed activities touch the linked set, roll ONCE per
+  // (person, sim_day) and reuse the cached decision across every listed
+  // activity. Couples e.g. an outbound route, a primary activity at the
+  // destination, and a return route into a single per-day attendance
+  // decision. Slots that don't touch linked activities (e.g. weekend slots
+  // or non-routing slots) are unaffected. Fully generic — driven by YAML,
+  // no hardcoded activity names.
+  const bool slot_touches_linked =
+      schedule_type->linked_activities_mask != 0 &&
+      (slot.allowed_activity_mask & schedule_type->linked_activities_mask) != 0;
+  if (slot_touches_linked) {
+    int day_now = static_cast<int>(current_simulation_time_);
+    if (person.linked_activities_day != day_now) {
+      // Use the rate of any linked activity from the participation table.
+      // We deliberately do NOT filter by available_indices — the rate is a
+      // schedule-level configuration that shouldn't depend on whether THIS
+      // person happens to have the venue (e.g. a person without a route
+      // leg should still re-roll the same attendance decision used by the
+      // primary-activity slot later in the day). All linked activities
+      // should be configured with the same rate.
+      double linked_rate = 0.0;
+      for (size_t a = 0; a < participation_by_id.size(); ++a) {
+        if ((schedule_type->linked_activities_mask & (ActivityMask(1) << a)) !=
+            0) {
+          linked_rate = participation_by_id[a];
+          break;
+        }
+      }
+      SplitMix64 day_rng(
+          mix_seed(base_seed_, person.id, mix_seed(0xDA17ULL, day_now, 0ULL)));
+      std::uniform_real_distribution<double> day_dist(0.0, 1.0);
+      bool pass = day_dist(day_rng) < linked_rate;
+      const_cast<Person&>(person).linked_activities_day = day_now;
+      const_cast<Person&>(person).linked_activities_pass = pass;
+    }
+  }
+
   for (int16_t act_idx : available_indices) {
-    if (act_idx >= 0 &&
-        act_idx < static_cast<int16_t>(participation_by_id.size())) {
+    if (act_idx < 0) continue;
+
+    // Linked activity: outcome already decided for today.
+    if (schedule_type->linked_activities_mask != 0 &&
+        (schedule_type->linked_activities_mask &
+         (ActivityMask(1) << act_idx)) != 0) {
+      if (person.linked_activities_pass) {
+        return act_idx;  // attending today — pick this activity if available
+      }
+      continue;  // skipping today — fall through without consuming rng
+    }
+
+    if (act_idx < static_cast<int16_t>(participation_by_id.size())) {
       double rate = participation_by_id[act_idx];
       if (rate > 0.0) {
         std::uniform_real_distribution<double> dist(0.0, 1.0);
@@ -514,6 +563,27 @@ void ActivityManager::precomputeSchedules() {
         bool is_det = config_.performance.isDeterministicIdx(act_idx, &slot);
         bool is_hyb = config_.performance.isHybridIdx(act_idx);
 
+        // Per-schedule override: demote DETERMINISTIC -> HYBRID for activities
+        // listed in this schedule type's force_hybrid_activities.
+        if (is_det && act_idx >= 0 &&
+            (schedule_type->force_hybrid_mask & (ActivityMask(1) << act_idx)) !=
+                0) {
+          is_det = false;
+          is_hyb = true;
+        }
+        // Linked-activities coupling: if this slot's allowed activities
+        // include any linked activity, force the entry to be re-rolled at
+        // runtime regardless of which outcome precompute chose. Otherwise
+        // the "skip" outcome (e.g. residence) would be stored
+        // deterministically and the person would never re-roll on later
+        // days, freezing their decision.
+        if (is_det && schedule_type->linked_activities_mask != 0 &&
+            (slot.allowed_activity_mask &
+             schedule_type->linked_activities_mask) != 0) {
+          is_det = false;
+          is_hyb = true;
+        }
+
         if (is_det) {
           auto [venue_id, subset_idx] =
               selectVenue(person, act_idx, slot, precomp_key);
@@ -660,10 +730,14 @@ void ActivityManager::assignActivitiesFromSchedule(
 
       if (!entry.is_deterministic) {
         // Check if this is a hybrid activity using bitmask (no string
-        // comparison)
+        // comparison). Also honour the per-schedule force_hybrid_mask so the
+        // cached venue is reused on participation pass.
         bool is_hybrid_entry =
             (entry.venue_id != -1) &&
-            config_.performance.isHybridIdx(scheduled_activity_index);
+            (config_.performance.isHybridIdx(scheduled_activity_index) ||
+             (schedule_type && scheduled_activity_index >= 0 &&
+              (schedule_type->force_hybrid_mask &
+               (ActivityMask(1) << scheduled_activity_index)) != 0));
 
         // Ensure we have valid slot/schedule_type pointers
         const ScheduleType* sched_type = schedule_type;

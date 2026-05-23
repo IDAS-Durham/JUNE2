@@ -199,6 +199,15 @@ struct Person {
       -1;  // schedule to restore after temp; -1 = original
   int16_t temp_slot_progress = 0;  // next flat_slots index to execute
 
+  // Per-day cached decision for activities listed in this person's
+  // ScheduleType.linked_activities. All listed activities share one outcome
+  // per (person, sim_day) — e.g. an outbound route, a primary activity at
+  // the destination, and a return route all agree on whether the person is
+  // "in" today. Generic: the activities are named in YAML, no hardcoded
+  // identifiers here.
+  int32_t linked_activities_day = -1;   // sim day of cached decision; -1 = unset
+  bool linked_activities_pass = false;  // cached outcome
+
   // Disease/infection tracking
   std::unique_ptr<Infection> infection;  // nullptr if not infected
   Immunity immunity;                     // Natural immunity tracking

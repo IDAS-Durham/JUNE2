@@ -546,6 +546,26 @@ void ScheduleConfig::resolveSlots(const WorldState& world) {
   };
 
   for (auto& sched_type : schedule_types) {
+    // Resolve force_hybrid_mask and linked_activities_mask. Activities listed
+    // in linked_activities are implicitly force-hybrid (must be re-rolled at
+    // runtime to honour the daily cached decision).
+    sched_type.force_hybrid_mask = 0;
+    for (const auto& act_name : sched_type.force_hybrid_activities) {
+      int idx = world.getActivityIndex(act_name);
+      if (idx >= 0) {
+        sched_type.force_hybrid_mask |= (ActivityMask(1) << idx);
+      }
+    }
+    sched_type.linked_activities_mask = 0;
+    for (const auto& act_name : sched_type.linked_activities) {
+      int idx = world.getActivityIndex(act_name);
+      if (idx >= 0) {
+        ActivityMask bit = (ActivityMask(1) << idx);
+        sched_type.linked_activities_mask |= bit;
+        sched_type.force_hybrid_mask |= bit;  // implies force_hybrid
+      }
+    }
+
     // Build participation_by_day_type_id[dt_idx][act_idx]
     sched_type.participation_by_day_type_id.assign(
         num_dt, std::vector<double>(num_acts, 0.0));

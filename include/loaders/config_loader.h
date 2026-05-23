@@ -365,6 +365,21 @@ inline ScheduleConfig ConfigLoader::loadSchedule(const std::string& filename) {
         }
       }
 
+      // Per-schedule override: activities to treat as HYBRID (per-tick re-
+      // roll, cached venue) even when listed globally as deterministic in
+      // performance.yaml.
+      if (type_node["force_hybrid_activities"]) {
+        sched_type.force_hybrid_activities =
+            type_node["force_hybrid_activities"].as<std::vector<std::string>>();
+      }
+
+      // Linked activities: share one dice roll per (person, sim_day).
+      // See ScheduleType::linked_activities for semantics.
+      if (type_node["linked_activities"]) {
+        sched_type.linked_activities =
+            type_node["linked_activities"].as<std::vector<std::string>>();
+      }
+
       // Participation rates: activity -> { day_type_name: rate, ... }
       if (type_node["participation"]) {
         for (const auto& kv : type_node["participation"]) {

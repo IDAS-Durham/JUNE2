@@ -178,6 +178,25 @@ struct ScheduleType {
   // Pre-resolved: slots_by_day_type_idx[day_type_idx] (nullptr if not defined)
   std::vector<const std::vector<TimeSlot>*> slots_by_day_type_idx;
 
+  // Per-schedule override: activities listed here are demoted from
+  // DETERMINISTIC to HYBRID at precompute time — venue is still pre-cached
+  // (no perf loss on venue lookup) but participation is re-rolled each tick
+  // via the existing hybrid-entry runtime path.
+  std::vector<std::string> force_hybrid_activities;
+  ActivityMask force_hybrid_mask = 0;  // resolved in resolveSlots()
+
+  // Linked activities: activities listed here share ONE dice roll per
+  // (person, sim_day). All listed activities pass or fail together — the
+  // engine caches the first roll on Person.linked_activities_pass and reuses
+  // it for the rest of the day. Implies force_hybrid (these activities must
+  // be re-rolled at runtime, not frozen at precompute), so listing an
+  // activity here automatically adds it to force_hybrid_mask too.
+  // The participation rate used is the rate of the first listed activity in
+  // the schedule's `participation` table — for the coupling to make semantic
+  // sense all listed activities should have the same rate.
+  std::vector<std::string> linked_activities;
+  ActivityMask linked_activities_mask = 0;  // resolved in resolveSlots()
+
   // Check if this schedule type applies to a person
   bool appliesTo(const Person& person,
                  const WorldState* world = nullptr) const {
@@ -199,6 +218,8 @@ struct ScheduleType {
     for (auto& criterion : selection_criteria) {
       criterion.resolve(world);
     }
+    // force_hybrid_mask is resolved in ScheduleConfig::resolveSlots (defined
+    // in config.cpp where WorldState is complete).
   }
 };
 
