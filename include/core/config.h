@@ -647,7 +647,37 @@ struct SimulationConfig {
     }
   } checkpoint;
 
-  void resolve(const WorldState& /*world*/) {}
+  // Partial-presence venues: at each slot, the RuntimeBinAllocator buckets
+  // riders of these venue types into ephemeral runtime bins (e.g. carriages
+  // of a train_line) and the FOI loop drives sub-interval transmission from
+  // each rider's per-membership (t_board_min, t_alight_min).
+  //
+  // Number of bins is emergent — derived at slot time from the global rider
+  // count and the per-venue-type `target_group_size`. There is no hard
+  // capacity; bins differ in size by at most 1 (round-robin deal). Empty
+  // map (default) = feature inactive, zero hot-path overhead.
+  struct PartialPresenceConfig {
+    // YAML-declared: type name → target group size.
+    // Example: {"train_line": 100, "tube_line": 100, "bus_line": 50}.
+    std::unordered_map<std::string, int> target_group_size_by_name;
+
+    // Resolved at world-load time. Bit i set iff venue type id i is a
+    // partial-presence type present in this world. uint64_t fits 64 venue
+    // types; promote to bitset if a world ever exceeds that.
+    uint64_t enabled_venue_type_mask = 0;
+
+    // Resolved at world-load time. Indexed by venue type id; entries for
+    // non-partial-presence types are 0. Lookup-by-id is the hot path.
+    std::vector<int> target_group_size_by_type_id;
+
+    int getTargetGroupSize(uint8_t type_id) const {
+      return type_id < target_group_size_by_type_id.size()
+                 ? target_group_size_by_type_id[type_id]
+                 : 0;
+    }
+  } partial_presence;
+
+  void resolve(const WorldState& world);
 };
 
 // =============================================================================

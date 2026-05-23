@@ -198,6 +198,26 @@ inline SimulationConfig ConfigLoader::loadSimulation(
     }
   }
 
+  // Partial-presence venue types (optional). Map of venue type name to
+  // { target_group_size: N } — the target rider count per ephemeral runtime
+  // bin within a venue of that type (e.g. train_line: 100 ≈ one carriage).
+  // num_bins at slot time = max(1, ceil(N_global_riders / target_group_size)),
+  // so bins are bounded by target above and equal-sized below it. Omitting
+  // the block (or an empty map) leaves the feature off.
+  if (root["partial_presence"]) {
+    auto pp = root["partial_presence"];
+    if (pp["enabled_venue_types"] && pp["enabled_venue_types"].IsMap()) {
+      for (auto it = pp["enabled_venue_types"].begin();
+           it != pp["enabled_venue_types"].end(); ++it) {
+        std::string name = it->first.as<std::string>();
+        int tgs = it->second["target_group_size"]
+                      ? it->second["target_group_size"].as<int>()
+                      : 0;
+        config.partial_presence.target_group_size_by_name[name] = tgs;
+      }
+    }
+  }
+
   // Checkpoint / restart settings (optional). Cadence is mutually exclusive:
   // on_dates (non-null, non-empty) takes precedence over every_n_days. A
   // null YAML value leaves the corresponding optional empty.

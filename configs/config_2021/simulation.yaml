@@ -28,6 +28,25 @@ regional_risk:
     enabled: false
     regional_risk_file: "data/regional_risk.csv"
 
+# Partial-presence venues — venue types whose venues have ephemeral per-slot
+# rider sub-grouping (runtime bins). For each slot routing riders into one of
+# these types the RuntimeBinAllocator buckets riders into bins, and the FOI
+# loop drives sub-interval transmission from per-rider (t_board_min,
+# t_alight_min).
+#
+# target_group_size is the target rider count per bin (≈ vehicle occupancy:
+# tube/train carriages ~100, bus ~50). num_bins at slot time emerges as
+# max(1, ceil(N_global_riders / target_group_size)), so the model self-scales
+# with demand: a tube line with 1000 riders gets 10 bins, with 50 gets 1.
+# No hard capacity / no overflow handling — everyone is bucketed. Starting
+# values are guesses, calibrate alongside contact_matrices.yaml betas.
+# Empty map / missing block = feature off, zero overhead.
+partial_presence:
+    enabled_venue_types:
+        train_line: { target_group_size: 100 }
+        tube_line:  { target_group_size: 100 }
+        bus_line:   { target_group_size: 50 }
+
 #Checkpoint / restart (resume with: --restart-from runs/<id>/checkpoints/latest)
 checkpoint:
     enabled: true
