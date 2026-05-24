@@ -89,17 +89,18 @@ class HDF5Loader {
   // Helper to get a cached dataset handle
   H5::DataSet& getDataSet(const std::string& path);
 
+  // Helper: read property dataset range (detects type and returns PropertyValue
+  // vector). Peer of the other read* helpers — public so that file-local
+  // loaders in hdf5_loader.cpp can use it.
+  std::vector<PropertyValue> readPropertyDatasetRange(
+      const std::string& path, size_t start, size_t count,
+      const std::string& prop_name = "");
+
   WorldState world_;
 
  private:
   H5::H5File file_;
   const Config& config_;
-
-  // Helper: read property dataset range (detects type and returns PropertyValue
-  // vector)
-  std::vector<PropertyValue> readPropertyDatasetRange(
-      const std::string& path, size_t start, size_t count,
-      const std::string& prop_name = "");
 
   std::unordered_map<std::string, H5::DataSet> dataset_cache_;
   std::unordered_map<std::string, H5T_class_t> type_cache_;
