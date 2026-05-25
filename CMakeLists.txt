@@ -158,7 +158,8 @@ if(MPI_FOUND)
        src/parallel/domain.cpp
        src/parallel/domain_manager.cpp
        src/parallel/geography_partitioner.cpp
-       src/parallel/domain_communicator.cpp)
+       src/parallel/domain_communicator.cpp
+       src/parallel/domain_communicator_encounters.cpp)
 endif()
 
 # Create the library
