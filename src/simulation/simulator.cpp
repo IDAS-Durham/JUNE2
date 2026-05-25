@@ -90,16 +90,8 @@ void printSeedAudit(const InfectionSeedConfig& seed_config) {
   std::cout << "==========================================\n" << std::endl;
 }
 
-// One-shot rank-0 dump of the loaded disease + infection-seed configuration.
-// Output is purely diagnostic (no MPI participation, no global state mutated)
-// so it is safe to run after construction but before the simulator starts.
-void printStartupAudit(const Disease& disease,
-                       const std::string& disease_yaml_path,
-                       const InfectionSeedConfig& seed_config) {
-  auto saved_flags = std::cout.flags();
-  auto saved_prec = std::cout.precision();
-  std::cout.unsetf(std::ios::floatfield);
-  std::cout << std::setprecision(6);
+void printDiseaseAudit(const Disease& disease,
+                       const std::string& disease_yaml_path) {
   auto fmtDist = [](const DistributionParams& d) {
     std::ostringstream os;
     os << d.type << "(";
@@ -193,9 +185,22 @@ void printStartupAudit(const Disease& disease,
   dumpRow(0);
   dumpRow(orates.rows.size() / 2);
   if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
+}
 
+// One-shot rank-0 dump of the loaded disease + infection-seed configuration.
+// Output is purely diagnostic (no MPI participation, no global state mutated)
+// so it is safe to run after construction but before the simulator starts.
+void printStartupAudit(const Disease& disease,
+                       const std::string& disease_yaml_path,
+                       const InfectionSeedConfig& seed_config) {
+  auto saved_flags = std::cout.flags();
+  auto saved_prec = std::cout.precision();
+  std::cout.unsetf(std::ios::floatfield);
+  std::cout << std::setprecision(6);
+
+  printDiseaseAudit(disease, disease_yaml_path);
   printSeedAudit(seed_config);
-  // Restore stream state.
+
   std::cout.flags(saved_flags);
   std::cout.precision(saved_prec);
 }
