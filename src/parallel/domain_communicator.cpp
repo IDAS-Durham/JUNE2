@@ -756,22 +756,14 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
   for (int r = 0; r < num_ranks_; ++r) {
     char* ptr = sbuf.data() + sd[r];
     for (const auto& u : updates[r]) {
-      memcpy(ptr, &u.person_id, 4);
-      ptr += 4;
-      memcpy(ptr, &u.infector_id, 4);
-      ptr += 4;
-      memcpy(ptr, &u.infection_time, 8);
-      ptr += 8;
-      memcpy(ptr, &u.venue_type_id, 1);
-      ptr += 1;
-      memcpy(ptr, &u.encounter_type_id, 1);
-      ptr += 1;
-      memcpy(ptr, &u.venue_id, 4);
-      ptr += 4;
-      memcpy(ptr, &u.infector_symptom_id, 2);
-      ptr += 2;
-      memcpy(ptr, &u.transmission_mode_index, 1);
-      ptr += 1;
+      ptr = packField(ptr, u.person_id);
+      ptr = packField(ptr, u.infector_id);
+      ptr = packField(ptr, u.infection_time);
+      ptr = packField(ptr, u.venue_type_id);
+      ptr = packField(ptr, u.encounter_type_id);
+      ptr = packField(ptr, u.venue_id);
+      ptr = packField(ptr, u.infector_symptom_id);
+      ptr = packField(ptr, u.transmission_mode_index);
     }
   }
 
