@@ -133,6 +133,44 @@ void parseInviteDistributionStrict(const YAML::Node& dist_node,
   }
 }
 
+// Parse the required scalar/list fields of a coordinated-encounter entry
+// (name, network, trigger_slots, allowed_venues) plus the optional `enabled`
+// flag. Throws if any required field is missing.
+void parseEncounterRequiredFields(const YAML::Node& enc_node,
+                                  CoordinatedEncounterDef& enc_def) {
+  if (!enc_node["name"])
+    throw std::runtime_error(
+        "Coordinated encounter missing required field: name");
+  enc_def.name = enc_node["name"].as<std::string>();
+
+  if (enc_node["enabled"]) {
+    enc_def.enabled = enc_node["enabled"].as<bool>();
+  }
+
+  if (!enc_node["network"])
+    throw std::runtime_error("Coordinated encounter '" + enc_def.name +
+                             "' missing required field: network");
+  enc_def.network = enc_node["network"].as<std::string>();
+
+  if (!enc_node["trigger_slots"])
+    throw std::runtime_error("Coordinated encounter '" + enc_def.name +
+                             "' missing required field: trigger_slots");
+  if (enc_node["trigger_slots"].IsSequence()) {
+    for (const auto& slot : enc_node["trigger_slots"]) {
+      enc_def.trigger_slots.push_back(slot.as<std::string>());
+    }
+  }
+
+  if (!enc_node["allowed_venues"])
+    throw std::runtime_error("Coordinated encounter '" + enc_def.name +
+                             "' missing required field: allowed_venues");
+  if (enc_node["allowed_venues"].IsSequence()) {
+    for (const auto& venue : enc_node["allowed_venues"]) {
+      enc_def.allowed_venues.push_back(venue.as<std::string>());
+    }
+  }
+}
+
 // Lenient counterpart to parseInviteDistributionStrict, used for
 // `daily_max_distribution` blocks. Every key is optional: missing `type`
 // leaves the existing default in place, and a missing distribution-specific
@@ -1006,39 +1044,7 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
       if (ce_node["encounters"]) {
         for (const auto& enc_node : ce_node["encounters"]) {
           CoordinatedEncounterDef enc_def;
-
-          if (!enc_node["name"])
-            throw std::runtime_error(
-                "Coordinated encounter missing required field: name");
-          enc_def.name = enc_node["name"].as<std::string>();
-
-          if (enc_node["enabled"]) {
-            enc_def.enabled = enc_node["enabled"].as<bool>();
-          }
-
-          if (!enc_node["network"])
-            throw std::runtime_error("Coordinated encounter '" + enc_def.name +
-                                     "' missing required field: network");
-          enc_def.network = enc_node["network"].as<std::string>();
-
-          if (!enc_node["trigger_slots"])
-            throw std::runtime_error("Coordinated encounter '" + enc_def.name +
-                                     "' missing required field: trigger_slots");
-          if (enc_node["trigger_slots"].IsSequence()) {
-            for (const auto& slot : enc_node["trigger_slots"]) {
-              enc_def.trigger_slots.push_back(slot.as<std::string>());
-            }
-          }
-
-          if (!enc_node["allowed_venues"])
-            throw std::runtime_error(
-                "Coordinated encounter '" + enc_def.name +
-                "' missing required field: allowed_venues");
-          if (enc_node["allowed_venues"].IsSequence()) {
-            for (const auto& venue : enc_node["allowed_venues"]) {
-              enc_def.allowed_venues.push_back(venue.as<std::string>());
-            }
-          }
+          parseEncounterRequiredFields(enc_node, enc_def);
 
           // proposal_probability is optional when frequency_group is set.
           // Validated below after frequency_group parsing.
