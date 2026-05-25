@@ -36,6 +36,111 @@ H5::Group openOrCreateGroup(H5::Group& parent, const std::string& name) {
   return parent.createGroup(name);
 }
 
+// Resolve which people should appear in /lookups/people for this write call.
+// Empty result means "skip the whole table". The save_full_person_details=="all"
+// + append branch returns empty intentionally (already written on first call).
+std::unordered_set<june::PersonId> selectPeopleToSave(
+    const june::WorldState& world, const june::Config& config,
+    const june::EventLogger& logger, bool append,
+    const std::unordered_set<june::PersonId>* person_ids_filter) {
+  std::unordered_set<june::PersonId> people_to_save;
+  if (person_ids_filter) {
+    people_to_save = *person_ids_filter;
+  } else if (config.simulation.save_full_person_details == "all") {
+    if (append) return people_to_save;
+    for (const auto& person : world.people) people_to_save.insert(person.id);
+  } else if (config.simulation.save_full_person_details == "infected_only") {
+    people_to_save = logger.getInfectedPersonIds();
+  }
+  return people_to_save;
+}
+
+// Project the selected people into the flat PersonRecord shape written to
+// /lookups/people. Field order matches makePersonCompType().
+std::vector<june::detail::PersonRecord> buildPersonRecords(
+    const june::WorldState& world,
+    const std::unordered_set<june::PersonId>& people_to_save) {
+  std::vector<june::detail::PersonRecord> records;
+  records.reserve(people_to_save.size());
+  for (const auto& person : world.people) {
+    if (!people_to_save.count(person.id)) continue;
+    june::detail::PersonRecord record;
+    record.person_id = person.id;
+    record.age = person.age;
+    std::string sex_str = (person.sex == june::Sex::MALE)     ? "male"
+                          : (person.sex == june::Sex::FEMALE) ? "female"
+                                                              : "unknown";
+    strncpy(record.sex, sex_str.c_str(), 15);
+    record.sex[15] = '\0';
+    record.geo_unit_id = person.geo_unit_id;
+    record.is_dead = person.is_dead ? 1 : 0;
+    record.death_time = person.death_time;
+    std::string sched_type =
+        person.schedule_type_id < world.schedule_type_names.size()
+            ? world.schedule_type_names[person.schedule_type_id]
+            : "unknown";
+    strncpy(record.schedule_type, sched_type.c_str(), 63);
+    record.schedule_type[63] = '\0';
+    record.num_activities =
+        static_cast<int>(world.getActivityMetas(person).size());
+    record.num_residence_venues =
+        static_cast<int>(world.getActivityVenues(person, "residence").size());
+    record.num_primary_activities = static_cast<int>(
+        world.getActivityVenues(person, "primary_activity").size());
+    record.num_leisure_venues =
+        static_cast<int>(world.getActivityVenues(person, "leisure").size());
+    record.num_medical_facilities = static_cast<int>(
+        world.getActivityVenues(person, "medical_facility").size());
+    records.push_back(record);
+  }
+  return records;
+}
+
+H5::CompType makePersonCompType() {
+  H5::StrType sex_type(H5::PredType::C_S1, 16);
+  H5::StrType schedule_type(H5::PredType::C_S1, 64);
+  H5::CompType person_type(sizeof(june::detail::PersonRecord));
+  person_type.insertMember("person_id",
+                           HOFFSET(june::detail::PersonRecord, person_id),
+                           H5::PredType::NATIVE_INT);
+  person_type.insertMember("age", HOFFSET(june::detail::PersonRecord, age),
+                           H5::PredType::NATIVE_DOUBLE);
+  person_type.insertMember("sex", HOFFSET(june::detail::PersonRecord, sex),
+                           sex_type);
+  person_type.insertMember("geo_unit_id",
+                           HOFFSET(june::detail::PersonRecord, geo_unit_id),
+                           H5::PredType::NATIVE_INT);
+  person_type.insertMember("is_dead",
+                           HOFFSET(june::detail::PersonRecord, is_dead),
+                           H5::PredType::NATIVE_INT);
+  person_type.insertMember("death_time",
+                           HOFFSET(june::detail::PersonRecord, death_time),
+                           H5::PredType::NATIVE_DOUBLE);
+  person_type.insertMember("schedule_type",
+                           HOFFSET(june::detail::PersonRecord, schedule_type),
+                           schedule_type);
+  person_type.insertMember("num_activities",
+                           HOFFSET(june::detail::PersonRecord, num_activities),
+                           H5::PredType::NATIVE_INT);
+  person_type.insertMember(
+      "num_residence_venues",
+      HOFFSET(june::detail::PersonRecord, num_residence_venues),
+      H5::PredType::NATIVE_INT);
+  person_type.insertMember(
+      "num_primary_activities",
+      HOFFSET(june::detail::PersonRecord, num_primary_activities),
+      H5::PredType::NATIVE_INT);
+  person_type.insertMember(
+      "num_leisure_venues",
+      HOFFSET(june::detail::PersonRecord, num_leisure_venues),
+      H5::PredType::NATIVE_INT);
+  person_type.insertMember(
+      "num_medical_facilities",
+      HOFFSET(june::detail::PersonRecord, num_medical_facilities),
+      H5::PredType::NATIVE_INT);
+  return person_type;
+}
+
 // Write a string-registry vector as a chunked variable-length string dataset.
 // No-op when the registry is empty or the dataset already exists.
 void writeStringRegistry(H5::Group& registries_group,
@@ -312,96 +417,16 @@ void EventWriter::writePersonLookupTable(
     H5::H5File& file, const WorldState& world, const Config& config,
     const EventLogger& logger, bool append,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  std::unordered_set<PersonId> people_to_save;
-  if (person_ids_filter) {
-    people_to_save = *person_ids_filter;
-  } else if (config.simulation.save_full_person_details == "all") {
-    if (append) return;  // All people already saved in first write
-    for (const auto& person : world.people) people_to_save.insert(person.id);
-  } else if (config.simulation.save_full_person_details == "infected_only") {
-    people_to_save = logger.getInfectedPersonIds();
-  } else
-    return;
+  auto people_to_save =
+      selectPeopleToSave(world, config, logger, append, person_ids_filter);
+  if (people_to_save.empty()) return;
 
-  size_t n = people_to_save.size();
-  if (n == 0) return;
-
-  std::vector<detail::PersonRecord> records;
-  records.reserve(n);
-  for (const auto& person : world.people) {
-    if (!people_to_save.count(person.id)) continue;
-    detail::PersonRecord record;
-    record.person_id = person.id;
-    record.age = person.age;
-    std::string sex_str = (person.sex == Sex::MALE)     ? "male"
-                          : (person.sex == Sex::FEMALE) ? "female"
-                                                        : "unknown";
-    strncpy(record.sex, sex_str.c_str(), 15);
-    record.sex[15] = '\0';
-    record.geo_unit_id = person.geo_unit_id;
-    record.is_dead = person.is_dead ? 1 : 0;
-    record.death_time = person.death_time;
-    std::string sched_type =
-        person.schedule_type_id < world.schedule_type_names.size()
-            ? world.schedule_type_names[person.schedule_type_id]
-            : "unknown";
-    strncpy(record.schedule_type, sched_type.c_str(), 63);
-    record.schedule_type[63] = '\0';
-    record.num_activities =
-        static_cast<int>(world.getActivityMetas(person).size());
-    record.num_residence_venues =
-        static_cast<int>(world.getActivityVenues(person, "residence").size());
-    record.num_primary_activities = static_cast<int>(
-        world.getActivityVenues(person, "primary_activity").size());
-    record.num_leisure_venues =
-        static_cast<int>(world.getActivityVenues(person, "leisure").size());
-    record.num_medical_facilities = static_cast<int>(
-        world.getActivityVenues(person, "medical_facility").size());
-    records.push_back(record);
-  }
-
-  H5::StrType sex_type(H5::PredType::C_S1, 16);
-  H5::StrType schedule_type(H5::PredType::C_S1, 64);
-  H5::CompType person_type(sizeof(detail::PersonRecord));
-  person_type.insertMember("person_id",
-                           HOFFSET(detail::PersonRecord, person_id),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("age", HOFFSET(detail::PersonRecord, age),
-                           H5::PredType::NATIVE_DOUBLE);
-  person_type.insertMember("sex", HOFFSET(detail::PersonRecord, sex), sex_type);
-  person_type.insertMember("geo_unit_id",
-                           HOFFSET(detail::PersonRecord, geo_unit_id),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("is_dead", HOFFSET(detail::PersonRecord, is_dead),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("death_time",
-                           HOFFSET(detail::PersonRecord, death_time),
-                           H5::PredType::NATIVE_DOUBLE);
-  person_type.insertMember("schedule_type",
-                           HOFFSET(detail::PersonRecord, schedule_type),
-                           schedule_type);
-  person_type.insertMember("num_activities",
-                           HOFFSET(detail::PersonRecord, num_activities),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("num_residence_venues",
-                           HOFFSET(detail::PersonRecord, num_residence_venues),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember(
-      "num_primary_activities",
-      HOFFSET(detail::PersonRecord, num_primary_activities),
-      H5::PredType::NATIVE_INT);
-  person_type.insertMember("num_leisure_venues",
-                           HOFFSET(detail::PersonRecord, num_leisure_venues),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember(
-      "num_medical_facilities",
-      HOFFSET(detail::PersonRecord, num_medical_facilities),
-      H5::PredType::NATIVE_INT);
-
-  hsize_t dims[1] = {records.size()};
-  H5::DataSpace dataspace(1, dims);
+  auto records = buildPersonRecords(world, people_to_save);
+  auto person_type = makePersonCompType();
   writeDatasetTemplate(file, "/lookups/people", records, person_type,
                        config.simulation.compression_level);
+
+  const size_t n = people_to_save.size();
 
   if (!world.person_property_names.empty()) {
     H5::Group prop_group =
