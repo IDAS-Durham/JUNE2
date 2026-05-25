@@ -939,66 +939,14 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
       ptr = unpackField(ptr, infector_symptom_id);
       ptr = unpackField(ptr, transmission_mode_index);
 
-      Person* person = world_.getPerson(pid);
-      if (person && !person->infection && domain_.ownsPerson(pid) && disease_) {
-        // Pass venue metadata to the Infection constructor
-        std::string venue_type_name = "";
-        if (v_type < world_.venue_type_names.size()) {
-          venue_type_name = world_.venue_type_names[v_type];
-        }
-
-        float severity_factor = 1.0f;
-        auto* gu = world_.getGeoUnit(person->geo_unit_id);
-        if (gu) severity_factor = gu->severity_factor;
-
-        // Use venue_key consistent with the local infection path
-        // (interaction_manager.cpp): for virtual venues (id <= -1000),
-        // extract the host's person_id so the infection seed is
-        // deterministic regardless of which rank creates it.
-        uint64_t venue_key = static_cast<uint64_t>(v_id);
-        if (v_id <= -1000) {
-          venue_key = static_cast<uint64_t>(-static_cast<int64_t>(v_id) - 1000);
-        }
-        uint64_t infection_seed =
-            mix_seed(config_.simulation.random_seed, pid,
-                     static_cast<uint64_t>(t * 1000), venue_key);
-        person->infection = std::make_unique<Infection>(
-            disease_, t, person, static_cast<unsigned int>(infection_seed),
-            &world_, venue_type_name, v_id, severity_factor,
-            infector_symptom_id, "", "", transmission_mode_index);
-        PendingInfection applied;
-        applied.person_id = pid;
-        applied.infector_id = infector_id;
-        applied.infection_time = t;
-        applied.venue_type_id = v_type;
-        applied.encounter_type_id = enc_type_id;
-        applied.venue_id = v_id;
-        applied.infector_symptom_id = infector_symptom_id;
-        applied.transmission_mode_index = transmission_mode_index;
-        newly_infected.push_back(applied);
+      auto applied = applyOnePendingInfection(
+          pid, infector_id, t, v_type, enc_type_id, v_id, infector_symptom_id,
+          transmission_mode_index, r);
+      if (applied) {
+        newly_infected.push_back(*applied);
         applied_count++;
-
-#ifdef JUNE_MPI_DEBUG
-        if (config_.parallel.verbose_mpi) {
-          std::cout << "  [CROSS_RANK_INFECTION_APPLIED] Rank " << rank_
-                    << ": Person " << pid << " (age=" << person->age
-                    << " geo=" << person->geo_unit_id << ")"
-                    << " INFECTED at remote venue " << v_id
-                    << " (type=" << venue_type_name << ")"
-                    << " from rank " << r
-                    << " infector_symptom=" << infector_symptom_id
-                    << " mode=" << (int)transmission_mode_index
-                    << " infection_time=" << t << std::endl;
-        }
-#endif
       } else {
         skipped_count++;
-#ifdef JUNE_MPI_DEBUG
-        if (person && person->infection) {
-          std::cout << "  [CROSS_RANK_SKIP] Rank " << rank_ << ": Person "
-                    << pid << " already infected, skipping" << std::endl;
-        }
-#endif
       }
     }
   }
@@ -1016,6 +964,75 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
   }
 #endif
   return newly_infected;
+}
+
+std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
+    PersonId pid, PersonId infector_id, double t, uint8_t v_type,
+    uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
+    uint8_t transmission_mode_index, int from_rank) {
+  Person* person = world_.getPerson(pid);
+  if (!person || person->infection || !domain_.ownsPerson(pid) || !disease_) {
+#ifdef JUNE_MPI_DEBUG
+    if (person && person->infection && config_.parallel.verbose_mpi) {
+      std::cout << "  [CROSS_RANK_SKIP] Rank " << rank_ << ": Person " << pid
+                << " already infected, skipping" << std::endl;
+    }
+#endif
+    (void)from_rank;
+    return std::nullopt;
+  }
+
+  std::string venue_type_name = "";
+  if (v_type < world_.venue_type_names.size()) {
+    venue_type_name = world_.venue_type_names[v_type];
+  }
+
+  float severity_factor = 1.0f;
+  auto* gu = world_.getGeoUnit(person->geo_unit_id);
+  if (gu) severity_factor = gu->severity_factor;
+
+  // venue_key consistent with the local infection path
+  // (interaction_manager.cpp): for virtual venues (id <= -1000), extract
+  // the host's person_id so the infection seed is deterministic
+  // regardless of which rank creates it.
+  uint64_t venue_key = static_cast<uint64_t>(v_id);
+  if (v_id <= -1000) {
+    venue_key = static_cast<uint64_t>(-static_cast<int64_t>(v_id) - 1000);
+  }
+  uint64_t infection_seed =
+      mix_seed(config_.simulation.random_seed, pid,
+               static_cast<uint64_t>(t * 1000), venue_key);
+  person->infection = std::make_unique<Infection>(
+      disease_, t, person, static_cast<unsigned int>(infection_seed), &world_,
+      venue_type_name, v_id, severity_factor, infector_symptom_id, "", "",
+      transmission_mode_index);
+
+  PendingInfection applied;
+  applied.person_id = pid;
+  applied.infector_id = infector_id;
+  applied.infection_time = t;
+  applied.venue_type_id = v_type;
+  applied.encounter_type_id = enc_type_id;
+  applied.venue_id = v_id;
+  applied.infector_symptom_id = infector_symptom_id;
+  applied.transmission_mode_index = transmission_mode_index;
+
+#ifdef JUNE_MPI_DEBUG
+  if (config_.parallel.verbose_mpi) {
+    std::cout << "  [CROSS_RANK_INFECTION_APPLIED] Rank " << rank_
+              << ": Person " << pid << " (age=" << person->age
+              << " geo=" << person->geo_unit_id << ")"
+              << " INFECTED at remote venue " << v_id
+              << " (type=" << venue_type_name << ")"
+              << " from rank " << from_rank
+              << " infector_symptom=" << infector_symptom_id
+              << " mode=" << (int)transmission_mode_index
+              << " infection_time=" << t << std::endl;
+  }
+#else
+  (void)from_rank;
+#endif
+  return applied;
 }
 
 // =============================================================================

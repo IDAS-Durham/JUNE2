@@ -5,6 +5,7 @@
 #include <mpi.h>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -76,6 +77,25 @@ class DomainCommunicator {
   void dispatchVisitorExchange(
       const std::vector<std::vector<Domain::VisitorData>>& outgoing,
       const std::vector<int>& send_counts);
+
+  // Join the local PendingInfections against incoming_visitors to find the
+  // home rank that needs to be notified for each. Returns the per-rank
+  // updates table and corresponding send_counts vector.
+  void routePendingByHomeRank(
+      const std::vector<PendingInfection>& pending,
+      std::vector<std::vector<PendingInfection>>& updates,
+      std::vector<int>& send_counts);
+
+  // Construct the local Infection for one successfully-unpacked pending
+  // record and return the resulting PendingInfection for upstream logging.
+  // Returns std::nullopt if the record was skipped (person not owned,
+  // already infected, or no disease loaded) so the caller can update its
+  // applied/skipped counters. `from_rank` is the sender rank, used only
+  // for the JUNE_MPI_DEBUG trace.
+  std::optional<PendingInfection> applyOnePendingInfection(
+      PersonId pid, PersonId infector_id, double t, uint8_t v_type,
+      uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
+      uint8_t transmission_mode_index, int from_rank);
 
   WorldState& world_;
   const Config& config_;
