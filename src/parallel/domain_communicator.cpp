@@ -850,28 +850,9 @@ void DomainCommunicator::exchangePointToPointVerySparse(
 
 std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
     const std::vector<PendingInfection>& pending) {
-  std::vector<std::vector<PendingInfection>> updates(num_ranks_);
-  std::vector<int> send_counts(num_ranks_, 0);
-
-  for (const auto& p : pending) {
-    for (const auto& v : domain_.incoming_visitors) {
-      if (v.person_id == p.person_id) {
-        updates[v.home_rank].push_back(p);
-        send_counts[v.home_rank]++;
-        break;
-      }
-    }
-  }
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_pending_out = 0;
-    for (int r = 0; r < num_ranks_; ++r) total_pending_out += send_counts[r];
-    std::cout << "[MPI_XRANK] Rank " << rank_
-              << " SENDING pending infections to home ranks: count="
-              << total_pending_out << std::endl;
-  }
-#endif
+  std::vector<std::vector<PendingInfection>> updates;
+  std::vector<int> send_counts;
+  routePendingByHomeRank(pending, updates, send_counts);
 
   std::vector<int> recv_counts(num_ranks_, 0);
   MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
@@ -964,6 +945,34 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
   }
 #endif
   return newly_infected;
+}
+
+void DomainCommunicator::routePendingByHomeRank(
+    const std::vector<PendingInfection>& pending,
+    std::vector<std::vector<PendingInfection>>& updates,
+    std::vector<int>& send_counts) {
+  updates.assign(num_ranks_, {});
+  send_counts.assign(num_ranks_, 0);
+
+  for (const auto& p : pending) {
+    for (const auto& v : domain_.incoming_visitors) {
+      if (v.person_id == p.person_id) {
+        updates[v.home_rank].push_back(p);
+        send_counts[v.home_rank]++;
+        break;
+      }
+    }
+  }
+
+#ifdef JUNE_MPI_DEBUG
+  if (config_.parallel.verbose_mpi) {
+    int total_pending_out = 0;
+    for (int r = 0; r < num_ranks_; ++r) total_pending_out += send_counts[r];
+    std::cout << "[MPI_XRANK] Rank " << rank_
+              << " SENDING pending infections to home ranks: count="
+              << total_pending_out << std::endl;
+  }
+#endif
 }
 
 std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
