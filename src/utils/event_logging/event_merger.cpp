@@ -6,6 +6,19 @@
 
 namespace june {
 
+namespace {
+
+// Open `name` under `parent` if it exists, otherwise create it.
+// `parent` may be either H5::H5File or H5::Group.
+template <typename Parent>
+H5::Group openOrCreateGroup(Parent& parent, const std::string& name) {
+  if (H5Lexists(parent.getId(), name.c_str(), H5P_DEFAULT))
+    return parent.openGroup(name);
+  return parent.createGroup(name);
+}
+
+}  // namespace
+
 void EventMerger::mergeEventFiles(const std::vector<std::string>& input_files,
                                   const std::string& output_file) {
   std::cout << "\n=== Merging Event Files ===" << std::endl;
@@ -684,18 +697,8 @@ void EventMerger::mergeProfileAssignments(
   if (facet_names.empty()) return;
 
   // 2. Ensure output parent group exists.
-  H5::Group out_lookups;
-  if (H5Lexists(out_file.getId(), "/lookups", H5P_DEFAULT)) {
-    out_lookups = out_file.openGroup("/lookups");
-  } else {
-    out_lookups = out_file.createGroup("/lookups");
-  }
-  H5::Group out_assigns;
-  if (H5Lexists(out_lookups.getId(), "profile_assignments", H5P_DEFAULT)) {
-    out_assigns = out_lookups.openGroup("profile_assignments");
-  } else {
-    out_assigns = out_lookups.createGroup("profile_assignments");
-  }
+  H5::Group out_lookups = openOrCreateGroup(out_file, "/lookups");
+  H5::Group out_assigns = openOrCreateGroup(out_lookups, "profile_assignments");
 
   for (const auto& facet : facet_names) {
     // 3. Discover the field set for this facet. Union across files.
@@ -719,12 +722,7 @@ void EventMerger::mergeProfileAssignments(
     }
     if (field_names.empty()) continue;
 
-    H5::Group out_facet;
-    if (H5Lexists(out_assigns.getId(), facet.c_str(), H5P_DEFAULT)) {
-      out_facet = out_assigns.openGroup(facet);
-    } else {
-      out_facet = out_assigns.createGroup(facet);
-    }
+    H5::Group out_facet = openOrCreateGroup(out_assigns, facet);
 
     // 4. For every field, concatenate arrays from all rank files. MPI
     //    partitions agents across ranks so simple concatenation is correct;
@@ -817,26 +815,11 @@ void EventMerger::mergePopulationNetworks(
   }
   if (network_names.empty()) return;
 
-  H5::Group out_lookups;
-  if (H5Lexists(out_file.getId(), "/lookups", H5P_DEFAULT)) {
-    out_lookups = out_file.openGroup("/lookups");
-  } else {
-    out_lookups = out_file.createGroup("/lookups");
-  }
-  H5::Group out_nets;
-  if (H5Lexists(out_lookups.getId(), "population_networks", H5P_DEFAULT)) {
-    out_nets = out_lookups.openGroup("population_networks");
-  } else {
-    out_nets = out_lookups.createGroup("population_networks");
-  }
+  H5::Group out_lookups = openOrCreateGroup(out_file, "/lookups");
+  H5::Group out_nets = openOrCreateGroup(out_lookups, "population_networks");
 
   for (const auto& net_name : network_names) {
-    H5::Group out_net;
-    if (H5Lexists(out_nets.getId(), net_name.c_str(), H5P_DEFAULT)) {
-      out_net = out_nets.openGroup(net_name);
-    } else {
-      out_net = out_nets.createGroup(net_name);
-    }
+    H5::Group out_net = openOrCreateGroup(out_nets, net_name);
 
     for (const char* field : {"person_id", "partner_id"}) {
       const std::string ds_path =
