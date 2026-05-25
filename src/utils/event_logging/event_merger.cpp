@@ -214,6 +214,83 @@ void readPropertyValuesFromFile(
   }
 }
 
+H5::CompType buildPopulationSummaryCompType() {
+  H5::CompType type(sizeof(PopulationSummaryRecord));
+  type.insertMember("person_id", HOFFSET(PopulationSummaryRecord, person_id),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("age_group", HOFFSET(PopulationSummaryRecord, age_group),
+                    H5::PredType::NATIVE_UINT8);
+  type.insertMember("sex_code", HOFFSET(PopulationSummaryRecord, sex_code),
+                    H5::PredType::NATIVE_UINT8);
+  type.insertMember("schedule_type_code",
+                    HOFFSET(PopulationSummaryRecord, schedule_type_code),
+                    H5::PredType::NATIVE_UINT8);
+  type.insertMember("reserved", HOFFSET(PopulationSummaryRecord, reserved),
+                    H5::PredType::NATIVE_UINT8);
+  type.insertMember("geo_unit_id",
+                    HOFFSET(PopulationSummaryRecord, geo_unit_id),
+                    H5::PredType::NATIVE_INT);
+  hsize_t extra_dims[1] = {4};
+  H5::ArrayType extra_type(H5::PredType::NATIVE_UINT8, 1, extra_dims);
+  type.insertMember("extra_codes",
+                    HOFFSET(PopulationSummaryRecord, extra_codes), extra_type);
+  return type;
+}
+
+// Stream unique PopulationSummaryRecords from input files into `out_ds`,
+// deduplicated by person_id (first occurrence wins). Returns count of
+// unique records written.
+hsize_t streamUniquePopulationSummary(
+    H5::DataSet& out_ds, const H5::CompType& type,
+    const std::vector<std::string>& input_files) {
+  std::vector<uint8_t> seen;
+  hsize_t total_unique = 0;
+  const size_t CHUNK_SIZE = 100000;
+  std::vector<PopulationSummaryRecord> unique_buffer;
+
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), "/lookups/population_summary", H5P_DEFAULT))
+        continue;
+      H5::DataSet ds = file.openDataSet("/lookups/population_summary");
+      H5::DataSpace in_space = ds.getSpace();
+      hsize_t in_dims[1];
+      in_space.getSimpleExtentDims(in_dims);
+
+      hsize_t in_count = in_dims[0];
+      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
+        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
+        std::vector<PopulationSummaryRecord> chunk(count);
+        hsize_t count_h[1] = {count};
+        hsize_t offset_h[1] = {offset};
+        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
+        H5::DataSpace mem_space(1, count_h);
+        ds.read(chunk.data(), type, mem_space, in_space);
+
+        for (const auto& r : chunk) {
+          int rid = r.person_id;
+          if (rid >= (int)seen.size()) seen.resize(rid + 1, 0);
+          if (!seen[rid]) {
+            seen[rid] = 1;
+            unique_buffer.push_back(r);
+            total_unique++;
+            if (unique_buffer.size() >= CHUNK_SIZE) {
+              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
+            }
+          }
+        }
+      }
+    } catch (...) {
+    }
+  }
+
+  if (!unique_buffer.empty()) {
+    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
+  }
+  return total_unique;
+}
+
 void mergeOnePeopleProperty(const std::string& key,
                             const std::vector<std::string>& input_files,
                             const std::vector<int32_t>& id_to_merged_idx,
@@ -590,27 +667,8 @@ void EventMerger::mergePopulationSummary(
     H5::H5File& out_file, const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  H5::CompType type(sizeof(PopulationSummaryRecord));
-  type.insertMember("person_id", HOFFSET(PopulationSummaryRecord, person_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("age_group", HOFFSET(PopulationSummaryRecord, age_group),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("sex_code", HOFFSET(PopulationSummaryRecord, sex_code),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("schedule_type_code",
-                    HOFFSET(PopulationSummaryRecord, schedule_type_code),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("reserved", HOFFSET(PopulationSummaryRecord, reserved),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("geo_unit_id",
-                    HOFFSET(PopulationSummaryRecord, geo_unit_id),
-                    H5::PredType::NATIVE_INT);
-  hsize_t extra_dims[1] = {4};
-  H5::ArrayType extra_type(H5::PredType::NATIVE_UINT8, 1, extra_dims);
-  type.insertMember("extra_codes",
-                    HOFFSET(PopulationSummaryRecord, extra_codes), extra_type);
+  H5::CompType type = buildPopulationSummaryCompType();
 
-  std::vector<uint8_t> seen;
   hsize_t initial_dims[1] = {0};
   hsize_t max_dims[1] = {H5S_UNLIMITED};
   H5::DataSpace out_space(1, initial_dims, max_dims);
@@ -621,50 +679,8 @@ void EventMerger::mergePopulationSummary(
   H5::DataSet out_ds = out_file.createDataSet("/lookups/population_summary",
                                               type, out_space, plist);
 
-  hsize_t total_unique = 0;
-  const size_t CHUNK_SIZE = 100000;
-  std::vector<PopulationSummaryRecord> unique_buffer;
-
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/population_summary", H5P_DEFAULT))
-        continue;
-      H5::DataSet ds = file.openDataSet("/lookups/population_summary");
-      H5::DataSpace in_space = ds.getSpace();
-      hsize_t in_dims[1];
-      in_space.getSimpleExtentDims(in_dims);
-
-      hsize_t in_count = in_dims[0];
-      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
-        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
-        std::vector<PopulationSummaryRecord> chunk(count);
-        hsize_t count_h[1] = {count};
-        hsize_t offset_h[1] = {offset};
-        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
-        H5::DataSpace mem_space(1, count_h);
-        ds.read(chunk.data(), type, mem_space, in_space);
-
-        for (const auto& r : chunk) {
-          int rid = r.person_id;
-          if (rid >= (int)seen.size()) seen.resize(rid + 1, 0);
-          if (!seen[rid]) {
-            seen[rid] = 1;
-            unique_buffer.push_back(r);
-            total_unique++;
-            if (unique_buffer.size() >= CHUNK_SIZE) {
-              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-            }
-          }
-        }
-      }
-    } catch (...) {
-    }
-  }
-
-  if (!unique_buffer.empty()) {
-    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-  }
+  hsize_t total_unique =
+      streamUniquePopulationSummary(out_ds, type, input_files);
   std::cout << "  Merged " << total_unique
             << " population summary records (streaming)" << std::endl;
 }
