@@ -418,21 +418,15 @@ void DomainManager::exchangeGlobalProperty(
 }
 
 void DomainManager::exchangeDeathFlags() {
-#ifdef USE_MPI
   exchangeGlobalProperty<uint8_t>(
       global_death_flags_, 0, MPI_UINT8_T, MPI_MAX,
       [&](const Person& p) -> uint8_t { return p.is_dead ? 1 : 0; });
-#endif
 }
 
 void DomainManager::exchangeScheduleTypes() {
-#ifdef USE_MPI
-
   exchangeGlobalProperty<uint16_t>(
       global_person_schedule_type_, 65535, MPI_UNSIGNED_SHORT, MPI_MIN,
       [](const Person& p) -> uint16_t { return p.schedule_type_id; });
-
-#endif
 }
 
 uint16_t DomainManager::getGlobalScheduleType(PersonId pid) const {
@@ -452,8 +446,6 @@ void DomainManager::setGlobalScheduleType(PersonId pid, uint16_t type_id) {
 }
 
 void DomainManager::exchangeActivityMasks() {
-#ifdef USE_MPI
-
   if (rank_ == 0)
     std::cout << "MPI: Exchanging global activity/venue availability masks..."
               << std::endl;
@@ -494,7 +486,6 @@ void DomainManager::exchangeActivityMasks() {
     std::cout << "  Synchronized activity masks for "
               << global_person_activity_mask_.size() << " people." << std::endl;
   }
-#endif
 }
 
 ActivityMask DomainManager::getGlobalActivityMask(PersonId pid) const {
