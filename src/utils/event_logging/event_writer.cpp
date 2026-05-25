@@ -36,20 +36,21 @@ H5::Group openOrCreateGroup(H5::Group& parent, const std::string& name) {
   return parent.createGroup(name);
 }
 
-// Resolve which people should appear in /lookups/people for this write call.
-// Empty result means "skip the whole table". The save_full_person_details=="all"
-// + append branch returns empty intentionally (already written on first call).
+// Resolve which people should appear in a /lookups/* table for this write
+// call. `mode` is the config switch ("none"/"all"/"infected_only"). Empty
+// result means "skip the whole table". The mode=="all" + append branch
+// returns empty intentionally (already written on first call).
 std::unordered_set<june::PersonId> selectPeopleToSave(
-    const june::WorldState& world, const june::Config& config,
+    const june::WorldState& world, const std::string& mode,
     const june::EventLogger& logger, bool append,
     const std::unordered_set<june::PersonId>* person_ids_filter) {
   std::unordered_set<june::PersonId> people_to_save;
   if (person_ids_filter) {
     people_to_save = *person_ids_filter;
-  } else if (config.simulation.save_full_person_details == "all") {
+  } else if (mode == "all") {
     if (append) return people_to_save;
     for (const auto& person : world.people) people_to_save.insert(person.id);
-  } else if (config.simulation.save_full_person_details == "infected_only") {
+  } else if (mode == "infected_only") {
     people_to_save = logger.getInfectedPersonIds();
   }
   return people_to_save;
@@ -181,6 +182,61 @@ void writeOrAppendStringDataset(H5::Group& prop_group, const std::string& name,
     pds = prop_group.createDataSet(name, out_type, out_space, plist);
     pds.write(pc_strs.data(), out_type);
   }
+}
+
+std::vector<june::detail::PersonActivityRecord> buildPersonActivityRecords(
+    const june::WorldState& world,
+    const std::unordered_set<june::PersonId>& people_to_save) {
+  size_t total_entries = 0;
+  for (const auto& person : world.people) {
+    if (!people_to_save.count(person.id)) continue;
+    for (const auto& meta : world.getActivityMetas(person))
+      total_entries += world.getActivityVenues(meta).size();
+  }
+  std::vector<june::detail::PersonActivityRecord> records;
+  records.reserve(total_entries);
+  for (const auto& person : world.people) {
+    if (!people_to_save.count(person.id)) continue;
+    for (const auto& meta : world.getActivityMetas(person)) {
+      if (meta.activity_index < 0 ||
+          meta.activity_index >= (int16_t)world.activity_names.size())
+        continue;
+      const std::string& aname = world.activity_names[meta.activity_index];
+      auto venues = world.getActivityVenues(meta);
+      for (size_t idx = 0; idx < venues.size(); ++idx) {
+        june::detail::PersonActivityRecord record;
+        record.person_id = person.id;
+        strncpy(record.activity_name, aname.c_str(), 63);
+        record.activity_name[63] = '\0';
+        record.venue_id = venues[idx].first;
+        record.subset_index = venues[idx].second;
+        record.activity_index = static_cast<int>(idx);
+        records.push_back(record);
+      }
+    }
+  }
+  return records;
+}
+
+H5::CompType makePersonActivityCompType() {
+  H5::StrType aname_type(H5::PredType::C_S1, 64);
+  H5::CompType atype(sizeof(june::detail::PersonActivityRecord));
+  atype.insertMember("person_id",
+                     HOFFSET(june::detail::PersonActivityRecord, person_id),
+                     H5::PredType::NATIVE_INT);
+  atype.insertMember("activity_name",
+                     HOFFSET(june::detail::PersonActivityRecord, activity_name),
+                     aname_type);
+  atype.insertMember("venue_id",
+                     HOFFSET(june::detail::PersonActivityRecord, venue_id),
+                     H5::PredType::NATIVE_INT);
+  atype.insertMember("subset_index",
+                     HOFFSET(june::detail::PersonActivityRecord, subset_index),
+                     H5::PredType::NATIVE_INT);
+  atype.insertMember("activity_index",
+                     HOFFSET(june::detail::PersonActivityRecord, activity_index),
+                     H5::PredType::NATIVE_INT);
+  return atype;
 }
 
 // Metadata for one /lookups/population_summary "extra" property slot.
@@ -590,8 +646,9 @@ void EventWriter::writePersonLookupTable(
     H5::H5File& file, const WorldState& world, const Config& config,
     const EventLogger& logger, bool append,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  auto people_to_save =
-      selectPeopleToSave(world, config, logger, append, person_ids_filter);
+  auto people_to_save = selectPeopleToSave(
+      world, config.simulation.save_full_person_details, logger, append,
+      person_ids_filter);
   if (people_to_save.empty()) return;
 
   auto records = buildPersonRecords(world, people_to_save);
@@ -669,68 +726,14 @@ void EventWriter::writePersonActivitiesTable(
     H5::H5File& file, const WorldState& world, const Config& config,
     const EventLogger& logger, bool append,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  std::unordered_set<PersonId> people_to_save;
-  if (person_ids_filter) {
-    people_to_save = *person_ids_filter;
-  } else if (config.simulation.save_person_activities == "all") {
-    if (append) return;  // All people's activities already saved in first write
-    for (const auto& person : world.people) people_to_save.insert(person.id);
-  } else if (config.simulation.save_person_activities == "infected_only") {
-    people_to_save = logger.getInfectedPersonIds();
-  } else
-    return;
+  auto people_to_save = selectPeopleToSave(
+      world, config.simulation.save_person_activities, logger, append,
+      person_ids_filter);
+  if (people_to_save.empty()) return;
 
-  size_t total_entries = 0;
-  for (const auto& person : world.people) {
-    if (!people_to_save.count(person.id)) continue;
-    for (const auto& meta : world.getActivityMetas(person))
-      total_entries += world.getActivityVenues(meta).size();
-  }
-  if (total_entries == 0) return;
-
-  std::vector<detail::PersonActivityRecord> records;
-  records.reserve(total_entries);
-  for (const auto& person : world.people) {
-    if (!people_to_save.count(person.id)) continue;
-    for (const auto& meta : world.getActivityMetas(person)) {
-      if (meta.activity_index < 0 ||
-          meta.activity_index >= (int16_t)world.activity_names.size())
-        continue;
-      const std::string& aname = world.activity_names[meta.activity_index];
-      auto venues = world.getActivityVenues(meta);
-      for (size_t idx = 0; idx < venues.size(); ++idx) {
-        detail::PersonActivityRecord record;
-        record.person_id = person.id;
-        strncpy(record.activity_name, aname.c_str(), 63);
-        record.activity_name[63] = '\0';
-        record.venue_id = venues[idx].first;
-        record.subset_index = venues[idx].second;
-        record.activity_index = static_cast<int>(idx);
-        records.push_back(record);
-      }
-    }
-  }
-
-  H5::StrType aname_type(H5::PredType::C_S1, 64);
-  H5::CompType atype(sizeof(detail::PersonActivityRecord));
-  atype.insertMember("person_id",
-                     HOFFSET(detail::PersonActivityRecord, person_id),
-                     H5::PredType::NATIVE_INT);
-  atype.insertMember("activity_name",
-                     HOFFSET(detail::PersonActivityRecord, activity_name),
-                     aname_type);
-  atype.insertMember("venue_id",
-                     HOFFSET(detail::PersonActivityRecord, venue_id),
-                     H5::PredType::NATIVE_INT);
-  atype.insertMember("subset_index",
-                     HOFFSET(detail::PersonActivityRecord, subset_index),
-                     H5::PredType::NATIVE_INT);
-  atype.insertMember("activity_index",
-                     HOFFSET(detail::PersonActivityRecord, activity_index),
-                     H5::PredType::NATIVE_INT);
-
-  hsize_t adims[1] = {records.size()};
-  H5::DataSpace aspace(1, adims);
+  auto records = buildPersonActivityRecords(world, people_to_save);
+  if (records.empty()) return;
+  auto atype = makePersonActivityCompType();
   writeDatasetTemplate(file, "/lookups/person_activities", records, atype,
                        config.simulation.compression_level);
 }
