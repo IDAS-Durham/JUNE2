@@ -291,6 +291,162 @@ void dumpCountsAndDispls(std::ostream& os, const std::vector<int>& send_counts,
      << " total_recv_bytes=" << total_recv << '\n';
 }
 
+// =============================================================================
+// Templated route-and-Alltoallv exchange shared by encounter proposals and
+// replies. Both call sites had a near-identical 150-LOC body that differed
+// only in the record type, wire size, per-record validate/dump/pack/unpack
+// functions, routing field, abort codes, and diagnostic tag ("proposal" /
+// "reply"). All of those are passed in; the byte-level wire format is the
+// caller's responsibility (delegated to pack_fn / unpack_fn).
+//
+// The send/recv counts are exposed via out-params so the caller can emit
+// its own JUNE_MPI_DEBUG postlude (proposals and replies print different
+// stats).
+//
+// Template parameters are deduced; pack_fn / unpack_fn / etc. are passed as
+// free functions or lambdas — no std::function, no heap, no vtable dispatch.
+// =============================================================================
+template <typename T, typename Pack, typename Unpack, typename Validate,
+          typename Dump, typename Route>
+void exchangeRoutedRecords(const std::vector<T>& local_records,
+                           std::vector<T>& records_for_this_rank, int rank,
+                           int num_ranks, int wire_size, const char* kind,
+                           int before_abort, int total_neg_abort,
+                           int pack_abort, int unpack_abort, Pack pack_fn,
+                           Unpack unpack_fn, Validate validate_fn,
+                           Dump dump_fn, Route route_fn,
+                           std::vector<int>& out_send_counts,
+                           std::vector<int>& out_recv_counts) {
+  // [DIAG] Validate every local record before anything else. If we see
+  // corruption here, the bug is in the generator, not in MPI.
+  for (size_t i = 0; i < local_records.size(); ++i) {
+    std::string err = validate_fn(local_records[i]);
+    if (!err.empty()) {
+      std::cerr << "[Rank " << rank << "] FATAL: corrupt local " << kind
+                << " BEFORE MPI exchange"
+                << " at local_records[" << i << "/" << local_records.size()
+                << "]: " << err << "\n  ";
+      dump_fn(std::cerr, local_records[i]);
+      std::cerr << std::endl;
+      MPI_Abort(MPI_COMM_WORLD, before_abort);
+    }
+  }
+
+  // Route each record to its target rank. Unknown rank -> keep locally.
+  std::vector<std::vector<T>> per_rank(num_ranks);
+  for (const auto& rec : local_records) {
+    int target = route_fn(rec);
+    if (target < 0 || target >= num_ranks) {
+      per_rank[rank].push_back(rec);
+    } else {
+      per_rank[target].push_back(rec);
+    }
+  }
+
+  records_for_this_rank = std::move(per_rank[rank]);
+
+  std::vector<int> send_counts(num_ranks, 0);
+  for (int r = 0; r < num_ranks; ++r) {
+    send_counts[r] = static_cast<int>(per_rank[r].size());
+  }
+  send_counts[rank] = 0;  // Don't send to self
+
+  std::string send_tag = std::string(kind) + " send";
+  if (!checkByteOverflow(send_counts, wire_size, rank, send_tag.c_str())) {
+    return;
+  }
+
+  std::vector<int> recv_counts(num_ranks, 0);
+  MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
+               MPI_COMM_WORLD);
+
+  std::string recv_tag = std::string(kind) + " recv";
+  if (!checkByteOverflow(recv_counts, wire_size, rank, recv_tag.c_str())) {
+    return;
+  }
+
+  std::vector<int> sd, rd;
+  int total_send, total_recv;
+  june::mpi_utils::computeByteDisplacements(send_counts, wire_size, sd,
+                                            total_send);
+  june::mpi_utils::computeByteDisplacements(recv_counts, wire_size, rd,
+                                            total_recv);
+
+  if (total_send < 0 || total_recv < 0) {
+    std::cerr << "[Rank " << rank << "] FATAL: " << kind
+              << " byte totals negative after "
+                 "computeByteDisplacements: total_send="
+              << total_send << " total_recv=" << total_recv << std::endl;
+    MPI_Abort(MPI_COMM_WORLD, total_neg_abort);
+  }
+
+  std::vector<char> sbuf(total_send);
+  std::vector<char> rbuf(total_recv);
+
+  // Pack + validate each record on the way out. A second validate here
+  // catches any corruption introduced between the BEFORE check and now.
+  for (int r = 0; r < num_ranks; ++r) {
+    if (r == rank) continue;
+    char* ptr = sbuf.data() + sd[r];
+    for (size_t i = 0; i < per_rank[r].size(); ++i) {
+      const auto& rec = per_rank[r][i];
+      std::string err = validate_fn(rec);
+      if (!err.empty()) {
+        std::cerr << "[Rank " << rank << "] FATAL: corrupt " << kind
+                  << " at PACK time for target rank " << r << ", per_rank[" << r
+                  << "][" << i << "/" << per_rank[r].size() << "]: " << err
+                  << "\n  ";
+        dump_fn(std::cerr, rec);
+        std::cerr << std::endl;
+        MPI_Abort(MPI_COMM_WORLD, pack_abort);
+      }
+      ptr = pack_fn(ptr, rec);
+    }
+  }
+
+  std::vector<int> sc(num_ranks), rc(num_ranks);
+  for (int i = 0; i < num_ranks; ++i) {
+    sc[i] = send_counts[i] * wire_size;
+    rc[i] = recv_counts[i] * wire_size;
+  }
+  MPI_Alltoallv(sbuf.data(), sc.data(), sd.data(), MPI_BYTE, rbuf.data(),
+                rc.data(), rd.data(), MPI_BYTE, MPI_COMM_WORLD);
+
+  // Unpack + validate. First corrupt record gets a rich dump then MPI_Abort.
+  for (int r = 0; r < num_ranks; ++r) {
+    if (r == rank) continue;
+    const char* ptr = rbuf.data() + rd[r];
+    for (int i = 0; i < recv_counts[r]; ++i) {
+      const char* record_start = ptr;
+      T rec;
+      ptr = unpack_fn(ptr, rec);
+      std::string err = validate_fn(rec);
+      if (!err.empty()) {
+        size_t offset = static_cast<size_t>(record_start - rbuf.data());
+        std::cerr << "[Rank " << rank << "] FATAL: corrupt " << kind
+                  << " AFTER MPI unpack"
+                  << " from rank " << r << ", record " << i << "/"
+                  << recv_counts[r] << " at buffer offset " << offset
+                  << " (wire_size=" << wire_size << "): " << err << "\n  ";
+        dump_fn(std::cerr, rec);
+        std::cerr << "\n";
+        dumpCountsAndDispls(std::cerr, send_counts, recv_counts, sd, rd,
+                            total_send, total_recv);
+        std::cerr << "  hex dump of recv buffer around offset " << offset
+                  << ":\n";
+        hexDumpRegion(std::cerr, rbuf.data(), static_cast<size_t>(total_recv),
+                      offset, static_cast<size_t>(wire_size));
+        std::cerr.flush();
+        MPI_Abort(MPI_COMM_WORLD, unpack_abort);
+      }
+      records_for_this_rank.push_back(rec);
+    }
+  }
+
+  out_send_counts = std::move(send_counts);
+  out_recv_counts = std::move(recv_counts);
+}
+
 }  // anonymous namespace
 
 namespace june {
@@ -887,141 +1043,22 @@ void DomainCommunicator::exchangeEncounterProposals(
     const DomainManager& dm,
     std::vector<EncounterProposal>& proposals_for_this_rank) {
   const size_t num_enc_types = world_.encounter_type_names.size();
+  const int num_ranks_capture = num_ranks_;
 
-  // [DIAG] Validate every locally-generated proposal before anything else.
-  // If we see corruption here the bug is in the generator, not in MPI.
-  for (size_t i = 0; i < local_proposals.size(); ++i) {
-    std::string err =
-        validateProposal(local_proposals[i], num_ranks_, num_enc_types);
-    if (!err.empty()) {
-      std::cerr << "[Rank " << rank_
-                << "] FATAL: corrupt local proposal BEFORE MPI exchange"
-                << " at local_proposals[" << i << "/" << local_proposals.size()
-                << "]: " << err << "\n  ";
-      dumpProposal(std::cerr, local_proposals[i]);
-      std::cerr << std::endl;
-      MPI_Abort(MPI_COMM_WORLD, 110);
-    }
-  }
-
-  // Route each proposal to the rank that owns the invitee.
-  // Keep proposals where invitee is local.
-  std::vector<std::vector<EncounterProposal>> per_rank(num_ranks_);
-  for (const auto& prop : local_proposals) {
-    int target = dm.getPersonRank(prop.invitee_id);
-    if (target < 0 || target >= num_ranks_) {
-      // Unknown rank — keep locally (will get REJECTED_NOT_FOUND)
-      per_rank[rank_].push_back(prop);
-    } else {
-      per_rank[target].push_back(prop);
-    }
-  }
-
-  // Local proposals stay
-  proposals_for_this_rank = std::move(per_rank[rank_]);
-
-  std::vector<int> send_counts(num_ranks_, 0);
-  for (int r = 0; r < num_ranks_; ++r) {
-    send_counts[r] = static_cast<int>(per_rank[r].size());
-  }
-  send_counts[rank_] = 0;  // Don't send to self
-
-  // [DIAG] Overflow check on the byte count we're about to hand to MPI.
-  if (!checkByteOverflow(send_counts, PROPOSAL_WIRE_SIZE, rank_,
-                         "proposal send")) {
-    return;  // MPI_Abort already called
-  }
-
-  std::vector<int> recv_counts(num_ranks_, 0);
-  MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
-               MPI_COMM_WORLD);
-
-  if (!checkByteOverflow(recv_counts, PROPOSAL_WIRE_SIZE, rank_,
-                         "proposal recv")) {
-    return;
-  }
-
-  std::vector<int> sd, rd;
-  int total_send, total_recv;
-  mpi_utils::computeByteDisplacements(send_counts, PROPOSAL_WIRE_SIZE, sd,
-                                      total_send);
-  mpi_utils::computeByteDisplacements(recv_counts, PROPOSAL_WIRE_SIZE, rd,
-                                      total_recv);
-
-  // [DIAG] total_* are ints filled by computeByteDisplacements. Negative
-  // values indicate silent overflow inside the helper.
-  if (total_send < 0 || total_recv < 0) {
-    std::cerr << "[Rank " << rank_
-              << "] FATAL: proposal byte totals negative after "
-                 "computeByteDisplacements: total_send="
-              << total_send << " total_recv=" << total_recv << std::endl;
-    MPI_Abort(MPI_COMM_WORLD, 103);
-  }
-
-  std::vector<char> sbuf(total_send);
-  std::vector<char> rbuf(total_recv);
-
-  // Pack + validate each proposal on the way out. If a proposal became
-  // corrupt between validateProposal above and here the per_rank routing
-  // is the culprit.
-  for (int r = 0; r < num_ranks_; ++r) {
-    if (r == rank_) continue;
-    char* ptr = sbuf.data() + sd[r];
-    for (size_t i = 0; i < per_rank[r].size(); ++i) {
-      const auto& p = per_rank[r][i];
-      std::string err = validateProposal(p, num_ranks_, num_enc_types);
-      if (!err.empty()) {
-        std::cerr << "[Rank " << rank_
-                  << "] FATAL: corrupt proposal at PACK time for target rank "
-                  << r << ", per_rank[" << r << "][" << i << "/"
-                  << per_rank[r].size() << "]: " << err << "\n  ";
-        dumpProposal(std::cerr, p);
-        std::cerr << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 111);
-      }
-      ptr = packProposal(ptr, p);
-    }
-  }
-
-  std::vector<int> sc(num_ranks_), rc(num_ranks_);
-  for (int i = 0; i < num_ranks_; ++i) {
-    sc[i] = send_counts[i] * PROPOSAL_WIRE_SIZE;
-    rc[i] = recv_counts[i] * PROPOSAL_WIRE_SIZE;
-  }
-  MPI_Alltoallv(sbuf.data(), sc.data(), sd.data(), MPI_BYTE, rbuf.data(),
-                rc.data(), rd.data(), MPI_BYTE, MPI_COMM_WORLD);
-
-  // Unpack + validate. First corrupt record gets a rich dump then MPI_Abort.
-  for (int r = 0; r < num_ranks_; ++r) {
-    if (r == rank_) continue;
-    const char* ptr = rbuf.data() + rd[r];
-    for (int i = 0; i < recv_counts[r]; ++i) {
-      const char* record_start = ptr;
-      EncounterProposal p;
-      ptr = unpackProposal(ptr, p);
-      std::string err = validateProposal(p, num_ranks_, num_enc_types);
-      if (!err.empty()) {
-        size_t offset = static_cast<size_t>(record_start - rbuf.data());
-        std::cerr << "[Rank " << rank_
-                  << "] FATAL: corrupt proposal AFTER MPI unpack"
-                  << " from rank " << r << ", record " << i << "/"
-                  << recv_counts[r] << " at buffer offset " << offset
-                  << " (wire_size=" << PROPOSAL_WIRE_SIZE << "): " << err
-                  << "\n  ";
-        dumpProposal(std::cerr, p);
-        std::cerr << "\n";
-        dumpCountsAndDispls(std::cerr, send_counts, recv_counts, sd, rd,
-                            total_send, total_recv);
-        std::cerr << "  hex dump of recv buffer around offset " << offset
-                  << ":\n";
-        hexDumpRegion(std::cerr, rbuf.data(), static_cast<size_t>(total_recv),
-                      offset, static_cast<size_t>(PROPOSAL_WIRE_SIZE));
-        std::cerr.flush();
-        MPI_Abort(MPI_COMM_WORLD, 112);
-      }
-      proposals_for_this_rank.push_back(p);
-    }
-  }
+  std::vector<int> send_counts, recv_counts;
+  exchangeRoutedRecords<EncounterProposal>(
+      local_proposals, proposals_for_this_rank, rank_, num_ranks_,
+      PROPOSAL_WIRE_SIZE, "proposal",
+      /*before_abort=*/110, /*total_neg_abort=*/103,
+      /*pack_abort=*/111, /*unpack_abort=*/112, packProposal, unpackProposal,
+      [num_ranks_capture, num_enc_types](const EncounterProposal& p) {
+        return validateProposal(p, num_ranks_capture, num_enc_types);
+      },
+      dumpProposal,
+      [&dm](const EncounterProposal& p) {
+        return dm.getPersonRank(p.invitee_id);
+      },
+      send_counts, recv_counts);
 
 #ifdef JUNE_MPI_DEBUG
   if (config_.parallel.verbose_mpi) {
