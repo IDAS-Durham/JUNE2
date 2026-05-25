@@ -629,10 +629,6 @@ void DomainManager::synchronizeRegistries() {
 void DomainManager::reportDomainStats(const std::string& label) const {
   size_t local_pop = world_.people.size();
   size_t local_venues = world_.venues.size();
-  size_t local_residences = 0;
-  for (const auto& v : world_.venues)
-    if (v.is_residence) local_residences++;
-
   double local_rss_gb = MemoryUtils::getRSS() / (1024.0 * 1024.0);
 
   // Exchange stats
@@ -652,23 +648,16 @@ void DomainManager::reportDomainStats(const std::string& label) const {
 
   if (rank_ == 0) {
     std::cout << "\n=== Domain Statistics [" << label << "] ===" << std::endl;
-    uint64_t total_p = 0, max_p = 0,
-             min_p = std::numeric_limits<uint64_t>::max();
-    uint64_t total_v = 0, max_v = 0,
-             min_v = std::numeric_limits<uint64_t>::max();
-    double total_rss = 0, max_rss = 0,
-           min_rss = std::numeric_limits<double>::max();
+    uint64_t total_p = 0, max_p = 0;
+    uint64_t total_v = 0;
+    double total_rss = 0, max_rss = 0;
 
     for (int r = 0; r < num_ranks_; ++r) {
       total_p += pops[r];
       max_p = std::max(max_p, pops[r]);
-      min_p = std::min(min_p, pops[r]);
       total_v += venues[r];
-      max_v = std::max(max_v, venues[r]);
-      min_v = std::min(min_v, venues[r]);
       total_rss += rss[r];
       max_rss = std::max(max_rss, rss[r]);
-      min_rss = std::min(min_rss, rss[r]);
 
       if (num_ranks_ <= 64 || r < 4 || r >= num_ranks_ - 4) {
         std::cout << "  Rank " << std::setw(3) << r << ": Pop=" << std::setw(10)
