@@ -350,6 +350,74 @@ std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
   return slots;
 }
 
+// Forward decl: defined further down. Shared by parseScheduleType and the
+// loadActivityPreferences / loadVaccination loaders.
+void parseSelectionCriteria(const YAML::Node& selection_node,
+                            std::vector<SelectionCriterion>& out);
+
+// Parse one entry from `schedule_types:` (a named schedule). Reads the
+// flag/scalar fields, the optional `selection` block (via
+// parseSelectionCriteria), the flat_slots / per-day-type slot lists (via
+// parseSlotList), the per-schedule activity overrides, and the
+// participation-rate table. `day_type_names` lists the day-type keys to
+// look up on the YAML node.
+ScheduleType parseScheduleType(const std::string& name,
+                               const YAML::Node& type_node,
+                               const std::vector<std::string>& day_type_names) {
+  ScheduleType sched_type;
+  sched_type.name = name;
+
+  if (type_node["priority"]) {
+    sched_type.priority = type_node["priority"].as<int>();
+  }
+
+  if (type_node["is_temporary"]) {
+    sched_type.is_temporary = type_node["is_temporary"].as<bool>();
+  }
+  if (type_node["return_schedule"]) {
+    sched_type.return_schedule = type_node["return_schedule"].as<std::string>();
+  }
+  if (type_node["flat_slots"]) {
+    sched_type.flat_slots = parseSlotList(type_node["flat_slots"]);
+  }
+
+  if (type_node["selection"]) {
+    parseSelectionCriteria(type_node["selection"],
+                           sched_type.selection_criteria);
+  }
+
+  for (const auto& dt_name : day_type_names) {
+    if (type_node[dt_name]) {
+      sched_type.slots_by_day_type[dt_name] =
+          parseSlotList(type_node[dt_name]);
+    }
+  }
+
+  if (type_node["force_hybrid_activities"]) {
+    sched_type.force_hybrid_activities =
+        type_node["force_hybrid_activities"].as<std::vector<std::string>>();
+  }
+
+  if (type_node["linked_activities"]) {
+    sched_type.linked_activities =
+        type_node["linked_activities"].as<std::vector<std::string>>();
+  }
+
+  if (type_node["participation"]) {
+    for (const auto& kv : type_node["participation"]) {
+      std::string activity = kv.first.as<std::string>();
+      for (const auto& dt_name : day_type_names) {
+        if (kv.second[dt_name]) {
+          sched_type.participation_by_day_type[dt_name][activity] =
+              kv.second[dt_name].as<double>();
+        }
+      }
+    }
+  }
+
+  return sched_type;
+}
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
 // of SelectionCriterion. The scalar `value` is dispatched int -> double ->
 // string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
@@ -587,70 +655,9 @@ ScheduleConfig ConfigLoader::loadSchedule(const std::string& filename) {
 
     // Parse each schedule type
     for (const auto& type_kv : root["schedule_types"]) {
-      ScheduleType sched_type;
-      sched_type.name = type_kv.first.as<std::string>();
-      const auto& type_node = type_kv.second;
-
-      // Priority
-      if (type_node["priority"]) {
-        sched_type.priority = type_node["priority"].as<int>();
-      }
-
-      // Temporary schedule flag and flat_slots
-      if (type_node["is_temporary"]) {
-        sched_type.is_temporary = type_node["is_temporary"].as<bool>();
-      }
-      if (type_node["return_schedule"]) {
-        sched_type.return_schedule =
-            type_node["return_schedule"].as<std::string>();
-      }
-      if (type_node["flat_slots"]) {
-        sched_type.flat_slots = parseSlotList(type_node["flat_slots"]);
-      }
-
-      // Selection criteria
-      if (type_node["selection"]) {
-        parseSelectionCriteria(type_node["selection"],
-                               sched_type.selection_criteria);
-      }
-
-      // Slot lists — one per day type name
-      for (const auto& dt_name : config.day_type_names) {
-        if (type_node[dt_name]) {
-          sched_type.slots_by_day_type[dt_name] =
-              parseSlotList(type_node[dt_name]);
-        }
-      }
-
-      // Per-schedule override: activities to treat as HYBRID (per-tick re-
-      // roll, cached venue) even when listed globally as deterministic in
-      // performance.yaml.
-      if (type_node["force_hybrid_activities"]) {
-        sched_type.force_hybrid_activities =
-            type_node["force_hybrid_activities"].as<std::vector<std::string>>();
-      }
-
-      // Linked activities: share one dice roll per (person, sim_day).
-      // See ScheduleType::linked_activities for semantics.
-      if (type_node["linked_activities"]) {
-        sched_type.linked_activities =
-            type_node["linked_activities"].as<std::vector<std::string>>();
-      }
-
-      // Participation rates: activity -> { day_type_name: rate, ... }
-      if (type_node["participation"]) {
-        for (const auto& kv : type_node["participation"]) {
-          std::string activity = kv.first.as<std::string>();
-          for (const auto& dt_name : config.day_type_names) {
-            if (kv.second[dt_name]) {
-              sched_type.participation_by_day_type[dt_name][activity] =
-                  kv.second[dt_name].as<double>();
-            }
-          }
-        }
-      }
-
-      config.schedule_types.push_back(sched_type);
+      config.schedule_types.push_back(
+          parseScheduleType(type_kv.first.as<std::string>(), type_kv.second,
+                            config.day_type_names));
     }
 
     // Sort schedule types by priority (highest first)
