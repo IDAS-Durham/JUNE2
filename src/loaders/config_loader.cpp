@@ -32,6 +32,37 @@ bool config_loader_log_rank0() {
 #endif
 }
 
+// Parse a YAML sequence of `{property, operator, value}` entries into a vector
+// of SelectionCriterion. The scalar `value` is dispatched int -> double ->
+// string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
+// loadActivityPreferences, and loadVaccination (campaign selection blocks).
+void parseSelectionCriteria(const YAML::Node& selection_node,
+                            std::vector<SelectionCriterion>& out) {
+  for (const auto& criterion_node : selection_node) {
+    SelectionCriterion criterion;
+    criterion.property_path =
+        criterion_node["property"].as<std::string>();
+    criterion.operator_type =
+        criterion_node["operator"].as<std::string>();
+
+    const auto& value_node = criterion_node["value"];
+    if (value_node.IsSequence()) {
+      criterion.value = value_node.as<std::vector<int32_t>>();
+    } else if (value_node.IsScalar()) {
+      try {
+        criterion.value = value_node.as<int>();
+      } catch (...) {
+        try {
+          criterion.value = value_node.as<double>();
+        } catch (...) {
+          criterion.value = value_node.as<std::string>();
+        }
+      }
+    }
+    out.push_back(std::move(criterion));
+  }
+}
+
 }  // namespace
 
 Config ConfigLoader::loadAll(const std::string& simulation_file) {
@@ -311,31 +342,8 @@ ScheduleConfig ConfigLoader::loadSchedule(const std::string& filename) {
 
       // Selection criteria
       if (type_node["selection"]) {
-        for (const auto& criterion_node : type_node["selection"]) {
-          SelectionCriterion criterion;
-          criterion.property_path =
-              criterion_node["property"].as<std::string>();
-          criterion.operator_type =
-              criterion_node["operator"].as<std::string>();
-
-          const auto& value_node = criterion_node["value"];
-          if (value_node.IsSequence()) {
-            std::vector<int32_t> values = value_node.as<std::vector<int32_t>>();
-            criterion.value = values;
-          } else if (value_node.IsScalar()) {
-            try {
-              criterion.value = value_node.as<int>();
-            } catch (...) {
-              try {
-                criterion.value = value_node.as<float>();
-              } catch (...) {
-                criterion.value = value_node.as<std::string>();
-              }
-            }
-          }
-
-          sched_type.selection_criteria.push_back(criterion);
-        }
+        parseSelectionCriteria(type_node["selection"],
+                               sched_type.selection_criteria);
       }
 
       // Slot lists — one per day type name
@@ -685,29 +693,8 @@ ActivityPreferenceConfig ConfigLoader::loadActivityPreferences(
 
         // Load selection criteria
         if (profile_node["selection"]) {
-          for (const auto& criterion_node : profile_node["selection"]) {
-            SelectionCriterion criterion;
-            criterion.property_path =
-                criterion_node["property"].as<std::string>();
-            criterion.operator_type =
-                criterion_node["operator"].as<std::string>();
-
-            const auto& value_node = criterion_node["value"];
-            if (value_node.IsSequence()) {
-              criterion.value = value_node.as<std::vector<int32_t>>();
-            } else if (value_node.IsScalar()) {
-              try {
-                criterion.value = value_node.as<int>();
-              } catch (...) {
-                try {
-                  criterion.value = value_node.as<float>();
-                } catch (...) {
-                  criterion.value = value_node.as<std::string>();
-                }
-              }
-            }
-            profile.selection_criteria.push_back(criterion);
-          }
+          parseSelectionCriteria(profile_node["selection"],
+                                 profile.selection_criteria);
         }
 
         // Load preference weights
@@ -839,27 +826,8 @@ VaccinationConfig ConfigLoader::loadVaccination(const std::string& filename) {
 
         // Selection criteria
         if (camp_node["selection"]) {
-          for (const auto& crit_node : camp_node["selection"]) {
-            SelectionCriterion crit;
-            crit.property_path = crit_node["property"].as<std::string>();
-            crit.operator_type = crit_node["operator"].as<std::string>();
-
-            // Parse value (int, float, string, or vector)
-            if (crit_node["value"].IsScalar()) {
-              try {
-                crit.value = crit_node["value"].as<int>();
-              } catch (...) {
-                try {
-                  crit.value = crit_node["value"].as<double>();
-                } catch (...) {
-                  crit.value = crit_node["value"].as<std::string>();
-                }
-              }
-            } else if (crit_node["value"].IsSequence()) {
-              crit.value = crit_node["value"].as<std::vector<int32_t>>();
-            }
-            camp.selection_criteria.push_back(crit);
-          }
+          parseSelectionCriteria(camp_node["selection"],
+                                 camp.selection_criteria);
         }
 
         if (camp_node["last_dose_type_filter"]) {
