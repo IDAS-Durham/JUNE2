@@ -171,6 +171,41 @@ void parseEncounterRequiredFields(const YAML::Node& enc_node,
   }
 }
 
+// Resolve the per-encounter rate source: either an inline scalar
+// `proposal_probability` (signalled by has_proposal_prob) or a named
+// `frequency_group` referencing the surrounding config's frequency_groups
+// map. Exactly one must be declared. Throws on unknown group, on both
+// declared, or on neither.
+void parseEncounterRateSource(
+    const YAML::Node& enc_node, CoordinatedEncounterDef& enc_def,
+    const std::unordered_map<std::string, FrequencyGroup>& frequency_groups,
+    bool has_proposal_prob) {
+  if (enc_node["frequency_group"]) {
+    std::string fg_name = enc_node["frequency_group"].as<std::string>();
+    if (!frequency_groups.count(fg_name)) {
+      throw std::runtime_error(
+          "Coordinated encounter '" + enc_def.name +
+          "' references unknown frequency_group '" + fg_name +
+          "' (not declared in frequency_groups block)");
+    }
+    enc_def.frequency_group = fg_name;
+  }
+
+  if (enc_def.frequency_group.has_value() && has_proposal_prob) {
+    throw std::runtime_error(
+        "Coordinated encounter '" + enc_def.name +
+        "' declares both 'proposal_probability' and "
+        "'frequency_group'; these are mutually exclusive. Remove "
+        "proposal_probability when using a frequency_group.");
+  }
+  if (!enc_def.frequency_group.has_value() && !has_proposal_prob) {
+    throw std::runtime_error(
+        "Coordinated encounter '" + enc_def.name +
+        "' missing rate source: specify either 'proposal_probability' "
+        "or 'frequency_group'.");
+  }
+}
+
 // Lenient counterpart to parseInviteDistributionStrict, used for
 // `daily_max_distribution` blocks. Every key is optional: missing `type`
 // leaves the existing default in place, and a missing distribution-specific
@@ -1100,35 +1135,8 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
                 enc_node["network_partner_filter"].as<std::string>();
           }
 
-          // Frequency group (optional). When set, the encounter draws its
-          // per-person daily proposal rate from the named frequency_group CSV
-          // and the scalar proposal_probability is unused.
-          if (enc_node["frequency_group"]) {
-            std::string fg_name = enc_node["frequency_group"].as<std::string>();
-            if (!config.frequency_groups.count(fg_name)) {
-              throw std::runtime_error(
-                  "Coordinated encounter '" + enc_def.name +
-                  "' references unknown frequency_group '" + fg_name +
-                  "' (not declared in frequency_groups block)");
-            }
-            enc_def.frequency_group = fg_name;
-          }
-
-          // Validate proposal_probability vs. frequency_group: exactly one
-          // frequency source must be declared per encounter.
-          if (enc_def.frequency_group.has_value() && has_proposal_prob) {
-            throw std::runtime_error(
-                "Coordinated encounter '" + enc_def.name +
-                "' declares both 'proposal_probability' and "
-                "'frequency_group'; these are mutually exclusive. Remove "
-                "proposal_probability when using a frequency_group.");
-          }
-          if (!enc_def.frequency_group.has_value() && !has_proposal_prob) {
-            throw std::runtime_error(
-                "Coordinated encounter '" + enc_def.name +
-                "' missing rate source: specify either 'proposal_probability' "
-                "or 'frequency_group'.");
-          }
+          parseEncounterRateSource(enc_node, enc_def, config.frequency_groups,
+                                   has_proposal_prob);
 
           // Daily max distribution (optional, defaults to fixed count=1)
           if (enc_node["daily_max_distribution"]) {
