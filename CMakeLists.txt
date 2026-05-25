@@ -150,7 +150,9 @@ set(JUNE_CORE_SOURCES
     src/loaders/hdf5_loader.cpp
     src/loaders/domain_loader.cpp
     src/loaders/domain_loader_internals.cpp
-    src/loaders/config_loader.cpp)
+    src/loaders/config_loader.cpp
+    src/loaders/config_loader_encounters.cpp
+    src/loaders/config_loader_vaccination.cpp)
 
 if(MPI_FOUND)
   list(APPEND JUNE_CORE_SOURCES
