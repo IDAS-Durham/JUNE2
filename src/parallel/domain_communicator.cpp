@@ -1081,127 +1081,18 @@ void DomainCommunicator::exchangeEncounterReplies(
     std::vector<EncounterReply>& replies_for_this_rank) {
   const size_t num_enc_types = world_.encounter_type_names.size();
 
-  // [DIAG] Validate every local reply before anything else. If corruption
-  // is already here, the bug is upstream of the reply exchange.
-  for (size_t i = 0; i < local_replies.size(); ++i) {
-    std::string err = validateReply(local_replies[i], num_enc_types);
-    if (!err.empty()) {
-      std::cerr << "[Rank " << rank_
-                << "] FATAL: corrupt local reply BEFORE MPI exchange"
-                << " at local_replies[" << i << "/" << local_replies.size()
-                << "]: " << err << "\n  ";
-      dumpReply(std::cerr, local_replies[i]);
-      std::cerr << std::endl;
-      MPI_Abort(MPI_COMM_WORLD, 120);
-    }
-  }
-
-  // Route each reply back to the host's rank.
-  std::vector<std::vector<EncounterReply>> per_rank(num_ranks_);
-  for (const auto& reply : local_replies) {
-    int target = dm.getPersonRank(reply.host_id);
-    if (target < 0 || target >= num_ranks_) {
-      per_rank[rank_].push_back(reply);
-    } else {
-      per_rank[target].push_back(reply);
-    }
-  }
-
-  replies_for_this_rank = std::move(per_rank[rank_]);
-
-  std::vector<int> send_counts(num_ranks_, 0);
-  for (int r = 0; r < num_ranks_; ++r) {
-    send_counts[r] = static_cast<int>(per_rank[r].size());
-  }
-  send_counts[rank_] = 0;
-
-  if (!checkByteOverflow(send_counts, REPLY_WIRE_SIZE, rank_, "reply send")) {
-    return;
-  }
-
-  std::vector<int> recv_counts(num_ranks_, 0);
-  MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
-               MPI_COMM_WORLD);
-
-  if (!checkByteOverflow(recv_counts, REPLY_WIRE_SIZE, rank_, "reply recv")) {
-    return;
-  }
-
-  std::vector<int> sd, rd;
-  int total_send, total_recv;
-  mpi_utils::computeByteDisplacements(send_counts, REPLY_WIRE_SIZE, sd,
-                                      total_send);
-  mpi_utils::computeByteDisplacements(recv_counts, REPLY_WIRE_SIZE, rd,
-                                      total_recv);
-
-  if (total_send < 0 || total_recv < 0) {
-    std::cerr << "[Rank " << rank_
-              << "] FATAL: reply byte totals negative after "
-                 "computeByteDisplacements: total_send="
-              << total_send << " total_recv=" << total_recv << std::endl;
-    MPI_Abort(MPI_COMM_WORLD, 104);
-  }
-
-  std::vector<char> sbuf(total_send);
-  std::vector<char> rbuf(total_recv);
-
-  for (int r = 0; r < num_ranks_; ++r) {
-    if (r == rank_) continue;
-    char* ptr = sbuf.data() + sd[r];
-    for (size_t i = 0; i < per_rank[r].size(); ++i) {
-      const auto& reply = per_rank[r][i];
-      std::string err = validateReply(reply, num_enc_types);
-      if (!err.empty()) {
-        std::cerr << "[Rank " << rank_
-                  << "] FATAL: corrupt reply at PACK time for target rank " << r
-                  << ", per_rank[" << r << "][" << i << "/"
-                  << per_rank[r].size() << "]: " << err << "\n  ";
-        dumpReply(std::cerr, reply);
-        std::cerr << std::endl;
-        MPI_Abort(MPI_COMM_WORLD, 121);
-      }
-      ptr = packReply(ptr, reply);
-    }
-  }
-
-  std::vector<int> sc(num_ranks_), rc(num_ranks_);
-  for (int i = 0; i < num_ranks_; ++i) {
-    sc[i] = send_counts[i] * REPLY_WIRE_SIZE;
-    rc[i] = recv_counts[i] * REPLY_WIRE_SIZE;
-  }
-  MPI_Alltoallv(sbuf.data(), sc.data(), sd.data(), MPI_BYTE, rbuf.data(),
-                rc.data(), rd.data(), MPI_BYTE, MPI_COMM_WORLD);
-
-  for (int r = 0; r < num_ranks_; ++r) {
-    if (r == rank_) continue;
-    const char* ptr = rbuf.data() + rd[r];
-    for (int i = 0; i < recv_counts[r]; ++i) {
-      const char* record_start = ptr;
-      EncounterReply reply;
-      ptr = unpackReply(ptr, reply);
-      std::string err = validateReply(reply, num_enc_types);
-      if (!err.empty()) {
-        size_t offset = static_cast<size_t>(record_start - rbuf.data());
-        std::cerr << "[Rank " << rank_
-                  << "] FATAL: corrupt reply AFTER MPI unpack"
-                  << " from rank " << r << ", record " << i << "/"
-                  << recv_counts[r] << " at buffer offset " << offset
-                  << " (wire_size=" << REPLY_WIRE_SIZE << "): " << err
-                  << "\n  ";
-        dumpReply(std::cerr, reply);
-        std::cerr << "\n";
-        dumpCountsAndDispls(std::cerr, send_counts, recv_counts, sd, rd,
-                            total_send, total_recv);
-        std::cerr << "  hex dump of recv buffer around offset " << offset
-                  << ":\n";
-        hexDumpRegion(std::cerr, rbuf.data(), static_cast<size_t>(total_recv),
-                      offset, static_cast<size_t>(REPLY_WIRE_SIZE));
-        std::cerr.flush();
-        MPI_Abort(MPI_COMM_WORLD, 122);
-      }
-      replies_for_this_rank.push_back(reply);
-    }
-  }
+  std::vector<int> send_counts, recv_counts;
+  exchangeRoutedRecords<EncounterReply>(
+      local_replies, replies_for_this_rank, rank_, num_ranks_, REPLY_WIRE_SIZE,
+      "reply",
+      /*before_abort=*/120, /*total_neg_abort=*/104,
+      /*pack_abort=*/121, /*unpack_abort=*/122, packReply, unpackReply,
+      [num_enc_types](const EncounterReply& r) {
+        return validateReply(r, num_enc_types);
+      },
+      dumpReply,
+      [&dm](const EncounterReply& r) { return dm.getPersonRank(r.host_id); },
+      send_counts, recv_counts);
 
 #ifdef JUNE_MPI_DEBUG
   if (config_.parallel.verbose_mpi) {
