@@ -96,6 +96,93 @@ std::vector<june::detail::PersonRecord> buildPersonRecords(
   return records;
 }
 
+// Stringify one person-property column across the selected people, in
+// world.people order. Falls back to network-partner serialisation for keys
+// whose values live in Person::NetworkMeta rather than the flat property
+// table; falls back to "" when neither source has a value.
+std::vector<std::string> collectPropertyValues(
+    const june::WorldState& world,
+    const std::unordered_set<june::PersonId>& people_to_save,
+    const std::string& key) {
+  const int network_type_id = world.getNetworkTypeIndex(key);
+  std::vector<std::string> values;
+  values.reserve(people_to_save.size());
+  for (const auto& person : world.people) {
+    if (!people_to_save.count(person.id)) continue;
+    auto prop = world.getPersonProperty(person, key);
+    if (prop.has_value()) {
+      const auto& val = *prop;
+      if (std::holds_alternative<std::string>(val))
+        values.push_back(std::get<std::string>(val));
+      else if (std::holds_alternative<int32_t>(val)) {
+        int32_t iv = std::get<int32_t>(val);
+        auto rit = world.person_property_value_registries.find(key);
+        if (rit != world.person_property_value_registries.end() && iv >= 0 &&
+            (size_t)iv < rit->second.size())
+          values.push_back(rit->second[iv]);
+        else
+          values.push_back(std::to_string(iv));
+      } else if (std::holds_alternative<bool>(val))
+        values.push_back(std::get<bool>(val) ? "true" : "false");
+      else if (std::holds_alternative<double>(val))
+        values.push_back(std::to_string(std::get<double>(val)));
+      else
+        values.push_back("unknown");
+    } else if (network_type_id >= 0) {
+      auto partners = world.getNetworkPartners(person, network_type_id);
+      if (partners.empty()) {
+        values.push_back("");
+      } else {
+        std::string s = "[";
+        for (size_t i = 0; i < partners.size(); ++i) {
+          if (i > 0) s.push_back(' ');
+          s += std::to_string(partners[i]);
+        }
+        s.push_back(']');
+        values.push_back(std::move(s));
+      }
+    } else {
+      values.push_back("");
+    }
+  }
+  return values;
+}
+
+// Write `values` to `name` under `prop_group` as a chunked var-length string
+// dataset. Creates the dataset if absent, extends + appends if present.
+void writeOrAppendStringDataset(H5::Group& prop_group, const std::string& name,
+                                const std::vector<std::string>& values) {
+  hsize_t out_dims[1] = {values.size()};
+  hsize_t out_maxdims[1] = {H5S_UNLIMITED};
+  H5::DataSpace out_space(1, out_dims, out_maxdims);
+  H5::StrType out_type(H5::PredType::C_S1, H5T_VARIABLE);
+
+  H5::DSetCreatPropList plist;
+  hsize_t chunk_dims[1] = {std::min(out_dims[0], hsize_t(100000))};
+  if (chunk_dims[0] == 0) chunk_dims[0] = 1;
+  plist.setChunk(1, chunk_dims);
+
+  std::vector<const char*> pc_strs;
+  pc_strs.reserve(values.size());
+  for (const auto& s : values) pc_strs.push_back(s.c_str());
+
+  H5::DataSet pds;
+  if (H5Lexists(prop_group.getId(), name.c_str(), H5P_DEFAULT)) {
+    pds = prop_group.openDataSet(name);
+    hsize_t current_dims[1];
+    pds.getSpace().getSimpleExtentDims(current_dims);
+    hsize_t new_dims[1] = {current_dims[0] + values.size()};
+    pds.extend(new_dims);
+
+    H5::DataSpace file_space = pds.getSpace();
+    file_space.selectHyperslab(H5S_SELECT_SET, out_dims, current_dims);
+    pds.write(pc_strs.data(), out_type, out_space, file_space);
+  } else {
+    pds = prop_group.createDataSet(name, out_type, out_space, plist);
+    pds.write(pc_strs.data(), out_type);
+  }
+}
+
 H5::CompType makePersonCompType() {
   H5::StrType sex_type(H5::PredType::C_S1, 16);
   H5::StrType schedule_type(H5::PredType::C_S1, 64);
@@ -426,87 +513,12 @@ void EventWriter::writePersonLookupTable(
   writeDatasetTemplate(file, "/lookups/people", records, person_type,
                        config.simulation.compression_level);
 
-  const size_t n = people_to_save.size();
-
   if (!world.person_property_names.empty()) {
     H5::Group prop_group =
         openOrCreateGroup(file, "/lookups/people_properties");
     for (const auto& key : world.person_property_names) {
-      // Network-typed properties (e.g. friendships) are
-      // stored in Person::NetworkMeta rather than the flat property table.
-      // getPersonProperty returns nullopt for them; fall back to serialising
-      // partner ids in the same "[id1 id2 ...]" shape the world loader reads.
-      const int network_type_id = world.getNetworkTypeIndex(key);
-      std::vector<std::string> values;
-      values.reserve(n);
-      for (const auto& person : world.people) {
-        if (!people_to_save.count(person.id)) continue;
-        auto prop = world.getPersonProperty(person, key);
-        if (prop.has_value()) {
-          const auto& val = *prop;
-          if (std::holds_alternative<std::string>(val))
-            values.push_back(std::get<std::string>(val));
-          else if (std::holds_alternative<int32_t>(val)) {
-            int32_t iv = std::get<int32_t>(val);
-            auto rit = world.person_property_value_registries.find(key);
-            if (rit != world.person_property_value_registries.end() &&
-                iv >= 0 && (size_t)iv < rit->second.size())
-              values.push_back(rit->second[iv]);
-            else
-              values.push_back(std::to_string(iv));
-          } else if (std::holds_alternative<bool>(val))
-            values.push_back(std::get<bool>(val) ? "true" : "false");
-          else if (std::holds_alternative<double>(val))
-            values.push_back(std::to_string(std::get<double>(val)));
-          else
-            values.push_back("unknown");
-        } else if (network_type_id >= 0) {
-          auto partners = world.getNetworkPartners(person, network_type_id);
-          if (partners.empty()) {
-            values.push_back("");
-          } else {
-            std::string s = "[";
-            for (size_t i = 0; i < partners.size(); ++i) {
-              if (i > 0) s.push_back(' ');
-              s += std::to_string(partners[i]);
-            }
-            s.push_back(']');
-            values.push_back(std::move(s));
-          }
-        } else {
-          values.push_back("");
-        }
-      }
-      hsize_t out_dims[1] = {values.size()};
-      hsize_t out_maxdims[1] = {H5S_UNLIMITED};
-      H5::DataSpace out_space(1, out_dims, out_maxdims);
-      H5::StrType out_type(H5::PredType::C_S1, H5T_VARIABLE);
-
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(out_dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-
-      H5::DataSet pds;
-      std::vector<const char*> pc_strs;
-      for (const auto& s : values) pc_strs.push_back(s.c_str());
-
-      if (H5Lexists(prop_group.getId(), key.c_str(), H5P_DEFAULT)) {
-        // Dataset exists, open it and extend
-        pds = prop_group.openDataSet(key);
-        hsize_t current_dims[1];
-        pds.getSpace().getSimpleExtentDims(current_dims);
-        hsize_t new_dims[1] = {current_dims[0] + values.size()};
-        pds.extend(new_dims);
-
-        H5::DataSpace file_space = pds.getSpace();
-        file_space.selectHyperslab(H5S_SELECT_SET, out_dims, current_dims);
-        pds.write(pc_strs.data(), out_type, out_space, file_space);
-      } else {
-        // Dataset does not exist, create it
-        pds = prop_group.createDataSet(key, out_type, out_space, plist);
-        pds.write(pc_strs.data(), out_type);
-      }
+      auto values = collectPropertyValues(world, people_to_save, key);
+      writeOrAppendStringDataset(prop_group, key, values);
     }
   }
 }
