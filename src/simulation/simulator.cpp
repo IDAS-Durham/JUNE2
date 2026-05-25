@@ -187,6 +187,41 @@ void printDiseaseAudit(const Disease& disease,
   if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
 }
 
+// Rank-0 announcement of the active checkpoint cadence and any out-of-window
+// date entries. Only fires when checkpointing is enabled; callers should
+// gate on rank 0 themselves.
+void announceCheckpointMode(const SimulationConfig::CheckpointConfig& cp,
+                            const std::string& start_date,
+                            const std::string& end_date) {
+  if (!cp.enabled) return;
+  if (cp.usesDates()) {
+    if (cp.every_n_days.has_value()) {
+      std::cout << "[checkpoint] on_dates is set; every_n_days ("
+                << *cp.every_n_days
+                << ") is IGNORED (dates take precedence)" << std::endl;
+    }
+    for (const auto& d : *cp.on_dates) {
+      if (d < start_date || d > end_date) {
+        std::cout << "[checkpoint] WARNING: on_dates entry '" << d
+                  << "' is outside the simulation window [" << start_date
+                  << ", " << end_date << "] and will never fire" << std::endl;
+      }
+    }
+    std::cout << "[checkpoint] enabled: date-based cadence, "
+              << cp.on_dates->size() << " date(s), output_dir='"
+              << cp.output_dir << "', keep_last=" << cp.keep_last << std::endl;
+  } else if (cp.every_n_days.has_value() && *cp.every_n_days > 0) {
+    std::cout << "[checkpoint] enabled: every " << *cp.every_n_days
+              << " day(s), output_dir='" << cp.output_dir
+              << "', keep_last=" << cp.keep_last << std::endl;
+  } else {
+    std::cout << "[checkpoint] enabled but no cadence configured "
+                 "(every_n_days and on_dates both absent) — no "
+                 "checkpoints will be written"
+              << std::endl;
+  }
+}
+
 // One-shot rank-0 dump of the loaded disease + infection-seed configuration.
 // Output is purely diagnostic (no MPI participation, no global state mutated)
 // so it is safe to run after construction but before the simulator starts.
@@ -405,38 +440,9 @@ void Simulator::run() {
     Profiler::instance().enable();
 
     // Checkpoint cadence: validate + announce the active mode once.
-    const auto& cp = config_.simulation.checkpoint;
-    if (cp.enabled) {
-      if (cp.usesDates()) {
-        if (cp.every_n_days.has_value()) {
-          std::cout << "[checkpoint] on_dates is set; every_n_days ("
-                    << *cp.every_n_days
-                    << ") is IGNORED (dates take precedence)" << std::endl;
-        }
-        const std::string& sd = config_.simulation.start_date;
-        const std::string& ed = config_.simulation.end_date;
-        for (const auto& d : *cp.on_dates) {
-          if (d < sd || d > ed) {
-            std::cout << "[checkpoint] WARNING: on_dates entry '" << d
-                      << "' is outside the simulation window [" << sd << ", "
-                      << ed << "] and will never fire" << std::endl;
-          }
-        }
-        std::cout << "[checkpoint] enabled: date-based cadence, "
-                  << cp.on_dates->size() << " date(s), output_dir='"
-                  << cp.output_dir << "', keep_last=" << cp.keep_last
-                  << std::endl;
-      } else if (cp.every_n_days.has_value() && *cp.every_n_days > 0) {
-        std::cout << "[checkpoint] enabled: every " << *cp.every_n_days
-                  << " day(s), output_dir='" << cp.output_dir
-                  << "', keep_last=" << cp.keep_last << std::endl;
-      } else {
-        std::cout << "[checkpoint] enabled but no cadence configured "
-                     "(every_n_days and on_dates both absent) — no "
-                     "checkpoints will be written"
-                  << std::endl;
-      }
-    }
+    announceCheckpointMode(config_.simulation.checkpoint,
+                           config_.simulation.start_date,
+                           config_.simulation.end_date);
   }
 
   if (resume_from_day_ > 0 && rank == 0) {
