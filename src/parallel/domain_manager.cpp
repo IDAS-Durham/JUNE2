@@ -88,6 +88,22 @@ std::vector<int32_t> buildRemapToGlobal(
   return remap;
 }
 
+// Apply a (old → new) index remap to every person's stored value for one
+// property, in-place on the world's person_properties buffer.
+void remapPersonPropertyValues(WorldState& world, const std::string& prop_name,
+                               const std::vector<int32_t>& remap) {
+  int prop_idx = world.getPersonPropertyIndex(prop_name);
+  if (prop_idx < 0) return;
+  for (auto& person : world.people) {
+    size_t base = person.properties_start + prop_idx;
+    if (base >= world.person_properties.size()) continue;
+    int32_t old_val = world.person_properties[base];
+    if (old_val >= 0 && old_val < static_cast<int32_t>(remap.size())) {
+      world.person_properties[base] = remap[old_val];
+    }
+  }
+}
+
 }  // anonymous namespace
 
 DomainManager::DomainManager(WorldState& world, const Config& config)
@@ -603,19 +619,7 @@ void DomainManager::synchronizeRegistries() {
         buildRemapToGlobal(local_registry, global_registry);
 
     // 4. Remap all person property values for this property
-    int prop_idx = world_.getPersonPropertyIndex(prop_name);
-    if (prop_idx >= 0) {
-      int num_props = static_cast<int>(world_.person_property_names.size());
-      for (auto& person : world_.people) {
-        size_t base = person.properties_start + prop_idx;
-        if (base < world_.person_properties.size()) {
-          int32_t old_val = world_.person_properties[base];
-          if (old_val >= 0 && old_val < static_cast<int32_t>(remap.size())) {
-            world_.person_properties[base] = remap[old_val];
-          }
-        }
-      }
-    }
+    remapPersonPropertyValues(world_, prop_name, remap);
 
     // 5. Replace local registry with global registry
     local_registry = global_registry;
