@@ -122,6 +122,15 @@ class Simulator {
 
   std::unique_ptr<Epidemiology> epidemiology_;
 
+  // Returns the MPI rank of this process, or 0 for serial / no-MPI builds.
+  int getRank() const {
+#ifdef USE_MPI
+    return domain_mgr_ ? domain_mgr_->getRank() : 0;
+#else
+    return 0;
+#endif
+  }
+
   // Simulation loop functions
   void simulateDay(int day_num);
   void simulateTimeSlot(const TimeSlot& slot, int time_slot_index,

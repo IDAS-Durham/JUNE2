@@ -109,11 +109,7 @@ Simulator::Simulator(WorldState& world, const Config& config,
   // identical regardless of MPI rank count because only rank 0 ever writes.
   // ---------------------------------------------------------------------------
   {
-    int audit_rank = 0;
-#ifdef USE_MPI
-    if (domain_mgr_) audit_rank = domain_mgr_->getRank();
-#endif
-    if (audit_rank == 0) {
+    if (getRank() == 0) {
       // Save and override stream state so inherited precision doesn't truncate.
       auto saved_flags = std::cout.flags();
       auto saved_prec = std::cout.precision();
@@ -296,10 +292,7 @@ Simulator::Simulator(WorldState& world, const Config& config,
   interaction_manager_->setRuntimeBinAllocator(runtime_bin_allocator_.get());
 
   // Initialize coordinated encounter manager
-  int rank = 0;
-#ifdef USE_MPI
-  if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
+  const int rank = getRank();
   coordinated_encounter_manager_ =
       std::make_unique<CoordinatedEncounterManager>(world_, config_, rank);
 
@@ -390,10 +383,7 @@ Simulator::Simulator(WorldState& world, const Config& config,
 }
 
 void Simulator::run() {
-  int rank = 0;
-#ifdef USE_MPI
-  if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
+  const int rank = getRank();
 
   if (rank == 0) {
     std::cout << "\n=== Starting Simulation ===" << std::endl;
@@ -530,10 +520,6 @@ void Simulator::run() {
       // 48 bits are a per-rank monotonic counter (2^48 events / rank is
       // effectively unbounded for realistic simulations).
       {
-        int rank = 0;
-#ifdef USE_MPI
-        if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
         const uint64_t rank_prefix = static_cast<uint64_t>(rank) << 48;
         for (const auto& enc : finalized) {
           const uint64_t group_id = rank_prefix | (next_encounter_group_id_++ &
@@ -771,10 +757,7 @@ void Simulator::simulateDay(int day_num) {
 
 void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
                                  int day_type_idx, double delta_hours) {
-  int rank = 0;
-#ifdef USE_MPI
-  if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
+  const int rank = getRank();
 
   printSimulationState(slot.name, delta_hours);
 
@@ -1304,14 +1287,7 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 }
 
 void Simulator::outputStatistics() {
-  int rank = 0;
-  int size = 1;
-#ifdef USE_MPI
-  if (domain_mgr_) {
-    rank = domain_mgr_->getRank();
-    size = domain_mgr_->getNumRanks();
-  }
-#endif
+  const int rank = getRank();
 
 #ifdef USE_MPI
   if (domain_mgr_) {
@@ -1360,11 +1336,7 @@ void Simulator::outputStatistics() {
 
 void Simulator::printSimulationState(const std::string& time_slot_name,
                                      double delta_hours) {
-  int rank = 0;
-#ifdef USE_MPI
-  if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
-  if (rank == 0) {
+  if (getRank() == 0) {
     std::cout << "    [" << time_slot_name << "] duration = " << std::fixed
               << std::setprecision(2) << delta_hours << " hours" << std::endl;
   }
@@ -1383,11 +1355,7 @@ void Simulator::applyInfectionSeeds(const std::string& current_datetime) {
 #endif
 
   if (global_count > 0) {
-    int rank = 0;
-#ifdef USE_MPI
-    if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
-    if (rank == 0) {
+    if (getRank() == 0) {
       std::cout << "    [INFECTION SEED] Seeded " << global_count
                 << " infections" << std::endl;
     }
@@ -1400,13 +1368,10 @@ void Simulator::applyInfectionSeeds(const std::string& current_datetime) {
 }
 
 void Simulator::outputInfectionStatistics() {
-  int rank = 0;
+  const int rank = getRank();
   int size = 1;
 #ifdef USE_MPI
-  if (domain_mgr_) {
-    rank = domain_mgr_->getRank();
-    size = domain_mgr_->getNumRanks();
-  }
+  if (domain_mgr_) size = domain_mgr_->getNumRanks();
 #endif
 
   // Local counts and breakdown
@@ -1525,12 +1490,6 @@ void Simulator::checkAndFlushEvents(bool is_day_end) {
   }
 
   if (should_flush && event_logger_.getTotalRecordCount() > 0) {
-    int rank = 0;
-#ifdef USE_MPI
-    if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
-    // Streaming logger flush message removed — internal plumbing
-
     // Identify people who need their lookup records written (not already
     // written)
     std::unordered_set<PersonId> newly_infected;
