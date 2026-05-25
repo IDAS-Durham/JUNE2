@@ -896,6 +896,12 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
   MPI_Alltoallv(sbuf.data(), sc.data(), sd.data(), MPI_BYTE, rbuf.data(),
                 rc.data(), rd.data(), MPI_BYTE, MPI_COMM_WORLD);
 
+  return unpackAndApplyIncoming(rbuf, rd, recv_counts);
+}
+
+std::vector<PendingInfection> DomainCommunicator::unpackAndApplyIncoming(
+    const std::vector<char>& rbuf, const std::vector<int>& rd,
+    const std::vector<int>& recv_counts) {
   int applied_count = 0;
   int skipped_count = 0;
   std::vector<PendingInfection> newly_infected;

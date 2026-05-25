@@ -86,6 +86,14 @@ class DomainCommunicator {
       std::vector<std::vector<PendingInfection>>& updates,
       std::vector<int>& send_counts);
 
+  // Walks the receive buffer of an Alltoallv exchange of PendingInfections,
+  // unpacks each record, and delegates to applyOnePendingInfection. Returns
+  // the vector of newly-applied records (for upstream logging) and emits
+  // the JUNE_MPI_DEBUG receive-side summary.
+  std::vector<PendingInfection> unpackAndApplyIncoming(
+      const std::vector<char>& rbuf, const std::vector<int>& rd,
+      const std::vector<int>& recv_counts);
+
   // Construct the local Infection for one successfully-unpacked pending
   // record and return the resulting PendingInfection for upstream logging.
   // Returns std::nullopt if the record was skipped (person not owned,
