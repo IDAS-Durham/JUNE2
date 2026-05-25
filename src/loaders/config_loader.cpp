@@ -299,6 +299,57 @@ void parseDailyMaxDistribution(const YAML::Node& dmd_node,
   }
 }
 
+// Parse a YAML sequence of `{name, start, end, allowed_activities, ...}`
+// entries into a vector of TimeSlot. Shared by the per-schedule-type loop
+// in loadSchedule (both flat_slots and per-day-type slot lists).
+std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
+  std::vector<TimeSlot> slots;
+  for (const auto& slot : slot_list_node) {
+    TimeSlot ts;
+    ts.name = slot["name"].as<std::string>();
+    ts.start = slot["start"].as<std::string>();
+    ts.end = slot["end"].as<std::string>();
+    ts.allowed_activities =
+        slot["allowed_activities"].as<std::vector<std::string>>();
+
+    if (slot["coordinated_only_activities"])
+      ts.coordinated_only_activities = slot["coordinated_only_activities"]
+                                           .as<std::vector<std::string>>();
+
+    if (slot["specified_activity"]) {
+      SpecifiedActivity spec_act;
+      spec_act.type = slot["specified_activity"]["type"].as<std::string>();
+      spec_act.index = slot["specified_activity"]["index"].as<int>();
+      if (slot["specified_activity"]["venue_type"]) {
+        spec_act.venue_type =
+            slot["specified_activity"]["venue_type"].as<std::string>();
+      }
+      ts.specified_activity = spec_act;
+    }
+
+    if (slot["hop_on_activity"]) {
+      for (const auto& hop_kv : slot["hop_on_activity"]) {
+        std::string act_name = hop_kv.first.as<std::string>();
+        if (hop_kv.second.IsScalar()) {
+          // Direct hop: activity_name → schedule_name
+          ts.hop_on_activity[act_name] = hop_kv.second.as<std::string>();
+        } else if (hop_kv.second.IsMap()) {
+          // Property-dispatched hop: schedule name resolved at runtime
+          TimeSlot::PropertyDispatchHop dispatch;
+          dispatch.property_name =
+              hop_kv.second["property"].as<std::string>();
+          dispatch.schedule_name_template =
+              hop_kv.second["schedule_template"].as<std::string>();
+          ts.property_hop_dispatch[act_name] = std::move(dispatch);
+        }
+      }
+    }
+
+    slots.push_back(ts);
+  }
+  return slots;
+}
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
 // of SelectionCriterion. The scalar `value` is dispatched int -> double ->
 // string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
@@ -533,56 +584,6 @@ ScheduleConfig ConfigLoader::loadSchedule(const std::string& filename) {
       config.default_schedule_type =
           root["default_schedule_type"].as<std::string>();
     }
-
-    // Helper: parse a slot list node into a vector of TimeSlot
-    auto parseSlotList =
-        [](const YAML::Node& slot_list_node) -> std::vector<TimeSlot> {
-      std::vector<TimeSlot> slots;
-      for (const auto& slot : slot_list_node) {
-        TimeSlot ts;
-        ts.name = slot["name"].as<std::string>();
-        ts.start = slot["start"].as<std::string>();
-        ts.end = slot["end"].as<std::string>();
-        ts.allowed_activities =
-            slot["allowed_activities"].as<std::vector<std::string>>();
-
-        if (slot["coordinated_only_activities"])
-          ts.coordinated_only_activities = slot["coordinated_only_activities"]
-                                               .as<std::vector<std::string>>();
-
-        if (slot["specified_activity"]) {
-          SpecifiedActivity spec_act;
-          spec_act.type = slot["specified_activity"]["type"].as<std::string>();
-          spec_act.index = slot["specified_activity"]["index"].as<int>();
-          if (slot["specified_activity"]["venue_type"]) {
-            spec_act.venue_type =
-                slot["specified_activity"]["venue_type"].as<std::string>();
-          }
-          ts.specified_activity = spec_act;
-        }
-
-        if (slot["hop_on_activity"]) {
-          for (const auto& hop_kv : slot["hop_on_activity"]) {
-            std::string act_name = hop_kv.first.as<std::string>();
-            if (hop_kv.second.IsScalar()) {
-              // Direct hop: activity_name → schedule_name
-              ts.hop_on_activity[act_name] = hop_kv.second.as<std::string>();
-            } else if (hop_kv.second.IsMap()) {
-              // Property-dispatched hop: schedule name resolved at runtime
-              TimeSlot::PropertyDispatchHop dispatch;
-              dispatch.property_name =
-                  hop_kv.second["property"].as<std::string>();
-              dispatch.schedule_name_template =
-                  hop_kv.second["schedule_template"].as<std::string>();
-              ts.property_hop_dispatch[act_name] = std::move(dispatch);
-            }
-          }
-        }
-
-        slots.push_back(ts);
-      }
-      return slots;
-    };
 
     // Parse each schedule type
     for (const auto& type_kv : root["schedule_types"]) {
