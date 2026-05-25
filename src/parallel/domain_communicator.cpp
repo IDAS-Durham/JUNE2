@@ -472,41 +472,13 @@ void DomainCommunicator::exchangeVisitors(
   const int num_modes =
       (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
 
-#ifdef JUNE_MPI_DEBUG
-  int dbg_total = 0, dbg_no_venue = 0, dbg_not_ours = 0, dbg_local_venue = 0,
-      dbg_no_rank = 0;
-#endif
-
   for (const auto& loc : locations) {
-#ifdef JUNE_MPI_DEBUG
-    dbg_total++;
-#endif
-    if (loc.venue_id == -1) {
-#ifdef JUNE_MPI_DEBUG
-      dbg_no_venue++;
-#endif
-      continue;
-    }
-    if (!domain_.ownsPerson(loc.person_id)) {
-#ifdef JUNE_MPI_DEBUG
-      dbg_not_ours++;
-#endif
-      continue;
-    }
-    if (domain_.ownsVenue(loc.venue_id)) {
-#ifdef JUNE_MPI_DEBUG
-      dbg_local_venue++;
-#endif
-      continue;
-    }
+    if (loc.venue_id == -1) continue;
+    if (!domain_.ownsPerson(loc.person_id)) continue;
+    if (domain_.ownsVenue(loc.venue_id)) continue;
 
     int target_rank = dm.getVenueRank(loc.venue_id);
-    if (target_rank == -1) {
-#ifdef JUNE_MPI_DEBUG
-      dbg_no_rank++;
-#endif
-      continue;
-    }
+    if (target_rank == -1) continue;
     if (target_rank == rank_) {
       // Venue is on this rank (e.g., virtual venue hosted locally) — no
       // need to send as visitor; interaction will be computed locally.
