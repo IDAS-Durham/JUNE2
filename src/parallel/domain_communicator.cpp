@@ -1243,26 +1243,18 @@ void DomainCommunicator::exchangeFinalizedEncounters(
     const char* end = ptr + all_sizes[r];
     while (ptr < end) {
       CoordinatedEncounter enc;
-      memcpy(&enc.encounter_id, ptr, 4);
-      ptr += 4;
-      memcpy(&enc.host_id, ptr, 4);
-      ptr += 4;
-      memcpy(&enc.venue_id, ptr, 4);
-      ptr += 4;
-      memcpy(&enc.venue_type_id, ptr, 4);
-      ptr += 4;
-      memcpy(&enc.slot, ptr, 4);
-      ptr += 4;
-      memcpy(&enc.encounter_type_id, ptr, 1);
-      ptr += 1;
+      ptr = unpackField(ptr, enc.encounter_id);
+      ptr = unpackField(ptr, enc.host_id);
+      ptr = unpackField(ptr, enc.venue_id);
+      ptr = unpackField(ptr, enc.venue_type_id);
+      ptr = unpackField(ptr, enc.slot);
+      ptr = unpackField(ptr, enc.encounter_type_id);
       int participant_count;
-      memcpy(&participant_count, ptr, 4);
-      ptr += 4;
+      ptr = unpackField(ptr, participant_count);
       bool has_local = false;
       for (int i = 0; i < participant_count; ++i) {
         PersonId pid;
-        memcpy(&pid, ptr, 4);
-        ptr += 4;
+        ptr = unpackField(ptr, pid);
         enc.participants.insert(pid);
         if (dm.getPersonRank(pid) == rank_) has_local = true;
       }
