@@ -1207,23 +1207,15 @@ void DomainCommunicator::exchangeFinalizedEncounters(
     local_buf.resize(offset + entry_size);
     char* ptr = local_buf.data() + offset;
 
-    memcpy(ptr, &enc.encounter_id, 4);
-    ptr += 4;
-    memcpy(ptr, &enc.host_id, 4);
-    ptr += 4;
-    memcpy(ptr, &enc.venue_id, 4);
-    ptr += 4;
-    memcpy(ptr, &enc.venue_type_id, 4);
-    ptr += 4;
-    memcpy(ptr, &enc.slot, 4);
-    ptr += 4;
-    memcpy(ptr, &enc.encounter_type_id, 1);
-    ptr += 1;
-    memcpy(ptr, &participant_count, 4);
-    ptr += 4;
+    ptr = packField(ptr, enc.encounter_id);
+    ptr = packField(ptr, enc.host_id);
+    ptr = packField(ptr, enc.venue_id);
+    ptr = packField(ptr, enc.venue_type_id);
+    ptr = packField(ptr, enc.slot);
+    ptr = packField(ptr, enc.encounter_type_id);
+    ptr = packField(ptr, participant_count);
     for (PersonId pid : enc.participants) {
-      memcpy(ptr, &pid, 4);
-      ptr += 4;
+      ptr = packField(ptr, pid);
     }
   }
 
