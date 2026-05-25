@@ -142,6 +142,7 @@ set(JUNE_CORE_SOURCES
     src/utils/filtering.cpp
     src/utils/filtered_csv.cpp
     src/utils/event_logging/event_writer.cpp
+    src/utils/event_logging/event_writer_lookups.cpp
     src/utils/event_logging/event_merger.cpp
     src/epidemiology/epidemiology.cpp
     src/simulation/simulator.cpp
