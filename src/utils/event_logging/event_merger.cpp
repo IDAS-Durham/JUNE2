@@ -17,6 +17,23 @@ H5::Group openOrCreateGroup(Parent& parent, const std::string& name) {
   return parent.createGroup(name);
 }
 
+// Extend `out_ds` by buffer.size() rows, write buffer at the tail, then
+// clear it. `total_written` is the running output row count and must
+// already include the rows about to be flushed.
+template <typename T>
+void flushBufferToDataset(std::vector<T>& buffer, H5::DataSet& out_ds,
+                          const H5::CompType& type, hsize_t total_written) {
+  hsize_t new_size[1] = {total_written};
+  out_ds.extend(new_size);
+  H5::DataSpace out_space = out_ds.getSpace();
+  hsize_t count[1] = {buffer.size()};
+  hsize_t offset[1] = {total_written - buffer.size()};
+  out_space.selectHyperslab(H5S_SELECT_SET, count, offset);
+  H5::DataSpace mem_space(1, count);
+  out_ds.write(buffer.data(), type, mem_space, out_space);
+  buffer.clear();
+}
+
 }  // namespace
 
 void EventMerger::mergeEventFiles(const std::vector<std::string>& input_files,
@@ -327,17 +344,7 @@ void EventMerger::mergePeopleLookup(
             total_unique++;
 
             if (unique_buffer.size() >= CHUNK_SIZE) {
-              hsize_t new_size[1] = {total_unique};
-              out_ds.extend(new_size);
-              H5::DataSpace current_out_space = out_ds.getSpace();
-              hsize_t buffer_count[1] = {unique_buffer.size()};
-              hsize_t out_offset[1] = {total_unique - unique_buffer.size()};
-              current_out_space.selectHyperslab(H5S_SELECT_SET, buffer_count,
-                                                out_offset);
-              H5::DataSpace buffer_mem_space(1, buffer_count);
-              out_ds.write(unique_buffer.data(), type, buffer_mem_space,
-                           current_out_space);
-              unique_buffer.clear();
+              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
             }
           }
         }
@@ -347,15 +354,7 @@ void EventMerger::mergePeopleLookup(
   }
 
   if (!unique_buffer.empty()) {
-    hsize_t new_size[1] = {total_unique};
-    out_ds.extend(new_size);
-    H5::DataSpace current_out_space = out_ds.getSpace();
-    hsize_t buffer_count[1] = {unique_buffer.size()};
-    hsize_t out_offset[1] = {total_unique - unique_buffer.size()};
-    current_out_space.selectHyperslab(H5S_SELECT_SET, buffer_count, out_offset);
-    H5::DataSpace buffer_mem_space(1, buffer_count);
-    out_ds.write(unique_buffer.data(), type, buffer_mem_space,
-                 current_out_space);
+    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
   }
   std::cout << "  Merged " << total_unique << " unique people (streaming)"
             << std::endl;
@@ -512,17 +511,7 @@ void EventMerger::mergeVenueLookup(
             unique_buffer.push_back(r);
             total_unique++;
             if (unique_buffer.size() >= CHUNK_SIZE) {
-              hsize_t new_size[1] = {total_unique};
-              out_ds.extend(new_size);
-              H5::DataSpace current_out_space = out_ds.getSpace();
-              hsize_t buffer_count[1] = {unique_buffer.size()};
-              hsize_t out_offset[1] = {total_unique - unique_buffer.size()};
-              current_out_space.selectHyperslab(H5S_SELECT_SET, buffer_count,
-                                                out_offset);
-              H5::DataSpace buffer_mem_space(1, buffer_count);
-              out_ds.write(unique_buffer.data(), type, buffer_mem_space,
-                           current_out_space);
-              unique_buffer.clear();
+              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
             }
           }
         }
@@ -532,15 +521,7 @@ void EventMerger::mergeVenueLookup(
   }
 
   if (!unique_buffer.empty()) {
-    hsize_t new_size[1] = {total_unique};
-    out_ds.extend(new_size);
-    H5::DataSpace current_out_space = out_ds.getSpace();
-    hsize_t buffer_count[1] = {unique_buffer.size()};
-    hsize_t out_offset[1] = {total_unique - unique_buffer.size()};
-    current_out_space.selectHyperslab(H5S_SELECT_SET, buffer_count, out_offset);
-    H5::DataSpace buffer_mem_space(1, buffer_count);
-    out_ds.write(unique_buffer.data(), type, buffer_mem_space,
-                 current_out_space);
+    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
   }
   std::cout << "  Merged " << total_unique << " unique venues (streaming)"
             << std::endl;
@@ -635,17 +616,7 @@ void EventMerger::mergePopulationSummary(
             unique_buffer.push_back(r);
             total_unique++;
             if (unique_buffer.size() >= CHUNK_SIZE) {
-              hsize_t new_size[1] = {total_unique};
-              out_ds.extend(new_size);
-              H5::DataSpace current_out_space = out_ds.getSpace();
-              hsize_t buffer_count[1] = {unique_buffer.size()};
-              hsize_t out_offset[1] = {total_unique - unique_buffer.size()};
-              current_out_space.selectHyperslab(H5S_SELECT_SET, buffer_count,
-                                                out_offset);
-              H5::DataSpace buffer_mem_space(1, buffer_count);
-              out_ds.write(unique_buffer.data(), type, buffer_mem_space,
-                           current_out_space);
-              unique_buffer.clear();
+              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
             }
           }
         }
@@ -655,15 +626,7 @@ void EventMerger::mergePopulationSummary(
   }
 
   if (!unique_buffer.empty()) {
-    hsize_t new_size[1] = {total_unique};
-    out_ds.extend(new_size);
-    H5::DataSpace current_out_space = out_ds.getSpace();
-    hsize_t buffer_count[1] = {unique_buffer.size()};
-    hsize_t out_offset[1] = {total_unique - unique_buffer.size()};
-    current_out_space.selectHyperslab(H5S_SELECT_SET, buffer_count, out_offset);
-    H5::DataSpace buffer_mem_space(1, buffer_count);
-    out_ds.write(unique_buffer.data(), type, buffer_mem_space,
-                 current_out_space);
+    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
   }
   std::cout << "  Merged " << total_unique
             << " population summary records (streaming)" << std::endl;
