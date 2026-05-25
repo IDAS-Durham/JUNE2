@@ -119,8 +119,6 @@ class Simulator {
   // Incremental lookup tracking
   std::unordered_set<PersonId>
       lookups_written_;  // Tracks which people have been saved to HDF5
-  std::unordered_set<VenueId>
-      venues_written_;  // Tracks which venues have been saved to HDF5
 
   std::unique_ptr<Epidemiology> epidemiology_;
 
