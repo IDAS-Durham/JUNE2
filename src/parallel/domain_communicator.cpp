@@ -790,22 +790,14 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
       VenueId v_id;
       uint16_t infector_symptom_id = 0;
       uint8_t transmission_mode_index = 0;
-      memcpy(&pid, ptr, 4);
-      ptr += 4;
-      memcpy(&infector_id, ptr, 4);
-      ptr += 4;
-      memcpy(&t, ptr, 8);
-      ptr += 8;
-      memcpy(&v_type, ptr, 1);
-      ptr += 1;
-      memcpy(&enc_type_id, ptr, 1);
-      ptr += 1;
-      memcpy(&v_id, ptr, 4);
-      ptr += 4;
-      memcpy(&infector_symptom_id, ptr, 2);
-      ptr += 2;
-      memcpy(&transmission_mode_index, ptr, 1);
-      ptr += 1;
+      ptr = unpackField(ptr, pid);
+      ptr = unpackField(ptr, infector_id);
+      ptr = unpackField(ptr, t);
+      ptr = unpackField(ptr, v_type);
+      ptr = unpackField(ptr, enc_type_id);
+      ptr = unpackField(ptr, v_id);
+      ptr = unpackField(ptr, infector_symptom_id);
+      ptr = unpackField(ptr, transmission_mode_index);
 
       Person* person = world_.getPerson(pid);
       if (person && !person->infection && domain_.ownsPerson(pid) && disease_) {
