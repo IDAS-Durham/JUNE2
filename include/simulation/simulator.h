@@ -19,7 +19,7 @@
 #include "../epidemiology/vaccination_manager.h"
 #include "../loaders/disease_loader.h"
 #include "../loaders/policy_loader.h"
-#include "../utils/event_logger.h"
+#include "../utils/event_logging/event_logger.h"
 #include "../utils/memory_utils.h"
 #include "../utils/profiler.h"
 #include "../utils/random.h"

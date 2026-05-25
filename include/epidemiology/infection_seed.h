@@ -12,7 +12,7 @@
 #include "../core/config.h"  // For AgeGroup definition
 #include "../core/types.h"
 #include "../core/world_state.h"
-#include "../utils/event_logger.h"
+#include "../utils/event_logging/event_logger.h"
 
 namespace june {
 

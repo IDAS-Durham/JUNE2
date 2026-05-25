@@ -11,7 +11,7 @@
 #include "../core/config.h"
 #include "../core/world_state.h"
 #include "../utils/age_utils.h"
-#include "../utils/event_logger.h"
+#include "../utils/event_logging/event_logger.h"
 #include "../utils/event_logging/event_types.h"
 #include "../utils/time_utils.h"
 #include "disease.h"

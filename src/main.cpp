@@ -13,7 +13,7 @@
 #include "loaders/config_loader.h"
 #include "loaders/hdf5_loader.h"
 #include "simulation/simulator.h"
-#include "utils/event_logger.h"
+#include "utils/event_logging/event_logger.h"
 #include "utils/memory_utils.h"
 #include "utils/profiler.h"
 #include "utils/random.h"

@@ -7,7 +7,7 @@
 
 #include "../core/config.h"
 #include "../core/world_state.h"
-#include "../utils/event_logger.h"
+#include "../utils/event_logging/event_logger.h"
 #include "../utils/random.h"
 #include "../utils/time_utils.h"
 #include "vaccine.h"

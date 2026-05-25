@@ -7,7 +7,7 @@
 
 #include "../core/types.h"
 #include "../core/world_state.h"
-#include "../utils/event_logger.h"
+#include "../utils/event_logging/event_logger.h"
 #include "disease.h"
 
 namespace june {

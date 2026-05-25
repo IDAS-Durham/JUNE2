@@ -1,4 +1,4 @@
-#include "utils/event_logger.h"
+#include "utils/event_logging/event_logger.h"
 
 #include <cstring>
 #include <iostream>

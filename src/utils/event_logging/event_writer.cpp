@@ -10,7 +10,7 @@
 #include <mpi.h>
 #endif
 
-#include "utils/event_logger.h"
+#include "utils/event_logging/event_logger.h"
 #include "utils/event_logging/event_writer_detail.h"
 
 namespace {
