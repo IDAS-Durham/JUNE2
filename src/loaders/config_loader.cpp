@@ -355,6 +355,118 @@ std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
 void parseSelectionCriteria(const YAML::Node& selection_node,
                             std::vector<SelectionCriterion>& out);
 
+// Read the `config_paths:` block (or legacy top-level keys when no
+// `config_paths` section is present) onto the SimulationConfig file fields.
+// Also throws on the removed `group_encounters_file` key.
+void parseSimulationConfigPaths(const YAML::Node& paths,
+                                SimulationConfig& config) {
+  if (paths["disease_file"])
+    config.disease_file = paths["disease_file"].as<std::string>();
+  if (paths["contact_matrices_file"])
+    config.contact_matrices_file =
+        paths["contact_matrices_file"].as<std::string>();
+  if (paths["schedules_file"])
+    config.schedules_file = paths["schedules_file"].as<std::string>();
+  if (paths["vaccines_file"])
+    config.vaccines_file = paths["vaccines_file"].as<std::string>();
+  if (paths["activity_preferences_file"])
+    config.activity_preferences_file =
+        paths["activity_preferences_file"].as<std::string>();
+  if (paths["coordinated_encounters_file"])
+    config.coordinated_encounters_file =
+        paths["coordinated_encounters_file"].as<std::string>();
+  if (paths["group_encounters_file"]) {
+    throw std::runtime_error(
+        "simulation.yaml: 'group_encounters_file' is no longer a top-level "
+        "config_paths entry. Move it into coordinated_encounters.yaml as a "
+        "`parameters_file` field on the encounter entry whose network is "
+        "\"group_sex_roster\".");
+  }
+  if (paths["performance_file"])
+    config.performance_file = paths["performance_file"].as<std::string>();
+  if (paths["parallel_file"])
+    config.parallel_file = paths["parallel_file"].as<std::string>();
+  if (paths["policies_file"])
+    config.policies_file = paths["policies_file"].as<std::string>();
+  if (paths["infection_seeds_file"])
+    config.infection_seeds_file =
+        paths["infection_seeds_file"].as<std::string>();
+  if (paths["compartmental_model_sidecar"])
+    config.compartmental_model_sidecar =
+        paths["compartmental_model_sidecar"].as<std::string>();
+}
+
+// Read the `output:` block onto the SimulationConfig output fields.
+// `stats_interval_days` is required when the block is present; everything
+// else is optional.
+void parseSimulationOutput(const YAML::Node& output, SimulationConfig& config) {
+  config.stats_interval_days = output["stats_interval_days"].as<int>();
+
+  if (output["save_full_person_details"]) {
+    config.save_full_person_details =
+        output["save_full_person_details"].as<std::string>();
+  }
+  if (output["save_person_activities"]) {
+    config.save_person_activities =
+        output["save_person_activities"].as<std::string>();
+  }
+  if (output["compression_level"]) {
+    config.compression_level = output["compression_level"].as<int>();
+  }
+  if (output["flush_interval_days"]) {
+    config.flush_interval_days = output["flush_interval_days"].as<int>();
+  }
+  if (output["max_event_buffer_size"]) {
+    config.max_event_buffer_size = output["max_event_buffer_size"].as<int>();
+  }
+  if (output["save_population_summary"]) {
+    config.save_population_summary =
+        output["save_population_summary"].as<bool>();
+  }
+  if (output["summary_properties"]) {
+    config.summary_properties =
+        output["summary_properties"].as<std::vector<std::string>>();
+  }
+}
+
+// Read the `partial_presence.enabled_venue_types:` map onto the per-venue
+// target_group_size table.
+void parseSimulationPartialPresence(const YAML::Node& pp,
+                                    SimulationConfig& config) {
+  if (pp["enabled_venue_types"] && pp["enabled_venue_types"].IsMap()) {
+    for (auto it = pp["enabled_venue_types"].begin();
+         it != pp["enabled_venue_types"].end(); ++it) {
+      std::string name = it->first.as<std::string>();
+      int tgs = it->second["target_group_size"]
+                    ? it->second["target_group_size"].as<int>()
+                    : 0;
+      config.partial_presence.target_group_size_by_name[name] = tgs;
+    }
+  }
+}
+
+// Read the `checkpoint:` block. Cadence is mutually exclusive: on_dates
+// (non-null, non-empty) takes precedence over every_n_days. A null YAML
+// value leaves the corresponding optional empty.
+void parseSimulationCheckpoint(const YAML::Node& cp, SimulationConfig& config) {
+  if (cp["enabled"]) {
+    config.checkpoint.enabled = cp["enabled"].as<bool>();
+  }
+  if (cp["output_dir"]) {
+    config.checkpoint.output_dir = cp["output_dir"].as<std::string>();
+  }
+  if (cp["every_n_days"] && !cp["every_n_days"].IsNull()) {
+    config.checkpoint.every_n_days = cp["every_n_days"].as<int>();
+  }
+  if (cp["on_dates"] && !cp["on_dates"].IsNull()) {
+    config.checkpoint.on_dates =
+        cp["on_dates"].as<std::vector<std::string>>();
+  }
+  if (cp["keep_last"]) {
+    config.checkpoint.keep_last = cp["keep_last"].as<int>();
+  }
+}
+
 // Parse one entry from `schedule_types:` (a named schedule). Reads the
 // flag/scalar fields, the optional `selection` block (via
 // parseSelectionCriteria), the flat_slots / per-day-type slot lists (via
@@ -476,95 +588,28 @@ SimulationConfig ConfigLoader::loadSimulation(const std::string& filename) {
   YAML::Node root = YAML::LoadFile(filename);
   SimulationConfig config;
 
-  // Time settings
   if (root["time"]) {
     auto time = root["time"];
     config.start_date = time["start_date"].as<std::string>();
     config.end_date = time["end_date"].as<std::string>();
   }
 
-  // File links - support both nested config_paths: section and legacy top-level
-  // keys
-  auto paths = root["config_paths"] ? root["config_paths"] : root;
+  // File links: support both nested `config_paths:` block and legacy
+  // top-level keys.
+  parseSimulationConfigPaths(
+      root["config_paths"] ? root["config_paths"] : root, config);
 
-  if (paths["disease_file"])
-    config.disease_file = paths["disease_file"].as<std::string>();
-  if (paths["contact_matrices_file"])
-    config.contact_matrices_file =
-        paths["contact_matrices_file"].as<std::string>();
-  if (paths["schedules_file"])
-    config.schedules_file = paths["schedules_file"].as<std::string>();
-  if (paths["vaccines_file"])
-    config.vaccines_file = paths["vaccines_file"].as<std::string>();
-  if (paths["activity_preferences_file"])
-    config.activity_preferences_file =
-        paths["activity_preferences_file"].as<std::string>();
-  if (paths["coordinated_encounters_file"])
-    config.coordinated_encounters_file =
-        paths["coordinated_encounters_file"].as<std::string>();
-  if (paths["group_encounters_file"]) {
-    throw std::runtime_error(
-        "simulation.yaml: 'group_encounters_file' is no longer a top-level "
-        "config_paths entry. Move it into coordinated_encounters.yaml as a "
-        "`parameters_file` field on the encounter entry whose network is "
-        "\"group_sex_roster\".");
-  }
-  if (paths["performance_file"])
-    config.performance_file = paths["performance_file"].as<std::string>();
-  if (paths["parallel_file"])
-    config.parallel_file = paths["parallel_file"].as<std::string>();
-  if (paths["policies_file"])
-    config.policies_file = paths["policies_file"].as<std::string>();
-  if (paths["infection_seeds_file"])
-    config.infection_seeds_file =
-        paths["infection_seeds_file"].as<std::string>();
-  if (paths["compartmental_model_sidecar"])
-    config.compartmental_model_sidecar =
-        paths["compartmental_model_sidecar"].as<std::string>();
-
-  // Seeds for reproducibility (optional)
   if (root["random_seed"]) {
     config.random_seed = root["random_seed"].as<unsigned int>();
   }
-
-  // Verbose / debug-level output at load time
   if (root["verbose"]) {
     config.verbose = root["verbose"].as<bool>();
   }
 
-  // Output settings
   if (root["output"]) {
-    auto output = root["output"];
-    config.stats_interval_days = output["stats_interval_days"].as<int>();
-
-    if (output["save_full_person_details"]) {
-      config.save_full_person_details =
-          output["save_full_person_details"].as<std::string>();
-    }
-    if (output["save_person_activities"]) {
-      config.save_person_activities =
-          output["save_person_activities"].as<std::string>();
-    }
-    if (output["compression_level"]) {
-      config.compression_level = output["compression_level"].as<int>();
-    }
-    if (output["flush_interval_days"]) {
-      config.flush_interval_days = output["flush_interval_days"].as<int>();
-    }
-    if (output["max_event_buffer_size"]) {
-      config.max_event_buffer_size = output["max_event_buffer_size"].as<int>();
-    }
-    if (output["save_population_summary"]) {
-      config.save_population_summary =
-          output["save_population_summary"].as<bool>();
-    }
-    if (output["summary_properties"]) {
-      config.summary_properties =
-          output["summary_properties"].as<std::vector<std::string>>();
-    }
+    parseSimulationOutput(root["output"], config);
   }
 
-  // Regional Risk Factors settings
   if (root["regional_risk"]) {
     auto regional_risk = root["regional_risk"];
     if (regional_risk["enabled"]) {
@@ -576,47 +621,12 @@ SimulationConfig ConfigLoader::loadSimulation(const std::string& filename) {
     }
   }
 
-  // Partial-presence venue types (optional). Map of venue type name to
-  // { target_group_size: N } — the target rider count per ephemeral runtime
-  // bin within a venue of that type (e.g. train_line: 100 ≈ one carriage).
-  // num_bins at slot time = max(1, ceil(N_global_riders / target_group_size)),
-  // so bins are bounded by target above and equal-sized below it. Omitting
-  // the block (or an empty map) leaves the feature off.
   if (root["partial_presence"]) {
-    auto pp = root["partial_presence"];
-    if (pp["enabled_venue_types"] && pp["enabled_venue_types"].IsMap()) {
-      for (auto it = pp["enabled_venue_types"].begin();
-           it != pp["enabled_venue_types"].end(); ++it) {
-        std::string name = it->first.as<std::string>();
-        int tgs = it->second["target_group_size"]
-                      ? it->second["target_group_size"].as<int>()
-                      : 0;
-        config.partial_presence.target_group_size_by_name[name] = tgs;
-      }
-    }
+    parseSimulationPartialPresence(root["partial_presence"], config);
   }
 
-  // Checkpoint / restart settings (optional). Cadence is mutually exclusive:
-  // on_dates (non-null, non-empty) takes precedence over every_n_days. A
-  // null YAML value leaves the corresponding optional empty.
   if (root["checkpoint"]) {
-    auto cp = root["checkpoint"];
-    if (cp["enabled"]) {
-      config.checkpoint.enabled = cp["enabled"].as<bool>();
-    }
-    if (cp["output_dir"]) {
-      config.checkpoint.output_dir = cp["output_dir"].as<std::string>();
-    }
-    if (cp["every_n_days"] && !cp["every_n_days"].IsNull()) {
-      config.checkpoint.every_n_days = cp["every_n_days"].as<int>();
-    }
-    if (cp["on_dates"] && !cp["on_dates"].IsNull()) {
-      config.checkpoint.on_dates =
-          cp["on_dates"].as<std::vector<std::string>>();
-    }
-    if (cp["keep_last"]) {
-      config.checkpoint.keep_last = cp["keep_last"].as<int>();
-    }
+    parseSimulationCheckpoint(root["checkpoint"], config);
   }
 
   return config;
