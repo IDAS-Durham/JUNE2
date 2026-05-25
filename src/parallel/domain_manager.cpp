@@ -71,6 +71,23 @@ std::vector<std::string> buildGlobalRegistryFromPacked(
   return std::vector<std::string>(unique_vals.begin(), unique_vals.end());
 }
 
+// Build a remap from a local registry's old indices to the corresponding
+// indices in the global registry (-1 if not present).
+std::vector<int32_t> buildRemapToGlobal(
+    const std::vector<std::string>& local_registry,
+    const std::vector<std::string>& global_registry) {
+  std::unordered_map<std::string, int32_t> new_index;
+  for (size_t i = 0; i < global_registry.size(); ++i) {
+    new_index[global_registry[i]] = static_cast<int32_t>(i);
+  }
+  std::vector<int32_t> remap(local_registry.size(), -1);
+  for (size_t i = 0; i < local_registry.size(); ++i) {
+    auto it = new_index.find(local_registry[i]);
+    if (it != new_index.end()) remap[i] = it->second;
+  }
+  return remap;
+}
+
 }  // anonymous namespace
 
 DomainManager::DomainManager(WorldState& world, const Config& config)
@@ -581,18 +598,9 @@ void DomainManager::synchronizeRegistries() {
     std::vector<std::string> global_registry =
         buildGlobalRegistryFromPacked(all_packed);
 
-    // 3. Build old→new index mapping for this rank
-    std::unordered_map<std::string, int32_t> new_index;
-    for (size_t i = 0; i < global_registry.size(); ++i) {
-      new_index[global_registry[i]] = static_cast<int32_t>(i);
-    }
-
-    // Build remap from old local index → new global index
-    std::vector<int32_t> remap(local_registry.size(), -1);
-    for (size_t i = 0; i < local_registry.size(); ++i) {
-      auto it = new_index.find(local_registry[i]);
-      if (it != new_index.end()) remap[i] = it->second;
-    }
+    // 3. Build remap from old local index → new global index
+    std::vector<int32_t> remap =
+        buildRemapToGlobal(local_registry, global_registry);
 
     // 4. Remap all person property values for this property
     int prop_idx = world_.getPersonPropertyIndex(prop_name);
