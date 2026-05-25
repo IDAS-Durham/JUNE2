@@ -447,6 +447,67 @@ void exchangeRoutedRecords(const std::vector<T>& local_records,
   out_recv_counts = std::move(recv_counts);
 }
 
+// Builds a fully-populated VisitorData for a person attending a remote
+// venue. Pre-computes integrated_infectiousness per mode using the SAME
+// code path as local people (getIntegratedInfectiousness) so FP results
+// are bit-identical regardless of where a person is processed. The
+// integrated_infectiousness vector is always sized to num_modes
+// (zero-filled for non-infectious people) — the wire format expects
+// exactly that many doubles.
+june::Domain::VisitorData buildVisitorPayload(
+    const june::PersonLocation& loc, const june::Person& person, int home_rank,
+    double current_time, double delta_hours, int num_modes,
+    const june::Disease* disease) {
+  june::Domain::VisitorData visitor;
+  visitor.person_id = loc.person_id;
+  visitor.home_rank = home_rank;
+  visitor.venue_id = loc.venue_id;
+  visitor.subset_idx = loc.subset_index;
+  visitor.is_infected = (person.infection != nullptr);
+  visitor.is_infectious =
+      visitor.is_infected && person.infection->isInfectious(current_time);
+
+  double susceptibility = 1.0;
+  if (disease) {
+    susceptibility = person.getSusceptibility(current_time, disease->getName());
+  } else {
+    susceptibility = 1.0 - person.immunity.natural_level;
+  }
+  visitor.immunity_level = static_cast<float>(1.0 - susceptibility);
+
+  visitor.encounter_type_id = loc.encounter_type_id;
+  visitor.newly_infected = false;
+  visitor.new_infection_time = -1.0;
+
+  visitor.symptom_id = 0;
+  visitor.time_in_stage = 0.0;
+  visitor.integrated_infectiousness.assign(num_modes, 0.0);
+  if (visitor.is_infected && person.infection) {
+    const june::InfectionTrajectory& traj = person.infection->getTrajectory();
+    double stage_start_time = traj.infection_time;
+    uint16_t cur_symptom_id = 0;
+    for (const auto& trans : traj.transitions) {
+      if (current_time >= trans.first) {
+        stage_start_time = trans.first;
+        cur_symptom_id = trans.second;
+      } else {
+        break;
+      }
+    }
+    visitor.symptom_id = cur_symptom_id;
+    visitor.time_in_stage = current_time - stage_start_time;
+
+    if (visitor.is_infectious && disease) {
+      double t1 = current_time + delta_hours / 24.0;
+      for (int m = 0; m < num_modes; ++m) {
+        visitor.integrated_infectiousness[m] =
+            person.infection->getIntegratedInfectiousness(m, current_time, t1);
+      }
+    }
+  }
+  return visitor;
+}
+
 }  // anonymous namespace
 
 namespace june {
@@ -488,63 +549,8 @@ void DomainCommunicator::exchangeVisitors(
     Person* person = world_.getPerson(loc.person_id);
     if (!person) continue;
 
-    Domain::VisitorData visitor;
-    visitor.person_id = loc.person_id;
-    visitor.home_rank = rank_;
-    visitor.venue_id = loc.venue_id;
-    visitor.subset_idx = loc.subset_index;
-    visitor.is_infected = (person->infection != nullptr);
-    visitor.is_infectious =
-        visitor.is_infected && person->infection->isInfectious(current_time);
-
-    double susceptibility = 1.0;
-    if (disease_) {
-      susceptibility =
-          person->getSusceptibility(current_time, disease_->getName());
-    } else {
-      susceptibility = 1.0 - person->immunity.natural_level;
-    }
-    visitor.immunity_level = static_cast<float>(1.0 - susceptibility);
-
-    visitor.encounter_type_id = loc.encounter_type_id;
-    visitor.newly_infected = false;
-    visitor.new_infection_time = -1.0;
-
-    // Pre-compute integrated infectiousness per mode using the SAME code path
-    // as local people (getIntegratedInfectiousness). This ensures bit-identical
-    // FP results regardless of whether a person is local or a visitor.
-    visitor.symptom_id = 0;
-    visitor.time_in_stage = 0.0;
-    // Size payload to runtime mode count (zero-initialised). The wire
-    // format expects exactly num_modes doubles regardless of
-    // infectiousness state, so the assign happens unconditionally.
-    visitor.integrated_infectiousness.assign(num_modes, 0.0);
-    if (visitor.is_infected && person->infection) {
-      const InfectionTrajectory& traj = person->infection->getTrajectory();
-      double stage_start_time = traj.infection_time;
-      uint16_t cur_symptom_id = 0;
-      for (const auto& trans : traj.transitions) {
-        if (current_time >= trans.first) {
-          stage_start_time = trans.first;
-          cur_symptom_id = trans.second;
-        } else {
-          break;
-        }
-      }
-      visitor.symptom_id = cur_symptom_id;
-      visitor.time_in_stage = current_time - stage_start_time;
-
-      if (visitor.is_infectious && disease_) {
-        double t1 = current_time + delta_hours / 24.0;
-        for (int m = 0; m < num_modes; ++m) {
-          visitor.integrated_infectiousness[m] =
-              person->infection->getIntegratedInfectiousness(m, current_time,
-                                                             t1);
-        }
-      }
-    }
-
-    outgoing[target_rank].push_back(visitor);
+    outgoing[target_rank].push_back(buildVisitorPayload(
+        loc, *person, rank_, current_time, delta_hours, num_modes, disease_));
     send_counts[target_rank]++;
   }
 
