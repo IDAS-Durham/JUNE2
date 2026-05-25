@@ -674,9 +674,6 @@ ParallelConfig ConfigLoader::loadParallel(const std::string& filename) {
   if (parallel["enabled"]) {
     config.enabled = parallel["enabled"].as<bool>();
   }
-  if (parallel["verbose_mpi"]) {
-    config.verbose_mpi = parallel["verbose_mpi"].as<bool>();
-  }
 
   if (!parallel["partitioning"]) {
     throw std::runtime_error(

@@ -953,7 +953,6 @@ struct OutputConfig {
 
 struct ParallelConfig {
   bool enabled = false;
-  bool verbose_mpi = false;
   // Partitioning settings
   std::string partition_level = "MGU";  // Geographic level to partition on
   std::string centroids_file = "data/domain_decomposition/mgu_centroids.csv";

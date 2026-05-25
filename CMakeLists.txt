@@ -55,9 +55,6 @@ else()
   message(STATUS "yaml-cpp found via find_package")
 endif()
 
-# Optional: Enable MPI debug output
-option(JUNE_MPI_DEBUG "Enable MPI debug output for cross-rank infection tracing" ON)
-
 # Optional: Find MPI for parallel execution
 option(USE_MPI "Enable MPI parallel execution" ON)
 if(USE_MPI)
@@ -185,11 +182,6 @@ endif()
 if(MPI_FOUND)
   target_include_directories(june_core PUBLIC ${MPI_CXX_INCLUDE_DIRS})
   target_compile_definitions(june_core PUBLIC USE_MPI)
-endif()
-
-if(JUNE_MPI_DEBUG)
-    target_compile_definitions(june_core PUBLIC JUNE_MPI_DEBUG)
-    message(STATUS "JUNE_MPI_DEBUG enabled: cross-rank infection tracing active")
 endif()
 
 if(METIS_FOUND)
