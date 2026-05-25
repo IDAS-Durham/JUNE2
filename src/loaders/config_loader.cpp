@@ -562,6 +562,62 @@ void parseContactMatricesList(const YAML::Node& cm_node,
   }
 }
 
+// Read the required `parallel.partitioning:` block. Throws if any of the
+// three mandatory keys (level / centroids_file / adjacency_file) is missing,
+// embedding the source `filename` in the error so the user knows which
+// parallel.yaml triggered it. The optional metis.imbalance_tolerance is
+// applied if present.
+void parseParallelPartitioning(const YAML::Node& part,
+                               const std::string& filename,
+                               ParallelConfig& config) {
+  if (!part["level"]) {
+    throw std::runtime_error(
+        "Parallel config '" + filename +
+        "' is missing required key 'parallel.partitioning.level' "
+        "(e.g. 'SGU', 'MGU', 'LGU').");
+  }
+  config.partition_level = part["level"].as<std::string>();
+
+  if (!part["centroids_file"]) {
+    throw std::runtime_error(
+        "Parallel config '" + filename +
+        "' is missing required key 'parallel.partitioning.centroids_file'.");
+  }
+  config.centroids_file = part["centroids_file"].as<std::string>();
+
+  if (!part["adjacency_file"]) {
+    throw std::runtime_error(
+        "Parallel config '" + filename +
+        "' is missing required key 'parallel.partitioning.adjacency_file'.");
+  }
+  config.adjacency_file = part["adjacency_file"].as<std::string>();
+
+  if (part["metis"] && part["metis"]["imbalance_tolerance"]) {
+    config.metis_imbalance_tolerance =
+        part["metis"]["imbalance_tolerance"].as<double>();
+  }
+}
+
+// Read the optional `parallel.output:` block (partition / load-balance /
+// communication reporting flags).
+void parseParallelOutput(const YAML::Node& output, ParallelConfig& config) {
+  if (output["save_partition"]) {
+    config.save_partition = output["save_partition"].as<bool>();
+  }
+  if (output["partition_file"]) {
+    config.partition_file = output["partition_file"].as<std::string>();
+  }
+  if (output["report_load_balance"]) {
+    config.report_load_balance = output["report_load_balance"].as<bool>();
+  }
+  if (output["report_communication"]) {
+    config.report_communication = output["report_communication"].as<bool>();
+  }
+  if (output["report_interval_days"]) {
+    config.report_interval_days = output["report_interval_days"].as<int>();
+  }
+}
+
 // Read the `checkpoint:` block. Cadence is mutually exclusive: on_dates
 // (non-null, non-empty) takes precedence over every_n_days. A null YAML
 // value leaves the corresponding optional empty.
@@ -868,20 +924,17 @@ PerformanceConfig ConfigLoader::loadPerformance(const std::string& filename) {
 
 ParallelConfig ConfigLoader::loadParallel(const std::string& filename) {
   ParallelConfig config;
-
   YAML::Node root = YAML::LoadFile(filename);
 
   if (!root["parallel"]) {
     throw std::runtime_error("Parallel config file '" + filename +
                              "' is missing the top-level 'parallel:' block.");
   }
-
   YAML::Node parallel = root["parallel"];
 
   if (parallel["enabled"]) {
     config.enabled = parallel["enabled"].as<bool>();
   }
-
   if (parallel["verbose_mpi"]) {
     config.verbose_mpi = parallel["verbose_mpi"].as<bool>();
   }
@@ -892,44 +945,14 @@ ParallelConfig ConfigLoader::loadParallel(const std::string& filename) {
         "' is missing the required 'parallel.partitioning' block "
         "(must specify level, centroids_file, adjacency_file).");
   }
-
-  YAML::Node part = parallel["partitioning"];
-
-  if (!part["level"]) {
-    throw std::runtime_error(
-        "Parallel config '" + filename +
-        "' is missing required key 'parallel.partitioning.level' "
-        "(e.g. 'SGU', 'MGU', 'LGU').");
-  }
-  config.partition_level = part["level"].as<std::string>();
-
-  if (!part["centroids_file"]) {
-    throw std::runtime_error(
-        "Parallel config '" + filename +
-        "' is missing required key 'parallel.partitioning.centroids_file'.");
-  }
-  config.centroids_file = part["centroids_file"].as<std::string>();
-
-  if (!part["adjacency_file"]) {
-    throw std::runtime_error(
-        "Parallel config '" + filename +
-        "' is missing required key 'parallel.partitioning.adjacency_file'.");
-  }
-  config.adjacency_file = part["adjacency_file"].as<std::string>();
-
-  if (part["metis"] && part["metis"]["imbalance_tolerance"]) {
-    config.metis_imbalance_tolerance =
-        part["metis"]["imbalance_tolerance"].as<double>();
-  }
+  parseParallelPartitioning(parallel["partitioning"], filename, config);
 
   if (parallel["chunked_loading"]) {
     YAML::Node chunked = parallel["chunked_loading"];
-
     if (chunked["person_metadata_chunk_size"]) {
       config.person_metadata_chunk_size =
           chunked["person_metadata_chunk_size"].as<size_t>();
     }
-
     if (chunked["geo_unit_chunk_size"]) {
       config.geo_unit_chunk_size = chunked["geo_unit_chunk_size"].as<size_t>();
     }
@@ -943,27 +966,7 @@ ParallelConfig ConfigLoader::loadParallel(const std::string& filename) {
   }
 
   if (parallel["output"]) {
-    YAML::Node output = parallel["output"];
-
-    if (output["save_partition"]) {
-      config.save_partition = output["save_partition"].as<bool>();
-    }
-
-    if (output["partition_file"]) {
-      config.partition_file = output["partition_file"].as<std::string>();
-    }
-
-    if (output["report_load_balance"]) {
-      config.report_load_balance = output["report_load_balance"].as<bool>();
-    }
-
-    if (output["report_communication"]) {
-      config.report_communication = output["report_communication"].as<bool>();
-    }
-
-    if (output["report_interval_days"]) {
-      config.report_interval_days = output["report_interval_days"].as<int>();
-    }
+    parseParallelOutput(parallel["output"], config);
   }
 
   return config;
