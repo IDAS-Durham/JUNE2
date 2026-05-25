@@ -70,6 +70,13 @@ class DomainCommunicator {
       const std::vector<std::vector<Domain::VisitorData>>& outgoing,
       const std::vector<int>& send_counts, const std::vector<int>& recv_counts);
 
+  // Sparsity-driven dispatch: chooses among all-to-all, P2P, or very-sparse
+  // P2P based on the cross-rank send-pair density (MPI_Allreduce), then
+  // records the outgoing visitors locally.
+  void dispatchVisitorExchange(
+      const std::vector<std::vector<Domain::VisitorData>>& outgoing,
+      const std::vector<int>& send_counts);
+
   WorldState& world_;
   const Config& config_;
   Domain& domain_;

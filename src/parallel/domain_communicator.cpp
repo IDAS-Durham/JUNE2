@@ -570,6 +570,12 @@ void DomainCommunicator::exchangeVisitors(
   }
 #endif
 
+  dispatchVisitorExchange(outgoing, send_counts);
+}
+
+void DomainCommunicator::dispatchVisitorExchange(
+    const std::vector<std::vector<Domain::VisitorData>>& outgoing,
+    const std::vector<int>& send_counts) {
   int local_pairs = 0;
   for (int c : send_counts)
     if (c > 0) local_pairs++;
