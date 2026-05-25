@@ -442,6 +442,75 @@ void concatenateOneField(const std::vector<std::string>& input_files,
   }
 }
 
+// Concatenate the int32 dataset at `ds_path` across all `input_files`
+// into a new dataset `field` under `out_net`. Parallels
+// concatenateOneField but uses an explicit NATIVE_INT32 dtype, matching
+// the writer in event_writer_lookups. No-op if no input file has the
+// dataset, total is zero, or `out_net/field` already exists.
+void mergeOneNetworkField(const std::vector<std::string>& input_files,
+                          const std::string& ds_path, const char* field,
+                          H5::Group& out_net) {
+  hsize_t total = 0;
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
+      H5::DataSet ds = file.openDataSet(ds_path);
+      hsize_t d[1];
+      ds.getSpace().getSimpleExtentDims(d);
+      total += d[0];
+    } catch (...) {
+    }
+  }
+  if (total == 0) return;
+  if (H5Lexists(out_net.getId(), field, H5P_DEFAULT)) return;
+
+  hsize_t out_dims[1] = {total};
+  H5::DataSpace out_space(1, out_dims);
+  H5::DSetCreatPropList plist;
+  hsize_t chunk[1] = {std::min(total, hsize_t(100000))};
+  if (chunk[0] == 0) chunk[0] = 1;
+  plist.setChunk(1, chunk);
+  plist.setDeflate(6);
+  H5::DataSet out_ds = out_net.createDataSet(
+      field, H5::PredType::NATIVE_INT32, out_space, plist);
+
+  std::vector<int32_t> buffer;
+  hsize_t current_out_offset = 0;
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
+      H5::DataSet in_ds = file.openDataSet(ds_path);
+      hsize_t in_dims[1];
+      in_ds.getSpace().getSimpleExtentDims(in_dims);
+      if (in_dims[0] == 0) continue;
+      buffer.resize(in_dims[0]);
+      in_ds.read(buffer.data(), H5::PredType::NATIVE_INT32);
+
+      hsize_t count_h[1] = {in_dims[0]};
+      hsize_t out_offset_h[1] = {current_out_offset};
+      out_space.selectHyperslab(H5S_SELECT_SET, count_h, out_offset_h);
+      H5::DataSpace mem_space(1, count_h);
+      out_ds.write(buffer.data(), H5::PredType::NATIVE_INT32, mem_space,
+                   out_space);
+      current_out_offset += in_dims[0];
+    } catch (...) {
+    }
+  }
+}
+
+void mergeOneNetwork(const std::vector<std::string>& input_files,
+                     const std::string& net_name, H5::Group& out_nets) {
+  H5::Group out_net = openOrCreateGroup(out_nets, net_name);
+  for (const char* field : {"person_id", "partner_id"}) {
+    const std::string ds_path =
+        "/lookups/population_networks/" + net_name + "/" + field;
+    mergeOneNetworkField(input_files, ds_path, field, out_net);
+  }
+  std::cout << "  Merged population_networks for '" << net_name << "'\n";
+}
+
 void mergeOneProfileFacet(const std::vector<std::string>& input_files,
                           const std::string& facet, H5::Group& out_assigns) {
   const std::string facet_path = "/lookups/profile_assignments/" + facet;
@@ -829,83 +898,15 @@ void EventMerger::mergePopulationNetworks(
     H5::H5File& out_file, const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  std::vector<std::string> network_names;
-  std::unordered_set<std::string> net_seen;
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/population_networks", H5P_DEFAULT))
-        continue;
-      H5::Group g = file.openGroup("/lookups/population_networks");
-      hsize_t n_obj = g.getNumObjs();
-      for (hsize_t i = 0; i < n_obj; ++i) {
-        std::string name = g.getObjnameByIdx(i);
-        if (net_seen.insert(name).second) network_names.push_back(name);
-      }
-    } catch (...) {
-    }
-  }
+  std::vector<std::string> network_names =
+      discoverChildGroupNames(input_files, "/lookups/population_networks");
   if (network_names.empty()) return;
 
   H5::Group out_lookups = openOrCreateGroup(out_file, "/lookups");
   H5::Group out_nets = openOrCreateGroup(out_lookups, "population_networks");
 
   for (const auto& net_name : network_names) {
-    H5::Group out_net = openOrCreateGroup(out_nets, net_name);
-
-    for (const char* field : {"person_id", "partner_id"}) {
-      const std::string ds_path =
-          "/lookups/population_networks/" + net_name + "/" + field;
-      hsize_t total = 0;
-      for (const auto& f : input_files) {
-        try {
-          H5::H5File file(f, H5F_ACC_RDONLY);
-          if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-          H5::DataSet ds = file.openDataSet(ds_path);
-          hsize_t d[1];
-          ds.getSpace().getSimpleExtentDims(d);
-          total += d[0];
-        } catch (...) {
-        }
-      }
-      if (total == 0) continue;
-      if (H5Lexists(out_net.getId(), field, H5P_DEFAULT)) continue;
-
-      hsize_t out_dims[1] = {total};
-      H5::DataSpace out_space(1, out_dims);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk[1] = {std::min(total, hsize_t(100000))};
-      if (chunk[0] == 0) chunk[0] = 1;
-      plist.setChunk(1, chunk);
-      plist.setDeflate(6);
-      H5::DataSet out_ds = out_net.createDataSet(
-          field, H5::PredType::NATIVE_INT32, out_space, plist);
-
-      std::vector<int32_t> buffer;
-      hsize_t current_out_offset = 0;
-      for (const auto& f : input_files) {
-        try {
-          H5::H5File file(f, H5F_ACC_RDONLY);
-          if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-          H5::DataSet in_ds = file.openDataSet(ds_path);
-          hsize_t in_dims[1];
-          in_ds.getSpace().getSimpleExtentDims(in_dims);
-          if (in_dims[0] == 0) continue;
-          buffer.resize(in_dims[0]);
-          in_ds.read(buffer.data(), H5::PredType::NATIVE_INT32);
-
-          hsize_t count_h[1] = {in_dims[0]};
-          hsize_t out_offset_h[1] = {current_out_offset};
-          out_space.selectHyperslab(H5S_SELECT_SET, count_h, out_offset_h);
-          H5::DataSpace mem_space(1, count_h);
-          out_ds.write(buffer.data(), H5::PredType::NATIVE_INT32, mem_space,
-                       out_space);
-          current_out_offset += in_dims[0];
-        } catch (...) {
-        }
-      }
-    }
-    std::cout << "  Merged population_networks for '" << net_name << "'\n";
+    mergeOneNetwork(input_files, net_name, out_nets);
   }
 }
 
