@@ -184,6 +184,55 @@ void writeOrAppendStringDataset(H5::Group& prop_group, const std::string& name,
   }
 }
 
+// Dump (person_id, partner_id) pairs for one network type as two parallel
+// int32 datasets under `networks_group/network_name`. No-op when no person
+// has a partner in that network. Existing datasets are unlinked first so
+// each call writes a fresh snapshot.
+void writeOneNetworkLookup(H5::Group& networks_group,
+                           const june::WorldState& world,
+                           const std::string& network_name, int type_id,
+                           int compression_level) {
+  std::vector<int32_t> persons;
+  std::vector<int32_t> partners;
+  persons.reserve(world.people.size());
+  partners.reserve(world.people.size());
+
+  bool has_any = false;
+  for (const auto& person : world.people) {
+    auto partner_ids = world.getNetworkPartners(person, type_id);
+    if (partner_ids.empty()) continue;
+    has_any = true;
+    for (const auto& pid : partner_ids) {
+      persons.push_back(person.id);
+      partners.push_back(static_cast<int32_t>(pid));
+    }
+  }
+  if (!has_any) return;
+
+  H5::Group net_group = openOrCreateGroup(networks_group, network_name);
+
+  hsize_t dims[1] = {persons.size()};
+  H5::DataSpace space(1, dims);
+  H5::DSetCreatPropList plist;
+  hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
+  if (chunk_dims[0] == 0) chunk_dims[0] = 1;
+  plist.setChunk(1, chunk_dims);
+  plist.setDeflate(compression_level);
+
+  if (H5Lexists(net_group.getId(), "person_id", H5P_DEFAULT))
+    net_group.unlink("person_id");
+  if (H5Lexists(net_group.getId(), "partner_id", H5P_DEFAULT))
+    net_group.unlink("partner_id");
+
+  H5::DataSet p_ds = net_group.createDataSet(
+      "person_id", H5::PredType::NATIVE_INT32, space, plist);
+  p_ds.write(persons.data(), H5::PredType::NATIVE_INT32);
+
+  H5::DataSet q_ds = net_group.createDataSet(
+      "partner_id", H5::PredType::NATIVE_INT32, space, plist);
+  q_ds.write(partners.data(), H5::PredType::NATIVE_INT32);
+}
+
 std::vector<june::detail::PersonActivityRecord> buildPersonActivityRecords(
     const june::WorldState& world,
     const std::unordered_set<june::PersonId>& people_to_save) {
@@ -778,46 +827,8 @@ void EventWriter::writePopulationNetworks(H5::H5File& file,
   for (const auto& network_name : world.network_names) {
     const int type_id = world.getNetworkTypeIndex(network_name);
     if (type_id < 0) continue;
-
-    std::vector<int32_t> persons;
-    std::vector<int32_t> partners;
-    persons.reserve(world.people.size());
-    partners.reserve(world.people.size());
-
-    bool has_any = false;
-    for (const auto& person : world.people) {
-      auto partner_ids = world.getNetworkPartners(person, type_id);
-      if (partner_ids.empty()) continue;
-      has_any = true;
-      for (const auto& pid : partner_ids) {
-        persons.push_back(person.id);
-        partners.push_back(static_cast<int32_t>(pid));
-      }
-    }
-    if (!has_any) continue;
-
-    H5::Group net_group = openOrCreateGroup(networks_group, network_name);
-
-    hsize_t dims[1] = {persons.size()};
-    H5::DataSpace space(1, dims);
-    H5::DSetCreatPropList plist;
-    hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-    if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-    plist.setChunk(1, chunk_dims);
-    plist.setDeflate(config.simulation.compression_level);
-
-    if (H5Lexists(net_group.getId(), "person_id", H5P_DEFAULT))
-      net_group.unlink("person_id");
-    if (H5Lexists(net_group.getId(), "partner_id", H5P_DEFAULT))
-      net_group.unlink("partner_id");
-
-    H5::DataSet p_ds = net_group.createDataSet(
-        "person_id", H5::PredType::NATIVE_INT32, space, plist);
-    p_ds.write(persons.data(), H5::PredType::NATIVE_INT32);
-
-    H5::DataSet q_ds = net_group.createDataSet(
-        "partner_id", H5::PredType::NATIVE_INT32, space, plist);
-    q_ds.write(partners.data(), H5::PredType::NATIVE_INT32);
+    writeOneNetworkLookup(networks_group, world, network_name, type_id,
+                          config.simulation.compression_level);
   }
 }
 
