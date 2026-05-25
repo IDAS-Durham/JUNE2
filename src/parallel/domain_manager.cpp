@@ -55,6 +55,22 @@ std::vector<char> gatherPackedValuesAcrossRanks(
   return all_packed;
 }
 
+// Parse a null-separated packed buffer into a sorted, deduplicated registry.
+std::vector<std::string> buildGlobalRegistryFromPacked(
+    const std::vector<char>& all_packed) {
+  std::set<std::string> unique_vals;
+  size_t pos = 0;
+  const size_t total_size = all_packed.size();
+  while (pos < total_size) {
+    size_t end = pos;
+    while (end < total_size && all_packed[end] != '\0') ++end;
+    if (end > pos)
+      unique_vals.insert(std::string(all_packed.data() + pos, end - pos));
+    pos = end + 1;
+  }
+  return std::vector<std::string>(unique_vals.begin(), unique_vals.end());
+}
+
 }  // anonymous namespace
 
 DomainManager::DomainManager(WorldState& world, const Config& config)
@@ -560,22 +576,10 @@ void DomainManager::synchronizeRegistries() {
     // 1. Gather all unique values from all ranks (null-separated packed)
     std::vector<char> all_packed =
         gatherPackedValuesAcrossRanks(local_registry, num_ranks_);
-    const size_t total_size = all_packed.size();
 
     // 2. Build a sorted, deduplicated global registry
-    std::set<std::string> unique_vals;
-    size_t pos = 0;
-    while (pos < total_size) {
-      size_t end = pos;
-      while (end < total_size && all_packed[end] != '\0') ++end;
-      if (end > pos)
-        unique_vals.insert(std::string(all_packed.data() + pos, end - pos));
-      pos = end + 1;
-    }
-
-    std::vector<std::string> global_registry(unique_vals.begin(),
-                                             unique_vals.end());
-    // std::set is already sorted, so global_registry is deterministic
+    std::vector<std::string> global_registry =
+        buildGlobalRegistryFromPacked(all_packed);
 
     // 3. Build old→new index mapping for this rank
     std::unordered_map<std::string, int32_t> new_index;
