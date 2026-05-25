@@ -445,6 +445,123 @@ void parseSimulationPartialPresence(const YAML::Node& pp,
   }
 }
 
+// Parse a single contact-matrix YAML node into a ContactMatrix. Multiplies
+// the `contacts` rows by the optional `beta` scaling factor at parse time
+// (matching the historical behaviour of the inline lambda this replaced).
+ContactMatrix parseContactMatrix(const YAML::Node& matrix_node) {
+  ContactMatrix cm;
+  if (matrix_node["bins"]) {
+    cm.bins = matrix_node["bins"].as<std::vector<std::string>>();
+  }
+  if (matrix_node["characteristic_time"]) {
+    cm.characteristic_time = matrix_node["characteristic_time"].as<double>();
+  }
+  double beta = 1.0;
+  if (matrix_node["beta"]) {
+    beta = matrix_node["beta"].as<double>();
+  }
+  if (matrix_node["contacts"]) {
+    for (const auto& row : matrix_node["contacts"]) {
+      std::vector<double> row_vec;
+      for (const auto& val : row) row_vec.push_back(val.as<double>() * beta);
+      cm.contacts.push_back(row_vec);
+    }
+  }
+  if (matrix_node["proportion_physical"]) {
+    for (const auto& row : matrix_node["proportion_physical"]) {
+      std::vector<double> row_vec;
+      for (const auto& val : row) row_vec.push_back(val.as<double>());
+      cm.proportion_physical.push_back(row_vec);
+    }
+  }
+  return cm;
+}
+
+// Read the top-level betas / global_beta / default_* scalars onto the
+// ContactMatrixConfig. The per-matrix `contact_matrices:` block is handled
+// separately by parseContactMatricesList.
+void parseContactMatrixScalars(const YAML::Node& root,
+                               ContactMatrixConfig& config) {
+  if (root["betas"]) {
+    for (const auto& beta_kv : root["betas"]) {
+      std::string venue_type = beta_kv.first.as<std::string>();
+      double beta = beta_kv.second.as<double>();
+      config.betas[venue_type] = beta;
+    }
+  }
+
+  if (root["global_beta"]) {
+    if (root["global_beta"]["value"]) {
+      config.global_beta.value = root["global_beta"]["value"].as<double>();
+    }
+    if (root["global_beta"]["enabled"]) {
+      config.global_beta.enabled = root["global_beta"]["enabled"].as<bool>();
+    }
+  }
+
+  if (root["default_beta"]) {
+    config.default_beta = root["default_beta"].as<double>();
+  }
+  if (root["default_contacts"]) {
+    config.default_contacts = root["default_contacts"].as<double>();
+  }
+  if (root["default_proportion_physical"]) {
+    config.default_proportion_physical =
+        root["default_proportion_physical"].as<double>();
+  }
+  if (root["alpha_physical"]) {
+    config.alpha_physical = root["alpha_physical"].as<double>();
+  }
+  if (root["default_characteristic_time"]) {
+    config.default_characteristic_time =
+        root["default_characteristic_time"].as<double>();
+  }
+}
+
+// Read the `contact_matrices:` block: for each venue type, dispatch on
+// whether the entry declares `modes:` (multi-mode) or is a single contact
+// matrix. Records mode names in YAML insertion order on config.mode_names.
+void parseContactMatricesList(const YAML::Node& cm_node,
+                              ContactMatrixConfig& config) {
+  std::vector<std::string> seen_modes_ordered;
+  auto addMode = [&seen_modes_ordered](const std::string& m) {
+    for (const auto& s : seen_modes_ordered)
+      if (s == m) return;
+    seen_modes_ordered.push_back(m);
+  };
+
+  for (const auto& matrix_kv : cm_node) {
+    std::string venue_type = matrix_kv.first.as<std::string>();
+    const auto& matrix_node = matrix_kv.second;
+
+    if (matrix_node["modes"]) {
+      // Multi-mode: parse each mode entry
+      bool first_mode = true;
+      for (const auto& mode_kv : matrix_node["modes"]) {
+        std::string mode_name = mode_kv.first.as<std::string>();
+        addMode(mode_name);
+        ContactMatrix cm = parseContactMatrix(mode_kv.second);
+        config.mode_matrices[venue_type][mode_name] = cm;
+        // Backward compat: store first mode matrix in the flat matrices map
+        if (first_mode) {
+          config.matrices[venue_type] = cm;
+          first_mode = false;
+        }
+      }
+    } else {
+      // Single-mode fallback: store as "default" mode and in flat map
+      addMode("default");
+      ContactMatrix cm = parseContactMatrix(matrix_node);
+      config.mode_matrices[venue_type]["default"] = cm;
+      config.matrices[venue_type] = cm;
+    }
+  }
+
+  if (!seen_modes_ordered.empty()) {
+    config.mode_names = seen_modes_ordered;
+  }
+}
+
 // Read the `checkpoint:` block. Cadence is mutually exclusive: on_dates
 // (non-null, non-empty) takes precedence over every_n_days. A null YAML
 // value leaves the corresponding optional empty.
@@ -685,120 +802,14 @@ ContactMatrixConfig ConfigLoader::loadContactMatrices(
   YAML::Node root = YAML::LoadFile(filename);
   ContactMatrixConfig config;
 
-  // Load beta values
-  if (root["betas"]) {
-    for (const auto& beta_kv : root["betas"]) {
-      std::string venue_type = beta_kv.first.as<std::string>();
-      double beta = beta_kv.second.as<double>();
-      config.betas[venue_type] = beta;
-    }
-  }
+  parseContactMatrixScalars(root, config);
 
-  // Load global beta scaling
-  if (root["global_beta"]) {
-    if (root["global_beta"]["value"]) {
-      config.global_beta.value = root["global_beta"]["value"].as<double>();
-    }
-    if (root["global_beta"]["enabled"]) {
-      config.global_beta.enabled = root["global_beta"]["enabled"].as<bool>();
-    }
-  }
-
-  // Load default values
-  if (root["default_beta"]) {
-    config.default_beta = root["default_beta"].as<double>();
-  }
-  if (root["default_contacts"]) {
-    config.default_contacts = root["default_contacts"].as<double>();
-  }
-  if (root["default_proportion_physical"]) {
-    config.default_proportion_physical =
-        root["default_proportion_physical"].as<double>();
-  }
-  if (root["alpha_physical"]) {
-    config.alpha_physical = root["alpha_physical"].as<double>();
-  }
-  if (root["default_characteristic_time"]) {
-    config.default_characteristic_time =
-        root["default_characteristic_time"].as<double>();
-  }
-
-  // Helper lambda: parse a full ContactMatrix from a YAML node
-  auto parseContactMatrix = [](const YAML::Node& matrix_node) -> ContactMatrix {
-    ContactMatrix cm;
-    if (matrix_node["bins"]) {
-      cm.bins = matrix_node["bins"].as<std::vector<std::string>>();
-    }
-    if (matrix_node["characteristic_time"]) {
-      cm.characteristic_time = matrix_node["characteristic_time"].as<double>();
-    }
-    double beta = 1.0;
-    if (matrix_node["beta"]) {
-      beta = matrix_node["beta"].as<double>();
-    }
-    if (matrix_node["contacts"]) {
-      for (const auto& row : matrix_node["contacts"]) {
-        std::vector<double> row_vec;
-        for (const auto& val : row) row_vec.push_back(val.as<double>() * beta);
-        cm.contacts.push_back(row_vec);
-      }
-    }
-    if (matrix_node["proportion_physical"]) {
-      for (const auto& row : matrix_node["proportion_physical"]) {
-        std::vector<double> row_vec;
-        for (const auto& val : row) row_vec.push_back(val.as<double>());
-        cm.proportion_physical.push_back(row_vec);
-      }
-    }
-    return cm;
-  };
-
-  // Load optional default fallback matrix
   if (root["default_contacts_matrix"]) {
     config.default_matrix = parseContactMatrix(root["default_contacts_matrix"]);
   }
 
-  // Track mode names in insertion order
-  std::vector<std::string> seen_modes_ordered;
-  auto addMode = [&seen_modes_ordered](const std::string& m) {
-    for (const auto& s : seen_modes_ordered)
-      if (s == m) return;
-    seen_modes_ordered.push_back(m);
-  };
-
-  // Load contact matrices
   if (root["contact_matrices"]) {
-    for (const auto& matrix_kv : root["contact_matrices"]) {
-      std::string venue_type = matrix_kv.first.as<std::string>();
-      const auto& matrix_node = matrix_kv.second;
-
-      if (matrix_node["modes"]) {
-        // Multi-mode: parse each mode entry
-        bool first_mode = true;
-        for (const auto& mode_kv : matrix_node["modes"]) {
-          std::string mode_name = mode_kv.first.as<std::string>();
-          addMode(mode_name);
-          ContactMatrix cm = parseContactMatrix(mode_kv.second);
-          config.mode_matrices[venue_type][mode_name] = cm;
-          // Backward compat: store first mode matrix in the flat matrices map
-          if (first_mode) {
-            config.matrices[venue_type] = cm;
-            first_mode = false;
-          }
-        }
-      } else {
-        // Single-mode fallback: store as "default" mode and in flat map
-        addMode("default");
-        ContactMatrix cm = parseContactMatrix(matrix_node);
-        config.mode_matrices[venue_type]["default"] = cm;
-        config.matrices[venue_type] = cm;
-      }
-    }
-  }
-
-  // Set mode_names from ordered union of seen modes (or single "default")
-  if (!seen_modes_ordered.empty()) {
-    config.mode_names = seen_modes_ordered;
+    parseContactMatricesList(root["contact_matrices"], config);
   }
 
   return config;
