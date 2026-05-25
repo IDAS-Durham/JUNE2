@@ -133,6 +133,24 @@ void parseInviteDistributionStrict(const YAML::Node& dist_node,
   }
 }
 
+// Lenient counterpart to parseInviteDistributionStrict, used for
+// `daily_max_distribution` blocks. Every key is optional: missing `type`
+// leaves the existing default in place, and a missing distribution-specific
+// parameter is silently skipped. No throws.
+void parseDailyMaxDistribution(const YAML::Node& dmd_node,
+                               InviteDistribution& dist) {
+  if (dmd_node["type"]) {
+    dist.type = parseDistributionType(dmd_node["type"].as<std::string>());
+  }
+  if (dist.type == DistributionType::POISSON && dmd_node["mean"]) {
+    dist.mean = dmd_node["mean"].as<double>();
+  } else if (dist.type == DistributionType::BINOMIAL && dmd_node["p"]) {
+    dist.p = dmd_node["p"].as<double>();
+  } else if (dist.type == DistributionType::FIXED && dmd_node["count"]) {
+    dist.count = dmd_node["count"].as<int>();
+  }
+}
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
 // of SelectionCriterion. The scalar `value` is dispatched int -> double ->
 // string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
@@ -1108,26 +1126,8 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
 
           // Daily max distribution (optional, defaults to fixed count=1)
           if (enc_node["daily_max_distribution"]) {
-            const auto& dmd_node = enc_node["daily_max_distribution"];
-            if (dmd_node["type"]) {
-              enc_def.daily_max_distribution.type =
-                  parseDistributionType(dmd_node["type"].as<std::string>());
-            }
-            if (enc_def.daily_max_distribution.type ==
-                    DistributionType::POISSON &&
-                dmd_node["mean"]) {
-              enc_def.daily_max_distribution.mean =
-                  dmd_node["mean"].as<double>();
-            } else if (enc_def.daily_max_distribution.type ==
-                           DistributionType::BINOMIAL &&
-                       dmd_node["p"]) {
-              enc_def.daily_max_distribution.p = dmd_node["p"].as<double>();
-            } else if (enc_def.daily_max_distribution.type ==
-                           DistributionType::FIXED &&
-                       dmd_node["count"]) {
-              enc_def.daily_max_distribution.count =
-                  dmd_node["count"].as<int>();
-            }
+            parseDailyMaxDistribution(enc_node["daily_max_distribution"],
+                                      enc_def.daily_max_distribution);
           }
 
           config.encounters.push_back(enc_def);
