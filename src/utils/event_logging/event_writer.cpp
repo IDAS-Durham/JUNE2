@@ -183,6 +183,92 @@ void writeOrAppendStringDataset(H5::Group& prop_group, const std::string& name,
   }
 }
 
+// Metadata for one /lookups/population_summary "extra" property slot.
+// At most 4 are kept (matches PopulationSummaryRecord::extra_codes width).
+struct SummaryPropInfo {
+  std::string name;
+  int index;
+  const std::vector<std::string>* registry = nullptr;
+};
+
+std::vector<SummaryPropInfo> collectSummaryPropertyMetadata(
+    const june::WorldState& world,
+    const std::vector<std::string>& summary_props) {
+  std::vector<SummaryPropInfo> props_metadata;
+  for (const auto& name : summary_props) {
+    int idx = world.getPersonPropertyIndex(name);
+    if (idx < 0) continue;
+    SummaryPropInfo pi;
+    pi.name = name;
+    pi.index = idx;
+    auto it = world.person_property_value_registries.find(name);
+    if (it != world.person_property_value_registries.end())
+      pi.registry = &it->second;
+    props_metadata.push_back(pi);
+  }
+  return props_metadata;
+}
+
+std::vector<june::PopulationSummaryRecord> buildPopulationSummaryRecords(
+    const june::WorldState& world,
+    const std::vector<SummaryPropInfo>& props_metadata) {
+  const size_t n = world.people.size();
+  std::vector<june::PopulationSummaryRecord> records(n);
+  for (size_t i = 0; i < n; ++i) {
+    const june::Person& person = world.people[i];
+    records[i].person_id = person.id;
+    records[i].age_group =
+        std::min(static_cast<uint8_t>(person.age / 5), uint8_t(17));
+    records[i].sex_code = static_cast<uint8_t>(person.sex);
+    records[i].schedule_type_code =
+        static_cast<uint8_t>(person.schedule_type_id % 256);
+    records[i].reserved = 0;
+    records[i].geo_unit_id = person.geo_unit_id;
+    for (size_t k = 0; k < 4; ++k) {
+      records[i].extra_codes[k] = 0;
+      if (k < props_metadata.size()) {
+        auto p_opt = world.getPersonProperty(person, props_metadata[k].name);
+        if (p_opt) {
+          if (std::holds_alternative<int32_t>(*p_opt))
+            records[i].extra_codes[k] =
+                (uint8_t)(std::get<int32_t>(*p_opt) % 256);
+          else if (std::holds_alternative<bool>(*p_opt))
+            records[i].extra_codes[k] = std::get<bool>(*p_opt) ? 1 : 0;
+        }
+      }
+    }
+  }
+  return records;
+}
+
+H5::CompType makePopulationSummaryCompType() {
+  H5::CompType ptype(sizeof(june::PopulationSummaryRecord));
+  ptype.insertMember("person_id",
+                     HOFFSET(june::PopulationSummaryRecord, person_id),
+                     H5::PredType::NATIVE_INT);
+  ptype.insertMember("age_group",
+                     HOFFSET(june::PopulationSummaryRecord, age_group),
+                     H5::PredType::NATIVE_UINT8);
+  ptype.insertMember("sex_code",
+                     HOFFSET(june::PopulationSummaryRecord, sex_code),
+                     H5::PredType::NATIVE_UINT8);
+  ptype.insertMember("schedule_type_code",
+                     HOFFSET(june::PopulationSummaryRecord, schedule_type_code),
+                     H5::PredType::NATIVE_UINT8);
+  ptype.insertMember("reserved",
+                     HOFFSET(june::PopulationSummaryRecord, reserved),
+                     H5::PredType::NATIVE_UINT8);
+  ptype.insertMember("geo_unit_id",
+                     HOFFSET(june::PopulationSummaryRecord, geo_unit_id),
+                     H5::PredType::NATIVE_INT);
+  hsize_t adims[1] = {4};
+  H5::ArrayType atype(H5::PredType::NATIVE_UINT8, 1, adims);
+  ptype.insertMember("extra_codes",
+                     HOFFSET(june::PopulationSummaryRecord, extra_codes),
+                     atype);
+  return ptype;
+}
+
 H5::CompType makePersonCompType() {
   H5::StrType sex_type(H5::PredType::C_S1, 16);
   H5::StrType schedule_type(H5::PredType::C_S1, 64);
@@ -652,76 +738,15 @@ void EventWriter::writePersonActivitiesTable(
 void EventWriter::writePopulationSummary(H5::H5File& file,
                                          const WorldState& world,
                                          const Config& config) {
-  size_t n = world.people.size();
+  const size_t n = world.people.size();
   if (n == 0) return;
 
   std::vector<std::string> summary_props = config.simulation.summary_properties;
   if (summary_props.size() > 4) summary_props.resize(4);
 
-  struct PropInfo {
-    std::string name;
-    int index;
-    const std::vector<std::string>* registry = nullptr;
-  };
-  std::vector<PropInfo> props_metadata;
-  for (const auto& name : summary_props) {
-    int idx = world.getPersonPropertyIndex(name);
-    if (idx >= 0) {
-      PropInfo pi;
-      pi.name = name;
-      pi.index = idx;
-      auto it = world.person_property_value_registries.find(name);
-      if (it != world.person_property_value_registries.end())
-        pi.registry = &it->second;
-      props_metadata.push_back(pi);
-    }
-  }
-
-  std::vector<PopulationSummaryRecord> records(n);
-  for (size_t i = 0; i < n; ++i) {
-    const Person& person = world.people[i];
-    records[i].person_id = person.id;
-    records[i].age_group =
-        std::min(static_cast<uint8_t>(person.age / 5), uint8_t(17));
-    records[i].sex_code = static_cast<uint8_t>(person.sex);
-    records[i].schedule_type_code =
-        static_cast<uint8_t>(person.schedule_type_id % 256);
-    records[i].reserved = 0;
-    records[i].geo_unit_id = person.geo_unit_id;
-    for (size_t k = 0; k < 4; ++k) {
-      records[i].extra_codes[k] = 0;
-      if (k < props_metadata.size()) {
-        auto p_opt = world.getPersonProperty(person, props_metadata[k].name);
-        if (p_opt) {
-          if (std::holds_alternative<int32_t>(*p_opt))
-            records[i].extra_codes[k] =
-                (uint8_t)(std::get<int32_t>(*p_opt) % 256);
-          else if (std::holds_alternative<bool>(*p_opt))
-            records[i].extra_codes[k] = std::get<bool>(*p_opt) ? 1 : 0;
-        }
-      }
-    }
-  }
-
-  H5::CompType ptype(sizeof(PopulationSummaryRecord));
-  ptype.insertMember("person_id", HOFFSET(PopulationSummaryRecord, person_id),
-                     H5::PredType::NATIVE_INT);
-  ptype.insertMember("age_group", HOFFSET(PopulationSummaryRecord, age_group),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("sex_code", HOFFSET(PopulationSummaryRecord, sex_code),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("schedule_type_code",
-                     HOFFSET(PopulationSummaryRecord, schedule_type_code),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("reserved", HOFFSET(PopulationSummaryRecord, reserved),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("geo_unit_id",
-                     HOFFSET(PopulationSummaryRecord, geo_unit_id),
-                     H5::PredType::NATIVE_INT);
-  hsize_t adims[1] = {4};
-  H5::ArrayType atype(H5::PredType::NATIVE_UINT8, 1, adims);
-  ptype.insertMember("extra_codes",
-                     HOFFSET(PopulationSummaryRecord, extra_codes), atype);
+  auto props_metadata = collectSummaryPropertyMetadata(world, summary_props);
+  auto records = buildPopulationSummaryRecords(world, props_metadata);
+  auto ptype = makePopulationSummaryCompType();
 
   hsize_t pdims[1] = {n};
   H5::DataSpace pspace(1, pdims);
