@@ -214,6 +214,70 @@ void readPropertyValuesFromFile(
   }
 }
 
+H5::CompType buildVenueCompType() {
+  H5::StrType name_type(H5::PredType::C_S1, 128);
+  H5::StrType type_type(H5::PredType::C_S1, 64);
+  H5::CompType type(sizeof(detail::VenueRecord));
+  type.insertMember("venue_id", HOFFSET(detail::VenueRecord, venue_id),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("name", HOFFSET(detail::VenueRecord, name), name_type);
+  type.insertMember("type", HOFFSET(detail::VenueRecord, type), type_type);
+  type.insertMember("geo_unit_id", HOFFSET(detail::VenueRecord, geo_unit_id),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("n_subsets", HOFFSET(detail::VenueRecord, n_subsets),
+                    H5::PredType::NATIVE_INT);
+  return type;
+}
+
+// Stream unique VenueRecords from input files into `out_ds`,
+// deduplicated by venue_id (first occurrence wins). Returns count of
+// unique records written.
+hsize_t streamUniqueVenues(H5::DataSet& out_ds, const H5::CompType& type,
+                           const std::vector<std::string>& input_files) {
+  std::unordered_set<int> seen_venues;
+  hsize_t total_unique = 0;
+  const size_t CHUNK_SIZE = 100000;
+  std::vector<detail::VenueRecord> unique_buffer;
+
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), "/lookups/venues", H5P_DEFAULT)) continue;
+      H5::DataSet ds = file.openDataSet("/lookups/venues");
+      H5::DataSpace in_space = ds.getSpace();
+      hsize_t in_dims[1];
+      in_space.getSimpleExtentDims(in_dims);
+
+      hsize_t in_count = in_dims[0];
+      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
+        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
+        std::vector<detail::VenueRecord> chunk(count);
+        hsize_t count_h[1] = {count};
+        hsize_t offset_h[1] = {offset};
+        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
+        H5::DataSpace mem_space(1, count_h);
+        ds.read(chunk.data(), type, mem_space, in_space);
+
+        for (const auto& r : chunk) {
+          if (seen_venues.insert(r.venue_id).second) {
+            unique_buffer.push_back(r);
+            total_unique++;
+            if (unique_buffer.size() >= CHUNK_SIZE) {
+              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
+            }
+          }
+        }
+      }
+    } catch (...) {
+    }
+  }
+
+  if (!unique_buffer.empty()) {
+    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
+  }
+  return total_unique;
+}
+
 H5::CompType buildPopulationSummaryCompType() {
   H5::CompType type(sizeof(PopulationSummaryRecord));
   type.insertMember("person_id", HOFFSET(PopulationSummaryRecord, person_id),
@@ -574,19 +638,8 @@ void EventMerger::mergeVenueLookup(
     H5::H5File& out_file, const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  H5::StrType name_type(H5::PredType::C_S1, 128);
-  H5::StrType type_type(H5::PredType::C_S1, 64);
-  H5::CompType type(sizeof(detail::VenueRecord));
-  type.insertMember("venue_id", HOFFSET(detail::VenueRecord, venue_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("name", HOFFSET(detail::VenueRecord, name), name_type);
-  type.insertMember("type", HOFFSET(detail::VenueRecord, type), type_type);
-  type.insertMember("geo_unit_id", HOFFSET(detail::VenueRecord, geo_unit_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("n_subsets", HOFFSET(detail::VenueRecord, n_subsets),
-                    H5::PredType::NATIVE_INT);
+  H5::CompType type = buildVenueCompType();
 
-  std::unordered_set<int> seen_venues;
   hsize_t initial_dims[1] = {0};
   hsize_t max_dims[1] = {H5S_UNLIMITED};
   H5::DataSpace out_space(1, initial_dims, max_dims);
@@ -597,46 +650,7 @@ void EventMerger::mergeVenueLookup(
   H5::DataSet out_ds =
       out_file.createDataSet("/lookups/venues", type, out_space, plist);
 
-  hsize_t total_unique = 0;
-  const size_t CHUNK_SIZE = 100000;
-  std::vector<detail::VenueRecord> unique_buffer;
-
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/venues", H5P_DEFAULT)) continue;
-      H5::DataSet ds = file.openDataSet("/lookups/venues");
-      H5::DataSpace in_space = ds.getSpace();
-      hsize_t in_dims[1];
-      in_space.getSimpleExtentDims(in_dims);
-
-      hsize_t in_count = in_dims[0];
-      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
-        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
-        std::vector<detail::VenueRecord> chunk(count);
-        hsize_t count_h[1] = {count};
-        hsize_t offset_h[1] = {offset};
-        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
-        H5::DataSpace mem_space(1, count_h);
-        ds.read(chunk.data(), type, mem_space, in_space);
-
-        for (const auto& r : chunk) {
-          if (seen_venues.insert(r.venue_id).second) {
-            unique_buffer.push_back(r);
-            total_unique++;
-            if (unique_buffer.size() >= CHUNK_SIZE) {
-              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-            }
-          }
-        }
-      }
-    } catch (...) {
-    }
-  }
-
-  if (!unique_buffer.empty()) {
-    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-  }
+  hsize_t total_unique = streamUniqueVenues(out_ds, type, input_files);
   std::cout << "  Merged " << total_unique << " unique venues (streaming)"
             << std::endl;
 }
