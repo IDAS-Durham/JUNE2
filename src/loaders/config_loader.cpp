@@ -102,6 +102,37 @@ FrequencyGroup parseFrequencyGroup(const std::string& name,
   return fg;
 }
 
+// Parse a `{type, mean|p|count}` YAML node into an InviteDistribution.
+// Strict variant used by `invite_distribution`: both the `type` key and the
+// distribution-specific parameter are required (throws on absence). The
+// `enc_name` is woven into error messages to identify the offending encounter.
+void parseInviteDistributionStrict(const YAML::Node& dist_node,
+                                   InviteDistribution& dist,
+                                   const std::string& enc_name) {
+  if (!dist_node["type"])
+    throw std::runtime_error(
+        "Coordinated encounter '" + enc_name +
+        "' invite_distribution missing required field: type");
+  dist.type = parseDistributionType(dist_node["type"].as<std::string>());
+
+  if (dist.type == DistributionType::POISSON) {
+    if (!dist_node["mean"])
+      throw std::runtime_error("Poisson invite_distribution for '" + enc_name +
+                               "' requires 'mean' parameter.");
+    dist.mean = dist_node["mean"].as<double>();
+  } else if (dist.type == DistributionType::BINOMIAL) {
+    if (!dist_node["p"])
+      throw std::runtime_error("Binomial invite_distribution for '" + enc_name +
+                               "' requires 'p' parameter.");
+    dist.p = dist_node["p"].as<double>();
+  } else if (dist.type == DistributionType::FIXED) {
+    if (!dist_node["count"])
+      throw std::runtime_error("Fixed invite_distribution for '" + enc_name +
+                               "' requires 'count' parameter.");
+    dist.count = dist_node["count"].as<int>();
+  }
+}
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
 // of SelectionCriterion. The scalar `value` is dispatched int -> double ->
 // string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
@@ -1004,37 +1035,9 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
             throw std::runtime_error(
                 "Coordinated encounter '" + enc_def.name +
                 "' missing required field: invite_distribution");
-          {
-            const auto& dist_node = enc_node["invite_distribution"];
-            if (!dist_node["type"])
-              throw std::runtime_error(
-                  "Coordinated encounter '" + enc_def.name +
-                  "' invite_distribution missing required field: type");
-            const std::string dtype = dist_node["type"].as<std::string>();
-            enc_def.invite_distribution.type = parseDistributionType(dtype);
-
-            if (enc_def.invite_distribution.type == DistributionType::POISSON) {
-              if (!dist_node["mean"])
-                throw std::runtime_error("Poisson invite_distribution for '" +
-                                         enc_def.name +
-                                         "' requires 'mean' parameter.");
-              enc_def.invite_distribution.mean = dist_node["mean"].as<double>();
-            } else if (enc_def.invite_distribution.type ==
-                       DistributionType::BINOMIAL) {
-              if (!dist_node["p"])
-                throw std::runtime_error("Binomial invite_distribution for '" +
-                                         enc_def.name +
-                                         "' requires 'p' parameter.");
-              enc_def.invite_distribution.p = dist_node["p"].as<double>();
-            } else if (enc_def.invite_distribution.type ==
-                       DistributionType::FIXED) {
-              if (!dist_node["count"])
-                throw std::runtime_error("Fixed invite_distribution for '" +
-                                         enc_def.name +
-                                         "' requires 'count' parameter.");
-              enc_def.invite_distribution.count = dist_node["count"].as<int>();
-            }
-          }
+          parseInviteDistributionStrict(enc_node["invite_distribution"],
+                                        enc_def.invite_distribution,
+                                        enc_def.name);
 
           // acceptance_probability is optional. When absent, defaults to 1.0
           // (no refusal), which is appropriate whenever a frequency CSV is the
