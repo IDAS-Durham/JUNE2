@@ -12,12 +12,15 @@
 #include <mpi.h>
 #endif
 
+#include "loaders/config_loader_detail.h"
 #include "utils/filtered_csv.h"
 #include "utils/filtering.h"
 
 namespace june {
 
 namespace {
+
+using ::june::config_detail::parseSelectionCriteria;
 
 bool config_loader_log_rank0() {
 #ifdef USE_MPI
@@ -349,11 +352,6 @@ std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
   }
   return slots;
 }
-
-// Forward decl: defined further down. Shared by parseScheduleType and the
-// loadActivityPreferences / loadVaccination loaders.
-void parseSelectionCriteria(const YAML::Node& selection_node,
-                            std::vector<SelectionCriterion>& out);
 
 // Read the `config_paths:` block (or legacy top-level keys when no
 // `config_paths` section is present) onto the SimulationConfig file fields.
@@ -794,10 +792,14 @@ ScheduleType parseScheduleType(const std::string& name,
   return sched_type;
 }
 
+}  // namespace
+
+namespace config_detail {
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
 // of SelectionCriterion. The scalar `value` is dispatched int -> double ->
-// string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
-// loadActivityPreferences, and loadVaccination (campaign selection blocks).
+// string; sequence `value` becomes vector<int32_t>. Declared in
+// loaders/config_loader_detail.h so the vaccination-loader TU can reuse it.
 void parseSelectionCriteria(const YAML::Node& selection_node,
                             std::vector<SelectionCriterion>& out) {
   for (const auto& criterion_node : selection_node) {
@@ -825,7 +827,7 @@ void parseSelectionCriteria(const YAML::Node& selection_node,
   }
 }
 
-}  // namespace
+}  // namespace config_detail
 
 Config ConfigLoader::loadAll(const std::string& simulation_file) {
   Config config;
