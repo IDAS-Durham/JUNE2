@@ -88,6 +88,56 @@ std::vector<int32_t> buildRemapToGlobal(
   return remap;
 }
 
+// Print per-rank and aggregate domain-load stats from already-gathered
+// per-rank pop / venue / RSS vectors. Caller restricts to rank 0.
+void printDomainStats(const std::string& label, int num_ranks,
+                      const std::vector<uint64_t>& pops,
+                      const std::vector<uint64_t>& venues,
+                      const std::vector<double>& rss) {
+  std::cout << "\n=== Domain Statistics [" << label << "] ===" << std::endl;
+  uint64_t total_p = 0, max_p = 0;
+  uint64_t total_v = 0;
+  double total_rss = 0, max_rss = 0;
+
+  for (int r = 0; r < num_ranks; ++r) {
+    total_p += pops[r];
+    max_p = std::max(max_p, pops[r]);
+    total_v += venues[r];
+    total_rss += rss[r];
+    max_rss = std::max(max_rss, rss[r]);
+
+    if (num_ranks <= 64 || r < 4 || r >= num_ranks - 4) {
+      std::cout << "  Rank " << std::setw(3) << r << ": Pop=" << std::setw(10)
+                << pops[r] << " | Venues=" << std::setw(8) << venues[r]
+                << " | Mem=" << std::fixed << std::setprecision(2)
+                << std::setw(6) << rss[r] << " GB" << std::endl;
+    } else if (r == 4) {
+      std::cout << "  ... (omitted) ..." << std::endl;
+    }
+  }
+
+  double avg_p = static_cast<double>(total_p) / num_ranks;
+  double avg_v = static_cast<double>(total_v) / num_ranks;
+  double avg_rss = total_rss / num_ranks;
+
+  std::cout << "  --------------------------------------------------"
+            << std::endl;
+  std::cout << "  TOTAL:    Pop=" << total_p << " | Venues=" << total_v
+            << " | Mem=" << total_rss << " GB" << std::endl;
+  std::cout << "  AVERAGE:  Pop=" << std::fixed << std::setprecision(0) << avg_p
+            << " | Venues=" << avg_v << " | Mem=" << std::fixed
+            << std::setprecision(2) << avg_rss << " GB" << std::endl;
+
+  if (avg_p > 0)
+    std::cout << "  Pop Imbalance: " << std::fixed << std::setprecision(2)
+              << (max_p / avg_p - 1.0) * 100.0 << "%" << std::endl;
+  if (avg_rss > 0)
+    std::cout << "  Mem Imbalance: " << std::fixed << std::setprecision(2)
+              << (max_rss / avg_rss - 1.0) * 100.0 << "%" << std::endl;
+  std::cout << "====================================================\n"
+            << std::endl;
+}
+
 // Apply a (old → new) index remap to every person's stored value for one
 // property, in-place on the world's person_properties buffer.
 void remapPersonPropertyValues(WorldState& world, const std::string& prop_name,
@@ -646,50 +696,7 @@ void DomainManager::reportDomainStats(const std::string& label) const {
   MPI_Allgather(&local_rss_gb, 1, MPI_DOUBLE, rss.data(), 1, MPI_DOUBLE,
                 MPI_COMM_WORLD);
 
-  if (rank_ == 0) {
-    std::cout << "\n=== Domain Statistics [" << label << "] ===" << std::endl;
-    uint64_t total_p = 0, max_p = 0;
-    uint64_t total_v = 0;
-    double total_rss = 0, max_rss = 0;
-
-    for (int r = 0; r < num_ranks_; ++r) {
-      total_p += pops[r];
-      max_p = std::max(max_p, pops[r]);
-      total_v += venues[r];
-      total_rss += rss[r];
-      max_rss = std::max(max_rss, rss[r]);
-
-      if (num_ranks_ <= 64 || r < 4 || r >= num_ranks_ - 4) {
-        std::cout << "  Rank " << std::setw(3) << r << ": Pop=" << std::setw(10)
-                  << pops[r] << " | Venues=" << std::setw(8) << venues[r]
-                  << " | Mem=" << std::fixed << std::setprecision(2)
-                  << std::setw(6) << rss[r] << " GB" << std::endl;
-      } else if (r == 4) {
-        std::cout << "  ... (omitted) ..." << std::endl;
-      }
-    }
-
-    double avg_p = (double)total_p / num_ranks_;
-    double avg_v = (double)total_v / num_ranks_;
-    double avg_rss = total_rss / num_ranks_;
-
-    std::cout << "  --------------------------------------------------"
-              << std::endl;
-    std::cout << "  TOTAL:    Pop=" << total_p << " | Venues=" << total_v
-              << " | Mem=" << total_rss << " GB" << std::endl;
-    std::cout << "  AVERAGE:  Pop=" << std::fixed << std::setprecision(0)
-              << avg_p << " | Venues=" << avg_v << " | Mem=" << std::fixed
-              << std::setprecision(2) << avg_rss << " GB" << std::endl;
-
-    if (avg_p > 0)
-      std::cout << "  Pop Imbalance: " << std::fixed << std::setprecision(2)
-                << (max_p / avg_p - 1.0) * 100.0 << "%" << std::endl;
-    if (avg_rss > 0)
-      std::cout << "  Mem Imbalance: " << std::fixed << std::setprecision(2)
-                << (max_rss / avg_rss - 1.0) * 100.0 << "%" << std::endl;
-    std::cout << "====================================================\n"
-              << std::endl;
-  }
+  if (rank_ == 0) printDomainStats(label, num_ranks_, pops, venues, rss);
 }
 
 }  // namespace june
