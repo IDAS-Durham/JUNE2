@@ -18,6 +18,186 @@
 
 namespace june {
 
+namespace {
+
+// One-shot rank-0 dump of the loaded disease + infection-seed configuration.
+// Output is purely diagnostic (no MPI participation, no global state mutated)
+// so it is safe to run after construction but before the simulator starts.
+void printStartupAudit(const Disease& disease,
+                       const std::string& disease_yaml_path,
+                       const InfectionSeedConfig& seed_config) {
+  auto saved_flags = std::cout.flags();
+  auto saved_prec = std::cout.precision();
+  std::cout.unsetf(std::ios::floatfield);
+  std::cout << std::setprecision(6);
+  auto fmtDist = [](const DistributionParams& d) {
+    std::ostringstream os;
+    os << d.type << "(";
+    bool first = true;
+    for (const auto& [k, v] : d.params) {
+      if (!first) os << ", ";
+      os << k << "=" << v;
+      first = false;
+    }
+    os << ")";
+    return os.str();
+  };
+
+  const auto& tp = disease.getTransmissionParams();
+  std::cout << "\n=== [AUDIT] Disease config (rank 0) ===" << std::endl;
+  std::cout << "  Disease name: " << disease.getName() << std::endl;
+  std::cout << "  Disease YAML: " << disease_yaml_path << std::endl;
+  const auto& tags = disease.getSymptomTags();
+  std::cout << "  symptom_tags (" << tags.size() << "):";
+  for (const auto& t : tags) std::cout << " " << t.name;
+  std::cout << std::endl;
+
+  const auto& trajs = disease.getTrajectories();
+  std::cout << "  trajectories (" << trajs.size() << "):" << std::endl;
+  for (const auto& t : trajs) {
+    std::cout << "    - " << std::left << std::setw(14) << t.selection_key
+              << " sev=" << t.severity
+              << " inf_factor=" << t.infectiousness_factor
+              << " stages=" << t.stages.size() << "  path:";
+    for (size_t si = 0; si < t.stages.size(); ++si) {
+      std::cout << (si ? "→" : " ") << t.stages[si].symptom_tag;
+    }
+    if (!t.stages.empty()) {
+      std::cout << "  exposed_dist="
+                << fmtDist(t.stages[0].completion_time);
+    }
+    std::cout << std::endl;
+  }
+
+  std::cout << "  transmission:" << std::endl;
+  std::cout << "    mode="
+            << (tp.mode == InfectiousnessMode::TRAJECTORY_DRIVEN
+                    ? "Trajectory-Driven"
+                    : "Stage-Driven")
+            << "   type=" << tp.type << std::endl;
+  if (tp.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
+    std::cout << "    max_infectiousness=" << fmtDist(tp.max_infectiousness)
+              << std::endl;
+    std::cout << "    shape=" << fmtDist(tp.shape)
+              << "  rate=" << fmtDist(tp.rate)
+              << "  shift=" << fmtDist(tp.shift) << std::endl;
+    // Predicted gamma peak for diagnostic only:
+    // mode = (shape-1)/rate + shift, when shape > 1
+    auto getLoc = [](const DistributionParams& d) -> double {
+      auto it = d.params.find("loc");
+      return it == d.params.end() ? 0.0 : it->second;
+    };
+    double sh = getLoc(tp.shape);
+    double rt = getLoc(tp.rate);
+    double sft = getLoc(tp.shift);
+    if (sh > 1.0 && rt > 0.0) {
+      std::cout << "    -> predicted peak day post-infection: "
+                << ((sh - 1.0) / rt + sft) << std::endl;
+    }
+  }
+  std::cout << "    modes (" << tp.modes.size() << "):";
+  for (const auto& tmode : tp.modes) {
+    std::cout << "  " << tmode.name << "="
+              << tmode.susceptibility_multiplier;
+  }
+  std::cout << std::endl;
+
+  std::cout << "  immunity: level=" << tp.natural_immunity.level
+            << "  waning_rate=" << tp.natural_immunity.waning_rate
+            << std::endl;
+
+  const auto& orates = disease.getOutcomeRates();
+  std::cout << "  outcome_rates: " << orates.rows.size() << " rows loaded"
+            << std::endl;
+  auto dumpRow = [&](size_t i) {
+    if (i >= orates.rows.size()) return;
+    const auto& row = orates.rows[i];
+    double total = 0.0;
+    std::cout << "    row[" << i << "]:";
+    for (const auto& [k, v] : row.probabilities) {
+      std::cout << " " << k << "=" << v;
+      total += v;
+    }
+    std::cout << "  sum=" << total << std::endl;
+  };
+  dumpRow(0);
+  dumpRow(orates.rows.size() / 2);
+  if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
+
+  std::cout << "\n=== [AUDIT] Infection-seed config (rank 0) ==="
+            << std::endl;
+  std::cout << "  base_cases_per_capita="
+            << seed_config.global_params.base_cases_per_capita
+            << "  default_strength="
+            << seed_config.global_params.default_seed_strength << std::endl;
+  std::cout << "  seeds (" << seed_config.seeds.size() << "):" << std::endl;
+  // Helper: pretty-print one SelectionCriterion. Reused for both
+  // global attribute_filters and per-target-group criteria, because
+  // bulk-CSV exact/clustered seeds store their filters in
+  // structured_config.target_groups[*].criteria — not attribute_filters.
+  auto printCriterion = [](const SelectionCriterion& f,
+                           const std::string& prefix) {
+    std::cout << prefix << f.property_path << " " << f.operator_type << " ";
+    if (std::holds_alternative<std::string>(f.value)) {
+      std::cout << '"' << std::get<std::string>(f.value) << '"';
+    } else if (std::holds_alternative<int>(f.value)) {
+      std::cout << std::get<int>(f.value);
+    } else if (std::holds_alternative<double>(f.value)) {
+      std::cout << std::get<double>(f.value);
+    } else if (std::holds_alternative<bool>(f.value)) {
+      std::cout << (std::get<bool>(f.value) ? "true" : "false");
+    } else {
+      std::cout << "(complex)";
+    }
+    std::cout << std::endl;
+  };
+
+  for (const auto& s : seed_config.seeds) {
+    size_t tg_crit_total = 0;
+    for (const auto& g : s.structured_config.target_groups) {
+      tg_crit_total += g.criteria.size();
+    }
+    std::cout << "    - " << s.name << "  type="
+              << (s.type == InfectionSeedType::UNIFORM ? "uniform"
+                                                       : "structured")
+              << "  date=" << s.date_time
+              << "  filters=" << s.attribute_filters.size()
+              << "  target_group_criteria=" << tg_crit_total << std::endl;
+    if (s.type == InfectionSeedType::UNIFORM) {
+      std::cout << "      cases_per_capita="
+                << s.uniform_config.cases_per_capita
+                << "  seed_strength=" << s.seed_strength << std::endl;
+    } else {
+      std::cout << "      geo_level=" << s.structured_config.geo_level
+                << "  units=" << s.structured_config.unit_cases.size()
+                << "  target_groups="
+                << s.structured_config.target_groups.size() << std::endl;
+      for (const auto& uc : s.structured_config.unit_cases) {
+        int total = 0;
+        for (int n : uc.cases_per_target_group) total += n;
+        std::cout << "        unit=" << uc.unit_id << "  cases=" << total
+                  << std::endl;
+      }
+    }
+    for (const auto& f : s.attribute_filters) {
+      printCriterion(f, "      filter: ");
+    }
+    for (size_t gi = 0; gi < s.structured_config.target_groups.size();
+         ++gi) {
+      for (const auto& c : s.structured_config.target_groups[gi].criteria) {
+        std::cout << "      target_group[" << gi << "]: ";
+        printCriterion(c, "");
+      }
+    }
+  }
+  std::cout << "==========================================\n" << std::endl;
+  // Restore stream state.
+  std::cout.flags(saved_flags);
+  std::cout.precision(saved_prec);
+}
+
+}  // namespace
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -102,185 +282,8 @@ Simulator::Simulator(WorldState& world, const Config& config,
       world_, disease_.get(), seed_config, &event_logger_,
       config_.simulation.random_seed);
 
-  // ---------------------------------------------------------------------------
-  // One-shot disease/seed audit dump (rank 0 only).
-  // Prints a human-readable summary of every loaded disease parameter so we
-  // can eyeball-confirm the right configuration is in effect. Output is
-  // identical regardless of MPI rank count because only rank 0 ever writes.
-  // ---------------------------------------------------------------------------
-  {
-    if (getRank() == 0) {
-      // Save and override stream state so inherited precision doesn't truncate.
-      auto saved_flags = std::cout.flags();
-      auto saved_prec = std::cout.precision();
-      std::cout.unsetf(std::ios::floatfield);
-      std::cout << std::setprecision(6);
-      auto fmtDist = [](const DistributionParams& d) {
-        std::ostringstream os;
-        os << d.type << "(";
-        bool first = true;
-        for (const auto& [k, v] : d.params) {
-          if (!first) os << ", ";
-          os << k << "=" << v;
-          first = false;
-        }
-        os << ")";
-        return os.str();
-      };
-
-      const auto& tp = disease_->getTransmissionParams();
-      std::cout << "\n=== [AUDIT] Disease config (rank 0) ===" << std::endl;
-      std::cout << "  Disease name: " << disease_->getName() << std::endl;
-      std::cout << "  Disease YAML: " << config_.simulation.disease_file
-                << std::endl;
-      const auto& tags = disease_->getSymptomTags();
-      std::cout << "  symptom_tags (" << tags.size() << "):";
-      for (const auto& t : tags) std::cout << " " << t.name;
-      std::cout << std::endl;
-
-      const auto& trajs = disease_->getTrajectories();
-      std::cout << "  trajectories (" << trajs.size() << "):" << std::endl;
-      for (const auto& t : trajs) {
-        std::cout << "    - " << std::left << std::setw(14) << t.selection_key
-                  << " sev=" << t.severity
-                  << " inf_factor=" << t.infectiousness_factor
-                  << " stages=" << t.stages.size() << "  path:";
-        for (size_t si = 0; si < t.stages.size(); ++si) {
-          std::cout << (si ? "→" : " ") << t.stages[si].symptom_tag;
-        }
-        if (!t.stages.empty()) {
-          std::cout << "  exposed_dist="
-                    << fmtDist(t.stages[0].completion_time);
-        }
-        std::cout << std::endl;
-      }
-
-      std::cout << "  transmission:" << std::endl;
-      std::cout << "    mode="
-                << (tp.mode == InfectiousnessMode::TRAJECTORY_DRIVEN
-                        ? "Trajectory-Driven"
-                        : "Stage-Driven")
-                << "   type=" << tp.type << std::endl;
-      if (tp.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
-        std::cout << "    max_infectiousness=" << fmtDist(tp.max_infectiousness)
-                  << std::endl;
-        std::cout << "    shape=" << fmtDist(tp.shape)
-                  << "  rate=" << fmtDist(tp.rate)
-                  << "  shift=" << fmtDist(tp.shift) << std::endl;
-        // Predicted gamma peak for diagnostic only:
-        // mode = (shape-1)/rate + shift, when shape > 1
-        auto getLoc = [](const DistributionParams& d) -> double {
-          auto it = d.params.find("loc");
-          return it == d.params.end() ? 0.0 : it->second;
-        };
-        double sh = getLoc(tp.shape);
-        double rt = getLoc(tp.rate);
-        double sft = getLoc(tp.shift);
-        if (sh > 1.0 && rt > 0.0) {
-          std::cout << "    -> predicted peak day post-infection: "
-                    << ((sh - 1.0) / rt + sft) << std::endl;
-        }
-      }
-      std::cout << "    modes (" << tp.modes.size() << "):";
-      for (const auto& tmode : tp.modes) {
-        std::cout << "  " << tmode.name << "="
-                  << tmode.susceptibility_multiplier;
-      }
-      std::cout << std::endl;
-
-      std::cout << "  immunity: level=" << tp.natural_immunity.level
-                << "  waning_rate=" << tp.natural_immunity.waning_rate
-                << std::endl;
-
-      const auto& orates = disease_->getOutcomeRates();
-      std::cout << "  outcome_rates: " << orates.rows.size() << " rows loaded"
-                << std::endl;
-      auto dumpRow = [&](size_t i) {
-        if (i >= orates.rows.size()) return;
-        const auto& row = orates.rows[i];
-        double total = 0.0;
-        std::cout << "    row[" << i << "]:";
-        for (const auto& [k, v] : row.probabilities) {
-          std::cout << " " << k << "=" << v;
-          total += v;
-        }
-        std::cout << "  sum=" << total << std::endl;
-      };
-      dumpRow(0);
-      dumpRow(orates.rows.size() / 2);
-      if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
-
-      std::cout << "\n=== [AUDIT] Infection-seed config (rank 0) ==="
-                << std::endl;
-      std::cout << "  base_cases_per_capita="
-                << seed_config.global_params.base_cases_per_capita
-                << "  default_strength="
-                << seed_config.global_params.default_seed_strength << std::endl;
-      std::cout << "  seeds (" << seed_config.seeds.size() << "):" << std::endl;
-      // Helper: pretty-print one SelectionCriterion. Reused for both
-      // global attribute_filters and per-target-group criteria, because
-      // bulk-CSV exact/clustered seeds store their filters in
-      // structured_config.target_groups[*].criteria — not attribute_filters.
-      auto printCriterion = [](const SelectionCriterion& f,
-                               const std::string& prefix) {
-        std::cout << prefix << f.property_path << " " << f.operator_type << " ";
-        if (std::holds_alternative<std::string>(f.value)) {
-          std::cout << '"' << std::get<std::string>(f.value) << '"';
-        } else if (std::holds_alternative<int>(f.value)) {
-          std::cout << std::get<int>(f.value);
-        } else if (std::holds_alternative<double>(f.value)) {
-          std::cout << std::get<double>(f.value);
-        } else if (std::holds_alternative<bool>(f.value)) {
-          std::cout << (std::get<bool>(f.value) ? "true" : "false");
-        } else {
-          std::cout << "(complex)";
-        }
-        std::cout << std::endl;
-      };
-
-      for (const auto& s : seed_config.seeds) {
-        size_t tg_crit_total = 0;
-        for (const auto& g : s.structured_config.target_groups) {
-          tg_crit_total += g.criteria.size();
-        }
-        std::cout << "    - " << s.name << "  type="
-                  << (s.type == InfectionSeedType::UNIFORM ? "uniform"
-                                                           : "structured")
-                  << "  date=" << s.date_time
-                  << "  filters=" << s.attribute_filters.size()
-                  << "  target_group_criteria=" << tg_crit_total << std::endl;
-        if (s.type == InfectionSeedType::UNIFORM) {
-          std::cout << "      cases_per_capita="
-                    << s.uniform_config.cases_per_capita
-                    << "  seed_strength=" << s.seed_strength << std::endl;
-        } else {
-          std::cout << "      geo_level=" << s.structured_config.geo_level
-                    << "  units=" << s.structured_config.unit_cases.size()
-                    << "  target_groups="
-                    << s.structured_config.target_groups.size() << std::endl;
-          for (const auto& uc : s.structured_config.unit_cases) {
-            int total = 0;
-            for (int n : uc.cases_per_target_group) total += n;
-            std::cout << "        unit=" << uc.unit_id << "  cases=" << total
-                      << std::endl;
-          }
-        }
-        for (const auto& f : s.attribute_filters) {
-          printCriterion(f, "      filter: ");
-        }
-        for (size_t gi = 0; gi < s.structured_config.target_groups.size();
-             ++gi) {
-          for (const auto& c : s.structured_config.target_groups[gi].criteria) {
-            std::cout << "      target_group[" << gi << "]: ";
-            printCriterion(c, "");
-          }
-        }
-      }
-      std::cout << "==========================================\n" << std::endl;
-      // Restore stream state.
-      std::cout.flags(saved_flags);
-      std::cout.precision(saved_prec);
-    }
+  if (getRank() == 0) {
+    printStartupAudit(*disease_, config_.simulation.disease_file, seed_config);
   }
 
   // Initialize interaction and transmission management
