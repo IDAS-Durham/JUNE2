@@ -32,6 +32,76 @@ bool config_loader_log_rank0() {
 #endif
 }
 
+// Map a frequency-group `rate_unit` literal (e.g. "per_month") onto the
+// number of days it covers. Used to convert raw CSV rates into a daily
+// probability (raw / divisor). Throws if the unit is not recognised.
+double rateUnitDivisor(const std::string& rate_unit, const std::string& fg_name) {
+  if (rate_unit == "per_day") return 1.0;
+  if (rate_unit == "per_week") return 7.0;
+  if (rate_unit == "per_month") return 30.0;
+  if (rate_unit == "per_year") return 365.0;
+  throw std::runtime_error("frequency_group '" + fg_name +
+                           "' has unknown rate_unit '" + rate_unit + "'");
+}
+
+// Parse a single `frequency_groups:` entry (one named CSV-backed rate source).
+// Reads the CSV via csv::loadFilteredCSV, converts the per-person rate to a
+// daily probability using the configured rate_unit, and populates the
+// FrequencyGroup struct. Logs a one-line summary on rank 0.
+FrequencyGroup parseFrequencyGroup(const std::string& name,
+                                   const YAML::Node& gnode) {
+  FrequencyGroup fg;
+  fg.name = name;
+  if (!gnode["csv"])
+    throw std::runtime_error("frequency_group '" + fg.name +
+                             "' missing required field: csv");
+  fg.csv_path = gnode["csv"].as<std::string>();
+  fg.rate_column = gnode["rate_column"]
+                       ? gnode["rate_column"].as<std::string>()
+                       : "events_per_month";
+  fg.rate_unit = gnode["rate_unit"]
+                     ? gnode["rate_unit"].as<std::string>()
+                     : "per_month";
+
+  const double divisor = rateUnitDivisor(fg.rate_unit, fg.name);
+
+  csv::FilteredTable table = csv::loadFilteredCSV(fg.csv_path);
+  bool has_rate_col = false;
+  for (const auto& c : table.value_columns) {
+    if (c == fg.rate_column) {
+      has_rate_col = true;
+      break;
+    }
+  }
+  if (!has_rate_col)
+    throw std::runtime_error("frequency_group '" + fg.name + "' CSV '" +
+                             fg.csv_path + "' missing rate_column '" +
+                             fg.rate_column + "'");
+
+  for (const auto& row : table.rows) {
+    FrequencyRow fr;
+    fr.criteria = row.criteria;
+    auto it = row.values.find(fg.rate_column);
+    if (it == row.values.end() || it->second.empty()) continue;
+    try {
+      double raw = std::stod(it->second);
+      fr.daily_probability = raw / divisor;
+    } catch (...) {
+      continue;
+    }
+    fg.rows.push_back(std::move(fr));
+  }
+
+  if (config_loader_log_rank0()) {
+    std::cout << "[CoordEnc] Loaded frequency_group '" << fg.name
+              << "' from '" << fg.csv_path << "' (" << fg.rows.size()
+              << " rows, rate_column='" << fg.rate_column
+              << "', rate_unit='" << fg.rate_unit << "')" << std::endl;
+  }
+
+  return fg;
+}
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
 // of SelectionCriterion. The scalar `value` is dispatched int -> double ->
 // string; sequence `value` becomes vector<int32_t>. Shared by loadSchedule,
@@ -878,69 +948,9 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
       // encounter that declares `frequency_group: "<name>"`.
       if (ce_node["frequency_groups"]) {
         for (const auto& kv : ce_node["frequency_groups"]) {
-          FrequencyGroup fg;
-          fg.name = kv.first.as<std::string>();
-          const auto& gnode = kv.second;
-          if (!gnode["csv"])
-            throw std::runtime_error("frequency_group '" + fg.name +
-                                     "' missing required field: csv");
-          fg.csv_path = gnode["csv"].as<std::string>();
-          fg.rate_column = gnode["rate_column"]
-                               ? gnode["rate_column"].as<std::string>()
-                               : "events_per_month";
-          fg.rate_unit = gnode["rate_unit"]
-                             ? gnode["rate_unit"].as<std::string>()
-                             : "per_month";
-
-          double divisor = 0.0;
-          if (fg.rate_unit == "per_day")
-            divisor = 1.0;
-          else if (fg.rate_unit == "per_week")
-            divisor = 7.0;
-          else if (fg.rate_unit == "per_month")
-            divisor = 30.0;
-          else if (fg.rate_unit == "per_year")
-            divisor = 365.0;
-          else
-            throw std::runtime_error("frequency_group '" + fg.name +
-                                     "' has unknown rate_unit '" +
-                                     fg.rate_unit + "'");
-
-          csv::FilteredTable table = csv::loadFilteredCSV(fg.csv_path);
-          bool has_rate_col = false;
-          for (const auto& c : table.value_columns) {
-            if (c == fg.rate_column) {
-              has_rate_col = true;
-              break;
-            }
-          }
-          if (!has_rate_col)
-            throw std::runtime_error("frequency_group '" + fg.name + "' CSV '" +
-                                     fg.csv_path + "' missing rate_column '" +
-                                     fg.rate_column + "'");
-
-          for (const auto& row : table.rows) {
-            FrequencyRow fr;
-            fr.criteria = row.criteria;
-            auto it = row.values.find(fg.rate_column);
-            if (it == row.values.end() || it->second.empty()) continue;
-            try {
-              double raw = std::stod(it->second);
-              fr.daily_probability = raw / divisor;
-            } catch (...) {
-              continue;
-            }
-            fg.rows.push_back(std::move(fr));
-          }
-
-          if (config_loader_log_rank0()) {
-            std::cout << "[CoordEnc] Loaded frequency_group '" << fg.name
-                      << "' from '" << fg.csv_path << "' (" << fg.rows.size()
-                      << " rows, rate_column='" << fg.rate_column
-                      << "', rate_unit='" << fg.rate_unit << "')" << std::endl;
-          }
-
-          config.frequency_groups[fg.name] = std::move(fg);
+          std::string name = kv.first.as<std::string>();
+          config.frequency_groups[name] =
+              parseFrequencyGroup(name, kv.second);
         }
       }
 
