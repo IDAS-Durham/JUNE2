@@ -29,6 +29,13 @@ bool isLogRank() {
   return true;
 }
 
+// Open `name` under `parent` if it exists, otherwise create it.
+H5::Group openOrCreateGroup(H5::Group& parent, const std::string& name) {
+  if (H5Lexists(parent.getId(), name.c_str(), H5P_DEFAULT))
+    return parent.openGroup(name);
+  return parent.createGroup(name);
+}
+
 // Write a string-registry vector as a chunked variable-length string dataset.
 // No-op when the registry is empty or the dataset already exists.
 void writeStringRegistry(H5::Group& registries_group,
@@ -90,12 +97,7 @@ void EventWriter::saveToHDF5WithLookups(
                                     config.simulation.compression_level);
 
     // Always write lookups and metadata at the end, even if file exists
-    H5::Group lookups_group;
-    if (H5Lexists(file.getId(), "/lookups", H5P_DEFAULT)) {
-      lookups_group = file.openGroup("/lookups");
-    } else {
-      lookups_group = file.createGroup("/lookups");
-    }
+    H5::Group lookups_group = openOrCreateGroup(file, "/lookups");
 
     if (config.simulation.save_full_person_details != "none") {
       writePersonLookupTable(file, world, config, logger, exists,
@@ -114,19 +116,9 @@ void EventWriter::saveToHDF5WithLookups(
                                  person_ids_filter);
     }
 
-    H5::Group metadata_group;
-    if (H5Lexists(file.getId(), "/metadata", H5P_DEFAULT)) {
-      metadata_group = file.openGroup("/metadata");
-    } else {
-      metadata_group = file.createGroup("/metadata");
-    }
-
-    H5::Group registries_group;
-    if (H5Lexists(file.getId(), "/metadata/registries", H5P_DEFAULT)) {
-      registries_group = file.openGroup("/metadata/registries");
-    } else {
-      registries_group = metadata_group.createGroup("registries");
-    }
+    H5::Group metadata_group = openOrCreateGroup(file, "/metadata");
+    H5::Group registries_group =
+        openOrCreateGroup(metadata_group, "registries");
 
     writeStringRegistry(registries_group, "encounter_types",
                         world.encounter_type_names);
@@ -412,12 +404,8 @@ void EventWriter::writePersonLookupTable(
                        config.simulation.compression_level);
 
   if (!world.person_property_names.empty()) {
-    H5::Group prop_group;
-    if (H5Lexists(file.getId(), "/lookups/people_properties", H5P_DEFAULT)) {
-      prop_group = file.openGroup("/lookups/people_properties");
-    } else {
-      prop_group = file.createGroup("/lookups/people_properties");
-    }
+    H5::Group prop_group =
+        openOrCreateGroup(file, "/lookups/people_properties");
     for (const auto& key : world.person_property_names) {
       // Network-typed properties (e.g. friendships) are
       // stored in Person::NetworkMeta rather than the flat property table.
@@ -718,19 +706,9 @@ void EventWriter::writePopulationNetworks(H5::H5File& file,
                                           const Config& config) {
   if (world.people.empty() || world.network_names.empty()) return;
 
-  H5::Group lookups_group;
-  if (H5Lexists(file.getId(), "/lookups", H5P_DEFAULT)) {
-    lookups_group = file.openGroup("/lookups");
-  } else {
-    lookups_group = file.createGroup("/lookups");
-  }
-
-  H5::Group networks_group;
-  if (H5Lexists(lookups_group.getId(), "population_networks", H5P_DEFAULT)) {
-    networks_group = lookups_group.openGroup("population_networks");
-  } else {
-    networks_group = lookups_group.createGroup("population_networks");
-  }
+  H5::Group lookups_group = openOrCreateGroup(file, "/lookups");
+  H5::Group networks_group =
+      openOrCreateGroup(lookups_group, "population_networks");
 
   for (const auto& network_name : world.network_names) {
     const int type_id = world.getNetworkTypeIndex(network_name);
@@ -753,12 +731,7 @@ void EventWriter::writePopulationNetworks(H5::H5File& file,
     }
     if (!has_any) continue;
 
-    H5::Group net_group;
-    if (H5Lexists(networks_group.getId(), network_name.c_str(), H5P_DEFAULT)) {
-      net_group = networks_group.openGroup(network_name);
-    } else {
-      net_group = networks_group.createGroup(network_name);
-    }
+    H5::Group net_group = openOrCreateGroup(networks_group, network_name);
 
     hsize_t dims[1] = {persons.size()};
     H5::DataSpace space(1, dims);
