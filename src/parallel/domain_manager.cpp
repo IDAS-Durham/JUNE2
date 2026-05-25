@@ -30,6 +30,31 @@ void chunkedBroadcast(void* data, uint64_t count, size_t element_size,
   }
 }
 
+// Pack a local registry of strings into a single null-separated buffer and
+// MPI_Allgatherv-concatenate the same on every rank.
+std::vector<char> gatherPackedValuesAcrossRanks(
+    const std::vector<std::string>& local_registry, int num_ranks) {
+  std::string local_packed;
+  for (const auto& val : local_registry) {
+    local_packed += val;
+    local_packed += '\0';
+  }
+
+  int local_size = static_cast<int>(local_packed.size());
+  std::vector<int> all_sizes(num_ranks);
+  MPI_Allgather(&local_size, 1, MPI_INT, all_sizes.data(), 1, MPI_INT,
+                MPI_COMM_WORLD);
+
+  std::vector<int> displs;
+  int total_size;
+  mpi_utils::computeDisplacements(all_sizes, displs, total_size);
+
+  std::vector<char> all_packed(total_size);
+  MPI_Allgatherv(local_packed.data(), local_size, MPI_CHAR, all_packed.data(),
+                 all_sizes.data(), displs.data(), MPI_CHAR, MPI_COMM_WORLD);
+  return all_packed;
+}
+
 }  // anonymous namespace
 
 DomainManager::DomainManager(WorldState& world, const Config& config)
@@ -532,35 +557,17 @@ void DomainManager::synchronizeRegistries() {
 
   for (auto& [prop_name, local_registry] :
        world_.person_property_value_registries) {
-    // 1. Gather all unique values from all ranks
-    // Pack local values into a single string with null separators
-    std::string local_packed;
-    for (const auto& val : local_registry) {
-      local_packed += val;
-      local_packed += '\0';
-    }
-
-    // Exchange packed string sizes
-    int local_size = static_cast<int>(local_packed.size());
-    std::vector<int> all_sizes(num_ranks_);
-    MPI_Allgather(&local_size, 1, MPI_INT, all_sizes.data(), 1, MPI_INT,
-                  MPI_COMM_WORLD);
-
-    std::vector<int> displs;
-    int total_size;
-    mpi_utils::computeDisplacements(all_sizes, displs, total_size);
-
-    std::vector<char> all_packed(total_size);
-    MPI_Allgatherv(local_packed.data(), local_size, MPI_CHAR, all_packed.data(),
-                   all_sizes.data(), displs.data(), MPI_CHAR, MPI_COMM_WORLD);
+    // 1. Gather all unique values from all ranks (null-separated packed)
+    std::vector<char> all_packed =
+        gatherPackedValuesAcrossRanks(local_registry, num_ranks_);
+    const size_t total_size = all_packed.size();
 
     // 2. Build a sorted, deduplicated global registry
     std::set<std::string> unique_vals;
     size_t pos = 0;
-    while (pos < static_cast<size_t>(total_size)) {
+    while (pos < total_size) {
       size_t end = pos;
-      while (end < static_cast<size_t>(total_size) && all_packed[end] != '\0')
-        ++end;
+      while (end < total_size && all_packed[end] != '\0') ++end;
       if (end > pos)
         unique_vals.insert(std::string(all_packed.data() + pos, end - pos));
       pos = end + 1;
