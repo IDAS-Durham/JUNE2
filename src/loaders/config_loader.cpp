@@ -206,6 +206,81 @@ void parseEncounterRateSource(
   }
 }
 
+// Forward decl: defined further down (lenient companion to
+// parseInviteDistributionStrict).
+void parseDailyMaxDistribution(const YAML::Node& dmd_node,
+                               InviteDistribution& dist);
+
+// Parse one entry from `coordinated_encounters.encounters[]`. Dispatches
+// through the smaller per-section helpers (required fields, invite
+// distribution, rate source, daily-max distribution) and reads the optional
+// scalar/list fields (acceptance_probability, is_virtual /
+// virtual_contact_matrix, min_attendees, priority, network_partner_filter).
+CoordinatedEncounterDef parseEncounter(
+    const YAML::Node& enc_node,
+    const std::unordered_map<std::string, FrequencyGroup>& frequency_groups) {
+  CoordinatedEncounterDef enc_def;
+  parseEncounterRequiredFields(enc_node, enc_def);
+
+  // proposal_probability is optional when frequency_group is set.
+  // Validated by parseEncounterRateSource below.
+  bool has_proposal_prob =
+      static_cast<bool>(enc_node["proposal_probability"]);
+  if (has_proposal_prob) {
+    enc_def.proposal_probability =
+        enc_node["proposal_probability"].as<double>();
+  }
+
+  if (!enc_node["invite_distribution"])
+    throw std::runtime_error(
+        "Coordinated encounter '" + enc_def.name +
+        "' missing required field: invite_distribution");
+  parseInviteDistributionStrict(enc_node["invite_distribution"],
+                                enc_def.invite_distribution, enc_def.name);
+
+  // acceptance_probability is optional. When absent, defaults to 1.0
+  // (no refusal), which is appropriate whenever a frequency CSV is the
+  // realized-rate source and any refusal dynamics are already baked in.
+  if (enc_node["acceptance_probability"]) {
+    enc_def.acceptance_probability =
+        enc_node["acceptance_probability"].as<double>();
+  }
+
+  if (enc_node["is_virtual"]) {
+    enc_def.is_virtual = enc_node["is_virtual"].as<bool>();
+  }
+
+  if (enc_def.is_virtual) {
+    if (!enc_node["virtual_contact_matrix"])
+      throw std::runtime_error("Virtual coordinated encounter '" +
+                               enc_def.name +
+                               "' missing required field: virtual_contact_matrix");
+    enc_def.virtual_contact_matrix =
+        enc_node["virtual_contact_matrix"].as<std::string>();
+  }
+
+  if (enc_node["min_attendees"]) {
+    enc_def.min_attendees = enc_node["min_attendees"].as<int>();
+  }
+  if (enc_node["priority"]) {
+    enc_def.priority = enc_node["priority"].as<int>();
+  }
+  if (enc_node["network_partner_filter"]) {
+    enc_def.network_partner_filter =
+        enc_node["network_partner_filter"].as<std::string>();
+  }
+
+  parseEncounterRateSource(enc_node, enc_def, frequency_groups,
+                           has_proposal_prob);
+
+  if (enc_node["daily_max_distribution"]) {
+    parseDailyMaxDistribution(enc_node["daily_max_distribution"],
+                              enc_def.daily_max_distribution);
+  }
+
+  return enc_def;
+}
+
 // Lenient counterpart to parseInviteDistributionStrict, used for
 // `daily_max_distribution` blocks. Every key is optional: missing `type`
 // leaves the existing default in place, and a missing distribution-specific
@@ -1076,79 +1151,13 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
         }
       }
 
-      if (ce_node["encounters"]) {
-        for (const auto& enc_node : ce_node["encounters"]) {
-          CoordinatedEncounterDef enc_def;
-          parseEncounterRequiredFields(enc_node, enc_def);
-
-          // proposal_probability is optional when frequency_group is set.
-          // Validated below after frequency_group parsing.
-          bool has_proposal_prob =
-              static_cast<bool>(enc_node["proposal_probability"]);
-          if (has_proposal_prob) {
-            enc_def.proposal_probability =
-                enc_node["proposal_probability"].as<double>();
-          }
-
-          if (!enc_node["invite_distribution"])
-            throw std::runtime_error(
-                "Coordinated encounter '" + enc_def.name +
-                "' missing required field: invite_distribution");
-          parseInviteDistributionStrict(enc_node["invite_distribution"],
-                                        enc_def.invite_distribution,
-                                        enc_def.name);
-
-          // acceptance_probability is optional. When absent, defaults to 1.0
-          // (no refusal), which is appropriate whenever a frequency CSV is the
-          // realized-rate source and any refusal dynamics are already baked in.
-          if (enc_node["acceptance_probability"]) {
-            enc_def.acceptance_probability =
-                enc_node["acceptance_probability"].as<double>();
-          }
-
-          if (enc_node["is_virtual"]) {
-            enc_def.is_virtual = enc_node["is_virtual"].as<bool>();
-          }
-
-          if (enc_def.is_virtual) {
-            if (!enc_node["virtual_contact_matrix"])
-              throw std::runtime_error(
-                  "Virtual coordinated encounter '" + enc_def.name +
-                  "' missing required field: virtual_contact_matrix");
-            enc_def.virtual_contact_matrix =
-                enc_node["virtual_contact_matrix"].as<std::string>();
-          }
-
-          // Minimum attendees (optional, default 2)
-          if (enc_node["min_attendees"]) {
-            enc_def.min_attendees = enc_node["min_attendees"].as<int>();
-          }
-
-          // Priority (optional, default 0)
-          if (enc_node["priority"]) {
-            enc_def.priority = enc_node["priority"].as<int>();
-          }
-
-          // Network partner filter (optional, default empty = no filter)
-          if (enc_node["network_partner_filter"]) {
-            enc_def.network_partner_filter =
-                enc_node["network_partner_filter"].as<std::string>();
-          }
-
-          parseEncounterRateSource(enc_node, enc_def, config.frequency_groups,
-                                   has_proposal_prob);
-
-          // Daily max distribution (optional, defaults to fixed count=1)
-          if (enc_node["daily_max_distribution"]) {
-            parseDailyMaxDistribution(enc_node["daily_max_distribution"],
-                                      enc_def.daily_max_distribution);
-          }
-
-          config.encounters.push_back(enc_def);
-        }
-      } else {
+      if (!ce_node["encounters"]) {
         throw std::runtime_error(
             "coordinated_encounters block must define 'encounters' list.");
+      }
+      for (const auto& enc_node : ce_node["encounters"]) {
+        config.encounters.push_back(
+            parseEncounter(enc_node, config.frequency_groups));
       }
 
       // Sort encounters by priority (lower number = higher precedence =
