@@ -20,6 +20,76 @@ namespace june {
 
 namespace {
 
+void printSeedAudit(const InfectionSeedConfig& seed_config) {
+  std::cout << "\n=== [AUDIT] Infection-seed config (rank 0) ==="
+            << std::endl;
+  std::cout << "  base_cases_per_capita="
+            << seed_config.global_params.base_cases_per_capita
+            << "  default_strength="
+            << seed_config.global_params.default_seed_strength << std::endl;
+  std::cout << "  seeds (" << seed_config.seeds.size() << "):" << std::endl;
+  // Helper: pretty-print one SelectionCriterion. Reused for both
+  // global attribute_filters and per-target-group criteria, because
+  // bulk-CSV exact/clustered seeds store their filters in
+  // structured_config.target_groups[*].criteria — not attribute_filters.
+  auto printCriterion = [](const SelectionCriterion& f,
+                           const std::string& prefix) {
+    std::cout << prefix << f.property_path << " " << f.operator_type << " ";
+    if (std::holds_alternative<std::string>(f.value)) {
+      std::cout << '"' << std::get<std::string>(f.value) << '"';
+    } else if (std::holds_alternative<int>(f.value)) {
+      std::cout << std::get<int>(f.value);
+    } else if (std::holds_alternative<double>(f.value)) {
+      std::cout << std::get<double>(f.value);
+    } else if (std::holds_alternative<bool>(f.value)) {
+      std::cout << (std::get<bool>(f.value) ? "true" : "false");
+    } else {
+      std::cout << "(complex)";
+    }
+    std::cout << std::endl;
+  };
+
+  for (const auto& s : seed_config.seeds) {
+    size_t tg_crit_total = 0;
+    for (const auto& g : s.structured_config.target_groups) {
+      tg_crit_total += g.criteria.size();
+    }
+    std::cout << "    - " << s.name << "  type="
+              << (s.type == InfectionSeedType::UNIFORM ? "uniform"
+                                                       : "structured")
+              << "  date=" << s.date_time
+              << "  filters=" << s.attribute_filters.size()
+              << "  target_group_criteria=" << tg_crit_total << std::endl;
+    if (s.type == InfectionSeedType::UNIFORM) {
+      std::cout << "      cases_per_capita="
+                << s.uniform_config.cases_per_capita
+                << "  seed_strength=" << s.seed_strength << std::endl;
+    } else {
+      std::cout << "      geo_level=" << s.structured_config.geo_level
+                << "  units=" << s.structured_config.unit_cases.size()
+                << "  target_groups="
+                << s.structured_config.target_groups.size() << std::endl;
+      for (const auto& uc : s.structured_config.unit_cases) {
+        int total = 0;
+        for (int n : uc.cases_per_target_group) total += n;
+        std::cout << "        unit=" << uc.unit_id << "  cases=" << total
+                  << std::endl;
+      }
+    }
+    for (const auto& f : s.attribute_filters) {
+      printCriterion(f, "      filter: ");
+    }
+    for (size_t gi = 0; gi < s.structured_config.target_groups.size();
+         ++gi) {
+      for (const auto& c : s.structured_config.target_groups[gi].criteria) {
+        std::cout << "      target_group[" << gi << "]: ";
+        printCriterion(c, "");
+      }
+    }
+  }
+  std::cout << "==========================================\n" << std::endl;
+}
+
 // One-shot rank-0 dump of the loaded disease + infection-seed configuration.
 // Output is purely diagnostic (no MPI participation, no global state mutated)
 // so it is safe to run after construction but before the simulator starts.
@@ -124,73 +194,7 @@ void printStartupAudit(const Disease& disease,
   dumpRow(orates.rows.size() / 2);
   if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
 
-  std::cout << "\n=== [AUDIT] Infection-seed config (rank 0) ==="
-            << std::endl;
-  std::cout << "  base_cases_per_capita="
-            << seed_config.global_params.base_cases_per_capita
-            << "  default_strength="
-            << seed_config.global_params.default_seed_strength << std::endl;
-  std::cout << "  seeds (" << seed_config.seeds.size() << "):" << std::endl;
-  // Helper: pretty-print one SelectionCriterion. Reused for both
-  // global attribute_filters and per-target-group criteria, because
-  // bulk-CSV exact/clustered seeds store their filters in
-  // structured_config.target_groups[*].criteria — not attribute_filters.
-  auto printCriterion = [](const SelectionCriterion& f,
-                           const std::string& prefix) {
-    std::cout << prefix << f.property_path << " " << f.operator_type << " ";
-    if (std::holds_alternative<std::string>(f.value)) {
-      std::cout << '"' << std::get<std::string>(f.value) << '"';
-    } else if (std::holds_alternative<int>(f.value)) {
-      std::cout << std::get<int>(f.value);
-    } else if (std::holds_alternative<double>(f.value)) {
-      std::cout << std::get<double>(f.value);
-    } else if (std::holds_alternative<bool>(f.value)) {
-      std::cout << (std::get<bool>(f.value) ? "true" : "false");
-    } else {
-      std::cout << "(complex)";
-    }
-    std::cout << std::endl;
-  };
-
-  for (const auto& s : seed_config.seeds) {
-    size_t tg_crit_total = 0;
-    for (const auto& g : s.structured_config.target_groups) {
-      tg_crit_total += g.criteria.size();
-    }
-    std::cout << "    - " << s.name << "  type="
-              << (s.type == InfectionSeedType::UNIFORM ? "uniform"
-                                                       : "structured")
-              << "  date=" << s.date_time
-              << "  filters=" << s.attribute_filters.size()
-              << "  target_group_criteria=" << tg_crit_total << std::endl;
-    if (s.type == InfectionSeedType::UNIFORM) {
-      std::cout << "      cases_per_capita="
-                << s.uniform_config.cases_per_capita
-                << "  seed_strength=" << s.seed_strength << std::endl;
-    } else {
-      std::cout << "      geo_level=" << s.structured_config.geo_level
-                << "  units=" << s.structured_config.unit_cases.size()
-                << "  target_groups="
-                << s.structured_config.target_groups.size() << std::endl;
-      for (const auto& uc : s.structured_config.unit_cases) {
-        int total = 0;
-        for (int n : uc.cases_per_target_group) total += n;
-        std::cout << "        unit=" << uc.unit_id << "  cases=" << total
-                  << std::endl;
-      }
-    }
-    for (const auto& f : s.attribute_filters) {
-      printCriterion(f, "      filter: ");
-    }
-    for (size_t gi = 0; gi < s.structured_config.target_groups.size();
-         ++gi) {
-      for (const auto& c : s.structured_config.target_groups[gi].criteria) {
-        std::cout << "      target_group[" << gi << "]: ";
-        printCriterion(c, "");
-      }
-    }
-  }
-  std::cout << "==========================================\n" << std::endl;
+  printSeedAudit(seed_config);
   // Restore stream state.
   std::cout.flags(saved_flags);
   std::cout.precision(saved_prec);
