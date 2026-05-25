@@ -355,6 +355,113 @@ hsize_t streamUniquePopulationSummary(
   return total_unique;
 }
 
+// Walk `input_files` and return the union of child-group names under
+// `parent_path`, preserving insertion order for deterministic output.
+// Returns an empty vector if no input file contains the parent group.
+std::vector<std::string> discoverChildGroupNames(
+    const std::vector<std::string>& input_files,
+    const std::string& parent_path) {
+  std::vector<std::string> names;
+  std::unordered_set<std::string> seen;
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), parent_path.c_str(), H5P_DEFAULT)) continue;
+      H5::Group g = file.openGroup(parent_path);
+      hsize_t n_obj = g.getNumObjs();
+      for (hsize_t i = 0; i < n_obj; ++i) {
+        std::string name = g.getObjnameByIdx(i);
+        if (seen.insert(name).second) names.push_back(name);
+      }
+    } catch (...) {
+    }
+  }
+  return names;
+}
+
+// Concatenate the dataset at `ds_path` across all `input_files` into a
+// new dataset `field` under `out_facet`. No-op if no input file has the
+// dataset, or if `out_facet/field` already exists.
+void concatenateOneField(const std::vector<std::string>& input_files,
+                         const std::string& ds_path,
+                         const std::string& field, H5::Group& out_facet) {
+  hsize_t total = 0;
+  H5::DataType dtype;
+  bool dtype_set = false;
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
+      H5::DataSet ds = file.openDataSet(ds_path);
+      hsize_t d[1];
+      ds.getSpace().getSimpleExtentDims(d);
+      total += d[0];
+      if (!dtype_set) {
+        dtype = ds.getDataType();
+        dtype_set = true;
+      }
+    } catch (...) {
+    }
+  }
+  if (!dtype_set || total == 0) return;
+  if (H5Lexists(out_facet.getId(), field.c_str(), H5P_DEFAULT)) return;
+
+  hsize_t out_dims[1] = {total};
+  H5::DataSpace out_space(1, out_dims);
+  H5::DSetCreatPropList plist;
+  hsize_t chunk[1] = {std::min(total, hsize_t(100000))};
+  if (chunk[0] == 0) chunk[0] = 1;
+  plist.setChunk(1, chunk);
+  plist.setDeflate(6);
+  H5::DataSet out_ds = out_facet.createDataSet(field, dtype, out_space, plist);
+
+  const size_t elem_size = dtype.getSize();
+  std::vector<uint8_t> buffer;
+  hsize_t current_out_offset = 0;
+  for (const auto& f : input_files) {
+    try {
+      H5::H5File file(f, H5F_ACC_RDONLY);
+      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
+      H5::DataSet in_ds = file.openDataSet(ds_path);
+      H5::DataSpace in_space = in_ds.getSpace();
+      hsize_t in_dims[1];
+      in_space.getSimpleExtentDims(in_dims);
+      if (in_dims[0] == 0) continue;
+
+      buffer.resize(in_dims[0] * elem_size);
+      in_ds.read(buffer.data(), dtype);
+
+      hsize_t count_h[1] = {in_dims[0]};
+      hsize_t out_offset_h[1] = {current_out_offset};
+      out_space.selectHyperslab(H5S_SELECT_SET, count_h, out_offset_h);
+      H5::DataSpace mem_space(1, count_h);
+      out_ds.write(buffer.data(), dtype, mem_space, out_space);
+      current_out_offset += in_dims[0];
+    } catch (...) {
+    }
+  }
+}
+
+void mergeOneProfileFacet(const std::vector<std::string>& input_files,
+                          const std::string& facet, H5::Group& out_assigns) {
+  const std::string facet_path = "/lookups/profile_assignments/" + facet;
+  std::vector<std::string> field_names =
+      discoverChildGroupNames(input_files, facet_path);
+  if (field_names.empty()) return;
+
+  H5::Group out_facet = openOrCreateGroup(out_assigns, facet);
+
+  // For every field, concatenate arrays from all rank files. MPI
+  // partitions agents across ranks so simple concatenation is correct;
+  // no deduplication is applied here.
+  for (const auto& field : field_names) {
+    const std::string ds_path = facet_path + "/" + field;
+    concatenateOneField(input_files, ds_path, field, out_facet);
+  }
+  std::cout << "  Merged profile_assignments for facet '" << facet << "' ("
+            << field_names.size() << " fields)\n";
+}
+
 void mergeOnePeopleProperty(const std::string& key,
                             const std::vector<std::string>& input_files,
                             const std::vector<int32_t>& id_to_merged_idx,
@@ -703,123 +810,18 @@ void EventMerger::mergeProfileAssignments(
     H5::H5File& out_file, const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  // 1. Discover which facets exist. Take the union across all rank files so we
-  //    don't miss a facet that happens to be absent from rank 0. Preserve
-  //    insertion order for deterministic output.
-  std::vector<std::string> facet_names;
-  std::unordered_set<std::string> facet_seen;
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/profile_assignments", H5P_DEFAULT))
-        continue;
-      H5::Group g = file.openGroup("/lookups/profile_assignments");
-      hsize_t n_obj = g.getNumObjs();
-      for (hsize_t i = 0; i < n_obj; ++i) {
-        std::string name = g.getObjnameByIdx(i);
-        if (facet_seen.insert(name).second) {
-          facet_names.push_back(name);
-        }
-      }
-    } catch (...) {
-    }
-  }
+  // Discover which facets exist. Take the union across all rank files so
+  // we don't miss a facet that happens to be absent from rank 0. Preserve
+  // insertion order for deterministic output.
+  std::vector<std::string> facet_names =
+      discoverChildGroupNames(input_files, "/lookups/profile_assignments");
   if (facet_names.empty()) return;
 
-  // 2. Ensure output parent group exists.
   H5::Group out_lookups = openOrCreateGroup(out_file, "/lookups");
   H5::Group out_assigns = openOrCreateGroup(out_lookups, "profile_assignments");
 
   for (const auto& facet : facet_names) {
-    // 3. Discover the field set for this facet. Union across files.
-    std::vector<std::string> field_names;
-    std::unordered_set<std::string> field_seen;
-    for (const auto& f : input_files) {
-      try {
-        H5::H5File file(f, H5F_ACC_RDONLY);
-        std::string path = "/lookups/profile_assignments/" + facet;
-        if (!H5Lexists(file.getId(), path.c_str(), H5P_DEFAULT)) continue;
-        H5::Group g = file.openGroup(path);
-        hsize_t n_obj = g.getNumObjs();
-        for (hsize_t i = 0; i < n_obj; ++i) {
-          std::string name = g.getObjnameByIdx(i);
-          if (field_seen.insert(name).second) {
-            field_names.push_back(name);
-          }
-        }
-      } catch (...) {
-      }
-    }
-    if (field_names.empty()) continue;
-
-    H5::Group out_facet = openOrCreateGroup(out_assigns, facet);
-
-    // 4. For every field, concatenate arrays from all rank files. MPI
-    //    partitions agents across ranks so simple concatenation is correct;
-    //    no deduplication is applied here.
-    for (const auto& field : field_names) {
-      const std::string ds_path =
-          "/lookups/profile_assignments/" + facet + "/" + field;
-
-      hsize_t total = 0;
-      H5::DataType dtype;
-      bool dtype_set = false;
-      for (const auto& f : input_files) {
-        try {
-          H5::H5File file(f, H5F_ACC_RDONLY);
-          if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-          H5::DataSet ds = file.openDataSet(ds_path);
-          hsize_t d[1];
-          ds.getSpace().getSimpleExtentDims(d);
-          total += d[0];
-          if (!dtype_set) {
-            dtype = ds.getDataType();
-            dtype_set = true;
-          }
-        } catch (...) {
-        }
-      }
-      if (!dtype_set || total == 0) continue;
-      if (H5Lexists(out_facet.getId(), field.c_str(), H5P_DEFAULT)) continue;
-
-      hsize_t out_dims[1] = {total};
-      H5::DataSpace out_space(1, out_dims);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk[1] = {std::min(total, hsize_t(100000))};
-      if (chunk[0] == 0) chunk[0] = 1;
-      plist.setChunk(1, chunk);
-      plist.setDeflate(6);
-      H5::DataSet out_ds =
-          out_facet.createDataSet(field, dtype, out_space, plist);
-
-      const size_t elem_size = dtype.getSize();
-      std::vector<uint8_t> buffer;
-      hsize_t current_out_offset = 0;
-      for (const auto& f : input_files) {
-        try {
-          H5::H5File file(f, H5F_ACC_RDONLY);
-          if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-          H5::DataSet in_ds = file.openDataSet(ds_path);
-          H5::DataSpace in_space = in_ds.getSpace();
-          hsize_t in_dims[1];
-          in_space.getSimpleExtentDims(in_dims);
-          if (in_dims[0] == 0) continue;
-
-          buffer.resize(in_dims[0] * elem_size);
-          in_ds.read(buffer.data(), dtype);
-
-          hsize_t count_h[1] = {in_dims[0]};
-          hsize_t out_offset_h[1] = {current_out_offset};
-          out_space.selectHyperslab(H5S_SELECT_SET, count_h, out_offset_h);
-          H5::DataSpace mem_space(1, count_h);
-          out_ds.write(buffer.data(), dtype, mem_space, out_space);
-          current_out_offset += in_dims[0];
-        } catch (...) {
-        }
-      }
-    }
-    std::cout << "  Merged profile_assignments for facet '" << facet << "' ("
-              << field_names.size() << " fields)\n";
+    mergeOneProfileFacet(input_files, facet, out_assigns);
   }
 }
 
