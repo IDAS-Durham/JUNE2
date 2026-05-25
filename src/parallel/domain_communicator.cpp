@@ -299,10 +299,6 @@ void dumpCountsAndDispls(std::ostream& os, const std::vector<int>& send_counts,
 // "reply"). All of those are passed in; the byte-level wire format is the
 // caller's responsibility (delegated to pack_fn / unpack_fn).
 //
-// The send/recv counts are exposed via out-params so the caller can emit
-// its own JUNE_MPI_DEBUG postlude (proposals and replies print different
-// stats).
-//
 // Template parameters are deduced; pack_fn / unpack_fn / etc. are passed as
 // free functions or lambdas — no std::function, no heap, no vtable dispatch.
 // =============================================================================
@@ -314,9 +310,7 @@ void exchangeRoutedRecords(const std::vector<T>& local_records,
                            int before_abort, int total_neg_abort,
                            int pack_abort, int unpack_abort, Pack pack_fn,
                            Unpack unpack_fn, Validate validate_fn,
-                           Dump dump_fn, Route route_fn,
-                           std::vector<int>& out_send_counts,
-                           std::vector<int>& out_recv_counts) {
+                           Dump dump_fn, Route route_fn) {
   // [DIAG] Validate every local record before anything else. If we see
   // corruption here, the bug is in the generator, not in MPI.
   for (size_t i = 0; i < local_records.size(); ++i) {
@@ -442,9 +436,6 @@ void exchangeRoutedRecords(const std::vector<T>& local_records,
       records_for_this_rank.push_back(rec);
     }
   }
-
-  out_send_counts = std::move(send_counts);
-  out_recv_counts = std::move(recv_counts);
 }
 
 // Builds a fully-populated VisitorData for a person attending a remote
@@ -554,22 +545,6 @@ void DomainCommunicator::exchangeVisitors(
     send_counts[target_rank]++;
   }
 
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_outgoing = 0, total_infectious_out = 0;
-    for (int r = 0; r < num_ranks_; ++r) {
-      for (const auto& v : outgoing[r]) {
-        total_outgoing++;
-        if (v.is_infectious) total_infectious_out++;
-      }
-    }
-    std::cout << "[MPI_XRANK] Rank " << rank_
-              << " SENDING: total_visitors=" << total_outgoing
-              << " infectious=" << total_infectious_out
-              << " at time=" << current_time << std::endl;
-  }
-#endif
-
   dispatchVisitorExchange(outgoing, send_counts);
 }
 
@@ -630,54 +605,6 @@ void DomainCommunicator::exchangeAllToAll(
     rc[i] = recv_counts[i] * wire_size;
   }
 
-#ifdef JUNE_MPI_DEBUG
-  // Performance statistics
-  int active_send_pairs = 0;
-  int total_visitors_sent = 0;
-  for (int c : send_counts_in) {
-    if (c > 0) {
-      active_send_pairs++;
-      total_visitors_sent += c;
-    }
-  }
-
-  int global_min_send_pairs, global_max_send_pairs, global_total_send_pairs;
-  int global_min_visitors, global_max_visitors, global_total_visitors;
-
-  MPI_Reduce(&active_send_pairs, &global_min_send_pairs, 1, MPI_INT, MPI_MIN, 0,
-             MPI_COMM_WORLD);
-  MPI_Reduce(&active_send_pairs, &global_max_send_pairs, 1, MPI_INT, MPI_MAX, 0,
-             MPI_COMM_WORLD);
-  MPI_Reduce(&active_send_pairs, &global_total_send_pairs, 1, MPI_INT, MPI_SUM,
-             0, MPI_COMM_WORLD);
-  MPI_Reduce(&total_visitors_sent, &global_min_visitors, 1, MPI_INT, MPI_MIN, 0,
-             MPI_COMM_WORLD);
-  MPI_Reduce(&total_visitors_sent, &global_max_visitors, 1, MPI_INT, MPI_MAX, 0,
-             MPI_COMM_WORLD);
-  MPI_Reduce(&total_visitors_sent, &global_total_visitors, 1, MPI_INT, MPI_SUM,
-             0, MPI_COMM_WORLD);
-
-  if (rank_ == 0 && global_total_visitors > 0) {
-    double avg_send_pairs = (double)global_total_send_pairs / num_ranks_;
-    double avg_visitors = (double)global_total_visitors / num_ranks_;
-    double sparsity = 100.0 * avg_send_pairs / num_ranks_;
-    double total_mb = (global_total_visitors * wire_size) / (1024.0 * 1024.0);
-
-    std::cout << "      [MPI STATS] All-to-all exchange across " << num_ranks_
-              << " ranks:\n"
-              << "        Send pairs: min=" << global_min_send_pairs
-              << ", max=" << global_max_send_pairs << ", avg=" << std::fixed
-              << std::setprecision(1) << avg_send_pairs << "\n"
-              << "        Visitors sent: min=" << global_min_visitors
-              << ", max=" << global_max_visitors
-              << ", avg=" << std::setprecision(0) << avg_visitors << "\n"
-              << "        Sparsity: " << std::setprecision(1) << sparsity
-              << "% of rank pairs active\n"
-              << "        Total bandwidth: " << std::setprecision(2) << total_mb
-              << " MB" << std::endl;
-  }
-#endif
-
   MPI_Alltoallv(sbuf.data(), sc.data(), sdisp.data(), MPI_BYTE, rbuf.data(),
                 rc.data(), rdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
 
@@ -689,23 +616,6 @@ void DomainCommunicator::exchangeAllToAll(
       if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
     }
   }
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_recv = 0, recv_infectious = 0, recv_susceptible = 0;
-    for (const auto& v : domain_.incoming_visitors) {
-      total_recv++;
-      if (v.is_infectious)
-        recv_infectious++;
-      else if (!v.is_infected)
-        recv_susceptible++;
-    }
-    std::cout << "[MPI_XRANK] Rank " << rank_
-              << " RECEIVED (AllToAll): total_visitors=" << total_recv
-              << " infectious=" << recv_infectious
-              << " susceptible=" << recv_susceptible << std::endl;
-  }
-#endif
 }
 
 void DomainCommunicator::exchangePointToPoint(
@@ -778,33 +688,6 @@ void DomainCommunicator::performP2PVisitorExchange(
       }
     }
   }
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_recv = 0, recv_infectious = 0, recv_susceptible = 0;
-    for (const auto& v : domain_.incoming_visitors) {
-      total_recv++;
-      if (v.is_infectious)
-        recv_infectious++;
-      else if (!v.is_infected)
-        recv_susceptible++;
-    }
-    std::cout << "[MPI_XRANK] Rank " << rank_
-              << " RECEIVED (P2P): total_visitors=" << total_recv
-              << " infectious=" << recv_infectious
-              << " susceptible=" << recv_susceptible << std::endl;
-    int recv_examples = 0;
-    for (const auto& v : domain_.incoming_visitors) {
-      if (recv_examples >= 3) break;
-      if (v.is_infectious) {
-        std::cout << "  [RECV_EXAMPLE] Rank " << rank_ << " <- Rank "
-                  << v.home_rank << ": Person " << v.person_id << " INFECTIOUS"
-                  << " venue=" << v.venue_id << std::endl;
-        recv_examples++;
-      }
-    }
-  }
-#endif
 
   if (!sreqs.empty())
     MPI_Waitall(sreqs.size(), sreqs.data(), MPI_STATUSES_IGNORE);
@@ -902,8 +785,6 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
 std::vector<PendingInfection> DomainCommunicator::unpackAndApplyIncoming(
     const std::vector<char>& rbuf, const std::vector<int>& rd,
     const std::vector<int>& recv_counts) {
-  int applied_count = 0;
-  int skipped_count = 0;
   std::vector<PendingInfection> newly_infected;
   for (int r = 0; r < num_ranks_; ++r) {
     if (r == rank_) continue;
@@ -926,30 +807,13 @@ std::vector<PendingInfection> DomainCommunicator::unpackAndApplyIncoming(
       ptr = unpackField(ptr, infector_symptom_id);
       ptr = unpackField(ptr, transmission_mode_index);
 
-      auto applied = applyOnePendingInfection(
-          pid, infector_id, t, v_type, enc_type_id, v_id, infector_symptom_id,
-          transmission_mode_index, r);
-      if (applied) {
+      if (auto applied = applyOnePendingInfection(
+              pid, infector_id, t, v_type, enc_type_id, v_id,
+              infector_symptom_id, transmission_mode_index)) {
         newly_infected.push_back(*applied);
-        applied_count++;
-      } else {
-        skipped_count++;
       }
     }
   }
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_recv = 0;
-    for (int r = 0; r < num_ranks_; ++r)
-      if (r != rank_) total_recv += recv_counts[r];
-    std::cout << "[MPI_XRANK] Rank " << rank_
-              << " APPLYING pending infections from other ranks:"
-              << " received=" << total_recv << " applied=" << applied_count
-              << " skipped=" << skipped_count
-              << " (already infected or not owned)" << std::endl;
-  }
-#endif
   return newly_infected;
 }
 
@@ -969,31 +833,14 @@ void DomainCommunicator::routePendingByHomeRank(
       }
     }
   }
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_pending_out = 0;
-    for (int r = 0; r < num_ranks_; ++r) total_pending_out += send_counts[r];
-    std::cout << "[MPI_XRANK] Rank " << rank_
-              << " SENDING pending infections to home ranks: count="
-              << total_pending_out << std::endl;
-  }
-#endif
 }
 
 std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
     PersonId pid, PersonId infector_id, double t, uint8_t v_type,
     uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
-    uint8_t transmission_mode_index, int from_rank) {
+    uint8_t transmission_mode_index) {
   Person* person = world_.getPerson(pid);
   if (!person || person->infection || !domain_.ownsPerson(pid) || !disease_) {
-#ifdef JUNE_MPI_DEBUG
-    if (person && person->infection && config_.parallel.verbose_mpi) {
-      std::cout << "  [CROSS_RANK_SKIP] Rank " << rank_ << ": Person " << pid
-                << " already infected, skipping" << std::endl;
-    }
-#endif
-    (void)from_rank;
     return std::nullopt;
   }
 
@@ -1031,22 +878,6 @@ std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
   applied.venue_id = v_id;
   applied.infector_symptom_id = infector_symptom_id;
   applied.transmission_mode_index = transmission_mode_index;
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    std::cout << "  [CROSS_RANK_INFECTION_APPLIED] Rank " << rank_
-              << ": Person " << pid << " (age=" << person->age
-              << " geo=" << person->geo_unit_id << ")"
-              << " INFECTED at remote venue " << v_id
-              << " (type=" << venue_type_name << ")"
-              << " from rank " << from_rank
-              << " infector_symptom=" << infector_symptom_id
-              << " mode=" << (int)transmission_mode_index
-              << " infection_time=" << t << std::endl;
-  }
-#else
-  (void)from_rank;
-#endif
   return applied;
 }
 
@@ -1061,7 +892,6 @@ void DomainCommunicator::exchangeEncounterProposals(
   const size_t num_enc_types = world_.encounter_type_names.size();
   const int num_ranks_capture = num_ranks_;
 
-  std::vector<int> send_counts, recv_counts;
   exchangeRoutedRecords<EncounterProposal>(
       local_proposals, proposals_for_this_rank, rank_, num_ranks_,
       PROPOSAL_WIRE_SIZE, "proposal",
@@ -1073,23 +903,7 @@ void DomainCommunicator::exchangeEncounterProposals(
       dumpProposal,
       [&dm](const EncounterProposal& p) {
         return dm.getPersonRank(p.invitee_id);
-      },
-      send_counts, recv_counts);
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_sent = 0;
-    for (int r = 0; r < num_ranks_; ++r)
-      if (r != rank_) total_sent += send_counts[r];
-    int total_received = 0;
-    for (int r = 0; r < num_ranks_; ++r)
-      if (r != rank_) total_received += recv_counts[r];
-    std::cout << "[MPI_ENC] Rank " << rank_
-              << " proposal exchange: sent=" << total_sent
-              << " received=" << total_received
-              << " local=" << proposals_for_this_rank.size() << std::endl;
-  }
-#endif
+      });
 }
 
 void DomainCommunicator::exchangeEncounterReplies(
@@ -1097,7 +911,6 @@ void DomainCommunicator::exchangeEncounterReplies(
     std::vector<EncounterReply>& replies_for_this_rank) {
   const size_t num_enc_types = world_.encounter_type_names.size();
 
-  std::vector<int> send_counts, recv_counts;
   exchangeRoutedRecords<EncounterReply>(
       local_replies, replies_for_this_rank, rank_, num_ranks_, REPLY_WIRE_SIZE,
       "reply",
@@ -1107,31 +920,7 @@ void DomainCommunicator::exchangeEncounterReplies(
         return validateReply(r, num_enc_types);
       },
       dumpReply,
-      [&dm](const EncounterReply& r) { return dm.getPersonRank(r.host_id); },
-      send_counts, recv_counts);
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int total_sent = 0, total_received = 0;
-    int accepted = 0, rejected = 0;
-    for (int r = 0; r < num_ranks_; ++r)
-      if (r != rank_) total_sent += send_counts[r];
-    for (int r = 0; r < num_ranks_; ++r)
-      if (r != rank_) total_received += recv_counts[r];
-    for (const auto& r : replies_for_this_rank) {
-      if (r.status == ReplyStatus::ACCEPTED)
-        accepted++;
-      else
-        rejected++;
-    }
-    std::cout << "[MPI_ENC] Rank " << rank_
-              << " reply exchange: sent=" << total_sent
-              << " received=" << total_received
-              << " total_replies=" << replies_for_this_rank.size()
-              << " (accepted=" << accepted << " rejected=" << rejected << ")"
-              << std::endl;
-  }
-#endif
+      [&dm](const EncounterReply& r) { return dm.getPersonRank(r.host_id); });
 }
 
 void DomainCommunicator::exchangeFinalizedEncounters(
@@ -1207,23 +996,6 @@ void DomainCommunicator::exchangeFinalizedEncounters(
       }
     }
   }
-
-#ifdef JUNE_MPI_DEBUG
-  if (config_.parallel.verbose_mpi) {
-    int cross_rank_participants = 0;
-    for (const auto& enc : finalized_for_this_rank) {
-      for (PersonId pid : enc.participants) {
-        if (dm.getPersonRank(pid) == rank_) cross_rank_participants++;
-      }
-    }
-    std::cout << "[MPI_ENC] Rank " << rank_
-              << " finalized encounter exchange: local_finalized="
-              << local_finalized.size()
-              << " remote_relevant=" << finalized_for_this_rank.size()
-              << " local_participants_in_remote=" << cross_rank_participants
-              << std::endl;
-  }
-#endif
 }
 
 }  // namespace june

@@ -88,22 +88,19 @@ class DomainCommunicator {
 
   // Walks the receive buffer of an Alltoallv exchange of PendingInfections,
   // unpacks each record, and delegates to applyOnePendingInfection. Returns
-  // the vector of newly-applied records (for upstream logging) and emits
-  // the JUNE_MPI_DEBUG receive-side summary.
+  // the vector of newly-applied records.
   std::vector<PendingInfection> unpackAndApplyIncoming(
       const std::vector<char>& rbuf, const std::vector<int>& rd,
       const std::vector<int>& recv_counts);
 
   // Construct the local Infection for one successfully-unpacked pending
-  // record and return the resulting PendingInfection for upstream logging.
-  // Returns std::nullopt if the record was skipped (person not owned,
-  // already infected, or no disease loaded) so the caller can update its
-  // applied/skipped counters. `from_rank` is the sender rank, used only
-  // for the JUNE_MPI_DEBUG trace.
+  // record and return the resulting PendingInfection. Returns std::nullopt
+  // if the record was skipped (person not owned, already infected, or no
+  // disease loaded).
   std::optional<PendingInfection> applyOnePendingInfection(
       PersonId pid, PersonId infector_id, double t, uint8_t v_type,
       uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
-      uint8_t transmission_mode_index, int from_rank);
+      uint8_t transmission_mode_index);
 
   WorldState& world_;
   const Config& config_;
