@@ -499,6 +499,67 @@ june::Domain::VisitorData buildVisitorPayload(
   return visitor;
 }
 
+// Walks one remote rank's slice of the Allgatherv receive buffer,
+// unpacks each finalized encounter, and keeps the ones with at least one
+// local participant. Mirrors packFinalizedLocal's layout.
+void unpackFinalizedFromRank(
+    const char* ptr, const char* end, const june::DomainManager& dm,
+    int local_rank,
+    std::vector<june::CoordinatedEncounter>& finalized_for_this_rank) {
+  while (ptr < end) {
+    june::CoordinatedEncounter enc;
+    ptr = unpackField(ptr, enc.encounter_id);
+    ptr = unpackField(ptr, enc.host_id);
+    ptr = unpackField(ptr, enc.venue_id);
+    ptr = unpackField(ptr, enc.venue_type_id);
+    ptr = unpackField(ptr, enc.slot);
+    ptr = unpackField(ptr, enc.encounter_type_id);
+    int participant_count;
+    ptr = unpackField(ptr, participant_count);
+    bool has_local = false;
+    for (int i = 0; i < participant_count; ++i) {
+      june::PersonId pid;
+      ptr = unpackField(ptr, pid);
+      enc.participants.insert(pid);
+      if (dm.getPersonRank(pid) == local_rank) has_local = true;
+    }
+    if (has_local) {
+      finalized_for_this_rank.push_back(enc);
+    }
+  }
+}
+
+// Serializes one rank's finalized encounters into the variable-length
+// Allgatherv send buffer. Layout per encounter: 21-byte header
+// (encounter_id, host_id, venue_id, venue_type_id, slot,
+// encounter_type_id) + participant_count (4 bytes) + participant_count *
+// PersonId (4 bytes each). All sizes are computed up-front per record so
+// the buffer is resized once per record (no slot left to grow on
+// participant_count drift).
+std::vector<char> packFinalizedLocal(
+    const std::vector<june::CoordinatedEncounter>& local_finalized) {
+  std::vector<char> local_buf;
+  for (const auto& enc : local_finalized) {
+    int participant_count = static_cast<int>(enc.participants.size());
+    size_t entry_size = 25 + participant_count * 4;
+    size_t offset = local_buf.size();
+    local_buf.resize(offset + entry_size);
+    char* ptr = local_buf.data() + offset;
+
+    ptr = packField(ptr, enc.encounter_id);
+    ptr = packField(ptr, enc.host_id);
+    ptr = packField(ptr, enc.venue_id);
+    ptr = packField(ptr, enc.venue_type_id);
+    ptr = packField(ptr, enc.slot);
+    ptr = packField(ptr, enc.encounter_type_id);
+    ptr = packField(ptr, participant_count);
+    for (june::PersonId pid : enc.participants) {
+      ptr = packField(ptr, pid);
+    }
+  }
+  return local_buf;
+}
+
 }  // anonymous namespace
 
 namespace june {
@@ -927,30 +988,10 @@ void DomainCommunicator::exchangeFinalizedEncounters(
     const std::vector<CoordinatedEncounter>& local_finalized,
     const DomainManager& dm,
     std::vector<CoordinatedEncounter>& finalized_for_this_rank) {
-  // Use Allgatherv: each rank broadcasts its finalized encounters.
-  // Other ranks filter for encounters containing their local people.
-  // Variable-length serialization: header(25 bytes) + participant_count * 4
-
-  // First, serialize local finalized encounters to a byte buffer
-  std::vector<char> local_buf;
-  for (const auto& enc : local_finalized) {
-    int participant_count = static_cast<int>(enc.participants.size());
-    size_t entry_size = 25 + participant_count * 4;
-    size_t offset = local_buf.size();
-    local_buf.resize(offset + entry_size);
-    char* ptr = local_buf.data() + offset;
-
-    ptr = packField(ptr, enc.encounter_id);
-    ptr = packField(ptr, enc.host_id);
-    ptr = packField(ptr, enc.venue_id);
-    ptr = packField(ptr, enc.venue_type_id);
-    ptr = packField(ptr, enc.slot);
-    ptr = packField(ptr, enc.encounter_type_id);
-    ptr = packField(ptr, participant_count);
-    for (PersonId pid : enc.participants) {
-      ptr = packField(ptr, pid);
-    }
-  }
+  // Allgatherv: each rank broadcasts its finalized encounters and the
+  // others filter for encounters containing their local people. The wire
+  // format is variable-length — see packFinalizedLocal for the layout.
+  std::vector<char> local_buf = packFinalizedLocal(local_finalized);
 
   int local_size = static_cast<int>(local_buf.size());
   std::vector<int> all_sizes(num_ranks_);
@@ -968,33 +1009,12 @@ void DomainCommunicator::exchangeFinalizedEncounters(
   MPI_Allgatherv(local_buf.data(), local_size, MPI_BYTE, all_buf.data(),
                  all_sizes.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
 
-  // Deserialize and filter: keep encounters with at least one local participant
   finalized_for_this_rank.clear();
   for (int r = 0; r < num_ranks_; ++r) {
     if (r == rank_) continue;  // Skip our own (already have them)
     const char* ptr = all_buf.data() + displs[r];
     const char* end = ptr + all_sizes[r];
-    while (ptr < end) {
-      CoordinatedEncounter enc;
-      ptr = unpackField(ptr, enc.encounter_id);
-      ptr = unpackField(ptr, enc.host_id);
-      ptr = unpackField(ptr, enc.venue_id);
-      ptr = unpackField(ptr, enc.venue_type_id);
-      ptr = unpackField(ptr, enc.slot);
-      ptr = unpackField(ptr, enc.encounter_type_id);
-      int participant_count;
-      ptr = unpackField(ptr, participant_count);
-      bool has_local = false;
-      for (int i = 0; i < participant_count; ++i) {
-        PersonId pid;
-        ptr = unpackField(ptr, pid);
-        enc.participants.insert(pid);
-        if (dm.getPersonRank(pid) == rank_) has_local = true;
-      }
-      if (has_local) {
-        finalized_for_this_rank.push_back(enc);
-      }
-    }
+    unpackFinalizedFromRank(ptr, end, dm, rank_, finalized_for_this_rank);
   }
 }
 
