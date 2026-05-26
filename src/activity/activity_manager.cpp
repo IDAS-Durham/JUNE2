@@ -29,56 +29,59 @@ void ActivityManager::assignScheduleTypes() {
 
   for (auto& person : world_.people) {
     if (person.is_dead) continue;
+    assignScheduleTypeForPerson(person);
+  }
+}
 
-    // Skip if person already has a schedule type assigned (e.g., from HDF5)
-    if (person.schedule_type_id != 0xFFFF) {
-      std::string type_name =
-          person.schedule_type_id < world_.schedule_type_names.size()
-              ? world_.schedule_type_names[person.schedule_type_id]
-              : "unknown";
+void ActivityManager::assignScheduleTypeForPerson(Person& person) {
+  // Skip if person already has a schedule type assigned (e.g., from HDF5)
+  if (person.schedule_type_id != 0xFFFF) {
+    std::string type_name =
+        person.schedule_type_id < world_.schedule_type_names.size()
+            ? world_.schedule_type_names[person.schedule_type_id]
+            : "unknown";
 
-      // BUG FIX 1: Set cached schedule type pointer correctly when loaded from
-      // state
-      for (const auto& sched_type : config_.schedule.schedule_types) {
-        if (sched_type.name == type_name) {
-          person.cached_schedule_type_ = &sched_type;
-          break;
-        }
+    // BUG FIX 1: Set cached schedule type pointer correctly when loaded from
+    // state
+    for (const auto& sched_type : config_.schedule.schedule_types) {
+      if (sched_type.name == type_name) {
+        person.cached_schedule_type_ = &sched_type;
+        break;
       }
-      continue;
+    }
+    return;
+  }
+
+  // 1. Try CSV-based probabilistic assignment first
+  //    Use a per-person seed for reproducible assignment across MPI ranks.
+  std::mt19937 csv_rng(mix_seed(base_seed_, person.id, 0xC5A0ULL));
+  const ScheduleType* matched_type =
+      config_.schedule.tryCSVAssignment(person, world_, csv_rng);
+
+  // 2. Fall back to YAML selection_criteria if CSV returned nothing
+  if (!matched_type)
+    matched_type = config_.schedule.getScheduleTypeForPerson(person, &world_);
+
+  if (matched_type) {
+    // Find ID for the name
+    int type_id = world_.getScheduleTypeIndex(matched_type->name);
+    if (type_id >= 0) {
+      person.schedule_type_id = static_cast<uint16_t>(type_id);
+    }
+    person.cached_schedule_type_ = matched_type;
+  } else {
+    // Fallback: use default schedule type
+    std::string def_type = config_.schedule.default_schedule_type;
+    int type_id = world_.getScheduleTypeIndex(def_type);
+    if (type_id >= 0) {
+      person.schedule_type_id = static_cast<uint16_t>(type_id);
     }
 
-    // 1. Try CSV-based probabilistic assignment first
-    //    Use a per-person seed for reproducible assignment across MPI ranks.
-    std::mt19937 csv_rng(mix_seed(base_seed_, person.id, 0xC5A0ULL));
-    const ScheduleType* matched_type =
-        config_.schedule.tryCSVAssignment(person, world_, csv_rng);
-
-    // 2. Fall back to YAML selection_criteria if CSV returned nothing
-    if (!matched_type)
-      matched_type = config_.schedule.getScheduleTypeForPerson(person, &world_);
-
-    if (matched_type) {
-      // Find ID for the name
-      int type_id = world_.getScheduleTypeIndex(matched_type->name);
-      if (type_id >= 0) {
-        person.schedule_type_id = static_cast<uint16_t>(type_id);
-      }
-      person.cached_schedule_type_ = matched_type;
-    } else {
-      // Fallback: use default schedule type
-      std::string def_type = config_.schedule.default_schedule_type;
-      int type_id = world_.getScheduleTypeIndex(def_type);
-      if (type_id >= 0) {
-        person.schedule_type_id = static_cast<uint16_t>(type_id);
-      }
-
-      // Cache the default schedule type pointer
-      for (const auto& sched_type : config_.schedule.schedule_types) {
-        if (sched_type.name == def_type) {
-          person.cached_schedule_type_ = &sched_type;
-          break;
-        }
+    // Cache the default schedule type pointer
+    for (const auto& sched_type : config_.schedule.schedule_types) {
+      if (sched_type.name == def_type) {
+        person.cached_schedule_type_ = &sched_type;
+        break;
       }
     }
   }

@@ -178,6 +178,13 @@ class ActivityManager {
                              const std::vector<int16_t>& available_indices,
                              SplitMix64& rng) const;
 
+  // Resolves and assigns a schedule type to one (alive) person:
+  // preserves the schedule_type_id loaded from state (HDF5) if present
+  // and just rewires the cached pointer, otherwise tries CSV-based
+  // probabilistic assignment, falls back to YAML selection_criteria,
+  // and finally to the configured default schedule type.
+  void assignScheduleTypeForPerson(Person& person);
+
   // Pre-computes every slot for one (person, day_type) pair. Writes the
   // person's starts / counts into world_.schedule_starts /
   // schedule_counts and delegates each slot to precomputeOneSlot. No-op
