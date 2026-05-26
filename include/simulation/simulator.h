@@ -156,6 +156,18 @@ class Simulator {
   // onto every eligible participant's PersonLocation.
   void injectCoordinatedEncountersIntoSlot(int time_slot_index);
 
+  // Step 3 of simulateTimeSlot: drive InteractionManager::processTransmissions
+  // on this rank's locations + (in MPI mode) incoming visitors. The three
+  // visitor-related pointers are nullable so non-MPI / no-domain calls can
+  // pass nullptr; pending_infections is filled by the call and consumed by
+  // Step 4. Returns the local new-infection count.
+  int runSlotTransmission(
+      std::vector<PersonLocation>& transmission_locations,
+      double delta_hours, int day_type_idx,
+      std::unordered_set<PersonId>* visitor_ids,
+      std::vector<PendingInfection>* pending_infections,
+      std::unordered_map<PersonId, VisitorInfo>* visitor_data_map);
+
 #ifdef USE_MPI
   // Step 2 of simulateTimeSlot in MPI builds: trigger the cross-rank
   // visitor exchange, then fill `augmented_locations` with this rank's

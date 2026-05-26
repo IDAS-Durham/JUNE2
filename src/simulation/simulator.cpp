@@ -1114,6 +1114,29 @@ void Simulator::logFinalizedEncountersLocally(
   }
 }
 
+int Simulator::runSlotTransmission(
+    std::vector<PersonLocation>& transmission_locations, double delta_hours,
+    int day_type_idx, std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending_infections,
+    std::unordered_map<PersonId, VisitorInfo>* visitor_data_map) {
+  int local_new_infections = 0;
+  try {
+    ScopedTimer timer("03_TransmissionProcessing");
+    if (interaction_manager_) {
+      interaction_manager_->setCurrentDayTypeIdx(day_type_idx);
+    }
+    local_new_infections = interaction_manager_->processTransmissions(
+        transmission_locations, current_simulation_time_, delta_hours,
+        &epidemiology_->getActiveInfectionsMutable(), visitor_ids,
+        pending_infections, visitor_data_map,
+        compartmental_model_manager_.get());
+  } catch (const std::exception& e) {
+    std::cerr << "[Step 3 Transmission] Fatal error: " << e.what() << std::endl;
+    throw;
+  }
+  return local_new_infections;
+}
+
 #ifdef USE_MPI
 void Simulator::receivePendingAndApply(
     const std::vector<PendingInfection>& pending_infections) {
@@ -1310,38 +1333,19 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 #endif
 
   // Step 3: Calculate contacts and transmission (pass active_infections)
-  int local_new_infections = 0;
-  {
-    try {
-      ScopedTimer timer("03_TransmissionProcessing");
-      if (interaction_manager_) {
-        interaction_manager_->setCurrentDayTypeIdx(day_type_idx);
-      }
+  int local_new_infections;
 #ifdef USE_MPI
-      if (domain_mgr_ != nullptr) {
-        local_new_infections = interaction_manager_->processTransmissions(
-            transmission_locations, current_simulation_time_, delta_hours,
-            &epidemiology_->getActiveInfectionsMutable(), &visitor_ids,
-            &pending_infections, &visitor_data_map,
-            compartmental_model_manager_.get());
-      } else {
-        local_new_infections = interaction_manager_->processTransmissions(
-            transmission_locations, current_simulation_time_, delta_hours,
-            &epidemiology_->getActiveInfectionsMutable(), nullptr, nullptr,
-            nullptr, compartmental_model_manager_.get());
-      }
+  const bool have_mpi = (domain_mgr_ != nullptr);
+  local_new_infections = runSlotTransmission(
+      transmission_locations, delta_hours, day_type_idx,
+      have_mpi ? &visitor_ids : nullptr,
+      have_mpi ? &pending_infections : nullptr,
+      have_mpi ? &visitor_data_map : nullptr);
 #else
-      local_new_infections = interaction_manager_->processTransmissions(
-          transmission_locations, current_simulation_time_, delta_hours,
-          &epidemiology_->getActiveInfectionsMutable(), nullptr, nullptr,
-          nullptr, compartmental_model_manager_.get());
+  local_new_infections = runSlotTransmission(
+      transmission_locations, delta_hours, day_type_idx, nullptr, nullptr,
+      nullptr);
 #endif
-    } catch (const std::exception& e) {
-      std::cerr << "[Step 3 Transmission] Fatal error: " << e.what()
-                << std::endl;
-      throw;
-    }
-  }
 
 #ifdef USE_MPI
   // Step 4: Send back pending infections to home ranks (parallel mode only)
