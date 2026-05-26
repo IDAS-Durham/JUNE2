@@ -580,27 +580,35 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
   return out;
 }
 
-}  // namespace
-
-void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
-  const int rank = getRank();
-  fs::path cp = fs::canonical(checkpoint_dir);  // resolves 'latest' symlink
+// Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
+// matches the configured seed (no silent override), and return the
+// completed_day to resume from. The caller has already canonicalised cp.
+int readAndValidateManifest(const fs::path& cp, unsigned int config_seed) {
   if (!fs::exists(cp / "manifest.yaml"))
     throw std::runtime_error(
         "restoreFromCheckpoint: no manifest.yaml (incomplete/invalid "
         "checkpoint): " +
         cp.string());
-
   YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
   int completed_day = man["completed_day"].as<int>();
   unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
-  if (cp_seed != config_.simulation.random_seed) {
+  if (cp_seed != config_seed) {
     throw std::runtime_error(
         "restoreFromCheckpoint: effective_random_seed mismatch (checkpoint=" +
         std::to_string(cp_seed) +
-        ", config=" + std::to_string(config_.simulation.random_seed) +
+        ", config=" + std::to_string(config_seed) +
         "). Resume with the checkpoint's seed (no silent override).");
   }
+  return completed_day;
+}
+
+}  // namespace
+
+void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
+  const int rank = getRank();
+  fs::path cp = fs::canonical(checkpoint_dir);  // resolves 'latest' symlink
+  int completed_day =
+      readAndValidateManifest(cp, config_.simulation.random_seed);
 
   // ---- state.h5: scalars + non-derivable manager state ----
   std::unordered_map<PersonId, double> lpt_map;
