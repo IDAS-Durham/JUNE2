@@ -580,6 +580,65 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
   return out;
 }
 
+// Overlay one shard's /population/ records onto world_.people owned by this
+// rank. Each owned person gets every field assigned and any default-
+// constructed infection / vaccine_trajectory cleared (those get reinstated by
+// the per-shard infection / vaccine overlays). Returns the number of records
+// this rank applied.
+size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto U32 = H5::PredType::NATIVE_UINT32;
+  const auto U8 = H5::PredType::NATIVE_UINT8;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto ids = readVec<int32_t>(f, "/population/ids", I32);
+  auto imm_l = readVec<double>(f, "/population/immunity_natural_level", F64);
+  auto imm_a = readVec<double>(
+      f, "/population/immunity_natural_acquisition_time", F64);
+  auto imm_w =
+      readVec<double>(f, "/population/immunity_natural_waning_rate", F64);
+  auto dead = readVec<uint8_t>(f, "/population/is_dead", U8);
+  auto dt = readVec<double>(f, "/population/death_time", F64);
+  auto m_as =
+      readVec<uint32_t>(f, "/population/applicable_symptom_policy_mask", U32);
+  auto m_at = readVec<uint32_t>(
+      f, "/population/applicable_temporal_policy_mask", U32);
+  auto m_ps = readVec<uint32_t>(
+      f, "/population/active_symptom_policy_participation", U32);
+  auto m_pt = readVec<uint32_t>(
+      f, "/population/active_temporal_policy_participation", U32);
+  auto m_ds =
+      readVec<uint32_t>(f, "/population/symptom_policy_decisions", U32);
+  auto m_dt =
+      readVec<uint32_t>(f, "/population/temporal_policy_decisions", U32);
+  auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
+  auto ret = readVec<int32_t>(f, "/population/return_schedule_id", I32);
+  auto tsl = readVec<int32_t>(f, "/population/temp_slot_progress", I32);
+  size_t n = 0;
+  for (size_t i = 0; i < ids.size(); ++i) {
+    Person* p = world.getPerson(ids[i]);
+    if (!p) continue;  // not owned by this rank
+    ++n;
+    p->immunity.natural_level = imm_l[i];
+    p->immunity.natural_acquisition_time = imm_a[i];
+    p->immunity.natural_waning_rate = imm_w[i];
+    p->is_dead = dead[i] != 0;
+    p->death_time = dt[i];
+    p->applicable_symptom_policy_mask = m_as[i];
+    p->applicable_temporal_policy_mask = m_at[i];
+    p->active_symptom_policy_participation = m_ps[i];
+    p->active_temporal_policy_participation = m_pt[i];
+    p->symptom_policy_decisions = m_ds[i];
+    p->temporal_policy_decisions = m_dt[i];
+    p->hopped_schedule_id = static_cast<int16_t>(hop[i]);
+    p->return_schedule_id = static_cast<int16_t>(ret[i]);
+    p->temp_slot_progress = static_cast<int16_t>(tsl[i]);
+    // Clear any default-constructed infection/vaccine; reinstated below.
+    p->infection.reset();
+    p->vaccine_trajectory.reset();
+  }
+  return n;
+}
+
 // Overlay one shard's /infection/ records onto world_.people owned by this
 // rank. Each record rebuilds the symptom trajectory from the flat
 // traj_times/traj_symptom_ids arrays, then materialises the Infection via
@@ -775,52 +834,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     if (!fs::exists(sf)) continue;
     H5::H5File f(sf.string(), H5F_ACC_RDONLY);
 
-    auto ids = readVec<int32_t>(f, "/population/ids", I32);
-    auto imm_l = readVec<double>(f, "/population/immunity_natural_level", F64);
-    auto imm_a = readVec<double>(
-        f, "/population/immunity_natural_acquisition_time", F64);
-    auto imm_w =
-        readVec<double>(f, "/population/immunity_natural_waning_rate", F64);
-    auto dead = readVec<uint8_t>(f, "/population/is_dead", U8);
-    auto dt = readVec<double>(f, "/population/death_time", F64);
-    auto m_as =
-        readVec<uint32_t>(f, "/population/applicable_symptom_policy_mask", U32);
-    auto m_at = readVec<uint32_t>(
-        f, "/population/applicable_temporal_policy_mask", U32);
-    auto m_ps = readVec<uint32_t>(
-        f, "/population/active_symptom_policy_participation", U32);
-    auto m_pt = readVec<uint32_t>(
-        f, "/population/active_temporal_policy_participation", U32);
-    auto m_ds =
-        readVec<uint32_t>(f, "/population/symptom_policy_decisions", U32);
-    auto m_dt =
-        readVec<uint32_t>(f, "/population/temporal_policy_decisions", U32);
-    auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
-    auto ret = readVec<int32_t>(f, "/population/return_schedule_id", I32);
-    auto tsl = readVec<int32_t>(f, "/population/temp_slot_progress", I32);
-
-    for (size_t i = 0; i < ids.size(); ++i) {
-      Person* p = world_.getPerson(ids[i]);
-      if (!p) continue;  // not owned by this rank
-      ++n_people;
-      p->immunity.natural_level = imm_l[i];
-      p->immunity.natural_acquisition_time = imm_a[i];
-      p->immunity.natural_waning_rate = imm_w[i];
-      p->is_dead = dead[i] != 0;
-      p->death_time = dt[i];
-      p->applicable_symptom_policy_mask = m_as[i];
-      p->applicable_temporal_policy_mask = m_at[i];
-      p->active_symptom_policy_participation = m_ps[i];
-      p->active_temporal_policy_participation = m_pt[i];
-      p->symptom_policy_decisions = m_ds[i];
-      p->temporal_policy_decisions = m_dt[i];
-      p->hopped_schedule_id = static_cast<int16_t>(hop[i]);
-      p->return_schedule_id = static_cast<int16_t>(ret[i]);
-      p->temp_slot_progress = static_cast<int16_t>(tsl[i]);
-      // Clear any default-constructed infection/vaccine; reinstated below.
-      p->infection.reset();
-      p->vaccine_trajectory.reset();
-    }
+    n_people += overlayShardPopulation(f, world_);
 
     n_inf += overlayShardInfection(f, world_, disease_.get());
 
