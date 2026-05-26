@@ -106,6 +106,21 @@ bool hasMutualProposal(const ProposalSet& s, const EncounterProposal& prop) {
                   prop.encounter_type_id}) > 0;
 }
 
+// Returns true iff the invitee's slot is committed AND the mutual-proposal
+// bypass does not apply (i.e. this proposal should be
+// REJECTED_ALREADY_COMMITTED). Mutual proposals on 1:1 virtual encounters
+// bypass commitment to avoid the deadlock where both partners commit the
+// slot as hosts and then reject each other as invitees.
+bool isInviteeSlotBlocked(
+    const std::unordered_map<PersonId, std::set<int>>& committed_slots,
+    PersonId invitee_id, int slot,
+    const CoordinatedEncounterDef& matched_def, const EncounterProposal& prop,
+    const ProposalSet& proposal_set) {
+  auto it = committed_slots.find(invitee_id);
+  if (it == committed_slots.end() || it->second.count(slot) == 0) return false;
+  return !(matched_def.is_virtual && hasMutualProposal(proposal_set, prop));
+}
+
 // Populates the proposal-derived fields of a reply (all but status, which
 // is set by the per-proposal decision logic).
 EncounterReply makeReplySkeleton(const EncounterProposal& prop) {
@@ -584,24 +599,11 @@ void CoordinatedEncounterManager::processProposals(
       continue;
     }
 
-    // Check if invitee's slot is already committed
-    auto committed_it = committed_slots_.find(invitee.id);
-    if (committed_it != committed_slots_.end() &&
-        committed_it->second.count(prop.slot) > 0) {
-      // For 1:1 virtual encounters (e.g. romantic), both partners propose
-      // to each other at the same slot, causing a deadlock where both
-      // reject. Bypass commitment check only for these mutual proposals.
-      // Multi-invitee encounters (social) should NOT bypass — the slot
-      // commitment is legitimate.
-      bool bypass = false;
-      if (matched_def->is_virtual && hasMutualProposal(proposal_set, prop)) {
-        bypass = true;
-      }
-      if (!bypass) {
-        reply.status = ReplyStatus::REJECTED_ALREADY_COMMITTED;
-        out_replies.push_back(reply);
-        continue;
-      }
+    if (isInviteeSlotBlocked(committed_slots_, invitee.id, prop.slot,
+                             *matched_def, prop, proposal_set)) {
+      reply.status = ReplyStatus::REJECTED_ALREADY_COMMITTED;
+      out_replies.push_back(reply);
+      continue;
     }
 
     // Schedule validation
