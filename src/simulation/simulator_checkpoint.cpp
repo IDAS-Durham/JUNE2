@@ -77,13 +77,8 @@ void writeStrs(H5::H5File& f, const std::string& name,
 
 void Simulator::writeCheckpoint(int completed_day,
                                 const std::string& date_iso) {
-  int rank = 0, nranks = 1;
-#ifdef USE_MPI
-  if (domain_mgr_) {
-    rank = domain_mgr_->getRank();
-    nranks = domain_mgr_->getNumRanks();
-  }
-#endif
+  const int rank = getRank();
+  const int nranks = getNumRanks();
   const auto& ck = config_.simulation.checkpoint;
   const int comp = config_.simulation.compression_level;
 
@@ -520,10 +515,7 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
 }  // namespace
 
 void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
-  int rank = 0;
-#ifdef USE_MPI
-  if (domain_mgr_) rank = domain_mgr_->getRank();
-#endif
+  const int rank = getRank();
   fs::path cp = fs::canonical(checkpoint_dir);  // resolves 'latest' symlink
   if (!fs::exists(cp / "manifest.yaml"))
     throw std::runtime_error(

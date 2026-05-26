@@ -133,6 +133,15 @@ class Simulator {
 #endif
   }
 
+  // Returns the MPI world size, or 1 for serial / no-MPI builds.
+  int getNumRanks() const {
+#ifdef USE_MPI
+    return domain_mgr_ ? domain_mgr_->getNumRanks() : 1;
+#else
+    return 1;
+#endif
+  }
+
   // Simulation loop functions
   void runOneDay(int day, int rank);
   void simulateDay(int day_num);
