@@ -496,6 +496,31 @@ void ActivityManager::resolveAndWriteValidScheduleSlot(
   locations[i].encounter_type_id = 255;
 }
 
+void ActivityManager::resolveHybridEntry(
+    Person& person, const ScheduleEntry& entry, int time_slot_index,
+    int day_type_idx, uint64_t time_key, const ScheduleType* sched_type,
+    const TimeSlot& current_slot, int16_t& scheduled_activity_index,
+    VenueId& scheduled_venue_id, SubsetIndex& scheduled_subset_idx) {
+  // HYBRID: Re-evaluate participation, use precomputed venue if passed
+  int16_t runtime_activity_idx = selectActivity(
+      person, current_slot, time_slot_index, sched_type, day_type_idx,
+      time_key);
+
+  if (runtime_activity_idx == scheduled_activity_index) {
+    // Passed participation! Use precomputed venue
+    scheduled_venue_id = entry.venue_id;
+    scheduled_subset_idx = entry.subset_index;
+    scheduled_activity_index = entry.activity_index;
+  } else {
+    // Failed participation or chose different activity
+    auto [venue_id, subset_idx] =
+        selectVenue(person, runtime_activity_idx, current_slot, time_key);
+    scheduled_venue_id = venue_id;
+    scheduled_subset_idx = subset_idx;
+    scheduled_activity_index = runtime_activity_idx;
+  }
+}
+
 void ActivityManager::resolveStochasticEntry(
     Person& person, const ScheduleEntry& entry, int time_slot_index,
     int day_type_idx, uint64_t time_key,
@@ -523,24 +548,9 @@ void ActivityManager::resolveStochasticEntry(
   }
 
   if (is_hybrid_entry) {
-    // HYBRID: Re-evaluate participation, use precomputed venue if passed
-    int16_t runtime_activity_idx =
-        selectActivity(person, *current_slot, time_slot_index, sched_type,
-                       day_type_idx, time_key);
-
-    if (runtime_activity_idx == scheduled_activity_index) {
-      // Passed participation! Use precomputed venue
-      scheduled_venue_id = entry.venue_id;
-      scheduled_subset_idx = entry.subset_index;
-      scheduled_activity_index = entry.activity_index;
-    } else {
-      // Failed participation or chose different activity
-      auto [venue_id, subset_idx] =
-          selectVenue(person, runtime_activity_idx, *current_slot, time_key);
-      scheduled_venue_id = venue_id;
-      scheduled_subset_idx = subset_idx;
-      scheduled_activity_index = runtime_activity_idx;
-    }
+    resolveHybridEntry(person, entry, time_slot_index, day_type_idx, time_key,
+                       sched_type, *current_slot, scheduled_activity_index,
+                       scheduled_venue_id, scheduled_subset_idx);
   } else {
     // FULLY STOCHASTIC: select both activity and venue at runtime
     int16_t runtime_activity_idx =

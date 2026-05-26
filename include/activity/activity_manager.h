@@ -259,6 +259,19 @@ class ActivityManager {
                                VenueId& scheduled_venue_id,
                                SubsetIndex& scheduled_subset_idx);
 
+  // Hybrid branch of resolveStochasticEntry: re-rolls participation via
+  // selectActivity. If the runtime activity matches the precomputed
+  // scheduled_activity_index (participation passed), reuses the
+  // precomputed venue from `entry`. Otherwise re-picks both activity
+  // and venue.
+  void resolveHybridEntry(Person& person, const ScheduleEntry& entry,
+                          int time_slot_index, int day_type_idx,
+                          uint64_t time_key, const ScheduleType* sched_type,
+                          const TimeSlot& current_slot,
+                          int16_t& scheduled_activity_index,
+                          VenueId& scheduled_venue_id,
+                          SubsetIndex& scheduled_subset_idx);
+
   // Re-evaluates a non-deterministic precomputed schedule entry at runtime.
   // For hybrid entries, re-rolls participation and reuses the precomputed
   // venue iff the same activity is chosen. For fully-stochastic entries,
