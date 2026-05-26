@@ -445,6 +445,37 @@ std::pair<std::vector<double>, double> Infection::gatherTrajectoryRates(
   return {std::move(rates), total};
 }
 
+void Infection::applyVaccineEfficacyShift(std::vector<double>& rates,
+                                          const Person& person,
+                                          double infection_time,
+                                          double total_rate) const {
+  if (!person.vaccine_trajectory || total_rate <= 0.0) return;
+  double ve_symptoms = person.vaccine_trajectory->getEfficacy(
+      infection_time, disease_->getName(), person.age, true);
+  if (ve_symptoms <= 0.0) return;
+
+  const auto& trajectories = disease_->getTrajectories();
+  size_t safe_idx = 0;
+  double min_severity = trajectories[0].severity;
+  for (size_t i = 1; i < trajectories.size(); ++i) {
+    if (trajectories[i].severity < min_severity) {
+      min_severity = trajectories[i].severity;
+      safe_idx = i;
+    }
+  }
+
+  double total_shifted = 0.0;
+  for (size_t i = 0; i < trajectories.size(); ++i) {
+    if (i == safe_idx) continue;
+    if (trajectories[i].severity > min_severity) {
+      double shift = rates[i] * ve_symptoms;
+      rates[i] -= shift;
+      total_shifted += shift;
+    }
+  }
+  rates[safe_idx] += total_shifted;
+}
+
 std::optional<InfectionTrajectory> Infection::tryBuildForcedTrajectory(
     const std::string& key, SplitMix64& rng) {
   const auto& trajectories = disease_->getTrajectories();
@@ -513,36 +544,8 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
       gatherTrajectoryRates(*person, world, infection_ctx);
 
   // 2. Apply dynamic vaccine efficacy
-  if (person->vaccine_trajectory && total_rate > 0.0) {
-    double ve_symptoms = person->vaccine_trajectory->getEfficacy(
-        traj.infection_time, disease_->getName(), person->age, true);
-
-    if (ve_symptoms > 0.0) {
-      // Find the lowest severity trajectory (the "safe" target)
-      size_t safe_idx = 0;
-      double min_severity = trajectories[0].severity;
-      for (size_t i = 1; i < trajectories.size(); ++i) {
-        if (trajectories[i].severity < min_severity) {
-          min_severity = trajectories[i].severity;
-          safe_idx = i;
-        }
-      }
-
-      // Shift mass from "severe" trajectories to the "safe" one
-      double total_shifted = 0.0;
-      for (size_t i = 0; i < trajectories.size(); ++i) {
-        if (i == safe_idx) continue;
-
-        // Only shift if the trajectory is more severe than the safe one
-        if (trajectories[i].severity > min_severity) {
-          double shift = trajectory_rates[i] * ve_symptoms;
-          trajectory_rates[i] -= shift;
-          total_shifted += shift;
-        }
-      }
-      trajectory_rates[safe_idx] += total_shifted;
-    }
-  }
+  applyVaccineEfficacyShift(trajectory_rates, *person, traj.infection_time,
+                            total_rate);
 
   // 3. Selection
   int selected_idx = 0;

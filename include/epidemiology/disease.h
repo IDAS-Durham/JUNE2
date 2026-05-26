@@ -444,6 +444,15 @@ class Infection {
       const Person& person, const WorldState* world,
       const InfectionContext& ctx) const;
 
+  // Step 2 of rate-based selection: shift probability mass from severe
+  // trajectories to the lowest-severity ("safe") trajectory in proportion
+  // to the person's symptom-reducing vaccine efficacy at `infection_time`.
+  // No-op if the person is unvaccinated or efficacy is zero. Preserves the
+  // sum (total_rate) since mass is redistributed.
+  void applyVaccineEfficacyShift(std::vector<double>& rates,
+                                 const Person& person, double infection_time,
+                                 double total_rate) const;
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;
