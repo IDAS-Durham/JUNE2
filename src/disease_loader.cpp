@@ -131,6 +131,20 @@ DistributionParams DiseaseLoader::parseDistribution(
 // Parse Trajectory Definitions from YAML
 // =============================================================================
 
+std::optional<TrajectoryStage> DiseaseLoader::parseTrajectoryStage(
+    const YAML::Node& stage_node) {
+  if (!stage_node["symptom_tag"]) {
+    std::cerr << "Warning: Stage missing 'symptom_tag' field" << std::endl;
+    return std::nullopt;
+  }
+  TrajectoryStage stage;
+  stage.symptom_tag = stage_node["symptom_tag"].as<std::string>();
+  if (stage_node["completion_time"]) {
+    stage.completion_time = parseDistribution(stage_node["completion_time"]);
+  }
+  return stage;
+}
+
 std::optional<TrajectoryDefinition> DiseaseLoader::parseOneTrajectory(
     const YAML::Node& traj_node) {
   TrajectoryDefinition traj;
@@ -164,20 +178,9 @@ std::optional<TrajectoryDefinition> DiseaseLoader::parseOneTrajectory(
   }
 
   for (const auto& stage_node : traj_node["stages"]) {
-    TrajectoryStage stage;
-
-    if (!stage_node["symptom_tag"]) {
-      std::cerr << "Warning: Stage missing 'symptom_tag' field" << std::endl;
-      continue;
+    if (auto stage = parseTrajectoryStage(stage_node)) {
+      traj.stages.push_back(std::move(*stage));
     }
-
-    stage.symptom_tag = stage_node["symptom_tag"].as<std::string>();
-
-    if (stage_node["completion_time"]) {
-      stage.completion_time = parseDistribution(stage_node["completion_time"]);
-    }
-
-    traj.stages.push_back(stage);
   }
 
   return traj;

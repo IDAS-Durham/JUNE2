@@ -82,6 +82,10 @@ class DiseaseLoader {
   static std::optional<TrajectoryDefinition> parseOneTrajectory(
       const YAML::Node& traj_node);
 
+  // Parse one stage entry; returns nullopt if 'symptom_tag' is missing.
+  static std::optional<TrajectoryStage> parseTrajectoryStage(
+      const YAML::Node& stage_node);
+
   static std::vector<SymptomTag> loadSymptomTags(const YAML::Node& config);
   static DiseaseStageSettings loadStageSettings(const YAML::Node& config);
   static void validateTrajectoryStageRefs(
