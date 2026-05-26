@@ -666,6 +666,49 @@ static std::string resolveEncTypeName(uint8_t type_id,
   return "type_" + std::to_string(type_id);
 }
 
+// Layout of the per-type stats vector built by serializePerTypeStats:
+//   [0] total_proposals
+//   [1] total_finalized
+//   [2 + i*kFieldsPerType + k] per-type field k for type i, where k indexes
+//   into:
+//     0 proposals_generated, 1 accepted, 2 rejected_not_found,
+//     3 rejected_dead,       4 rejected_committed, 5 rejected_no_def,
+//     6 rejected_schedule,   7 rejected_declined,
+//     8 finalized_encounters, 9 total_participants
+constexpr int kFieldsPerType = 10;
+
+static std::vector<int> serializePerTypeStats(
+    const std::vector<CoordinatedEncounterDef>& enc_defs,
+    const CoordinatedEncounterManager::DailyEncounterStats& daily_stats,
+    const WorldState& world) {
+  int num_types = static_cast<int>(enc_defs.size());
+  int arr_size = num_types * kFieldsPerType + 2;
+
+  std::vector<int> arr(arr_size, 0);
+  arr[0] = daily_stats.total_proposals;
+  arr[1] = daily_stats.total_finalized;
+
+  for (int i = 0; i < num_types; ++i) {
+    std::string name =
+        resolveEncTypeName(enc_defs[i].cached_encounter_type_id, world);
+    auto it = daily_stats.by_type.find(name);
+    if (it == daily_stats.by_type.end()) continue;
+    const auto& ts = it->second;
+    int base = 2 + i * kFieldsPerType;
+    arr[base + 0] = ts.proposals_generated;
+    arr[base + 1] = ts.accepted;
+    arr[base + 2] = ts.rejected_not_found;
+    arr[base + 3] = ts.rejected_dead;
+    arr[base + 4] = ts.rejected_committed;
+    arr[base + 5] = ts.rejected_no_def;
+    arr[base + 6] = ts.rejected_schedule;
+    arr[base + 7] = ts.rejected_declined;
+    arr[base + 8] = ts.finalized_encounters;
+    arr[base + 9] = ts.total_participants;
+  }
+  return arr;
+}
+
 void CoordinatedEncounterManager::accumulateProposalStats(
     const std::vector<EncounterProposal>& proposals) {
   for (const auto& p : proposals) {
@@ -720,38 +763,12 @@ void CoordinatedEncounterManager::accumulateFinalizeStats(
 void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   if (!config_.coordinated_encounters.enabled) return;
 
-  // Serialize per-type stats into flat arrays for MPI reduction.
-  // Order matches config_.coordinated_encounters.encounters (same on all
-  // ranks). 9 fields per type: proposals, accepted, rej_not_found, rej_dead,
-  //   rej_committed, rej_no_def, rej_schedule, rej_declined, finalized,
-  //   participants  => 10 fields per type + 2 globals
   const auto& enc_defs = config_.coordinated_encounters.encounters;
   int num_types = static_cast<int>(enc_defs.size());
-  int fields_per_type = 10;
-  int arr_size = num_types * fields_per_type + 2;  // +2 for global totals
 
-  std::vector<int> local_arr(arr_size, 0);
-  local_arr[0] = daily_stats_.total_proposals;
-  local_arr[1] = daily_stats_.total_finalized;
-
-  for (int i = 0; i < num_types; ++i) {
-    std::string name =
-        resolveEncTypeName(enc_defs[i].cached_encounter_type_id, world_);
-    auto it = daily_stats_.by_type.find(name);
-    if (it == daily_stats_.by_type.end()) continue;
-    const auto& ts = it->second;
-    int base = 2 + i * fields_per_type;
-    local_arr[base + 0] = ts.proposals_generated;
-    local_arr[base + 1] = ts.accepted;
-    local_arr[base + 2] = ts.rejected_not_found;
-    local_arr[base + 3] = ts.rejected_dead;
-    local_arr[base + 4] = ts.rejected_committed;
-    local_arr[base + 5] = ts.rejected_no_def;
-    local_arr[base + 6] = ts.rejected_schedule;
-    local_arr[base + 7] = ts.rejected_declined;
-    local_arr[base + 8] = ts.finalized_encounters;
-    local_arr[base + 9] = ts.total_participants;
-  }
+  std::vector<int> local_arr =
+      serializePerTypeStats(enc_defs, daily_stats_, world_);
+  int arr_size = static_cast<int>(local_arr.size());
 
   std::vector<int> global_arr(local_arr);
 #ifdef USE_MPI
@@ -806,7 +823,7 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
             << "  Total finalized: " << global_arr[1] << std::endl;
 
   for (int i = 0; i < num_types; ++i) {
-    int base = 2 + i * fields_per_type;
+    int base = 2 + i * kFieldsPerType;
     int proposals = global_arr[base + 0];
     int accepted = global_arr[base + 1];
     int rej_not_found = global_arr[base + 2];
