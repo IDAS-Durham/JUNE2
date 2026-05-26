@@ -83,6 +83,45 @@ int CoordinatedEncounterManager::getVirtualVenueTypeId(
 // generateProposals helpers
 // =============================================================================
 
+bool CoordinatedEncounterManager::tryEmitForOneSlot(
+    const Person& person, size_t person_idx,
+    const CoordinatedEncounterDef& enc_def, int slot_idx, int virtual_v_type,
+    const std::string* fg_name_ptr, SplitMix64& gen,
+    std::uniform_real_distribution<double>& dist,
+    std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+    std::vector<EncounterProposal>& out_proposals) {
+  // Rate gate: frequency_group bypass (budget-hit verified once per day) or
+  // the legacy scalar proposal_probability roll.
+  if (!fg_name_ptr) {
+    if (dist(gen) > enc_def.proposal_probability) return false;
+  }
+
+  VenueSelection venue = selectVenue(person, enc_def, virtual_v_type, gen);
+  if (enc_def.is_virtual) {
+    // Virtual venue IDs use the host's person_id directly, making collisions
+    // impossible by construction. A person can only host one encounter per
+    // slot per type, so person_id is a unique key.
+    venue.id = -1000 - person.id;
+  } else if (!venue.valid) {
+    return false;
+  }
+
+  std::vector<PersonId> partners = gatherEligiblePartners(person, enc_def);
+  if (partners.empty()) return false;
+
+  emitProposals(person, enc_def, slot_idx, venue, partners, gen, out_proposals);
+
+  committed_slots_[person.id].insert(slot_idx);
+  auto& rem = remaining_slots[person_idx];
+  rem.erase(std::remove(rem.begin(), rem.end(), slot_idx), rem.end());
+
+  if (fg_name_ptr) {
+    freq_group_committed_[person.id][*fg_name_ptr] = true;
+    freq_group_stats_[*fg_name_ptr].encounters_emitted++;
+  }
+  return true;
+}
+
 bool CoordinatedEncounterManager::isFrequencyGroupBudgetAvailable(
     const Person& person, const std::string& fg_name, int current_day) {
   auto& per_person = freq_group_hit_[person.id];
@@ -410,50 +449,11 @@ void CoordinatedEncounterManager::generateProposals(
       int proposals_made = 0;
       for (int slot_idx : valid_slots) {
         if (proposals_made >= type_budget) break;
-
-        // Rate gate: either a frequency_group budget-hit (already resolved
-        // once above; no per-slot roll needed), or the legacy scalar
-        // proposal_probability roll.
-        if (fg_name_ptr) {
-          // Budget-hit already verified; no per-slot roll.
-        } else {
-          if (dist(gen) > enc_def.proposal_probability) continue;
+        if (tryEmitForOneSlot(person, person_idx, enc_def, slot_idx,
+                              virtual_v_type, fg_name_ptr, gen, dist,
+                              remaining_slots, out_proposals)) {
+          proposals_made++;
         }
-
-        // Select venue
-        VenueSelection venue =
-            selectVenue(person, enc_def, virtual_v_type, gen);
-        if (enc_def.is_virtual) {
-          // Virtual venue IDs use the host's person_id directly, making
-          // collisions impossible by construction. A person can only host
-          // one encounter per slot per type, so person_id is a
-          // unique key.
-          venue.id = -1000 - person.id;
-        } else if (!venue.valid) {
-          continue;
-        }
-
-        // Gather partners
-        std::vector<PersonId> partners =
-            gatherEligiblePartners(person, enc_def);
-        if (partners.empty()) continue;
-
-        // Emit proposals for this slot
-        emitProposals(person, enc_def, slot_idx, venue, partners, gen,
-                      out_proposals);
-
-        // Mark slot as committed for the host
-        committed_slots_[person.id].insert(slot_idx);
-        auto& rem = remaining_slots[person_idx];
-        rem.erase(std::remove(rem.begin(), rem.end(), slot_idx), rem.end());
-
-        // Mark frequency-group budget spent for this person.
-        if (fg_name_ptr) {
-          freq_group_committed_[person.id][*fg_name_ptr] = true;
-          freq_group_stats_[*fg_name_ptr].encounters_emitted++;
-        }
-
-        proposals_made++;
       }
     }
     enc_type_counter++;

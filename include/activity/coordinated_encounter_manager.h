@@ -137,6 +137,19 @@ class CoordinatedEncounterManager {
                      std::vector<PersonId>& eligible_partners, SplitMix64& gen,
                      std::vector<EncounterProposal>& out_proposals);
 
+  // Per-slot body of generateProposals. Runs the rate gate (frequency-group
+  // bypass or proposal_probability roll), venue selection, partner gather, and
+  // emitProposals. On success, marks the slot committed for the host and
+  // (when fg_name_ptr is set) records the per-(person, group) commitment.
+  // Returns true iff a proposal block was emitted.
+  bool tryEmitForOneSlot(
+      const Person& person, size_t person_idx,
+      const CoordinatedEncounterDef& enc_def, int slot_idx, int virtual_v_type,
+      const std::string* fg_name_ptr, SplitMix64& gen,
+      std::uniform_real_distribution<double>& dist,
+      std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+      std::vector<EncounterProposal>& out_proposals);
+
   // --- processProposals helpers ---
 
   // Finds the encounter definition matching a proposal's venue type
