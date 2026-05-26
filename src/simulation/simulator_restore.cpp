@@ -1,4 +1,4 @@
-// Checkpoint restore / overlay (P4). Reads a rank-count-independent
+// Checkpoint restore / overlay. Reads a rank-count-independent
 // checkpoint directory (state.h5 + per-rank delta shards + shard_index.yaml +
 // manifest.yaml) and overlays the recorded state onto an already-loaded
 // world by global id. Writer side lives in simulator_checkpoint.cpp.

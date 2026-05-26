@@ -87,6 +87,12 @@ class CoordinatedEncounterManager {
   // Logs encounter definition config on Day 0, Rank 0 only
   void logEncounterConfig(const CoordinatedEncounterDef& enc_def) const;
 
+  // First-call-wins populate of the per-person remaining-slot vector for the
+  // given day_type. No-op on subsequent calls within the same day.
+  void populateInitialRemainingSlotsIfAbsent(
+      const Person& person, size_t person_idx, int day_type_idx,
+      std::unordered_map<size_t, std::vector<int>>& remaining_slots) const;
+
   // Returns the slot indices valid for this encounter type from the person's
   // remaining pool
   std::vector<int> getValidSlotsForType(const Person& person,

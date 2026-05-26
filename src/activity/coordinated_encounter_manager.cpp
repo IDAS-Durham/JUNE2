@@ -83,6 +83,26 @@ int CoordinatedEncounterManager::getVirtualVenueTypeId(
 // generateProposals helpers
 // =============================================================================
 
+void CoordinatedEncounterManager::populateInitialRemainingSlotsIfAbsent(
+    const Person& person, size_t person_idx, int day_type_idx,
+    std::unordered_map<size_t, std::vector<int>>& remaining_slots) const {
+  if (remaining_slots.find(person_idx) != remaining_slots.end()) return;
+  std::vector<int> all_valid;
+  if (person.cached_schedule_type_ != nullptr) {
+    const auto* sched = person.cached_schedule_type_;
+    if (day_type_idx >= 0 &&
+        day_type_idx <
+            static_cast<int>(sched->slots_by_day_type_idx.size()) &&
+        sched->slots_by_day_type_idx[day_type_idx] != nullptr) {
+      const auto& slots = *sched->slots_by_day_type_idx[day_type_idx];
+      for (size_t s = 0; s < slots.size(); ++s) {
+        all_valid.push_back(static_cast<int>(s));
+      }
+    }
+  }
+  remaining_slots[person_idx] = all_valid;
+}
+
 void CoordinatedEncounterManager::logEncounterConfig(
     const CoordinatedEncounterDef& enc_def) const {
   // One-line config dump (rank 0, day 0). Shows the rate source and the
@@ -368,23 +388,8 @@ void CoordinatedEncounterManager::generateProposals(
         if (committed[*fg_name_ptr]) continue;
       }
 
-      // On first encounter type for this person, populate all slot indices
-      if (remaining_slots.find(person_idx) == remaining_slots.end()) {
-        std::vector<int> all_valid;
-        if (person.cached_schedule_type_ != nullptr) {
-          const auto* sched = person.cached_schedule_type_;
-          if (day_type_idx >= 0 &&
-              day_type_idx <
-                  static_cast<int>(sched->slots_by_day_type_idx.size()) &&
-              sched->slots_by_day_type_idx[day_type_idx] != nullptr) {
-            const auto& slots = *sched->slots_by_day_type_idx[day_type_idx];
-            for (size_t s = 0; s < slots.size(); ++s) {
-              all_valid.push_back(static_cast<int>(s));
-            }
-          }
-        }
-        remaining_slots[person_idx] = all_valid;
-      }
+      populateInitialRemainingSlotsIfAbsent(person, person_idx, day_type_idx,
+                                            remaining_slots);
 
       // Filter to slots valid for this encounter type
       std::vector<int> valid_slots = getValidSlotsForType(
