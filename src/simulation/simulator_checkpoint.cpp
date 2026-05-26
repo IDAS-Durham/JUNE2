@@ -57,6 +57,40 @@ void writeVec(H5::H5File& f, const std::string& name,
   ds.write(data.data(), t);
 }
 
+// Gather + write the sparse venue fomite-history shard section. One record
+// per (venue, mode) with a non-empty deposit deque; the contiguous deposits
+// for each record sit at /venue_fomite/deposit_time[offset..offset+count).
+void writeShardFomite(H5::H5File& f, const std::vector<Venue>& venues,
+                      int comp) {
+  std::vector<int32_t> fo_vid, fo_mode;
+  std::vector<int64_t> fo_off;
+  std::vector<int32_t> fo_cnt;
+  std::vector<double> fo_time, fo_amt;
+  for (const Venue& v : venues) {
+    for (size_t m = 0; m < v.fomite_history.size(); ++m) {
+      const auto& dq = v.fomite_history[m];
+      if (dq.empty()) continue;
+      fo_vid.push_back(v.id);
+      fo_mode.push_back(static_cast<int32_t>(m));
+      fo_off.push_back(static_cast<int64_t>(fo_time.size()));
+      fo_cnt.push_back(static_cast<int32_t>(dq.size()));
+      for (const auto& de : dq) {
+        fo_time.push_back(de.time);
+        fo_amt.push_back(de.amount);
+      }
+    }
+  }
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto I64 = H5::PredType::NATIVE_INT64;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  writeVec(f, "/venue_fomite/venue_id", fo_vid, I32, comp);
+  writeVec(f, "/venue_fomite/mode_index", fo_mode, I32, comp);
+  writeVec(f, "/venue_fomite/offsets", fo_off, I64, comp);
+  writeVec(f, "/venue_fomite/counts", fo_cnt, I32, comp);
+  writeVec(f, "/venue_fomite/deposit_time", fo_time, F64, comp);
+  writeVec(f, "/venue_fomite/deposit_amount", fo_amt, F64, comp);
+}
+
 // Atomic commit: rename the staging "<root>.tmp" dir into place, refresh the
 // "latest" symlink, then drop the oldest checkpoints down to keep_last.
 // Returns true on a successful commit (rename succeeded); false otherwise so
@@ -301,26 +335,6 @@ void Simulator::writeCheckpoint(int completed_day,
       }
     }
 
-    // sparse venue fomite history
-    std::vector<int32_t> fo_vid, fo_mode;
-    std::vector<int64_t> fo_off;
-    std::vector<int32_t> fo_cnt;
-    std::vector<double> fo_time, fo_amt;
-    for (const Venue& v : world_.venues) {
-      for (size_t m = 0; m < v.fomite_history.size(); ++m) {
-        const auto& dq = v.fomite_history[m];
-        if (dq.empty()) continue;
-        fo_vid.push_back(v.id);
-        fo_mode.push_back(static_cast<int32_t>(m));
-        fo_off.push_back(static_cast<int64_t>(fo_time.size()));
-        fo_cnt.push_back(static_cast<int32_t>(dq.size()));
-        for (const auto& de : dq) {
-          fo_time.push_back(de.time);
-          fo_amt.push_back(de.amount);
-        }
-      }
-    }
-
     fs::path shard = tmp / ("delta_rank" + std::to_string(rank) + ".h5");
     H5::H5File f(shard.string(), H5F_ACC_TRUNC);
     f.createGroup("/population");
@@ -386,12 +400,7 @@ void Simulator::writeCheckpoint(int completed_day,
     writeVec(f, "/vaccine/dose_days_to_finished", d_fin, F64, comp);
     writeVec(f, "/vaccine/dose_waning_factor", d_wfac, F64, comp);
 
-    writeVec(f, "/venue_fomite/venue_id", fo_vid, I32, comp);
-    writeVec(f, "/venue_fomite/mode_index", fo_mode, I32, comp);
-    writeVec(f, "/venue_fomite/offsets", fo_off, I64, comp);
-    writeVec(f, "/venue_fomite/counts", fo_cnt, I32, comp);
-    writeVec(f, "/venue_fomite/deposit_time", fo_time, F64, comp);
-    writeVec(f, "/venue_fomite/deposit_amount", fo_amt, F64, comp);
+    writeShardFomite(f, world_.venues, comp);
 
     // Per-rank, global-id-keyed manager state lives in the shard (NOT rank-0
     // state.h5) so it survives a resume at a different rank count.
