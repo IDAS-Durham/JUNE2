@@ -73,6 +73,23 @@ void writeStrs(H5::H5File& f, const std::string& name,
   ds.write(ptrs.data(), st);
 }
 
+// Stable, rank-count-independent order over this rank's owned people:
+// (geo_unit_id, person_id). Contiguous geo_unit runs in the resulting order
+// become the embedded partition_index in the shard, mirroring the world file
+// so restore can selectively read.
+std::vector<uint32_t> buildOwnedPersonOrder(const std::vector<Person>& people) {
+  std::vector<uint32_t> ord(people.size());
+  for (uint32_t i = 0; i < ord.size(); ++i) ord[i] = i;
+  std::sort(ord.begin(), ord.end(), [&](uint32_t a, uint32_t b) {
+    const auto& pa = people[a];
+    const auto& pb = people[b];
+    if (pa.geo_unit_id != pb.geo_unit_id)
+      return pa.geo_unit_id < pb.geo_unit_id;
+    return pa.id < pb.id;
+  });
+  return ord;
+}
+
 // Gather + write the sparse infection shard section. One record per infected
 // person (in sorted `ord` order); the per-person symptom trajectory transitions
 // sit at /infection/traj_times[offset..offset+count). Sorted person order is
@@ -379,18 +396,7 @@ void Simulator::writeCheckpoint(int completed_day,
 
   // -------- per-rank shard: this rank's owned world_ subset --------
   {
-    // Stable, rank-count-independent order: sort owned people by
-    // (geo_unit_id, person_id). The geo_unit runs become the embedded
-    // partition_index, mirroring the world file so P4 can selectively read.
-    std::vector<uint32_t> ord(world_.people.size());
-    for (uint32_t i = 0; i < ord.size(); ++i) ord[i] = i;
-    std::sort(ord.begin(), ord.end(), [&](uint32_t a, uint32_t b) {
-      const auto& pa = world_.people[a];
-      const auto& pb = world_.people[b];
-      if (pa.geo_unit_id != pb.geo_unit_id)
-        return pa.geo_unit_id < pb.geo_unit_id;
-      return pa.id < pb.id;
-    });
+    const std::vector<uint32_t> ord = buildOwnedPersonOrder(world_.people);
 
     std::vector<int32_t> ids, geo, hop, ret, tslot;
     std::vector<double> imm_l, imm_a, imm_w, death_t;
