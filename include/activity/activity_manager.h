@@ -232,6 +232,18 @@ class ActivityManager {
                               VenueId& scheduled_venue_id,
                               SubsetIndex& scheduled_subset_idx);
 
+  // Handles the hopped-schedule branch of assignActivities (single slot
+  // form): runs advanceHoppedSchedule for temporary hops or executes the
+  // non-temporary day-type slot directly against `slot`, applies any
+  // policy override (with effective-venue resolution), and finalises
+  // locations[person_array_idx]. The companion of
+  // assignHoppedScheduleSlot, kept separate because the single-slot form
+  // uses the caller's slot rather than looking one up from
+  // slots_by_day_type_idx[time_slot_index].
+  void assignHoppedSingleSlot(const Person& person, size_t person_array_idx,
+                              const TimeSlot& slot, int day_type_idx,
+                              std::vector<PersonLocation>& locations);
+
   // Handles the hopped-schedule branch of assignActivitiesFromSchedule:
   // dispatches to advanceHoppedSchedule (temporary) or the non-temporary
   // freeze-in-place day-type-slot path, then applies any policy override

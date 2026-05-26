@@ -207,45 +207,7 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
 
     // Hopped person: bypass normal slot
     if (person.hopped_schedule_id != -1) {
-      Person& mutable_person = const_cast<Person&>(person);
-      const ScheduleType& hopped_sched =
-          config_.schedule.schedule_types[person.hopped_schedule_id];
-      uint64_t time_key_hop =
-          static_cast<uint64_t>(current_simulation_time_ * 1000);
-
-      if (hopped_sched.is_temporary) {
-        advanceHoppedSchedule(mutable_person, locations[i], i, day_type_idx);
-      } else {
-        // Non-temporary hop: execute normal day-type slots
-        if (day_type_idx <
-                static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
-            hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
-          // assignActivities is called with a single slot; use it directly
-          int16_t act = selectActivity(person, slot, 0, &hopped_sched,
-                                       day_type_idx, time_key_hop);
-          auto [v, s] = selectVenue(person, act, slot, time_key_hop);
-          locations[i].venue_id = v;
-          locations[i].subset_index = s;
-          locations[i].activity_index = act;
-          locations[i].encounter_type_id = 255;
-        }
-      }
-
-      if (policy_manager_ != nullptr) {
-        VenueId effective_venue = locations[i].venue_id;
-        SubsetIndex effective_subset = locations[i].subset_index;
-        if (effective_venue < 0 && hopped_sched.is_temporary) {
-          auto [lv, ls] = findLastNonNullVenueOnHop(mutable_person);
-          effective_venue = lv;
-          effective_subset = ls;
-        }
-        applyPolicyOverride(locations[i], mutable_person,
-                            locations[i].activity_index, effective_venue,
-                            effective_subset, -1);
-      }
-
-      locations[i].person_id = person.id;
-      locations[i].person_array_index = i;
+      assignHoppedSingleSlot(person, i, slot, day_type_idx, locations);
       continue;
     }
 
@@ -870,6 +832,51 @@ const TimeSlot* ActivityManager::lookupCurrentSlot(
     return nullptr;
   }
   return &slots[time_slot_index];
+}
+
+void ActivityManager::assignHoppedSingleSlot(
+    const Person& person, size_t person_array_idx, const TimeSlot& slot,
+    int day_type_idx, std::vector<PersonLocation>& locations) {
+  const size_t i = person_array_idx;
+  Person& mutable_person = const_cast<Person&>(person);
+  const ScheduleType& hopped_sched =
+      config_.schedule.schedule_types[person.hopped_schedule_id];
+  uint64_t time_key_hop =
+      static_cast<uint64_t>(current_simulation_time_ * 1000);
+
+  if (hopped_sched.is_temporary) {
+    advanceHoppedSchedule(mutable_person, locations[i], i, day_type_idx);
+  } else {
+    // Non-temporary hop: execute normal day-type slots
+    if (day_type_idx <
+            static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
+        hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
+      // assignActivities is called with a single slot; use it directly
+      int16_t act = selectActivity(person, slot, 0, &hopped_sched,
+                                   day_type_idx, time_key_hop);
+      auto [v, s] = selectVenue(person, act, slot, time_key_hop);
+      locations[i].venue_id = v;
+      locations[i].subset_index = s;
+      locations[i].activity_index = act;
+      locations[i].encounter_type_id = 255;
+    }
+  }
+
+  if (policy_manager_ != nullptr) {
+    VenueId effective_venue = locations[i].venue_id;
+    SubsetIndex effective_subset = locations[i].subset_index;
+    if (effective_venue < 0 && hopped_sched.is_temporary) {
+      auto [lv, ls] = findLastNonNullVenueOnHop(mutable_person);
+      effective_venue = lv;
+      effective_subset = ls;
+    }
+    applyPolicyOverride(locations[i], mutable_person,
+                        locations[i].activity_index, effective_venue,
+                        effective_subset, -1);
+  }
+
+  locations[i].person_id = person.id;
+  locations[i].person_array_index = i;
 }
 
 void ActivityManager::assignHoppedScheduleSlot(
