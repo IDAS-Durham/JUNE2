@@ -422,6 +422,14 @@ class Infection {
   void cacheCurrentSymptom(double lookup_time, uint16_t& symptom_id,
                            double& stage_start_time) const;
 
+  // Append transitions to `traj` by walking `traj_def.stages` from the first
+  // stage whose symptom_tag matches `start_target` (or index 0 if empty / not
+  // found), sampling each stage's completion_time from `rng` to advance time.
+  void buildTransitionsFromStages(InfectionTrajectory& traj,
+                                  const TrajectoryDefinition& traj_def,
+                                  const std::string& start_target,
+                                  SplitMix64& rng);
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;

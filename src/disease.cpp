@@ -399,6 +399,27 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
   return 0.0;
 }
 
+void Infection::buildTransitionsFromStages(
+    InfectionTrajectory& traj, const TrajectoryDefinition& traj_def,
+    const std::string& start_target, SplitMix64& rng) {
+  int start_stage_idx = 0;
+  if (!start_target.empty()) {
+    for (int s = 0; s < (int)traj_def.stages.size(); ++s) {
+      if (traj_def.stages[s].symptom_tag == start_target) {
+        start_stage_idx = s;
+        break;
+      }
+    }
+  }
+  double current_time = infection_time_;
+  for (int s = start_stage_idx; s < (int)traj_def.stages.size(); ++s) {
+    const auto& stage = traj_def.stages[s];
+    traj.transitions.push_back(
+        {current_time, disease_->getSymptomId(stage.symptom_tag)});
+    current_time += sampleFromDistribution(stage.completion_time, rng);
+  }
+}
+
 InfectionTrajectory Infection::generateTrajectoryFromRates(
     SplitMix64& rng, const Person* person, const WorldState* world,
     const std::string& venue_type, int venue_id, float severity_factor,
@@ -442,23 +463,8 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
     for (int i = 0; i < (int)trajectories.size(); ++i) {
       if (trajectories[i].selection_key == trajectory_key_override) {
         const auto& forced_def = trajectories[i];
-        int start_stage_idx = 0;
-        if (forced_def.start_stage.has_value()) {
-          for (int s = 0; s < (int)forced_def.stages.size(); ++s) {
-            if (forced_def.stages[s].symptom_tag ==
-                forced_def.start_stage.value()) {
-              start_stage_idx = s;
-              break;
-            }
-          }
-        }
-        double current_time = infection_time_;
-        for (int s = start_stage_idx; s < (int)forced_def.stages.size(); ++s) {
-          const auto& stage = forced_def.stages[s];
-          traj.transitions.push_back(
-              {current_time, disease_->getSymptomId(stage.symptom_tag)});
-          current_time += sampleFromDistribution(stage.completion_time, rng);
-        }
+        buildTransitionsFromStages(traj, forced_def,
+                                   forced_def.start_stage.value_or(""), rng);
         traj.infectiousness_factor = forced_def.infectiousness_factor;
         return traj;
       }
@@ -550,32 +556,14 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   // 4. Generate timing
   const auto& final_def = trajectories[selected_idx];
   traj.infectiousness_factor = final_def.infectiousness_factor;
-  double current_time = infection_time_;
 
-  // Determine the entry point into the stage list.
   // start_symptom_override (from seeding) takes priority over the trajectory's
   // start_stage field.
-  int start_stage_idx = 0;
-  const std::string& start_target =
+  const std::string start_target =
       !start_symptom_override.empty()
           ? start_symptom_override
-          : (final_def.start_stage.has_value() ? final_def.start_stage.value()
-                                               : "");
-  if (!start_target.empty()) {
-    for (int s = 0; s < (int)final_def.stages.size(); ++s) {
-      if (final_def.stages[s].symptom_tag == start_target) {
-        start_stage_idx = s;
-        break;
-      }
-    }
-  }
-
-  for (int s = start_stage_idx; s < (int)final_def.stages.size(); ++s) {
-    const auto& stage = final_def.stages[s];
-    traj.transitions.push_back(
-        {current_time, disease_->getSymptomId(stage.symptom_tag)});
-    current_time += sampleFromDistribution(stage.completion_time, rng);
-  }
+          : final_def.start_stage.value_or("");
+  buildTransitionsFromStages(traj, final_def, start_target, rng);
 
   return traj;
 }
