@@ -57,6 +57,40 @@ void writeVec(H5::H5File& f, const std::string& name,
   ds.write(data.data(), t);
 }
 
+// Atomic commit: rename the staging "<root>.tmp" dir into place, refresh the
+// "latest" symlink, then drop the oldest checkpoints down to keep_last.
+// Returns true on a successful commit (rename succeeded); false otherwise so
+// the caller can skip the post-commit log line.
+bool commitAndRotate(const fs::path& tmp, const fs::path& cp_root,
+                     const fs::path& cp_parent, const std::string& cp_name,
+                     int keep_last) {
+  std::error_code ec;
+  fs::remove_all(cp_root, ec);
+  fs::rename(tmp, cp_root, ec);
+  if (ec) {
+    std::cerr << "[checkpoint] ERROR: commit rename failed: " << ec.message()
+              << std::endl;
+    return false;
+  }
+  fs::path latest = cp_parent / "latest";
+  fs::remove(latest, ec);
+  fs::create_symlink(cp_name, latest, ec);
+
+  if (keep_last > 0) {
+    std::vector<fs::path> cps;
+    for (auto& de : fs::directory_iterator(cp_parent)) {
+      if (!de.is_directory()) continue;
+      std::string n = de.path().filename().string();
+      if (n.rfind("checkpoint_", 0) == 0 && n.find(".tmp") == std::string::npos)
+        cps.push_back(de.path());
+    }
+    std::sort(cps.begin(), cps.end());
+    int remove_n = static_cast<int>(cps.size()) - keep_last;
+    for (int i = 0; i < remove_n; ++i) fs::remove_all(cps[i], ec);
+  }
+  return true;
+}
+
 // Re-reads each shard's embedded partition_index and emits a YAML mapping of
 // (rank -> [(geo_unit, start, count), ...]) so restore can locate per-geo
 // rows in any shard without scanning the population dataset.
@@ -414,31 +448,7 @@ void Simulator::writeCheckpoint(int completed_day,
   writeManifest(tmp, completed_day, date_iso, nranks,
                 current_simulation_time_, config_.simulation.random_seed);
 
-  // -------- atomic commit + latest symlink + keep_last rotation --------
-  std::error_code ec;
-  fs::remove_all(cp_root, ec);
-  fs::rename(tmp, cp_root, ec);
-  if (ec) {
-    std::cerr << "[checkpoint] ERROR: commit rename failed: " << ec.message()
-              << std::endl;
-    return;
-  }
-  fs::path latest = cp_parent / "latest";
-  fs::remove(latest, ec);
-  fs::create_symlink(cp_name, latest, ec);
-
-  if (ck.keep_last > 0) {
-    std::vector<fs::path> cps;
-    for (auto& de : fs::directory_iterator(cp_parent)) {
-      if (!de.is_directory()) continue;
-      std::string n = de.path().filename().string();
-      if (n.rfind("checkpoint_", 0) == 0 && n.find(".tmp") == std::string::npos)
-        cps.push_back(de.path());
-    }
-    std::sort(cps.begin(), cps.end());
-    int remove_n = static_cast<int>(cps.size()) - ck.keep_last;
-    for (int i = 0; i < remove_n; ++i) fs::remove_all(cps[i], ec);
-  }
+  if (!commitAndRotate(tmp, cp_root, cp_parent, cp_name, ck.keep_last)) return;
 
   std::cout << "[checkpoint] wrote " << cp_root.string() << " (day "
             << completed_day << ", " << date_iso << ", " << nranks
