@@ -90,6 +90,73 @@ std::vector<uint32_t> buildOwnedPersonOrder(const std::vector<Person>& people) {
   return ord;
 }
 
+// Gather + write the dense per-person shard section under /population/, plus
+// the embedded partition_index over contiguous geo_unit runs (so restore can
+// selectively read by geo without a full population scan). Rows follow `ord`
+// (sorted by geo_unit_id, person_id) so the run-based index aligns.
+void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
+                          const std::vector<Person>& people, int comp) {
+  std::vector<int32_t> ids, geo, hop, ret, tslot;
+  std::vector<double> imm_l, imm_a, imm_w, death_t;
+  std::vector<uint8_t> dead;
+  std::vector<uint32_t> m_as, m_at, m_ps, m_pt, m_ds, m_dt;
+  ids.reserve(ord.size());
+  for (uint32_t idx : ord) {
+    const Person& p = people[idx];
+    ids.push_back(p.id);
+    geo.push_back(p.geo_unit_id);
+    imm_l.push_back(p.immunity.natural_level);
+    imm_a.push_back(p.immunity.natural_acquisition_time);
+    imm_w.push_back(p.immunity.natural_waning_rate);
+    dead.push_back(p.is_dead ? 1 : 0);
+    death_t.push_back(p.death_time);
+    m_as.push_back(p.applicable_symptom_policy_mask);
+    m_at.push_back(p.applicable_temporal_policy_mask);
+    m_ps.push_back(p.active_symptom_policy_participation);
+    m_pt.push_back(p.active_temporal_policy_participation);
+    m_ds.push_back(p.symptom_policy_decisions);
+    m_dt.push_back(p.temporal_policy_decisions);
+    hop.push_back(p.hopped_schedule_id);
+    ret.push_back(p.return_schedule_id);
+    tslot.push_back(p.temp_slot_progress);
+  }
+  std::vector<int32_t> pi_gu, pi_start, pi_count;
+  for (size_t i = 0; i < geo.size();) {
+    size_t j = i;
+    while (j < geo.size() && geo[j] == geo[i]) ++j;
+    pi_gu.push_back(geo[i]);
+    pi_start.push_back(static_cast<int32_t>(i));
+    pi_count.push_back(static_cast<int32_t>(j - i));
+    i = j;
+  }
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto U32 = H5::PredType::NATIVE_UINT32;
+  const auto U8 = H5::PredType::NATIVE_UINT8;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  writeVec(f, "/population/ids", ids, I32, comp);
+  writeVec(f, "/population/geo_unit_ids", geo, I32, comp);
+  writeVec(f, "/population/partition_index/geo_unit_ids", pi_gu, I32, comp);
+  writeVec(f, "/population/partition_index/start_indices", pi_start, I32, comp);
+  writeVec(f, "/population/partition_index/counts", pi_count, I32, comp);
+  writeVec(f, "/population/immunity_natural_level", imm_l, F64, comp);
+  writeVec(f, "/population/immunity_natural_acquisition_time", imm_a, F64,
+           comp);
+  writeVec(f, "/population/immunity_natural_waning_rate", imm_w, F64, comp);
+  writeVec(f, "/population/is_dead", dead, U8, comp);
+  writeVec(f, "/population/death_time", death_t, F64, comp);
+  writeVec(f, "/population/applicable_symptom_policy_mask", m_as, U32, comp);
+  writeVec(f, "/population/applicable_temporal_policy_mask", m_at, U32, comp);
+  writeVec(f, "/population/active_symptom_policy_participation", m_ps, U32,
+           comp);
+  writeVec(f, "/population/active_temporal_policy_participation", m_pt, U32,
+           comp);
+  writeVec(f, "/population/symptom_policy_decisions", m_ds, U32, comp);
+  writeVec(f, "/population/temporal_policy_decisions", m_dt, U32, comp);
+  writeVec(f, "/population/hopped_schedule_id", hop, I32, comp);
+  writeVec(f, "/population/return_schedule_id", ret, I32, comp);
+  writeVec(f, "/population/temp_slot_progress", tslot, I32, comp);
+}
+
 // Gather + write the sparse infection shard section. One record per infected
 // person (in sorted `ord` order); the per-person symptom trajectory transitions
 // sit at /infection/traj_times[offset..offset+count). Sorted person order is
@@ -398,42 +465,6 @@ void Simulator::writeCheckpoint(int completed_day,
   {
     const std::vector<uint32_t> ord = buildOwnedPersonOrder(world_.people);
 
-    std::vector<int32_t> ids, geo, hop, ret, tslot;
-    std::vector<double> imm_l, imm_a, imm_w, death_t;
-    std::vector<uint8_t> dead;
-    std::vector<uint32_t> m_as, m_at, m_ps, m_pt, m_ds, m_dt;
-    ids.reserve(ord.size());
-    for (uint32_t idx : ord) {
-      const Person& p = world_.people[idx];
-      ids.push_back(p.id);
-      geo.push_back(p.geo_unit_id);
-      imm_l.push_back(p.immunity.natural_level);
-      imm_a.push_back(p.immunity.natural_acquisition_time);
-      imm_w.push_back(p.immunity.natural_waning_rate);
-      dead.push_back(p.is_dead ? 1 : 0);
-      death_t.push_back(p.death_time);
-      m_as.push_back(p.applicable_symptom_policy_mask);
-      m_at.push_back(p.applicable_temporal_policy_mask);
-      m_ps.push_back(p.active_symptom_policy_participation);
-      m_pt.push_back(p.active_temporal_policy_participation);
-      m_ds.push_back(p.symptom_policy_decisions);
-      m_dt.push_back(p.temporal_policy_decisions);
-      hop.push_back(p.hopped_schedule_id);
-      ret.push_back(p.return_schedule_id);
-      tslot.push_back(p.temp_slot_progress);
-    }
-
-    // partition_index over contiguous geo_unit runs in `geo`.
-    std::vector<int32_t> pi_gu, pi_start, pi_count;
-    for (size_t i = 0; i < geo.size();) {
-      size_t j = i;
-      while (j < geo.size() && geo[j] == geo[i]) ++j;
-      pi_gu.push_back(geo[i]);
-      pi_start.push_back(static_cast<int32_t>(i));
-      pi_count.push_back(static_cast<int32_t>(j - i));
-      i = j;
-    }
-
     fs::path shard = tmp / ("delta_rank" + std::to_string(rank) + ".h5");
     H5::H5File f(shard.string(), H5F_ACC_TRUNC);
     f.createGroup("/population");
@@ -441,37 +472,8 @@ void Simulator::writeCheckpoint(int completed_day,
     f.createGroup("/infection");
     f.createGroup("/vaccine");
     f.createGroup("/venue_fomite");
-    const auto I32 = H5::PredType::NATIVE_INT32;
-    const auto I64 = H5::PredType::NATIVE_INT64;
-    const auto U32 = H5::PredType::NATIVE_UINT32;
-    const auto U16 = H5::PredType::NATIVE_UINT16;
-    const auto U8 = H5::PredType::NATIVE_UINT8;
-    const auto F64 = H5::PredType::NATIVE_DOUBLE;
 
-    writeVec(f, "/population/ids", ids, I32, comp);
-    writeVec(f, "/population/geo_unit_ids", geo, I32, comp);
-    writeVec(f, "/population/partition_index/geo_unit_ids", pi_gu, I32, comp);
-    writeVec(f, "/population/partition_index/start_indices", pi_start, I32,
-             comp);
-    writeVec(f, "/population/partition_index/counts", pi_count, I32, comp);
-    writeVec(f, "/population/immunity_natural_level", imm_l, F64, comp);
-    writeVec(f, "/population/immunity_natural_acquisition_time", imm_a, F64,
-             comp);
-    writeVec(f, "/population/immunity_natural_waning_rate", imm_w, F64, comp);
-    writeVec(f, "/population/is_dead", dead, U8, comp);
-    writeVec(f, "/population/death_time", death_t, F64, comp);
-    writeVec(f, "/population/applicable_symptom_policy_mask", m_as, U32, comp);
-    writeVec(f, "/population/applicable_temporal_policy_mask", m_at, U32, comp);
-    writeVec(f, "/population/active_symptom_policy_participation", m_ps, U32,
-             comp);
-    writeVec(f, "/population/active_temporal_policy_participation", m_pt, U32,
-             comp);
-    writeVec(f, "/population/symptom_policy_decisions", m_ds, U32, comp);
-    writeVec(f, "/population/temporal_policy_decisions", m_dt, U32, comp);
-    writeVec(f, "/population/hopped_schedule_id", hop, I32, comp);
-    writeVec(f, "/population/return_schedule_id", ret, I32, comp);
-    writeVec(f, "/population/temp_slot_progress", tslot, I32, comp);
-
+    writeShardPopulation(f, ord, world_.people, comp);
     writeShardInfection(f, ord, world_.people, comp);
     writeShardVaccine(f, ord, world_.people, comp);
     writeShardFomite(f, world_.venues, comp);
