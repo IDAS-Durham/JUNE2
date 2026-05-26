@@ -57,6 +57,42 @@ void writeVec(H5::H5File& f, const std::string& name,
   ds.write(data.data(), t);
 }
 
+// Re-reads each shard's embedded partition_index and emits a YAML mapping of
+// (rank -> [(geo_unit, start, count), ...]) so restore can locate per-geo
+// rows in any shard without scanning the population dataset.
+void writeShardIndex(const fs::path& tmp, int nranks) {
+  YAML::Emitter e;
+  e << YAML::BeginMap;
+  e << YAML::Key << "num_ranks" << YAML::Value << nranks;
+  e << YAML::Key << "shards" << YAML::Value << YAML::BeginSeq;
+  for (int r = 0; r < nranks; ++r) {
+    std::string sf = "delta_rank" + std::to_string(r) + ".h5";
+    H5::H5File f((tmp / sf).string(), H5F_ACC_RDONLY);
+    auto rd = [&](const std::string& n) {
+      H5::DataSet d = f.openDataSet(n);
+      hsize_t dim[1];
+      d.getSpace().getSimpleExtentDims(dim);
+      std::vector<int32_t> v(dim[0]);
+      if (dim[0]) d.read(v.data(), H5::PredType::NATIVE_INT32);
+      return v;
+    };
+    auto gu = rd("/population/partition_index/geo_unit_ids");
+    auto st = rd("/population/partition_index/start_indices");
+    auto ct = rd("/population/partition_index/counts");
+    f.close();
+    e << YAML::BeginMap;
+    e << YAML::Key << "file" << YAML::Value << sf;
+    e << YAML::Key << "geo_units" << YAML::Value << YAML::BeginSeq;
+    for (size_t i = 0; i < gu.size(); ++i) {
+      e << YAML::Flow << YAML::BeginSeq << gu[i] << st[i] << ct[i]
+        << YAML::EndSeq;
+    }
+    e << YAML::EndSeq << YAML::EndMap;
+  }
+  e << YAML::EndSeq << YAML::EndMap;
+  std::ofstream(tmp / "shard_index.yaml") << e.c_str() << "\n";
+}
+
 // manifest.yaml is written LAST in the checkpoint dir — its presence is the
 // atomic commit marker for a complete checkpoint (see restoreFromCheckpoint).
 // world_path / world_sha256 are populated in P4 (restore validation);
@@ -420,39 +456,7 @@ void Simulator::writeCheckpoint(int completed_day,
     f.close();
   }
 
-  // -------- shard_index.yaml: geo_unit -> (shard, offset, count) --------
-  {
-    YAML::Emitter e;
-    e << YAML::BeginMap;
-    e << YAML::Key << "num_ranks" << YAML::Value << nranks;
-    e << YAML::Key << "shards" << YAML::Value << YAML::BeginSeq;
-    for (int r = 0; r < nranks; ++r) {
-      std::string sf = "delta_rank" + std::to_string(r) + ".h5";
-      H5::H5File f((tmp / sf).string(), H5F_ACC_RDONLY);
-      auto rd = [&](const std::string& n) {
-        H5::DataSet d = f.openDataSet(n);
-        hsize_t dim[1];
-        d.getSpace().getSimpleExtentDims(dim);
-        std::vector<int32_t> v(dim[0]);
-        if (dim[0]) d.read(v.data(), H5::PredType::NATIVE_INT32);
-        return v;
-      };
-      auto gu = rd("/population/partition_index/geo_unit_ids");
-      auto st = rd("/population/partition_index/start_indices");
-      auto ct = rd("/population/partition_index/counts");
-      f.close();
-      e << YAML::BeginMap;
-      e << YAML::Key << "file" << YAML::Value << sf;
-      e << YAML::Key << "geo_units" << YAML::Value << YAML::BeginSeq;
-      for (size_t i = 0; i < gu.size(); ++i) {
-        e << YAML::Flow << YAML::BeginSeq << gu[i] << st[i] << ct[i]
-          << YAML::EndSeq;
-      }
-      e << YAML::EndSeq << YAML::EndMap;
-    }
-    e << YAML::EndSeq << YAML::EndMap;
-    std::ofstream(tmp / "shard_index.yaml") << e.c_str() << "\n";
-  }
+  writeShardIndex(tmp, nranks);
 
   writeManifest(tmp, completed_day, date_iso, nranks,
                 current_simulation_time_, config_.simulation.random_seed);
