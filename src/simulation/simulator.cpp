@@ -265,6 +265,55 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
   return global_eligible_map;
 }
 
+// Pass 2: stamp the per-encounter venue_id / encounter_type_id onto every
+// local eligible participant of any encounter that meets its min_required
+// threshold. Then for virtual venues (negative IDs) register the host-rank
+// ownership so the visitor exchange routes cross-rank participants
+// correctly.
+void applyEncounterInjection(
+    const std::vector<EncounterEligibility>& slot_encounters,
+    const std::vector<CoordinatedEncounter>& daily_encounters,
+    const std::unordered_map<int, int>& global_eligible_map,
+    std::vector<PersonLocation>& locations, DomainManager* domain_mgr) {
+  for (size_t i = 0; i < slot_encounters.size(); ++i) {
+    const auto& ee = slot_encounters[i];
+    const auto& enc = daily_encounters[ee.encounter_idx];
+
+    // Use global eligible count if available (MPI mode with remote
+    // participants); otherwise use local count (serial or all-local).
+    int total_eligible;
+    auto ge_it = global_eligible_map.find(enc.encounter_id);
+    if (ge_it != global_eligible_map.end()) {
+      total_eligible = ge_it->second;
+    } else {
+      total_eligible = ee.local_eligible;
+    }
+
+    if (total_eligible < ee.min_required || ee.local_eligible <= 0) continue;
+
+    for (size_t array_idx : ee.eligible_indices) {
+      locations[array_idx].venue_id = enc.venue_id;
+      locations[array_idx].encounter_type_id = enc.encounter_type_id;
+    }
+
+#ifdef USE_MPI
+    // Register virtual venue ownership so the visitor exchange can route
+    // cross-rank encounter participants to the host's rank. Physical
+    // venues already have ownership via the venue ownership map; virtual
+    // venues (negative IDs) need explicit registration.
+    if (domain_mgr && enc.venue_id < 0) {
+      int host_rank = domain_mgr->getPersonRank(enc.host_id);
+      domain_mgr->setVenueRank(enc.venue_id, host_rank);
+      if (host_rank == domain_mgr->getRank()) {
+        domain_mgr->getDomain().registerVirtualVenue(enc.venue_id);
+      }
+    }
+#else
+    (void)domain_mgr;
+#endif
+  }
+}
+
 // Pass 1: per-encounter, compute the local participants who survive the
 // alive + policy-block checks. Encounters not scheduled for this slot are
 // skipped. Returned vector is index-aligned with the surviving subset of
@@ -1061,42 +1110,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
     std::unordered_map<int, int> global_eligible_map = exchangeGlobalEligibility(
         slot_encounters, daily_encounters, world_, domain_mgr_);
 
-    // Pass 2: Inject encounters using global eligible counts.
-    for (size_t i = 0; i < slot_encounters.size(); ++i) {
-      const auto& ee = slot_encounters[i];
-      const auto& enc = daily_encounters[ee.encounter_idx];
-
-      // Use global eligible count if available (MPI mode with remote
-      // participants); otherwise use local count (serial or all-local).
-      int total_eligible;
-      auto ge_it = global_eligible_map.find(enc.encounter_id);
-      if (ge_it != global_eligible_map.end()) {
-        total_eligible = ge_it->second;
-      } else {
-        total_eligible = ee.local_eligible;
-      }
-
-      if (total_eligible >= ee.min_required && ee.local_eligible > 0) {
-        for (size_t array_idx : ee.eligible_indices) {
-          locations_[array_idx].venue_id = enc.venue_id;
-          locations_[array_idx].encounter_type_id = enc.encounter_type_id;
-        }
-
-#ifdef USE_MPI
-        // Register virtual venue ownership so the visitor exchange can
-        // route cross-rank encounter participants to the host's rank.
-        // Physical venues already have ownership via the venue ownership
-        // map; virtual venues (negative IDs) need explicit registration.
-        if (domain_mgr_ && enc.venue_id < 0) {
-          int host_rank = domain_mgr_->getPersonRank(enc.host_id);
-          domain_mgr_->setVenueRank(enc.venue_id, host_rank);
-          if (host_rank == domain_mgr_->getRank()) {
-            domain_mgr_->getDomain().registerVirtualVenue(enc.venue_id);
-          }
-        }
-#endif
-      }
-    }
+    // Pass 2: stamp venue_id / encounter_type_id onto eligible participants
+    // for encounters that meet their min_required threshold.
+    applyEncounterInjection(slot_encounters, daily_encounters,
+                            global_eligible_map, locations_, domain_mgr_);
   }
 
   // Per-slot venue distribution (aggregated across ranks).
