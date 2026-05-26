@@ -140,6 +140,16 @@ class ActivityManager {
                                           const TimeSlot& slot,
                                           int16_t activity_idx) const;
 
+  // Handles a person with a precomputed schedule: looks up the
+  // ScheduleEntry at time_slot_index, re-evaluates stochastic/hybrid
+  // entries, applies any schedule hop, applies any policy override, and
+  // writes the final PersonLocation. Falls back to residence-or-none if
+  // time_slot_index is out of range for this day's schedule.
+  void assignFromPrecomputedSchedule(size_t person_array_idx, Person& person,
+                                     int time_slot_index, int day_type_idx,
+                                     uint64_t time_key,
+                                     std::vector<PersonLocation>& locations);
+
   // Checks current_slot for a schedule-hop trigger on the chosen activity
   // (first via the static hop_schedule_by_activity_idx table, then via the
   // YAML property-dispatched fallback). If a hop target is found, mutates

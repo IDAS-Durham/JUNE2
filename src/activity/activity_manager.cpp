@@ -631,59 +631,67 @@ void ActivityManager::assignActivitiesFromSchedule(
       continue;
     }
 
-    // Use pre-computed schedule
-    auto schedule = world_.getSchedule(person, day_type_idx);
+    assignFromPrecomputedSchedule(i, person, time_slot_index, day_type_idx,
+                                  time_key, locations);
+  }
+}
 
-    if (time_slot_index >= 0 &&
-        time_slot_index < static_cast<int>(schedule.size())) {
-      const ScheduleEntry& entry = schedule[time_slot_index];
+void ActivityManager::assignFromPrecomputedSchedule(
+    size_t person_array_idx, Person& person, int time_slot_index,
+    int day_type_idx, uint64_t time_key,
+    std::vector<PersonLocation>& locations) {
+  const size_t i = person_array_idx;
+  auto schedule = world_.getSchedule(person, day_type_idx);
 
-      // Get the current time slot definition for specified_activity
-      const ScheduleType* schedule_type = person.cached_schedule_type_;
-      const TimeSlot* current_slot =
-          lookupCurrentSlot(schedule_type, day_type_idx, time_slot_index);
+  if (time_slot_index >= 0 &&
+      time_slot_index < static_cast<int>(schedule.size())) {
+    const ScheduleEntry& entry = schedule[time_slot_index];
 
-      // Determine scheduled activity
-      VenueId scheduled_venue_id = entry.venue_id;
-      SubsetIndex scheduled_subset_idx = entry.subset_index;
-      int16_t scheduled_activity_index = entry.activity_index;
+    // Get the current time slot definition for specified_activity
+    const ScheduleType* schedule_type = person.cached_schedule_type_;
+    const TimeSlot* current_slot =
+        lookupCurrentSlot(schedule_type, day_type_idx, time_slot_index);
 
-      if (!entry.is_deterministic) {
-        const ScheduleType* sched_type = schedule_type;
-        resolveStochasticEntry(person, entry, time_slot_index, day_type_idx,
-                               time_key, sched_type, current_slot,
-                               scheduled_activity_index, scheduled_venue_id,
-                               scheduled_subset_idx);
-      }
+    // Determine scheduled activity
+    VenueId scheduled_venue_id = entry.venue_id;
+    SubsetIndex scheduled_subset_idx = entry.subset_index;
+    int16_t scheduled_activity_index = entry.activity_index;
 
-      // Check for schedule hop trigger
-      maybeTriggerScheduleHop(person, current_slot, day_type_idx, time_key,
-                              scheduled_activity_index, scheduled_venue_id,
-                              scheduled_subset_idx);
-
-      // Check for policy overrides (symptom-based, lockdowns, etc.)
-      if (applyPolicyOverride(locations[i], person, scheduled_activity_index,
-                              scheduled_venue_id, scheduled_subset_idx,
-                              time_slot_index)) {
-        locations[i].person_id = person.id;
-        locations[i].person_array_index = i;
-        continue;
-      }
-
-      // SUCCESS: Assign pre-computed or runtime-selected activity/venue
-      locations[i].venue_id = scheduled_venue_id;
-      locations[i].subset_index = scheduled_subset_idx;
-      locations[i].activity_index = scheduled_activity_index;
-      locations[i].encounter_type_id = 255;
-
-    } else {
-      // Fallback to residence if slot index invalid
-      setResidenceOrNoneLocation(locations[i], person);
+    if (!entry.is_deterministic) {
+      const ScheduleType* sched_type = schedule_type;
+      resolveStochasticEntry(person, entry, time_slot_index, day_type_idx,
+                             time_key, sched_type, current_slot,
+                             scheduled_activity_index, scheduled_venue_id,
+                             scheduled_subset_idx);
     }
 
-    locations[i].person_id = person.id;
-    locations[i].person_array_index = i;
+    // Check for schedule hop trigger
+    maybeTriggerScheduleHop(person, current_slot, day_type_idx, time_key,
+                            scheduled_activity_index, scheduled_venue_id,
+                            scheduled_subset_idx);
+
+    // Check for policy overrides (symptom-based, lockdowns, etc.)
+    if (applyPolicyOverride(locations[i], person, scheduled_activity_index,
+                            scheduled_venue_id, scheduled_subset_idx,
+                            time_slot_index)) {
+      locations[i].person_id = person.id;
+      locations[i].person_array_index = i;
+      return;
+    }
+
+    // SUCCESS: Assign pre-computed or runtime-selected activity/venue
+    locations[i].venue_id = scheduled_venue_id;
+    locations[i].subset_index = scheduled_subset_idx;
+    locations[i].activity_index = scheduled_activity_index;
+    locations[i].encounter_type_id = 255;
+
+  } else {
+    // Fallback to residence if slot index invalid
+    setResidenceOrNoneLocation(locations[i], person);
   }
+
+  locations[i].person_id = person.id;
+  locations[i].person_array_index = i;
 }
 
 void ActivityManager::resolveStochasticEntry(
