@@ -226,6 +226,17 @@ class ActivityManager {
       const ScheduleType& schedule_type,
       const std::vector<double>& participation_by_id);
 
+  // Inner step of assignFromPrecomputedSchedule for the "slot index is in
+  // range" path. Resolves current_slot, re-evaluates stochastic/hybrid
+  // entries, applies schedule hops, applies any policy override, and
+  // writes the final activity/venue/subset/encounter_type fields. Returns
+  // early when a policy override fired (caller still writes
+  // person_id / person_array_index in its tail).
+  void resolveAndWriteValidScheduleSlot(
+      size_t person_array_idx, Person& person, const ScheduleEntry& entry,
+      int time_slot_index, int day_type_idx, uint64_t time_key,
+      std::vector<PersonLocation>& locations);
+
   // Handles a person with a precomputed schedule: looks up the
   // ScheduleEntry at time_slot_index, re-evaluates stochastic/hybrid
   // entries, applies any schedule hop, applies any policy override, and
