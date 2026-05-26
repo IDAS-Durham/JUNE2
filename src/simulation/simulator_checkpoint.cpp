@@ -580,6 +580,43 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
   return out;
 }
 
+// Overlay one shard's per-rank manager state (last_processed_transition_time_
+// and policy frozen_states) onto the accumulator maps, keeping only entries
+// for people THIS rank owns — the maps are keyed on global PersonId so a
+// resume at a different rank count still routes every entry correctly.
+void overlayShardManagerState(
+    H5::H5File& f, const WorldState& world,
+    std::unordered_map<PersonId, double>& lpt_map,
+    std::unordered_map<PersonId, FrozenPersonState>& frozen_accum) {
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto U8 = H5::PredType::NATIVE_UINT8;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto lp = readVec<int32_t>(f, "/epidemiology/lpt_person_id", I32);
+  auto lt = readVec<double>(f, "/epidemiology/lpt_time", F64);
+  for (size_t i = 0; i < lp.size(); ++i)
+    if (world.getPerson(lp[i])) lpt_map[lp[i]] = lt[i];
+
+  auto fzp = readVec<int32_t>(f, "/policy_frozen_states/person_id", I32);
+  auto fzpol =
+      readVec<uint8_t>(f, "/policy_frozen_states/triggering_policy_index", U8);
+  auto fzh = readVec<int32_t>(
+      f, "/policy_frozen_states/paused_hopped_schedule_id", I32);
+  auto fzr = readVec<int32_t>(
+      f, "/policy_frozen_states/paused_return_schedule_id", I32);
+  auto fzv = readVec<int32_t>(f, "/policy_frozen_states/pin_venue_id", I32);
+  auto fzs = readVec<int32_t>(f, "/policy_frozen_states/pin_subset_index", I32);
+  for (size_t i = 0; i < fzp.size(); ++i) {
+    if (!world.getPerson(fzp[i])) continue;
+    FrozenPersonState st;
+    st.triggering_policy_index = fzpol[i];
+    st.paused_hopped_schedule_id = static_cast<int16_t>(fzh[i]);
+    st.paused_return_schedule_id = static_cast<int16_t>(fzr[i]);
+    st.pin_venue_id = fzv[i];
+    st.pin_subset_index = fzs[i];
+    frozen_accum[fzp[i]] = st;
+  }
+}
+
 // Overlay one shard's /population/ records onto world_.people owned by this
 // rank. Each owned person gets every field assigned and any default-
 // constructed infection / vaccine_trajectory cleared (those get reinstated by
@@ -821,54 +858,16 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   // ---- delta shards: overlay onto this rank's owned world_ by global id ----
   YAML::Node si = YAML::LoadFile((cp / "shard_index.yaml").string());
   int n_shards = si["num_ranks"].as<int>();
-  auto F64 = H5::PredType::NATIVE_DOUBLE;
-  auto I32 = H5::PredType::NATIVE_INT32;
-  auto I64 = H5::PredType::NATIVE_INT64;
-  auto U16 = H5::PredType::NATIVE_UINT16;
-  auto U8 = H5::PredType::NATIVE_UINT8;
-  auto U32 = H5::PredType::NATIVE_UINT32;
   size_t n_people = 0, n_inf = 0, n_vax = 0, n_fom = 0;
-
   for (int s = 0; s < n_shards; ++s) {
     fs::path sf = cp / ("delta_rank" + std::to_string(s) + ".h5");
     if (!fs::exists(sf)) continue;
     H5::H5File f(sf.string(), H5F_ACC_RDONLY);
-
     n_people += overlayShardPopulation(f, world_);
-
     n_inf += overlayShardInfection(f, world_, disease_.get());
-
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
-
     n_fom += overlayShardFomite(f, world_);
-
-    // per-rank manager state: keep only entries for people THIS rank owns
-    // (rank-count independent — keyed on global PersonId).
-    auto lp = readVec<int32_t>(f, "/epidemiology/lpt_person_id", I32);
-    auto lt = readVec<double>(f, "/epidemiology/lpt_time", F64);
-    for (size_t i = 0; i < lp.size(); ++i)
-      if (world_.getPerson(lp[i])) lpt_map[lp[i]] = lt[i];
-
-    auto fzp = readVec<int32_t>(f, "/policy_frozen_states/person_id", I32);
-    auto fzpol = readVec<uint8_t>(
-        f, "/policy_frozen_states/triggering_policy_index", U8);
-    auto fzh = readVec<int32_t>(
-        f, "/policy_frozen_states/paused_hopped_schedule_id", I32);
-    auto fzr = readVec<int32_t>(
-        f, "/policy_frozen_states/paused_return_schedule_id", I32);
-    auto fzv = readVec<int32_t>(f, "/policy_frozen_states/pin_venue_id", I32);
-    auto fzs =
-        readVec<int32_t>(f, "/policy_frozen_states/pin_subset_index", I32);
-    for (size_t i = 0; i < fzp.size(); ++i) {
-      if (!world_.getPerson(fzp[i])) continue;
-      FrozenPersonState st;
-      st.triggering_policy_index = fzpol[i];
-      st.paused_hopped_schedule_id = static_cast<int16_t>(fzh[i]);
-      st.paused_return_schedule_id = static_cast<int16_t>(fzr[i]);
-      st.pin_venue_id = fzv[i];
-      st.pin_subset_index = fzs[i];
-      frozen_accum[fzp[i]] = st;
-    }
+    overlayShardManagerState(f, world_, lpt_map, frozen_accum);
   }
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
