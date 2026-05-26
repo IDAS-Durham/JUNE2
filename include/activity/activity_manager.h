@@ -232,6 +232,16 @@ class ActivityManager {
                               VenueId& scheduled_venue_id,
                               SubsetIndex& scheduled_subset_idx);
 
+  // Handles the non-hopped, non-dead branch of assignActivities (single
+  // slot form): resolves the person's schedule type (lazily caching),
+  // picks an activity and venue against the caller-supplied slot, applies
+  // any policy override, and writes the final PersonLocation. Skips the
+  // person and logs an error if no schedule type can be resolved.
+  void assignSingleSlotForLivePerson(const Person& person,
+                                     size_t person_array_idx,
+                                     const TimeSlot& slot, int day_type_idx,
+                                     std::vector<PersonLocation>& locations);
+
   // Handles the hopped-schedule branch of assignActivities (single slot
   // form): runs advanceHoppedSchedule for temporary hops or executes the
   // non-temporary day-type slot directly against `slot`, applies any

@@ -217,43 +217,50 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
       continue;
     }
 
-    // Get person's schedule type
-    const ScheduleType* schedule_type = person.cached_schedule_type_;
-    if (!schedule_type) {
-      schedule_type = config_.schedule.getScheduleTypeForPerson(person);
-      const_cast<Person&>(person).cached_schedule_type_ = schedule_type;
-    }
+    assignSingleSlotForLivePerson(person, i, slot, day_type_idx, locations);
+  }
+}
 
-    if (!schedule_type) {
-      std::cerr << "ERROR: No schedule type for person " << person.id
-                << std::endl;
-      continue;
-    }
+void ActivityManager::assignSingleSlotForLivePerson(
+    const Person& person, size_t person_array_idx, const TimeSlot& slot,
+    int day_type_idx, std::vector<PersonLocation>& locations) {
+  const size_t i = person_array_idx;
+  // Get person's schedule type
+  const ScheduleType* schedule_type = person.cached_schedule_type_;
+  if (!schedule_type) {
+    schedule_type = config_.schedule.getScheduleTypeForPerson(person);
+    const_cast<Person&>(person).cached_schedule_type_ = schedule_type;
+  }
 
-    // Select activity for this person (returns int16_t index)
-    uint64_t time_key = static_cast<uint64_t>(current_simulation_time_ * 1000);
-    int16_t scheduled_activity_index =
-        selectActivity(person, slot, -1, schedule_type, day_type_idx, time_key);
+  if (!schedule_type) {
+    std::cerr << "ERROR: No schedule type for person " << person.id
+              << std::endl;
+    return;
+  }
 
-    // Select specific venue for that activity
-    auto [venue_id, subset_idx] =
-        selectVenue(person, scheduled_activity_index, slot, time_key);
+  // Select activity for this person (returns int16_t index)
+  uint64_t time_key = static_cast<uint64_t>(current_simulation_time_ * 1000);
+  int16_t scheduled_activity_index =
+      selectActivity(person, slot, -1, schedule_type, day_type_idx, time_key);
 
-    // Update location
-    locations[i].venue_id = venue_id;
-    locations[i].subset_index = subset_idx;
-    locations[i].activity_index = scheduled_activity_index;
-    locations[i].encounter_type_id = 255;  // Default for normal activities
+  // Select specific venue for that activity
+  auto [venue_id, subset_idx] =
+      selectVenue(person, scheduled_activity_index, slot, time_key);
+
+  // Update location
+  locations[i].venue_id = venue_id;
+  locations[i].subset_index = subset_idx;
+  locations[i].activity_index = scheduled_activity_index;
+  locations[i].encounter_type_id = 255;  // Default for normal activities
+  locations[i].person_id = person.id;
+  locations[i].person_array_index = i;
+
+  // Check for policy overrides (symptom-based, lockdowns, etc.)
+  if (applyPolicyOverride(locations[i], const_cast<Person&>(person),
+                          scheduled_activity_index, locations[i].venue_id,
+                          locations[i].subset_index, -1)) {
     locations[i].person_id = person.id;
     locations[i].person_array_index = i;
-
-    // Check for policy overrides (symptom-based, lockdowns, etc.)
-    if (applyPolicyOverride(locations[i], const_cast<Person&>(person),
-                            scheduled_activity_index, locations[i].venue_id,
-                            locations[i].subset_index, -1)) {
-      locations[i].person_id = person.id;
-      locations[i].person_array_index = i;
-    }
   }
 }
 
