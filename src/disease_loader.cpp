@@ -264,6 +264,35 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::loadTransmissionStageDrivenFlat(
+    const YAML::Node& trans_node, TransmissionParams& transmission,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  // Flat stage_curves at top level — single Standard mode.
+  if (trans_node["stage_curves"]) {
+    for (auto it = trans_node["stage_curves"].begin();
+         it != trans_node["stage_curves"].end(); ++it) {
+      std::string stage_name = it->first.as<std::string>();
+      transmission.stage_curves[stage_name] = parseCurve(
+          it->second, "stage_curves / " + stage_name, verbose);
+    }
+  }
+
+  // Populate hot-path vector for ID-based lookups.
+  transmission.symptom_id_curves.resize(symptom_tags.size(), nullptr);
+  for (const auto& tag : symptom_tags) {
+    auto it = transmission.stage_curves.find(tag.name);
+    if (it != transmission.stage_curves.end()) {
+      transmission.symptom_id_curves[tag.id] = it->second;
+    }
+  }
+
+  // Single Standard mode.
+  TransmissionMode tmode;
+  tmode.name = "default";
+  tmode.symptom_curves = transmission.symptom_id_curves;
+  transmission.modes.push_back(std::move(tmode));
+}
+
 void DiseaseLoader::finalizeStageDrivenMultiMode(
     TransmissionParams& transmission,
     const std::vector<SymptomTag>& symptom_tags) {
@@ -652,30 +681,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 
           finalizeStageDrivenMultiMode(transmission, symptom_tags);
         } else {
-          // Flat stage_curves at top level — single Standard mode.
-          if (trans_node["stage_curves"]) {
-            for (auto it = trans_node["stage_curves"].begin();
-                 it != trans_node["stage_curves"].end(); ++it) {
-              std::string stage_name = it->first.as<std::string>();
-              transmission.stage_curves[stage_name] = parseCurve(
-                  it->second, "stage_curves / " + stage_name, verbose);
-            }
-          }
-
-          // Populate hot-path vector for ID-based lookups.
-          transmission.symptom_id_curves.resize(symptom_tags.size(), nullptr);
-          for (const auto& tag : symptom_tags) {
-            auto it = transmission.stage_curves.find(tag.name);
-            if (it != transmission.stage_curves.end()) {
-              transmission.symptom_id_curves[tag.id] = it->second;
-            }
-          }
-
-          // Single Standard mode.
-          TransmissionMode tmode;
-          tmode.name = "default";
-          tmode.symptom_curves = transmission.symptom_id_curves;
-          transmission.modes.push_back(std::move(tmode));
+          loadTransmissionStageDrivenFlat(trans_node, transmission,
+                                          symptom_tags, verbose);
         }
       }
     }
