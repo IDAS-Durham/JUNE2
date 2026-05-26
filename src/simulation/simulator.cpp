@@ -265,6 +265,44 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
   return global_eligible_map;
 }
 
+// Per-slot transmission + epidemiology summary print: MPI_Reduce the
+// per-rank totals onto rank 0 and print one line of transmissions + one
+// line of epi transitions/recoveries/deaths if any are non-zero.
+void printSlotEpiSummary(int local_new_infections,
+                         const EpiSlotStats& epi_stats, double delta_hours,
+                         DomainManager* domain_mgr, int rank) {
+  int global_new_infections = local_new_infections;
+  int local_epi[4] = {epi_stats.transitions, epi_stats.recoveries,
+                      epi_stats.deaths, epi_stats.active_remaining};
+  int global_epi[4];
+#ifdef USE_MPI
+  if (domain_mgr) {
+    MPI_Reduce(&local_new_infections, &global_new_infections, 1, MPI_INT,
+               MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(local_epi, global_epi, 4, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+  } else {
+    std::copy(std::begin(local_epi), std::end(local_epi),
+              std::begin(global_epi));
+  }
+#else
+  (void)domain_mgr;
+  std::copy(std::begin(local_epi), std::end(local_epi),
+            std::begin(global_epi));
+#endif
+  if (rank != 0) return;
+  if (global_new_infections > 0) {
+    std::cout << "      [Transmission] " << global_new_infections
+              << " new infections (duration=" << delta_hours << "h)"
+              << std::endl;
+  }
+  if (global_epi[0] > 0 || global_epi[1] > 0 || global_epi[2] > 0) {
+    std::cout << "      [Epidemiology] Processed " << global_epi[0]
+              << " symptom transitions. " << global_epi[1] << " recoveries, "
+              << global_epi[2] << " deaths. "
+              << "Active infections remaining: " << global_epi[3] << std::endl;
+  }
+}
+
 // Per-slot venue distribution print: bin locations by activity index and
 // MPI_Reduce onto rank 0 for printing. Indexed by activity_index over
 // world.activity_names so the Reduce buffer size is identical on every
@@ -1336,40 +1374,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
     throw;
   }
 
-  // Per-slot transmission and epidemiology summary (aggregated across ranks)
-  {
-    int global_new_infections = local_new_infections;
-    int local_epi[4] = {epi_stats.transitions, epi_stats.recoveries,
-                        epi_stats.deaths, epi_stats.active_remaining};
-    int global_epi[4];
-#ifdef USE_MPI
-    if (domain_mgr_) {
-      MPI_Reduce(&local_new_infections, &global_new_infections, 1, MPI_INT,
-                 MPI_SUM, 0, MPI_COMM_WORLD);
-      MPI_Reduce(local_epi, global_epi, 4, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    } else {
-      std::copy(std::begin(local_epi), std::end(local_epi),
-                std::begin(global_epi));
-    }
-#else
-    std::copy(std::begin(local_epi), std::end(local_epi),
-              std::begin(global_epi));
-#endif
-    if (rank == 0) {
-      if (global_new_infections > 0) {
-        std::cout << "      [Transmission] " << global_new_infections
-                  << " new infections (duration=" << delta_hours << "h)"
-                  << std::endl;
-      }
-      if (global_epi[0] > 0 || global_epi[1] > 0 || global_epi[2] > 0) {
-        std::cout << "      [Epidemiology] Processed " << global_epi[0]
-                  << " symptom transitions. " << global_epi[1]
-                  << " recoveries, " << global_epi[2] << " deaths. "
-                  << "Active infections remaining: " << global_epi[3]
-                  << std::endl;
-      }
-    }
-  }
+  // Per-slot transmission + epidemiology summary (rank-0 prints after
+  // Reduce).
+  printSlotEpiSummary(local_new_infections, epi_stats, delta_hours,
+                      domain_mgr_, rank);
 
   // Deposition write-back: aggregate per-node contributions from infected
   // people at owned venues and forward to the plugin for the next advance()
