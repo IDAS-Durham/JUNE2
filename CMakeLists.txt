@@ -130,6 +130,7 @@ set(JUNE_CORE_SOURCES
     src/disease_loader.cpp
     src/interaction_manager.cpp
     src/activity/activity_manager.cpp
+    src/activity/activity_manager_selection.cpp
     src/config.cpp
     src/config_checks.cpp
     src/activity/coordinated_encounter_manager.cpp
