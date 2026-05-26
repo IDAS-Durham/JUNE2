@@ -37,6 +37,12 @@ class DiseaseLoader {
                                   TransmissionParams& transmission);
   static void validateOutcomeRowSums(const OutcomeRates& outcome_rates);
 
+  static void parseDepositionStages(
+      const YAML::Node& mode_node,
+      std::vector<std::shared_ptr<InfectiousnessCurve>>& deposition_by_symptom,
+      const std::string& mode_type_prefix, const std::string& mode_name,
+      const std::vector<SymptomTag>& symptom_tags, bool verbose);
+
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(
       const YAML::Node& trajectories_node);

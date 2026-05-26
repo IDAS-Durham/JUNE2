@@ -238,6 +238,29 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+void DiseaseLoader::parseDepositionStages(
+    const YAML::Node& mode_node,
+    std::vector<std::shared_ptr<InfectiousnessCurve>>& deposition_by_symptom,
+    const std::string& mode_type_prefix, const std::string& mode_name,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  deposition_by_symptom.resize(symptom_tags.size(), nullptr);
+  if (!mode_node["deposition_stages"]) return;
+  for (auto it = mode_node["deposition_stages"].begin();
+       it != mode_node["deposition_stages"].end(); ++it) {
+    std::string stage_name = it->first.as<std::string>();
+    auto curve =
+        parseCurve(it->second,
+                   mode_type_prefix + " / " + mode_name + " / " + stage_name,
+                   verbose);
+    for (const auto& tag : symptom_tags) {
+      if (tag.name == stage_name) {
+        deposition_by_symptom[tag.id] = curve;
+        break;
+      }
+    }
+  }
+}
+
 void DiseaseLoader::loadNaturalImmunity(const YAML::Node& config,
                                         TransmissionParams& transmission) {
   if (!config["immunity"]) return;
@@ -504,22 +527,9 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
                 fcfg.infectiousness_curve =
                     std::make_shared<ConstantCurve>(0.0);
               }
-              fcfg.deposition_by_symptom.resize(symptom_tags.size(), nullptr);
-              if (mode_node["deposition_stages"]) {
-                for (auto it = mode_node["deposition_stages"].begin();
-                     it != mode_node["deposition_stages"].end(); ++it) {
-                  std::string stage_name = it->first.as<std::string>();
-                  auto curve = parseCurve(
-                      it->second, "fomite / " + tmode.name + " / " + stage_name,
-                      verbose);
-                  for (const auto& tag : symptom_tags) {
-                    if (tag.name == stage_name) {
-                      fcfg.deposition_by_symptom[tag.id] = curve;
-                      break;
-                    }
-                  }
-                }
-              }
+              parseDepositionStages(mode_node, fcfg.deposition_by_symptom,
+                                    "fomite", tmode.name, symptom_tags,
+                                    verbose);
               tmode.config = std::move(fcfg);
               std::cout << "[DiseaseLoader] Fomite mode '" << tmode.name
                         << "' registered at index " << mode_idx << std::endl;
@@ -537,23 +547,9 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
               tmode.type = TransmissionModeType::CompartmentalDeposition;
               CompartmentalDepositionConfig dcfg;
               dcfg.mode_index = mode_idx;
-              dcfg.deposition_by_symptom.resize(symptom_tags.size(), nullptr);
-              if (mode_node["deposition_stages"]) {
-                for (auto it = mode_node["deposition_stages"].begin();
-                     it != mode_node["deposition_stages"].end(); ++it) {
-                  std::string stage_name = it->first.as<std::string>();
-                  auto curve = parseCurve(it->second,
-                                          "compartmental_deposition / " +
-                                              tmode.name + " / " + stage_name,
-                                          verbose);
-                  for (const auto& tag : symptom_tags) {
-                    if (tag.name == stage_name) {
-                      dcfg.deposition_by_symptom[tag.id] = curve;
-                      break;
-                    }
-                  }
-                }
-              }
+              parseDepositionStages(mode_node, dcfg.deposition_by_symptom,
+                                    "compartmental_deposition", tmode.name,
+                                    symptom_tags, verbose);
               tmode.config = std::move(dcfg);
               std::cout << "[DiseaseLoader] Compartmental deposition mode '"
                         << tmode.name << "' registered at index " << mode_idx
