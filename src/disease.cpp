@@ -445,6 +445,21 @@ std::pair<std::vector<double>, double> Infection::gatherTrajectoryRates(
   return {std::move(rates), total};
 }
 
+int Infection::sampleTrajectoryIndex(const std::vector<double>& rates,
+                                     double total_rate, SplitMix64& rng) {
+  if (total_rate <= 0.0) return 0;
+  std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
+  double rand_val = prob_dist(rng);
+  double cumulative = 0.0;
+  for (size_t i = 0; i < rates.size(); ++i) {
+    cumulative += rates[i];
+    if (rand_val <= cumulative) {
+      return static_cast<int>(i);
+    }
+  }
+  return 0;
+}
+
 void Infection::applyVaccineEfficacyShift(std::vector<double>& rates,
                                           const Person& person,
                                           double infection_time,
@@ -526,8 +541,6 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
     return traj;
   }
 
-  std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
-
   // If a specific trajectory key is requested, find it and skip probability
   // sampling.
   if (!trajectory_key_override.empty()) {
@@ -548,26 +561,8 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
                             total_rate);
 
   // 3. Selection
-  int selected_idx = 0;
-  if (total_rate > 0.0) {
-    double rand_val = prob_dist(rng);
-    double cumulative = 0.0;
-    bool found = false;
-
-    for (size_t i = 0; i < trajectory_rates.size(); ++i) {
-      cumulative += trajectory_rates[i];
-      if (rand_val <= cumulative) {
-        selected_idx = static_cast<int>(i);
-        found = true;
-        break;
-      }
-    }
-
-    // If normalization/precision issues, default to first trajectory
-    if (!found) {
-      selected_idx = 0;
-    }
-  }
+  int selected_idx =
+      sampleTrajectoryIndex(trajectory_rates, total_rate, rng);
 
   // 4. Generate timing
   const auto& final_def = trajectories[selected_idx];

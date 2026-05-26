@@ -453,6 +453,13 @@ class Infection {
                                  const Person& person, double infection_time,
                                  double total_rate) const;
 
+  // Step 3 of rate-based selection: draw a uniform [0,1) sample and return
+  // the index of the first trajectory whose cumulative mass crosses it.
+  // Returns 0 if `total_rate <= 0` or if no cumulative bucket is hit (due
+  // to normalisation / precision drift).
+  static int sampleTrajectoryIndex(const std::vector<double>& rates,
+                                   double total_rate, SplitMix64& rng);
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;
