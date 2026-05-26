@@ -148,6 +148,12 @@ class Simulator {
   void logFinalizedEncountersLocally(
       const std::vector<CoordinatedEncounter>& finalized, int rank);
 
+  // Two-pass coordinated-encounter injection for this slot: build per-slot
+  // lookups, dedup + sort daily_encounters, compute local eligibility,
+  // Allgatherv global eligibility, then stamp venue_id / encounter_type_id
+  // onto every eligible participant's PersonLocation.
+  void injectCoordinatedEncountersIntoSlot(int time_slot_index);
+
   // End-of-run output: write final epidemic events + lookups (collective on
   // all ranks; appends to the per-rank events file), then on rank 0 print
   // the wall-clock summary, activity/interaction stats, and encounter stats.

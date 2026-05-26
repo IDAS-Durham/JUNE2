@@ -1033,6 +1033,35 @@ void Simulator::logFinalizedEncountersLocally(
   }
 }
 
+void Simulator::injectCoordinatedEncountersIntoSlot(int time_slot_index) {
+  if (!coordinated_encounter_manager_) return;
+
+  // Per-slot lookup tables (trigger activities + min attendees) keyed by
+  // encounter_type_id. Cheap to rebuild per slot.
+  EncounterLookups lookups =
+      buildEncounterLookups(world_, config_.coordinated_encounters.encounters);
+
+  auto daily_encounters = dedupAndSortDailyEncounters(
+      coordinated_encounter_manager_->getDailyEncounters());
+
+  // Pass 1: compute each encounter's local eligible-participant set under
+  // the alive + policy-block checks.
+  std::vector<EncounterEligibility> slot_encounters = computeLocalEligibility(
+      daily_encounters, time_slot_index, current_simulation_time_,
+      lookups.trigger_activities, lookups.min_attendees, world_, locations_,
+      policy_manager_.get());
+
+  // Pass 1.5: in MPI mode, sum local_eligible across ranks for encounters
+  // that span ranks so every rank sees the true global count.
+  std::unordered_map<int, int> global_eligible_map = exchangeGlobalEligibility(
+      slot_encounters, daily_encounters, world_, domain_mgr_);
+
+  // Pass 2: stamp venue_id / encounter_type_id onto eligible participants
+  // for encounters that meet their min_required threshold.
+  applyEncounterInjection(slot_encounters, daily_encounters,
+                          global_eligible_map, locations_, domain_mgr_);
+}
+
 void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
                                  int day_type_idx, double delta_hours) {
   const int rank = getRank();
@@ -1079,42 +1108,8 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   }
 #endif
 
-  // Inject Coordinated Encounters for this timeslot into the locations
-  // array
-  if (coordinated_encounter_manager_) {
-    // Per-slot lookup tables (trigger activities + min attendees) keyed by
-    // encounter_type_id. Cheap to rebuild per slot.
-    EncounterLookups lookups = buildEncounterLookups(
-        world_, config_.coordinated_encounters.encounters);
-    auto& encounter_trigger_activities = lookups.trigger_activities;
-    auto& encounter_min_attendees = lookups.min_attendees;
-
-    auto daily_encounters = dedupAndSortDailyEncounters(
-        coordinated_encounter_manager_->getDailyEncounters());
-
-    // === Two-pass encounter injection with MPI eligibility exchange ===
-    // Pass 1: Compute local eligibility for ALL encounters in this slot.
-    // In MPI mode, remote participants cannot be assumed eligible — they
-    // may be policy-blocked or dead on their home rank. We exchange
-    // local_eligible counts across ranks so every rank sees the true
-    // global eligible count before making injection decisions.
-    std::vector<EncounterEligibility> slot_encounters = computeLocalEligibility(
-        daily_encounters, time_slot_index, current_simulation_time_,
-        encounter_trigger_activities, encounter_min_attendees, world_,
-        locations_, policy_manager_.get());
-
-    // MPI Pass 1.5: exchange local eligibility for encounters that span
-    // ranks so every rank sees the true global count before injection.
-    // Prevents assuming a remote participant is eligible when they may
-    // actually be policy-blocked or dead on their home rank.
-    std::unordered_map<int, int> global_eligible_map = exchangeGlobalEligibility(
-        slot_encounters, daily_encounters, world_, domain_mgr_);
-
-    // Pass 2: stamp venue_id / encounter_type_id onto eligible participants
-    // for encounters that meet their min_required threshold.
-    applyEncounterInjection(slot_encounters, daily_encounters,
-                            global_eligible_map, locations_, domain_mgr_);
-  }
+  // Inject Coordinated Encounters for this timeslot into the locations array.
+  injectCoordinatedEncountersIntoSlot(time_slot_index);
 
   // Per-slot venue distribution (aggregated across ranks).
   // Index by activity_index over the rank-consistent world_.activity_names
