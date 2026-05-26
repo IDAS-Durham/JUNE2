@@ -1114,6 +1114,26 @@ void Simulator::logFinalizedEncountersLocally(
   }
 }
 
+EpiSlotStats Simulator::updateEpidemiologyAfterTransmission(double delta_hours) {
+  EpiSlotStats epi_stats;
+  try {
+    ScopedTimer timer("04_InfectionStateUpdates");
+    epi_stats = epidemiology_->updateInfectionStates(current_simulation_time_,
+                                                     locations_);
+  } catch (const std::exception& e) {
+    std::cerr << "[Step 5 Infection Updates] Fatal error: " << e.what()
+              << std::endl;
+    throw;
+  }
+  try {
+    epidemiology_->updateVenueFomites(current_simulation_time_, delta_hours);
+  } catch (const std::exception& e) {
+    std::cerr << "[Step 6 Fomites] Fatal error: " << e.what() << std::endl;
+    throw;
+  }
+  return epi_stats;
+}
+
 int Simulator::runSlotTransmission(
     std::vector<PersonLocation>& transmission_locations, double delta_hours,
     int day_type_idx, std::unordered_set<PersonId>* visitor_ids,
@@ -1352,31 +1372,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   receivePendingAndApply(pending_infections);
 #endif
 
-  // Step 5: Update infection states (symptom changes, recoveries, deaths)
-  // This is done AFTER transmission so that:
-  // - Newly infected people are tracked
-  // - Death processing happens at end of time slot
-  // - Fatal symptoms are non-infectious anyway (checked in isInfectiousStage)
-  EpiSlotStats epi_stats;
-  {
-    try {
-      ScopedTimer timer("04_InfectionStateUpdates");
-      epi_stats = epidemiology_->updateInfectionStates(current_simulation_time_,
-                                                       locations_);
-    } catch (const std::exception& e) {
-      std::cerr << "[Step 5 Infection Updates] Fatal error: " << e.what()
-                << std::endl;
-      throw;
-    }
-  }
-
-  // Step 6: Update venue fomites (decay)
-  try {
-    epidemiology_->updateVenueFomites(current_simulation_time_, delta_hours);
-  } catch (const std::exception& e) {
-    std::cerr << "[Step 6 Fomites] Fatal error: " << e.what() << std::endl;
-    throw;
-  }
+  // Steps 5 + 6: infection state update + venue fomite decay (must run
+  // AFTER transmission so newly-infected people are tracked and death
+  // processing lands at end of slot).
+  EpiSlotStats epi_stats = updateEpidemiologyAfterTransmission(delta_hours);
 
   // Per-slot transmission + epidemiology summary (rank-0 prints after
   // Reduce).

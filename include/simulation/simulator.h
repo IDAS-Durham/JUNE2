@@ -156,6 +156,13 @@ class Simulator {
   // onto every eligible participant's PersonLocation.
   void injectCoordinatedEncountersIntoSlot(int time_slot_index);
 
+  // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
+  // (symptom transitions / recoveries / deaths) and then decay the venue
+  // fomite buffer for this slot. Both wrapped in try/catch with a Fatal
+  // log + rethrow. Returns the EpiSlotStats from Step 5 so the per-slot
+  // summary can print it.
+  EpiSlotStats updateEpidemiologyAfterTransmission(double delta_hours);
+
   // Step 3 of simulateTimeSlot: drive InteractionManager::processTransmissions
   // on this rank's locations + (in MPI mode) incoming visitors. The three
   // visitor-related pointers are nullable so non-MPI / no-domain calls can
