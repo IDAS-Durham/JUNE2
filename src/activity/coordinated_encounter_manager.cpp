@@ -106,6 +106,20 @@ bool hasMutualProposal(const ProposalSet& s, const EncounterProposal& prop) {
                   prop.encounter_type_id}) > 0;
 }
 
+// Populates the proposal-derived fields of a reply (all but status, which
+// is set by the per-proposal decision logic).
+EncounterReply makeReplySkeleton(const EncounterProposal& prop) {
+  EncounterReply reply;
+  reply.encounter_id = prop.encounter_id;
+  reply.host_id = prop.host_id;
+  reply.invitee_id = prop.invitee_id;
+  reply.venue_id = prop.venue_id;
+  reply.venue_type_id = prop.venue_type_id;
+  reply.slot = prop.slot;
+  reply.encounter_type_id = prop.encounter_type_id;
+  return reply;
+}
+
 }  // namespace
 
 CoordinatedEncounterManager::CoordinatedEncounterManager(
@@ -539,14 +553,7 @@ void CoordinatedEncounterManager::processProposals(
       buildProposalKeySet(sorted_proposals, host_proposals);
 
   for (const auto& prop : sorted_proposals) {
-    EncounterReply reply;
-    reply.encounter_id = prop.encounter_id;
-    reply.host_id = prop.host_id;
-    reply.invitee_id = prop.invitee_id;
-    reply.venue_id = prop.venue_id;
-    reply.venue_type_id = prop.venue_type_id;
-    reply.slot = prop.slot;
-    reply.encounter_type_id = prop.encounter_type_id;
+    EncounterReply reply = makeReplySkeleton(prop);
 
     // Find invitee locally
     auto it = world_.person_index.find(prop.invitee_id);
