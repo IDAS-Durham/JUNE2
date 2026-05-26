@@ -797,6 +797,27 @@ static void printPerTypeSummary(
 // 3 sum_daily_p * 1e6 (scaled to integer for MPI_SUM).
 constexpr int kFgFields = 4;
 
+// Rank-0 dump of the global per-frequency-group budget rolls.
+static void printFreqGroupSummary(const std::vector<std::string>& fg_names,
+                                  const std::vector<long long>& fg_global) {
+  if (fg_names.empty()) return;
+  std::cout << "      --- frequency_groups (budget rolls) ---" << std::endl;
+  for (size_t gi = 0; gi < fg_names.size(); ++gi) {
+    long long persons = fg_global[gi * kFgFields + 0];
+    long long hits = fg_global[gi * kFgFields + 1];
+    long long emitted = fg_global[gi * kFgFields + 2];
+    double sum_p = static_cast<double>(fg_global[gi * kFgFields + 3]) / 1e6;
+    double hit_rate = persons > 0 ? 100.0 * hits / persons : 0.0;
+    double avg_p = persons > 0 ? sum_p / persons : 0.0;
+    double emit_rate = hits > 0 ? 100.0 * emitted / hits : 0.0;
+    std::cout << "        [" << fg_names[gi] << "] persons=" << persons
+              << " avg_daily_p=" << std::fixed << std::setprecision(4) << avg_p
+              << " hits=" << hits << " (" << std::fixed << std::setprecision(1)
+              << hit_rate << "%) emitted=" << emitted << " (" << std::fixed
+              << std::setprecision(1) << emit_rate << "% of hits)" << std::endl;
+  }
+}
+
 static std::vector<long long> serializeFreqGroupStats(
     const std::vector<std::string>& fg_names,
     const std::unordered_map<
@@ -898,24 +919,7 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
 
   printPerTypeSummary(global_arr, enc_defs);
 
-  if (!fg_names.empty()) {
-    std::cout << "      --- frequency_groups (budget rolls) ---" << std::endl;
-    for (size_t gi = 0; gi < fg_names.size(); ++gi) {
-      long long persons = fg_global[gi * kFgFields + 0];
-      long long hits = fg_global[gi * kFgFields + 1];
-      long long emitted = fg_global[gi * kFgFields + 2];
-      double sum_p = static_cast<double>(fg_global[gi * kFgFields + 3]) / 1e6;
-      double hit_rate = persons > 0 ? 100.0 * hits / persons : 0.0;
-      double avg_p = persons > 0 ? sum_p / persons : 0.0;
-      double emit_rate = hits > 0 ? 100.0 * emitted / hits : 0.0;
-      std::cout << "        [" << fg_names[gi] << "] persons=" << persons
-                << " avg_daily_p=" << std::fixed << std::setprecision(4)
-                << avg_p << " hits=" << hits << " (" << std::fixed
-                << std::setprecision(1) << hit_rate << "%) emitted=" << emitted
-                << " (" << std::fixed << std::setprecision(1) << emit_rate
-                << "% of hits)" << std::endl;
-    }
-  }
+  printFreqGroupSummary(fg_names, fg_global);
   std::cout << "      =================================================="
             << std::endl;
 }
