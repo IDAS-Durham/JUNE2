@@ -649,57 +649,11 @@ void ActivityManager::assignActivitiesFromSchedule(
       int16_t scheduled_activity_index = entry.activity_index;
 
       if (!entry.is_deterministic) {
-        // Check if this is a hybrid activity using bitmask (no string
-        // comparison). Also honour the per-schedule force_hybrid_mask so the
-        // cached venue is reused on participation pass.
-        bool is_hybrid_entry =
-            (entry.venue_id != -1) &&
-            (config_.performance.isHybridIdx(scheduled_activity_index) ||
-             (schedule_type && scheduled_activity_index >= 0 &&
-              (schedule_type->force_hybrid_mask &
-               (ActivityMask(1) << scheduled_activity_index)) != 0));
-
-        // Ensure we have valid slot/schedule_type pointers
         const ScheduleType* sched_type = schedule_type;
-        if (!sched_type) {
-          sched_type = config_.schedule.getScheduleTypeForPerson(person);
-          person.cached_schedule_type_ = sched_type;
-        }
-        if (!current_slot) {
-          current_slot =
-              lookupCurrentSlot(sched_type, day_type_idx, time_slot_index);
-        }
-
-        if (is_hybrid_entry) {
-          // HYBRID: Re-evaluate participation, use precomputed venue if passed
-          int16_t runtime_activity_idx =
-              selectActivity(person, *current_slot, time_slot_index, sched_type,
-                             day_type_idx, time_key);
-
-          if (runtime_activity_idx == scheduled_activity_index) {
-            // Passed participation! Use precomputed venue
-            scheduled_venue_id = entry.venue_id;
-            scheduled_subset_idx = entry.subset_index;
-            scheduled_activity_index = entry.activity_index;
-          } else {
-            // Failed participation or chose different activity
-            auto [venue_id, subset_idx] = selectVenue(
-                person, runtime_activity_idx, *current_slot, time_key);
-            scheduled_venue_id = venue_id;
-            scheduled_subset_idx = subset_idx;
-            scheduled_activity_index = runtime_activity_idx;
-          }
-        } else {
-          // FULLY STOCHASTIC: select both activity and venue at runtime
-          int16_t runtime_activity_idx =
-              selectActivity(person, *current_slot, time_slot_index, sched_type,
-                             day_type_idx, time_key);
-          auto [venue_id, subset_idx] = selectVenue(
-              person, runtime_activity_idx, *current_slot, time_key);
-          scheduled_venue_id = venue_id;
-          scheduled_subset_idx = subset_idx;
-          scheduled_activity_index = runtime_activity_idx;
-        }
+        resolveStochasticEntry(person, entry, time_slot_index, day_type_idx,
+                               time_key, sched_type, current_slot,
+                               scheduled_activity_index, scheduled_venue_id,
+                               scheduled_subset_idx);
       }
 
       // Check for schedule hop trigger
@@ -790,6 +744,64 @@ void ActivityManager::assignActivitiesFromSchedule(
 
     locations[i].person_id = person.id;
     locations[i].person_array_index = i;
+  }
+}
+
+void ActivityManager::resolveStochasticEntry(
+    Person& person, const ScheduleEntry& entry, int time_slot_index,
+    int day_type_idx, uint64_t time_key,
+    const ScheduleType*& sched_type, const TimeSlot*& current_slot,
+    int16_t& scheduled_activity_index, VenueId& scheduled_venue_id,
+    SubsetIndex& scheduled_subset_idx) {
+  // Check if this is a hybrid activity using bitmask (no string
+  // comparison). Also honour the per-schedule force_hybrid_mask so the
+  // cached venue is reused on participation pass.
+  bool is_hybrid_entry =
+      (entry.venue_id != -1) &&
+      (config_.performance.isHybridIdx(scheduled_activity_index) ||
+       (sched_type && scheduled_activity_index >= 0 &&
+        (sched_type->force_hybrid_mask &
+         (ActivityMask(1) << scheduled_activity_index)) != 0));
+
+  // Ensure we have valid slot/schedule_type pointers
+  if (!sched_type) {
+    sched_type = config_.schedule.getScheduleTypeForPerson(person);
+    person.cached_schedule_type_ = sched_type;
+  }
+  if (!current_slot) {
+    current_slot =
+        lookupCurrentSlot(sched_type, day_type_idx, time_slot_index);
+  }
+
+  if (is_hybrid_entry) {
+    // HYBRID: Re-evaluate participation, use precomputed venue if passed
+    int16_t runtime_activity_idx =
+        selectActivity(person, *current_slot, time_slot_index, sched_type,
+                       day_type_idx, time_key);
+
+    if (runtime_activity_idx == scheduled_activity_index) {
+      // Passed participation! Use precomputed venue
+      scheduled_venue_id = entry.venue_id;
+      scheduled_subset_idx = entry.subset_index;
+      scheduled_activity_index = entry.activity_index;
+    } else {
+      // Failed participation or chose different activity
+      auto [venue_id, subset_idx] =
+          selectVenue(person, runtime_activity_idx, *current_slot, time_key);
+      scheduled_venue_id = venue_id;
+      scheduled_subset_idx = subset_idx;
+      scheduled_activity_index = runtime_activity_idx;
+    }
+  } else {
+    // FULLY STOCHASTIC: select both activity and venue at runtime
+    int16_t runtime_activity_idx =
+        selectActivity(person, *current_slot, time_slot_index, sched_type,
+                       day_type_idx, time_key);
+    auto [venue_id, subset_idx] =
+        selectVenue(person, runtime_activity_idx, *current_slot, time_key);
+    scheduled_venue_id = venue_id;
+    scheduled_subset_idx = subset_idx;
+    scheduled_activity_index = runtime_activity_idx;
   }
 }
 

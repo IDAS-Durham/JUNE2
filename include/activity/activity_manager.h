@@ -130,6 +130,21 @@ class ActivityManager {
                                     int day_type_idx,
                                     int time_slot_index) const;
 
+  // Re-evaluates a non-deterministic precomputed schedule entry at runtime.
+  // For hybrid entries, re-rolls participation and reuses the precomputed
+  // venue iff the same activity is chosen. For fully-stochastic entries,
+  // picks both activity and venue freshly. Lazily backfills sched_type and
+  // current_slot if either was null. Mutates the scheduled_* outputs in
+  // place. Caller must have verified !entry.is_deterministic.
+  void resolveStochasticEntry(Person& person, const ScheduleEntry& entry,
+                              int time_slot_index, int day_type_idx,
+                              uint64_t time_key,
+                              const ScheduleType*& sched_type,
+                              const TimeSlot*& current_slot,
+                              int16_t& scheduled_activity_index,
+                              VenueId& scheduled_venue_id,
+                              SubsetIndex& scheduled_subset_idx);
+
   // Handles the hopped-schedule branch of assignActivitiesFromSchedule:
   // dispatches to advanceHoppedSchedule (temporary) or the non-temporary
   // freeze-in-place day-type-slot path, then applies any policy override
