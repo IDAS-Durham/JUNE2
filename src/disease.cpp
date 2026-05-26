@@ -420,6 +420,22 @@ void Infection::buildTransitionsFromStages(
   }
 }
 
+std::optional<InfectionTrajectory> Infection::tryBuildForcedTrajectory(
+    const std::string& key, SplitMix64& rng) {
+  const auto& trajectories = disease_->getTrajectories();
+  for (const auto& traj_def : trajectories) {
+    if (traj_def.selection_key == key) {
+      InfectionTrajectory traj;
+      traj.infection_time = infection_time_;
+      buildTransitionsFromStages(traj, traj_def,
+                                 traj_def.start_stage.value_or(""), rng);
+      traj.infectiousness_factor = traj_def.infectiousness_factor;
+      return traj;
+    }
+  }
+  return std::nullopt;
+}
+
 InfectionTrajectory Infection::generateTrajectoryFromRates(
     SplitMix64& rng, const Person* person, const WorldState* world,
     const std::string& venue_type, int venue_id, float severity_factor,
@@ -460,14 +476,8 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   // If a specific trajectory key is requested, find it and skip probability
   // sampling.
   if (!trajectory_key_override.empty()) {
-    for (int i = 0; i < (int)trajectories.size(); ++i) {
-      if (trajectories[i].selection_key == trajectory_key_override) {
-        const auto& forced_def = trajectories[i];
-        buildTransitionsFromStages(traj, forced_def,
-                                   forced_def.start_stage.value_or(""), rng);
-        traj.infectiousness_factor = forced_def.infectiousness_factor;
-        return traj;
-      }
+    if (auto forced = tryBuildForcedTrajectory(trajectory_key_override, rng)) {
+      return std::move(*forced);
     }
     std::cerr << "WARNING: trajectory_key_override '" << trajectory_key_override
               << "' not found; falling back to rate-based selection."

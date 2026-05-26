@@ -430,6 +430,12 @@ class Infection {
                                   const std::string& start_target,
                                   SplitMix64& rng);
 
+  // Build a trajectory directly from the trajectory whose selection_key
+  // matches `key`, skipping rate-based selection. Returns empty if no
+  // trajectory has that key.
+  std::optional<InfectionTrajectory> tryBuildForcedTrajectory(
+      const std::string& key, SplitMix64& rng);
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;
