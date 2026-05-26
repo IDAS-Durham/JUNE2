@@ -140,6 +140,16 @@ class ActivityManager {
                                           const TimeSlot& slot,
                                           int16_t activity_idx) const;
 
+  // Walks `available_indices` in order and returns the first activity that
+  // passes its participation roll. Linked activities consult the cached
+  // per-(person, sim_day) decision instead of rolling. Returns
+  // available_indices.back() as the default if no candidate passes.
+  int16_t pickActivityByRate(const Person& person,
+                             const ScheduleType& schedule_type,
+                             const std::vector<double>& participation_by_id,
+                             const std::vector<int16_t>& available_indices,
+                             SplitMix64& rng) const;
+
   // Fills `available` with the slot's allowed activity indices, restricted
   // to those the person actually has venues for. no_venue_act_idx_ and
   // property-dispatch activities are always retained (their venue check

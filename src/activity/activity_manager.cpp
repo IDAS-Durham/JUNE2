@@ -325,32 +325,8 @@ int16_t ActivityManager::selectActivity(const Person& person,
   maybeRollLinkedActivitiesDay(person, slot, *schedule_type,
                                participation_by_id);
 
-  for (int16_t act_idx : available_indices) {
-    if (act_idx < 0) continue;
-
-    // Linked activity: outcome already decided for today.
-    if (schedule_type->linked_activities_mask != 0 &&
-        (schedule_type->linked_activities_mask &
-         (ActivityMask(1) << act_idx)) != 0) {
-      if (person.linked_activities_pass) {
-        return act_idx;  // attending today — pick this activity if available
-      }
-      continue;  // skipping today — fall through without consuming rng
-    }
-
-    if (act_idx < static_cast<int16_t>(participation_by_id.size())) {
-      double rate = participation_by_id[act_idx];
-      if (rate > 0.0) {
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
-        if (dist(rng) < rate) {
-          return act_idx;  // Participate in this activity
-        }
-      }
-    }
-  }
-
-  // Default to last available activity (usually residence)
-  return available_indices.back();
+  return pickActivityByRate(person, *schedule_type, participation_by_id,
+                            available_indices, rng);
 }
 
 std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
@@ -750,6 +726,38 @@ void ActivityManager::maybeTriggerScheduleHop(
     person.return_schedule_id = -1;
     person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
+}
+
+int16_t ActivityManager::pickActivityByRate(
+    const Person& person, const ScheduleType& schedule_type,
+    const std::vector<double>& participation_by_id,
+    const std::vector<int16_t>& available_indices, SplitMix64& rng) const {
+  for (int16_t act_idx : available_indices) {
+    if (act_idx < 0) continue;
+
+    // Linked activity: outcome already decided for today.
+    if (schedule_type.linked_activities_mask != 0 &&
+        (schedule_type.linked_activities_mask & (ActivityMask(1) << act_idx)) !=
+            0) {
+      if (person.linked_activities_pass) {
+        return act_idx;  // attending today — pick this activity if available
+      }
+      continue;  // skipping today — fall through without consuming rng
+    }
+
+    if (act_idx < static_cast<int16_t>(participation_by_id.size())) {
+      double rate = participation_by_id[act_idx];
+      if (rate > 0.0) {
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        if (dist(rng) < rate) {
+          return act_idx;  // Participate in this activity
+        }
+      }
+    }
+  }
+
+  // Default to last available activity (usually residence)
+  return available_indices.back();
 }
 
 void ActivityManager::filterAvailableActivities(
