@@ -523,26 +523,13 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   InfectionTrajectory traj;
   traj.infection_time = infection_time_;
 
-  // Resolve the infector's symptom name for use in CSV rate lookup.
-  const std::string infector_symptom =
-      disease_->getSymptomName(infector_symptom_id);
-
-  // Resolve the transmission mode name for use in CSV rate lookup.
-  const std::string mode_name = disease_->getModeName(transmission_mode_index);
-
-  // Build infection context for outcome rate filtering.
-  InfectionContext infection_ctx{infector_symptom, mode_name};
-
   const auto& trajectories = disease_->getTrajectories();
-
   if (trajectories.empty()) {
     std::cerr << "WARNING: No trajectories defined for disease: "
               << disease_->getName() << std::endl;
     return traj;
   }
 
-  // If a specific trajectory key is requested, find it and skip probability
-  // sampling.
   if (!trajectory_key_override.empty()) {
     if (auto forced = tryBuildForcedTrajectory(trajectory_key_override, rng)) {
       return std::move(*forced);
@@ -552,22 +539,17 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
               << std::endl;
   }
 
-  // 1. Gather raw rates for each trajectory.
+  InfectionContext infection_ctx{
+      disease_->getSymptomName(infector_symptom_id),
+      disease_->getModeName(transmission_mode_index)};
   auto [trajectory_rates, total_rate] =
       gatherTrajectoryRates(*person, world, infection_ctx);
-
-  // 2. Apply dynamic vaccine efficacy
   applyVaccineEfficacyShift(trajectory_rates, *person, traj.infection_time,
                             total_rate);
+  int selected_idx = sampleTrajectoryIndex(trajectory_rates, total_rate, rng);
 
-  // 3. Selection
-  int selected_idx =
-      sampleTrajectoryIndex(trajectory_rates, total_rate, rng);
-
-  // 4. Generate timing
   const auto& final_def = trajectories[selected_idx];
   traj.infectiousness_factor = final_def.infectiousness_factor;
-
   // start_symptom_override (from seeding) takes priority over the trajectory's
   // start_stage field.
   const std::string start_target =
@@ -575,7 +557,6 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
           ? start_symptom_override
           : final_def.start_stage.value_or("");
   buildTransitionsFromStages(traj, final_def, start_target, rng);
-
   return traj;
 }
 
