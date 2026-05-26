@@ -407,54 +407,7 @@ void Simulator::writeCheckpoint(int completed_day,
 
   if (rank != 0) return;
 
-  // -------- rank-0: state.h5 (non-derivable manager + scalar state) --------
-  {
-    H5::H5File f((tmp / "state.h5").string(), H5F_ACC_TRUNC);
-    f.createGroup("/scalars");
-    f.createGroup("/infection_seeder");
-    f.createGroup("/event_log");
-    const auto I32 = H5::PredType::NATIVE_INT32;
-
-    writeVec(f, "/scalars/completed_day", std::vector<int32_t>{completed_day},
-             I32, 0);
-    writeVec(f, "/scalars/num_ranks", std::vector<int32_t>{nranks}, I32, 0);
-    writeVec(f, "/scalars/current_simulation_time",
-             std::vector<double>{current_simulation_time_},
-             H5::PredType::NATIVE_DOUBLE, 0);
-    writeVec(f, "/scalars/next_encounter_group_id",
-             std::vector<uint64_t>{next_encounter_group_id_},
-             H5::PredType::NATIVE_UINT64, 0);
-    writeVec(f, "/scalars/effective_random_seed",
-             std::vector<uint32_t>{config_.simulation.random_seed},
-             H5::PredType::NATIVE_UINT32, 0);
-    writeVec(f, "/scalars/day_type_counts", day_type_counts_, I32, 0);
-
-    // applied_seeds_ (must not re-fire on resume)
-    std::vector<std::string> seeds;
-    if (infection_seeder_)
-      for (const auto& s : infection_seeder_->getAppliedSeeds())
-        seeds.push_back(s);
-    writeStrs(f, "/infection_seeder/applied_seeds", seeds);
-    // NOTE: frozen_states_ and last_processed_transition_time_ are per-rank,
-    // global-id-partitioned state — they live in each delta_rank<r>.h5 shard
-    // (written above), NOT here, so a resume at a different rank count keeps
-    // every rank's entries. Only replicated/global state lives in state.h5.
-
-    // event-log on-disk durability marker (rank-0 logger record counts)
-    std::vector<int64_t> ec = {
-        (int64_t)event_logger_.getInfectionCount(),
-        (int64_t)event_logger_.getSymptomChangeCount(),
-        (int64_t)event_logger_.getDeathCount(),
-        (int64_t)event_logger_.getHospitalAdmissionCount(),
-        (int64_t)event_logger_.getICUAdmissionCount(),
-        (int64_t)event_logger_.getHospitalDischargeCount(),
-        (int64_t)event_logger_.getVaccinationCount(),
-        (int64_t)event_logger_.getRelationshipCount(),
-        (int64_t)event_logger_.getCoordinatedEncounterCount()};
-    writeVec(f, "/event_log/rank0_buffered_counts", ec,
-             H5::PredType::NATIVE_INT64, 0);
-    f.close();
-  }
+  writeCheckpointStateFile(tmp, completed_day, nranks);
 
   writeShardIndex(tmp, nranks);
 
@@ -490,6 +443,51 @@ void Simulator::writeCheckpoint(int completed_day,
   std::cout << "[checkpoint] wrote " << cp_root.string() << " (day "
             << completed_day << ", " << date_iso << ", " << nranks
             << " shard(s))" << std::endl;
+}
+
+void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
+                                         int nranks) {
+  H5::H5File f((tmp / "state.h5").string(), H5F_ACC_TRUNC);
+  f.createGroup("/scalars");
+  f.createGroup("/infection_seeder");
+  f.createGroup("/event_log");
+  const auto I32 = H5::PredType::NATIVE_INT32;
+
+  writeVec(f, "/scalars/completed_day", std::vector<int32_t>{completed_day},
+           I32, 0);
+  writeVec(f, "/scalars/num_ranks", std::vector<int32_t>{nranks}, I32, 0);
+  writeVec(f, "/scalars/current_simulation_time",
+           std::vector<double>{current_simulation_time_},
+           H5::PredType::NATIVE_DOUBLE, 0);
+  writeVec(f, "/scalars/next_encounter_group_id",
+           std::vector<uint64_t>{next_encounter_group_id_},
+           H5::PredType::NATIVE_UINT64, 0);
+  writeVec(f, "/scalars/effective_random_seed",
+           std::vector<uint32_t>{config_.simulation.random_seed},
+           H5::PredType::NATIVE_UINT32, 0);
+  writeVec(f, "/scalars/day_type_counts", day_type_counts_, I32, 0);
+
+  // applied_seeds_ (must not re-fire on resume)
+  std::vector<std::string> seeds;
+  if (infection_seeder_)
+    for (const auto& s : infection_seeder_->getAppliedSeeds())
+      seeds.push_back(s);
+  writeStrs(f, "/infection_seeder/applied_seeds", seeds);
+
+  // event-log on-disk durability marker (rank-0 logger record counts)
+  std::vector<int64_t> ec = {
+      (int64_t)event_logger_.getInfectionCount(),
+      (int64_t)event_logger_.getSymptomChangeCount(),
+      (int64_t)event_logger_.getDeathCount(),
+      (int64_t)event_logger_.getHospitalAdmissionCount(),
+      (int64_t)event_logger_.getICUAdmissionCount(),
+      (int64_t)event_logger_.getHospitalDischargeCount(),
+      (int64_t)event_logger_.getVaccinationCount(),
+      (int64_t)event_logger_.getRelationshipCount(),
+      (int64_t)event_logger_.getCoordinatedEncounterCount()};
+  writeVec(f, "/event_log/rank0_buffered_counts", ec,
+           H5::PredType::NATIVE_INT64, 0);
+  f.close();
 }
 
 namespace {

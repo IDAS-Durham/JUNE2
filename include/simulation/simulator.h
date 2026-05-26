@@ -213,6 +213,14 @@ class Simulator {
   // the day fires, announces on rank 0 and writes a checkpoint.
   void maybeWriteCheckpoint(int day, int rank);
 
+  // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
+  // (completed_day, current_simulation_time_, next_encounter_group_id_, …),
+  // the infection_seeder's applied_seeds, and the rank-0 event-log buffered
+  // record counts. Per-rank manager state (lpt, frozen_states) lives in
+  // each shard, not here, so the checkpoint stays rank-count-independent.
+  void writeCheckpointStateFile(const std::filesystem::path& tmp,
+                                int completed_day, int nranks);
+
   // Fomite initialization
   void initFomiteState();
 
