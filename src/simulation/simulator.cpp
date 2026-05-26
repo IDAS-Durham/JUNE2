@@ -205,6 +205,66 @@ struct EncounterEligibility {
   int min_required;
 };
 
+// MPI eligibility exchange. Each rank only knows its local participants'
+// eligibility; for encounters with any remote participants we Allgatherv
+// (encounter_id, local_eligible) pairs and sum across ranks. The result
+// maps encounter_id -> global eligible count, with entries only for
+// encounters that had any remote participants. Serial or single-rank
+// builds return an empty map.
+std::unordered_map<int, int> exchangeGlobalEligibility(
+    const std::vector<EncounterEligibility>& slot_encounters,
+    const std::vector<CoordinatedEncounter>& daily_encounters,
+    const WorldState& world, DomainManager* domain_mgr) {
+  std::unordered_map<int, int> global_eligible_map;
+#ifdef USE_MPI
+  if (!domain_mgr) return global_eligible_map;
+  // Collect (encounter_id, local_eligible) for encounters with any remote
+  // participants — these are the only ones that need exchange.
+  std::vector<int> local_pairs;  // flat array: [eid, count, eid, count, ...]
+  for (const auto& ee : slot_encounters) {
+    const auto& enc = daily_encounters[ee.encounter_idx];
+    bool has_remote = false;
+    for (PersonId pid : enc.participants) {
+      if (world.person_index.find(pid) == world.person_index.end()) {
+        has_remote = true;
+        break;
+      }
+    }
+    if (has_remote) {
+      local_pairs.push_back(enc.encounter_id);
+      local_pairs.push_back(ee.local_eligible);
+    }
+  }
+
+  int local_count = static_cast<int>(local_pairs.size());
+  int num_ranks = domain_mgr->getNumRanks();
+  std::vector<int> all_counts(num_ranks);
+  MPI_Allgather(&local_count, 1, MPI_INT, all_counts.data(), 1, MPI_INT,
+                MPI_COMM_WORLD);
+
+  std::vector<int> displs(num_ranks, 0);
+  int total = 0;
+  for (int r = 0; r < num_ranks; ++r) {
+    displs[r] = total;
+    total += all_counts[r];
+  }
+
+  std::vector<int> all_pairs(total);
+  MPI_Allgatherv(local_pairs.data(), local_count, MPI_INT, all_pairs.data(),
+                 all_counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
+
+  for (int i = 0; i < total; i += 2) {
+    global_eligible_map[all_pairs[i]] += all_pairs[i + 1];
+  }
+#else
+  (void)slot_encounters;
+  (void)daily_encounters;
+  (void)world;
+  (void)domain_mgr;
+#endif
+  return global_eligible_map;
+}
+
 // Pass 1: per-encounter, compute the local participants who survive the
 // alive + policy-block checks. Encounters not scheduled for this slot are
 // skipped. Returned vector is index-aligned with the surviving subset of
@@ -994,63 +1054,12 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
         encounter_trigger_activities, encounter_min_attendees, world_,
         locations_, policy_manager_.get());
 
-    // Build per-encounter global eligible counts. In MPI mode, each rank
-    // only knows eligibility for its local participants. We exchange
-    // (encounter_id, local_eligible) pairs so each rank can compute the
-    // true global eligible count before making injection decisions.
-    // This prevents the bug where a remote participant is assumed eligible
-    // but is actually policy-blocked or dead on their home rank.
-    std::unordered_map<int, int>
-        global_eligible_map;  // encounter_id -> global count
-
-#ifdef USE_MPI
-    if (domain_mgr_) {
-      // Collect (encounter_id, local_eligible) for encounters with any
-      // remote participants — these are the only ones that need exchange.
-      std::vector<int>
-          local_pairs;  // flat array: [eid, count, eid, count, ...]
-      for (const auto& ee : slot_encounters) {
-        const auto& enc = daily_encounters[ee.encounter_idx];
-        // Check if this encounter has any remote participants
-        bool has_remote = false;
-        for (PersonId pid : enc.participants) {
-          if (world_.person_index.find(pid) == world_.person_index.end()) {
-            has_remote = true;
-            break;
-          }
-        }
-        if (has_remote) {
-          local_pairs.push_back(enc.encounter_id);
-          local_pairs.push_back(ee.local_eligible);
-        }
-      }
-
-      // MPI_Allgatherv to share eligibility data across all ranks
-      int local_count = static_cast<int>(local_pairs.size());
-      int num_ranks = domain_mgr_->getNumRanks();
-      std::vector<int> all_counts(num_ranks);
-      MPI_Allgather(&local_count, 1, MPI_INT, all_counts.data(), 1, MPI_INT,
-                    MPI_COMM_WORLD);
-
-      std::vector<int> displs(num_ranks, 0);
-      int total = 0;
-      for (int r = 0; r < num_ranks; ++r) {
-        displs[r] = total;
-        total += all_counts[r];
-      }
-
-      std::vector<int> all_pairs(total);
-      MPI_Allgatherv(local_pairs.data(), local_count, MPI_INT, all_pairs.data(),
-                     all_counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
-
-      // Sum eligible counts per encounter_id across all ranks
-      for (int i = 0; i < total; i += 2) {
-        int eid = all_pairs[i];
-        int eligible = all_pairs[i + 1];
-        global_eligible_map[eid] += eligible;
-      }
-    }
-#endif
+    // MPI Pass 1.5: exchange local eligibility for encounters that span
+    // ranks so every rank sees the true global count before injection.
+    // Prevents assuming a remote participant is eligible when they may
+    // actually be policy-blocked or dead on their home rank.
+    std::unordered_map<int, int> global_eligible_map = exchangeGlobalEligibility(
+        slot_encounters, daily_encounters, world_, domain_mgr_);
 
     // Pass 2: Inject encounters using global eligible counts.
     for (size_t i = 0; i < slot_encounters.size(); ++i) {
