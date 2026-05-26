@@ -371,28 +371,34 @@ void ActivityManager::precomputeSchedules() {
     }
 
     for (int dt_idx = 0; dt_idx < num_day_types; ++dt_idx) {
-      const std::vector<TimeSlot>* slots =
-          (dt_idx <
-           static_cast<int>(schedule_type->slots_by_day_type_idx.size()))
-              ? schedule_type->slots_by_day_type_idx[dt_idx]
-              : nullptr;
-      if (!slots) continue;
-
-      auto& dt_schedules = world_.precomputed_schedules[dt_idx];
-      uint32_t start = static_cast<uint32_t>(dt_schedules.size());
-      world_.schedule_starts[person_idx * num_day_types + dt_idx] = start;
-      world_.schedule_counts[person_idx * num_day_types + dt_idx] =
-          static_cast<uint16_t>(slots->size());
-
-      for (size_t slot_idx = 0; slot_idx < slots->size(); ++slot_idx) {
-        const auto& slot = (*slots)[slot_idx];
-        uint64_t precomp_key = mix_seed(0xBE00ULL, slot_idx, dt_idx);
-        precomputeOneSlot(person, slot, slot_idx, dt_idx, schedule_type,
-                          precomp_key, dt_schedules);
-      }
+      precomputePersonDayType(person, person_idx, dt_idx, num_day_types,
+                              schedule_type);
     }
 
     person.schedule_computed = true;
+  }
+}
+
+void ActivityManager::precomputePersonDayType(
+    Person& person, size_t person_idx, int dt_idx, int num_day_types,
+    const ScheduleType* schedule_type) {
+  const std::vector<TimeSlot>* slots =
+      (dt_idx < static_cast<int>(schedule_type->slots_by_day_type_idx.size()))
+          ? schedule_type->slots_by_day_type_idx[dt_idx]
+          : nullptr;
+  if (!slots) return;
+
+  auto& dt_schedules = world_.precomputed_schedules[dt_idx];
+  uint32_t start = static_cast<uint32_t>(dt_schedules.size());
+  world_.schedule_starts[person_idx * num_day_types + dt_idx] = start;
+  world_.schedule_counts[person_idx * num_day_types + dt_idx] =
+      static_cast<uint16_t>(slots->size());
+
+  for (size_t slot_idx = 0; slot_idx < slots->size(); ++slot_idx) {
+    const auto& slot = (*slots)[slot_idx];
+    uint64_t precomp_key = mix_seed(0xBE00ULL, slot_idx, dt_idx);
+    precomputeOneSlot(person, slot, slot_idx, dt_idx, schedule_type,
+                      precomp_key, dt_schedules);
   }
 }
 

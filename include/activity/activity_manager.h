@@ -178,6 +178,14 @@ class ActivityManager {
                              const std::vector<int16_t>& available_indices,
                              SplitMix64& rng) const;
 
+  // Pre-computes every slot for one (person, day_type) pair. Writes the
+  // person's starts / counts into world_.schedule_starts /
+  // schedule_counts and delegates each slot to precomputeOneSlot. No-op
+  // if the schedule type has no slot vector for this day_type.
+  void precomputePersonDayType(Person& person, size_t person_idx, int dt_idx,
+                               int num_day_types,
+                               const ScheduleType* schedule_type);
+
   // Pre-computes one (person, day-type, slot) entry. Picks the activity
   // via selectActivity against the per-slot precomp_key, classifies it
   // as deterministic / hybrid / fully-stochastic (honouring the
