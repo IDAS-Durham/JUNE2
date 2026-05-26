@@ -147,6 +147,7 @@ set(JUNE_CORE_SOURCES
     src/simulation/simulator_checkpoint.cpp
     src/simulation/simulator_encounters.cpp
     src/simulation/simulator_reporting.cpp
+    src/simulation/simulator_restore.cpp
     src/simulation/simulator_timeslot.cpp
     src/simulation/compartmental_model_manager.cpp
     src/loaders/hdf5_loader.cpp
