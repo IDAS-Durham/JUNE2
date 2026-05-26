@@ -57,6 +57,65 @@ void writeVec(H5::H5File& f, const std::string& name,
   ds.write(data.data(), t);
 }
 
+void writeStrs(H5::H5File& f, const std::string& name,
+               const std::vector<std::string>& v) {
+  H5::StrType st(H5::PredType::C_S1, H5T_VARIABLE);
+  hsize_t dims[1] = {v.size()};
+  H5::DataSpace space(1, dims);
+  if (v.empty()) {
+    f.createDataSet(name, st, space);
+    return;
+  }
+  std::vector<const char*> ptrs;
+  ptrs.reserve(v.size());
+  for (auto& s : v) ptrs.push_back(s.c_str());
+  H5::DataSet ds = f.createDataSet(name, st, space);
+  ds.write(ptrs.data(), st);
+}
+
+// Gather + write the sparse vaccine-trajectory shard section. One record per
+// vaccinated person (in sorted `ord` order); per-dose fields sit at
+// /vaccine/dose_*[offset..offset+count). Efficacy is re-derived from config
+// on restore, so it is not written here.
+void writeShardVaccine(H5::H5File& f, const std::vector<uint32_t>& ord,
+                       const std::vector<Person>& people, int comp) {
+  std::vector<int32_t> vx_pid;
+  std::vector<std::string> vx_name;
+  std::vector<int64_t> dose_off;
+  std::vector<int32_t> dose_cnt, dose_num;
+  std::vector<double> d_admin, d_eff, d_wane, d_fin, d_wfac;
+  for (uint32_t idx : ord) {
+    const Person& p = people[idx];
+    if (!p.vaccine_trajectory) continue;
+    const auto& vt = *p.vaccine_trajectory;
+    vx_pid.push_back(p.id);
+    vx_name.push_back(vt.vaccine_name);
+    dose_off.push_back(static_cast<int64_t>(dose_num.size()));
+    dose_cnt.push_back(static_cast<int32_t>(vt.doses.size()));
+    for (const auto& d : vt.doses) {
+      dose_num.push_back(d.number);
+      d_admin.push_back(d.day_administered);
+      d_eff.push_back(d.days_to_effective);
+      d_wane.push_back(d.days_to_waning);
+      d_fin.push_back(d.days_to_finished);
+      d_wfac.push_back(d.waning_factor);
+    }
+  }
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto I64 = H5::PredType::NATIVE_INT64;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  writeVec(f, "/vaccine/person_id", vx_pid, I32, comp);
+  writeStrs(f, "/vaccine/vaccine_name", vx_name);
+  writeVec(f, "/vaccine/dose_offsets", dose_off, I64, comp);
+  writeVec(f, "/vaccine/dose_counts", dose_cnt, I32, comp);
+  writeVec(f, "/vaccine/dose_number", dose_num, I32, comp);
+  writeVec(f, "/vaccine/dose_day_administered", d_admin, F64, comp);
+  writeVec(f, "/vaccine/dose_days_to_effective", d_eff, F64, comp);
+  writeVec(f, "/vaccine/dose_days_to_waning", d_wane, F64, comp);
+  writeVec(f, "/vaccine/dose_days_to_finished", d_fin, F64, comp);
+  writeVec(f, "/vaccine/dose_waning_factor", d_wfac, F64, comp);
+}
+
 // Gather + write last_processed_transition_time_ as two parallel arrays under
 // /epidemiology/. Per-rank, global-id-keyed manager state — lives in the
 // shard, not state.h5, so resume at a different rank count keeps every
@@ -235,22 +294,6 @@ void writeManifest(const fs::path& tmp, int completed_day,
   std::ofstream(tmp / "manifest.yaml") << m.c_str() << "\n";
 }
 
-void writeStrs(H5::H5File& f, const std::string& name,
-               const std::vector<std::string>& v) {
-  H5::StrType st(H5::PredType::C_S1, H5T_VARIABLE);
-  hsize_t dims[1] = {v.size()};
-  H5::DataSpace space(1, dims);
-  if (v.empty()) {
-    f.createDataSet(name, st, space);
-    return;
-  }
-  std::vector<const char*> ptrs;
-  ptrs.reserve(v.size());
-  for (auto& s : v) ptrs.push_back(s.c_str());
-  H5::DataSet ds = f.createDataSet(name, st, space);
-  ds.write(ptrs.data(), st);
-}
-
 }  // namespace
 
 void Simulator::writeCheckpoint(int completed_day,
@@ -360,30 +403,6 @@ void Simulator::writeCheckpoint(int completed_day,
       }
     }
 
-    // sparse vaccine doses
-    std::vector<int32_t> vx_pid;
-    std::vector<std::string> vx_name;
-    std::vector<int64_t> dose_off;
-    std::vector<int32_t> dose_cnt, dose_num;
-    std::vector<double> d_admin, d_eff, d_wane, d_fin, d_wfac;
-    for (uint32_t idx : ord) {
-      const Person& p = world_.people[idx];
-      if (!p.vaccine_trajectory) continue;
-      const auto& vt = *p.vaccine_trajectory;
-      vx_pid.push_back(p.id);
-      vx_name.push_back(vt.vaccine_name);
-      dose_off.push_back(static_cast<int64_t>(dose_num.size()));
-      dose_cnt.push_back(static_cast<int32_t>(vt.doses.size()));
-      for (const auto& d : vt.doses) {
-        dose_num.push_back(d.number);
-        d_admin.push_back(d.day_administered);
-        d_eff.push_back(d.days_to_effective);
-        d_wane.push_back(d.days_to_waning);
-        d_fin.push_back(d.days_to_finished);
-        d_wfac.push_back(d.waning_factor);
-      }
-    }
-
     fs::path shard = tmp / ("delta_rank" + std::to_string(rank) + ".h5");
     H5::H5File f(shard.string(), H5F_ACC_TRUNC);
     f.createGroup("/population");
@@ -438,17 +457,7 @@ void Simulator::writeCheckpoint(int completed_day,
     writeVec(f, "/infection/traj_times", traj_time, F64, comp);
     writeVec(f, "/infection/traj_symptom_ids", traj_sym, U16, comp);
 
-    writeVec(f, "/vaccine/person_id", vx_pid, I32, comp);
-    writeStrs(f, "/vaccine/vaccine_name", vx_name);
-    writeVec(f, "/vaccine/dose_offsets", dose_off, I64, comp);
-    writeVec(f, "/vaccine/dose_counts", dose_cnt, I32, comp);
-    writeVec(f, "/vaccine/dose_number", dose_num, I32, comp);
-    writeVec(f, "/vaccine/dose_day_administered", d_admin, F64, comp);
-    writeVec(f, "/vaccine/dose_days_to_effective", d_eff, F64, comp);
-    writeVec(f, "/vaccine/dose_days_to_waning", d_wane, F64, comp);
-    writeVec(f, "/vaccine/dose_days_to_finished", d_fin, F64, comp);
-    writeVec(f, "/vaccine/dose_waning_factor", d_wfac, F64, comp);
-
+    writeShardVaccine(f, ord, world_.people, comp);
     writeShardFomite(f, world_.venues, comp);
 
     writeShardEpidemiology(f, epidemiology_.get(), comp);
