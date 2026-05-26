@@ -13,11 +13,6 @@ namespace june {
 
 namespace {
 
-std::shared_ptr<ConstantCurve> makeConstantCurve(const YAML::Node& node) {
-  double value = node["value"] ? node["value"].as<double>() : 1.0;
-  return std::make_shared<ConstantCurve>(value);
-}
-
 void logCurveRescale(const std::string& context_label, const char* type_name,
                      double max_inf, double factor) {
   std::cout << "[DEBUG] Curve (" << context_label << "): type=" << type_name
@@ -26,6 +21,28 @@ void logCurveRescale(const std::string& context_label, const char* type_name,
             << "  rescale_factor=" << factor
             << "  (set max_infectiousness: " << max_inf * factor
             << " in YAML to match previous behaviour)\n";
+}
+
+std::shared_ptr<ConstantCurve> makeConstantCurve(const YAML::Node& node) {
+  double value = node["value"] ? node["value"].as<double>() : 1.0;
+  return std::make_shared<ConstantCurve>(value);
+}
+
+std::shared_ptr<GammaCurve> makeGammaCurve(const YAML::Node& node,
+                                           const std::string& context_label,
+                                           bool verbose) {
+  double max_inf = node["max_infectiousness"]
+                       ? node["max_infectiousness"].as<double>()
+                       : 1.0;
+  double shape = node["shape"] ? node["shape"].as<double>() : 1.56;
+  double rate = node["rate"] ? node["rate"].as<double>() : 0.53;
+  double shift = node["shift"] ? node["shift"].as<double>() : 0.0;
+  auto curve = std::make_shared<GammaCurve>(max_inf, shape, rate, shift);
+  if (verbose) {
+    logCurveRescale(context_label, "gamma", max_inf,
+                    curve->peakScalingFactor());
+  }
+  return curve;
 }
 
 }  // namespace
@@ -598,19 +615,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
   if (type == "constant") {
     curve = makeConstantCurve(curve_node);
   } else if (type == "gamma") {
-    double max_inf = curve_node["max_infectiousness"]
-                         ? curve_node["max_infectiousness"].as<double>()
-                         : 1.0;
-    double shape =
-        curve_node["shape"] ? curve_node["shape"].as<double>() : 1.56;
-    double rate = curve_node["rate"] ? curve_node["rate"].as<double>() : 0.53;
-    double shift = curve_node["shift"] ? curve_node["shift"].as<double>() : 0.0;
-    auto gamma = std::make_shared<GammaCurve>(max_inf, shape, rate, shift);
-    if (verbose) {
-      logCurveRescale(context_label, "gamma", max_inf,
-                      gamma->peakScalingFactor());
-    }
-    curve = gamma;
+    curve = makeGammaCurve(curve_node, context_label, verbose);
   } else if (type == "exponential_decay") {
     double initial = curve_node["initial_value"]
                          ? curve_node["initial_value"].as<double>()
