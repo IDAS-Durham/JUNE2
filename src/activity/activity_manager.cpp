@@ -98,6 +98,19 @@ void ActivityManager::setDeadLocation(PersonLocation& loc) const {
   loc.encounter_type_id = 255;
 }
 
+bool ActivityManager::applyPolicyOverride(PersonLocation& loc, Person& person,
+                                          int16_t activity, VenueId venue,
+                                          SubsetIndex subset,
+                                          int time_slot_index) {
+  if (policy_manager_ == nullptr) return false;
+  auto override = policy_manager_->getOverride(
+      person, activity, venue, subset, current_simulation_time_,
+      time_slot_index);
+  if (!override.has_value()) return false;
+  loc = override.value();
+  return true;
+}
+
 void ActivityManager::setResidenceOrNoneLocation(PersonLocation& loc,
                                                  const Person& person) {
   auto residence = world_.getActivityVenues(person, residence_act_idx_);
@@ -226,12 +239,9 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
           effective_venue = lv;
           effective_subset = ls;
         }
-        auto override = policy_manager_->getOverride(
-            mutable_person, locations[i].activity_index, effective_venue,
-            effective_subset, current_simulation_time_, -1);
-        if (override.has_value()) {
-          locations[i] = override.value();
-        }
+        applyPolicyOverride(locations[i], mutable_person,
+                            locations[i].activity_index, effective_venue,
+                            effective_subset, -1);
       }
 
       locations[i].person_id = person.id;
@@ -276,17 +286,11 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
     locations[i].person_array_index = i;
 
     // Check for policy overrides (symptom-based, lockdowns, etc.)
-    if (policy_manager_ != nullptr) {
-      auto override = policy_manager_->getOverride(
-          const_cast<Person&>(person), scheduled_activity_index,
-          locations[i].venue_id, locations[i].subset_index,
-          current_simulation_time_, -1);
-
-      if (override.has_value()) {
-        locations[i] = override.value();
-        locations[i].person_id = person.id;
-        locations[i].person_array_index = i;
-      }
+    if (applyPolicyOverride(locations[i], const_cast<Person&>(person),
+                            scheduled_activity_index, locations[i].venue_id,
+                            locations[i].subset_index, -1)) {
+      locations[i].person_id = person.id;
+      locations[i].person_array_index = i;
     }
   }
 }
@@ -645,12 +649,9 @@ void ActivityManager::assignActivitiesFromSchedule(
           effective_venue = lv;
           effective_subset = ls;
         }
-        auto override = policy_manager_->getOverride(
-            person, locations[i].activity_index, effective_venue,
-            effective_subset, current_simulation_time_, time_slot_index);
-        if (override.has_value()) {
-          locations[i] = override.value();
-        }
+        applyPolicyOverride(locations[i], person,
+                            locations[i].activity_index, effective_venue,
+                            effective_subset, time_slot_index);
       }
 
       locations[i].person_id = person.id;
@@ -825,17 +826,12 @@ void ActivityManager::assignActivitiesFromSchedule(
       }
 
       // Check for policy overrides (symptom-based, lockdowns, etc.)
-      if (policy_manager_ != nullptr) {
-        auto override = policy_manager_->getOverride(
-            person, scheduled_activity_index, scheduled_venue_id,
-            scheduled_subset_idx, current_simulation_time_, time_slot_index);
-
-        if (override.has_value()) {
-          locations[i] = override.value();
-          locations[i].person_id = person.id;
-          locations[i].person_array_index = i;
-          continue;
-        }
+      if (applyPolicyOverride(locations[i], person, scheduled_activity_index,
+                              scheduled_venue_id, scheduled_subset_idx,
+                              time_slot_index)) {
+        locations[i].person_id = person.id;
+        locations[i].person_array_index = i;
+        continue;
       }
 
       // SUCCESS: Assign pre-computed or runtime-selected activity/venue

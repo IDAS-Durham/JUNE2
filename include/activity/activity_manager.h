@@ -116,6 +116,14 @@ class ActivityManager {
   // slot index). Does not touch person_id / person_array_index.
   void setResidenceOrNoneLocation(PersonLocation& loc, const Person& person);
 
+  // Bridges to PolicyManager::getOverride. Returns true (with loc overwritten
+  // by the override) iff policy_manager_ is set and yields an override.
+  // Effective-venue resolution and post-override person_id/person_array_index
+  // re-set are left to callers (they vary across the four call sites).
+  bool applyPolicyOverride(PersonLocation& loc, Person& person,
+                           int16_t activity, VenueId venue, SubsetIndex subset,
+                           int time_slot_index);
+
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 
