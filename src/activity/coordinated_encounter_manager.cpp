@@ -38,6 +38,74 @@ int sampleCountFromDistribution(const Dist& dist, int n_for_binomial,
   return default_val;
 }
 
+// Key for mutual-proposal lookup. A proposal (host=A, invitee=B, slot=S,
+// type=T) is "mutual" iff the reverse (host=B, invitee=A, slot=S, type=T)
+// is also in the set.
+struct ProposalKey {
+  PersonId host;
+  PersonId invitee;
+  int slot;
+  uint8_t encounter_type_id;
+
+  bool operator==(const ProposalKey& o) const {
+    return host == o.host && invitee == o.invitee && slot == o.slot &&
+           encounter_type_id == o.encounter_type_id;
+  }
+};
+struct ProposalKeyHash {
+  size_t operator()(const ProposalKey& k) const {
+    size_t h = std::hash<int>{}(k.host);
+    h ^= std::hash<int>{}(k.invitee) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<int>{}(k.slot) + 0x9e3779b9 + (h << 6) + (h >> 2);
+    h ^= std::hash<uint8_t>{}(k.encounter_type_id) + 0x9e3779b9 + (h << 6) +
+         (h >> 2);
+    return h;
+  }
+};
+using ProposalSet = std::unordered_set<ProposalKey, ProposalKeyHash>;
+
+// Sorts proposals by (invitee, slot, encounter_id, host) so that the same
+// invitee processes proposals for the same slot in the same order regardless
+// of which rank generated them. Required for MPI-determinism of the
+// committed_slots_ decisions.
+std::vector<EncounterProposal> buildSortedProposals(
+    const std::vector<EncounterProposal>& in_proposals) {
+  std::vector<EncounterProposal> sorted(in_proposals.begin(),
+                                        in_proposals.end());
+  std::sort(sorted.begin(), sorted.end(),
+            [](const EncounterProposal& a, const EncounterProposal& b) {
+              if (a.invitee_id != b.invitee_id)
+                return a.invitee_id < b.invitee_id;
+              if (a.slot != b.slot) return a.slot < b.slot;
+              if (a.encounter_id != b.encounter_id)
+                return a.encounter_id < b.encounter_id;
+              return a.host_id < b.host_id;
+            });
+  return sorted;
+}
+
+// Builds the (host, invitee, slot, encounter_type) lookup set from BOTH
+// incoming and local-host proposals, so the mutual-proposal check works
+// across MPI ranks.
+ProposalSet buildProposalKeySet(
+    const std::vector<EncounterProposal>& incoming,
+    const std::vector<EncounterProposal>& host_proposals) {
+  ProposalSet s;
+  s.reserve(incoming.size() + host_proposals.size());
+  for (const auto& p : incoming) {
+    s.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
+  }
+  for (const auto& p : host_proposals) {
+    s.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
+  }
+  return s;
+}
+
+bool hasMutualProposal(const ProposalSet& s, const EncounterProposal& prop) {
+  return s.count({prop.invitee_id, prop.host_id, prop.slot,
+                  prop.encounter_type_id}) > 0;
+}
+
 }  // namespace
 
 CoordinatedEncounterManager::CoordinatedEncounterManager(
@@ -464,70 +532,11 @@ void CoordinatedEncounterManager::processProposals(
     const std::vector<EncounterProposal>& host_proposals,
     std::vector<EncounterReply>& out_replies, int day_type_idx) {
   if (!config_.coordinated_encounters.enabled) return;
-  // Progress message removed — sub-second operation
 
-  // Sort proposals by a deterministic key so committed_slots_ decisions
-  // are order-independent of MPI rank layout. Sort by (invitee, slot,
-  // encounter_id, host) ensures the same invitee processes proposals for
-  // the same slot in the same order regardless of which rank generated them.
-  std::vector<EncounterProposal> sorted_proposals(in_proposals.begin(),
-                                                  in_proposals.end());
-  std::sort(sorted_proposals.begin(), sorted_proposals.end(),
-            [](const EncounterProposal& a, const EncounterProposal& b) {
-              if (a.invitee_id != b.invitee_id)
-                return a.invitee_id < b.invitee_id;
-              if (a.slot != b.slot) return a.slot < b.slot;
-              if (a.encounter_id != b.encounter_id)
-                return a.encounter_id < b.encounter_id;
-              return a.host_id < b.host_id;
-            });
-
-  // Build a set of (host, invitee, slot, encounter_type) tuples so we can
-  // detect mutual proposals: if A proposed to B at slot S, and B also proposed
-  // to A at slot S for the same encounter type, the invitee's commitment as a
-  // host is not a conflict — both parties want the same encounter.
-  // Without this, single-slot schedules (e.g. weekday workers with only one
-  // evening leisure slot) deadlock: both partners commit the slot as hosts,
-  // then both reject each other as invitees.
-  struct ProposalKey {
-    PersonId host;
-    PersonId invitee;
-    int slot;
-    uint8_t encounter_type_id;
-
-    bool operator==(const ProposalKey& o) const {
-      return host == o.host && invitee == o.invitee && slot == o.slot &&
-             encounter_type_id == o.encounter_type_id;
-    }
-  };
-  struct ProposalKeyHash {
-    size_t operator()(const ProposalKey& k) const {
-      size_t h = std::hash<int>{}(k.host);
-      h ^= std::hash<int>{}(k.invitee) + 0x9e3779b9 + (h << 6) + (h >> 2);
-      h ^= std::hash<int>{}(k.slot) + 0x9e3779b9 + (h << 6) + (h >> 2);
-      h ^= std::hash<uint8_t>{}(k.encounter_type_id) + 0x9e3779b9 + (h << 6) +
-           (h >> 2);
-      return h;
-    }
-  };
-  // Build proposal set from BOTH incoming proposals (invitee is local) AND
-  // host proposals (host is local). This ensures mutual proposal detection
-  // works across MPI ranks: if A (rank 0) proposed to B (rank 1) and B
-  // proposed to A, rank 0 sees (B→A) in sorted_proposals and (A→B) in
-  // host_proposals.
-  std::unordered_set<ProposalKey, ProposalKeyHash> proposal_set;
-  proposal_set.reserve(sorted_proposals.size() + host_proposals.size());
-  for (const auto& p : sorted_proposals) {
-    proposal_set.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
-  }
-  for (const auto& p : host_proposals) {
-    proposal_set.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
-  }
-
-  auto hasMutualProposal = [&](const EncounterProposal& prop) -> bool {
-    return proposal_set.count({prop.invitee_id, prop.host_id, prop.slot,
-                               prop.encounter_type_id}) > 0;
-  };
+  std::vector<EncounterProposal> sorted_proposals =
+      buildSortedProposals(in_proposals);
+  ProposalSet proposal_set =
+      buildProposalKeySet(sorted_proposals, host_proposals);
 
   for (const auto& prop : sorted_proposals) {
     EncounterReply reply;
@@ -578,7 +587,7 @@ void CoordinatedEncounterManager::processProposals(
       // Multi-invitee encounters (social) should NOT bypass — the slot
       // commitment is legitimate.
       bool bypass = false;
-      if (matched_def->is_virtual && hasMutualProposal(prop)) {
+      if (matched_def->is_virtual && hasMutualProposal(proposal_set, prop)) {
         bypass = true;
       }
       if (!bypass) {
