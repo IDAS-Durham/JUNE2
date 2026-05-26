@@ -27,10 +27,6 @@ void ActivityManager::assignScheduleTypes() {
     return;
   }
 
-  // Count assignments per schedule type
-  std::unordered_map<std::string, size_t> type_counts;
-  int debug_restore_count = 0;
-
   for (auto& person : world_.people) {
     if (person.is_dead) continue;
 
@@ -40,7 +36,6 @@ void ActivityManager::assignScheduleTypes() {
           person.schedule_type_id < world_.schedule_type_names.size()
               ? world_.schedule_type_names[person.schedule_type_id]
               : "unknown";
-      type_counts[type_name]++;
 
       // BUG FIX 1: Set cached schedule type pointer correctly when loaded from
       // state
@@ -70,7 +65,6 @@ void ActivityManager::assignScheduleTypes() {
         person.schedule_type_id = static_cast<uint16_t>(type_id);
       }
       person.cached_schedule_type_ = matched_type;
-      type_counts[matched_type->name]++;
     } else {
       // Fallback: use default schedule type
       std::string def_type = config_.schedule.default_schedule_type;
@@ -78,7 +72,6 @@ void ActivityManager::assignScheduleTypes() {
       if (type_id >= 0) {
         person.schedule_type_id = static_cast<uint16_t>(type_id);
       }
-      type_counts[def_type]++;
 
       // Cache the default schedule type pointer
       for (const auto& sched_type : config_.schedule.schedule_types) {
