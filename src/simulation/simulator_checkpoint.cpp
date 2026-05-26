@@ -77,6 +77,35 @@ void writeShardEpidemiology(H5::H5File& f, Epidemiology* epi, int comp) {
            comp);
 }
 
+// Gather + write the policy manager's frozen_states_ under /policy_frozen_states.
+// Per-rank, global-id-keyed manager state — lives in the shard, not state.h5.
+void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
+  std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
+  std::vector<uint8_t> fz_pol;
+  if (pm) {
+    for (const auto& [pid, st] : pm->getFrozenStates()) {
+      fz_pid.push_back(pid);
+      fz_pol.push_back(st.triggering_policy_index);
+      fz_hop.push_back(st.paused_hopped_schedule_id);
+      fz_ret.push_back(st.paused_return_schedule_id);
+      fz_venue.push_back(st.pin_venue_id);
+      fz_subset.push_back(st.pin_subset_index);
+    }
+  }
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto U8 = H5::PredType::NATIVE_UINT8;
+  f.createGroup("/policy_frozen_states");
+  writeVec(f, "/policy_frozen_states/person_id", fz_pid, I32, comp);
+  writeVec(f, "/policy_frozen_states/triggering_policy_index", fz_pol, U8,
+           comp);
+  writeVec(f, "/policy_frozen_states/paused_hopped_schedule_id", fz_hop, I32,
+           comp);
+  writeVec(f, "/policy_frozen_states/paused_return_schedule_id", fz_ret, I32,
+           comp);
+  writeVec(f, "/policy_frozen_states/pin_venue_id", fz_venue, I32, comp);
+  writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
+}
+
 // Gather + write the sparse venue fomite-history shard section. One record
 // per (venue, mode) with a non-empty deposit deque; the contiguous deposits
 // for each record sit at /venue_fomite/deposit_time[offset..offset+count).
@@ -423,30 +452,7 @@ void Simulator::writeCheckpoint(int completed_day,
     writeShardFomite(f, world_.venues, comp);
 
     writeShardEpidemiology(f, epidemiology_.get(), comp);
-
-    // frozen_states_ (this rank's persons mid policy-hop):
-    std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
-    std::vector<uint8_t> fz_pol;
-    if (policy_manager_) {
-      for (const auto& [pid, st] : policy_manager_->getFrozenStates()) {
-        fz_pid.push_back(pid);
-        fz_pol.push_back(st.triggering_policy_index);
-        fz_hop.push_back(st.paused_hopped_schedule_id);
-        fz_ret.push_back(st.paused_return_schedule_id);
-        fz_venue.push_back(st.pin_venue_id);
-        fz_subset.push_back(st.pin_subset_index);
-      }
-    }
-    f.createGroup("/policy_frozen_states");
-    writeVec(f, "/policy_frozen_states/person_id", fz_pid, I32, comp);
-    writeVec(f, "/policy_frozen_states/triggering_policy_index", fz_pol, U8,
-             comp);
-    writeVec(f, "/policy_frozen_states/paused_hopped_schedule_id", fz_hop, I32,
-             comp);
-    writeVec(f, "/policy_frozen_states/paused_return_schedule_id", fz_ret, I32,
-             comp);
-    writeVec(f, "/policy_frozen_states/pin_venue_id", fz_venue, I32, comp);
-    writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
+    writeShardFrozenStates(f, policy_manager_.get(), comp);
     f.close();
   }
 
