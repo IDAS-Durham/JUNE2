@@ -57,6 +57,26 @@ void writeVec(H5::H5File& f, const std::string& name,
   ds.write(data.data(), t);
 }
 
+// Gather + write last_processed_transition_time_ as two parallel arrays under
+// /epidemiology/. Per-rank, global-id-keyed manager state — lives in the
+// shard, not state.h5, so resume at a different rank count keeps every
+// rank's entries.
+void writeShardEpidemiology(H5::H5File& f, Epidemiology* epi, int comp) {
+  std::vector<int32_t> lpt_pid;
+  std::vector<double> lpt_t;
+  if (epi) {
+    for (const auto& [pid, t] : epi->getLastProcessedTransitionTimes()) {
+      lpt_pid.push_back(pid);
+      lpt_t.push_back(t);
+    }
+  }
+  f.createGroup("/epidemiology");
+  writeVec(f, "/epidemiology/lpt_person_id", lpt_pid,
+           H5::PredType::NATIVE_INT32, comp);
+  writeVec(f, "/epidemiology/lpt_time", lpt_t, H5::PredType::NATIVE_DOUBLE,
+           comp);
+}
+
 // Gather + write the sparse venue fomite-history shard section. One record
 // per (venue, mode) with a non-empty deposit deque; the contiguous deposits
 // for each record sit at /venue_fomite/deposit_time[offset..offset+count).
@@ -402,21 +422,7 @@ void Simulator::writeCheckpoint(int completed_day,
 
     writeShardFomite(f, world_.venues, comp);
 
-    // Per-rank, global-id-keyed manager state lives in the shard (NOT rank-0
-    // state.h5) so it survives a resume at a different rank count.
-    // last_processed_transition_time_ (this rank's infected people):
-    std::vector<int32_t> lpt_pid;
-    std::vector<double> lpt_t;
-    if (epidemiology_) {
-      for (const auto& [pid, t] :
-           epidemiology_->getLastProcessedTransitionTimes()) {
-        lpt_pid.push_back(pid);
-        lpt_t.push_back(t);
-      }
-    }
-    f.createGroup("/epidemiology");
-    writeVec(f, "/epidemiology/lpt_person_id", lpt_pid, I32, comp);
-    writeVec(f, "/epidemiology/lpt_time", lpt_t, F64, comp);
+    writeShardEpidemiology(f, epidemiology_.get(), comp);
 
     // frozen_states_ (this rank's persons mid policy-hop):
     std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
