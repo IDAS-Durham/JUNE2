@@ -77,6 +77,23 @@ std::shared_ptr<LognormalCurve> makeLognormalCurve(
   return curve;
 }
 
+std::shared_ptr<BetaCurve> makeBetaCurve(const YAML::Node& node,
+                                         const std::string& context_label,
+                                         bool verbose) {
+  double max_inf = node["max_infectiousness"]
+                       ? node["max_infectiousness"].as<double>()
+                       : 1.0;
+  double alpha = node["alpha"] ? node["alpha"].as<double>() : 2.0;
+  double beta = node["beta"] ? node["beta"].as<double>() : 2.0;
+  double duration = node["duration"] ? node["duration"].as<double>() : 1.0;
+  auto curve = std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
+  if (verbose) {
+    logCurveRescale(context_label, "beta", max_inf,
+                    curve->peakScalingFactor());
+  }
+  return curve;
+}
+
 }  // namespace
 
 // =============================================================================
@@ -655,20 +672,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
   } else if (type == "lognormal") {
     curve = makeLognormalCurve(curve_node, context_label, verbose);
   } else if (type == "beta") {
-    double max_inf = curve_node["max_infectiousness"]
-                         ? curve_node["max_infectiousness"].as<double>()
-                         : 1.0;
-    double alpha = curve_node["alpha"] ? curve_node["alpha"].as<double>() : 2.0;
-    double beta = curve_node["beta"] ? curve_node["beta"].as<double>() : 2.0;
-    double duration =
-        curve_node["duration"] ? curve_node["duration"].as<double>() : 1.0;
-    auto beta_curve =
-        std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
-    if (verbose) {
-      logCurveRescale(context_label, "beta", max_inf,
-                      beta_curve->peakScalingFactor());
-    }
-    curve = beta_curve;
+    curve = makeBetaCurve(curve_node, context_label, verbose);
   } else {
     throw std::runtime_error("Unknown infectiousness curve type: " + type);
   }
