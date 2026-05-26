@@ -33,6 +33,14 @@ void ActivityManager::assignScheduleTypes() {
   }
 }
 
+const ScheduleType* ActivityManager::findScheduleTypeByName(
+    const std::string& name) const {
+  for (const auto& sched_type : config_.schedule.schedule_types) {
+    if (sched_type.name == name) return &sched_type;
+  }
+  return nullptr;
+}
+
 void ActivityManager::assignScheduleTypeForPerson(Person& person) {
   // Skip if person already has a schedule type assigned (e.g., from HDF5)
   if (person.schedule_type_id != 0xFFFF) {
@@ -40,15 +48,9 @@ void ActivityManager::assignScheduleTypeForPerson(Person& person) {
         person.schedule_type_id < world_.schedule_type_names.size()
             ? world_.schedule_type_names[person.schedule_type_id]
             : "unknown";
-
     // BUG FIX 1: Set cached schedule type pointer correctly when loaded from
     // state
-    for (const auto& sched_type : config_.schedule.schedule_types) {
-      if (sched_type.name == type_name) {
-        person.cached_schedule_type_ = &sched_type;
-        break;
-      }
-    }
+    person.cached_schedule_type_ = findScheduleTypeByName(type_name);
     return;
   }
 
@@ -71,19 +73,13 @@ void ActivityManager::assignScheduleTypeForPerson(Person& person) {
     person.cached_schedule_type_ = matched_type;
   } else {
     // Fallback: use default schedule type
-    std::string def_type = config_.schedule.default_schedule_type;
+    const std::string& def_type = config_.schedule.default_schedule_type;
     int type_id = world_.getScheduleTypeIndex(def_type);
     if (type_id >= 0) {
       person.schedule_type_id = static_cast<uint16_t>(type_id);
     }
-
     // Cache the default schedule type pointer
-    for (const auto& sched_type : config_.schedule.schedule_types) {
-      if (sched_type.name == def_type) {
-        person.cached_schedule_type_ = &sched_type;
-        break;
-      }
-    }
+    person.cached_schedule_type_ = findScheduleTypeByName(def_type);
   }
 }
 

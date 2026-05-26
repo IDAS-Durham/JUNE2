@@ -178,6 +178,10 @@ class ActivityManager {
                              const std::vector<int16_t>& available_indices,
                              SplitMix64& rng) const;
 
+  // Linear lookup over config_.schedule.schedule_types by name. Returns
+  // a pointer to the first match, or nullptr if none is found.
+  const ScheduleType* findScheduleTypeByName(const std::string& name) const;
+
   // Resolves and assigns a schedule type to one (alive) person:
   // preserves the schedule_type_id loaded from state (HDF5) if present
   // and just rewires the cached pointer, otherwise tries CSV-based
