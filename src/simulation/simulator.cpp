@@ -561,93 +561,7 @@ void Simulator::run() {
 #endif
 
     // 3. Negotiate Coordinated Encounters
-    if (coordinated_encounter_manager_) {
-      coordinated_encounter_manager_->resetDaily();
-
-      int encounter_day_type_idx = config_.schedule.getDayTypeIndex(day);
-
-      // Phase 1: Generate proposals locally
-      std::vector<EncounterProposal> local_proposals;
-      coordinated_encounter_manager_->generateProposals(day, local_proposals,
-                                                        encounter_day_type_idx);
-
-      // Accumulate proposal stats for debug summary
-      coordinated_encounter_manager_->accumulateProposalStats(local_proposals);
-
-      // Phase 2: Exchange proposals across ranks, then process.
-      // Keep local_proposals alive for mutual proposal detection.
-      std::vector<EncounterProposal> all_proposals;
-#ifdef USE_MPI
-      if (domain_mgr_) {
-        domain_mgr_->exchangeEncounterProposals(local_proposals, all_proposals);
-      } else {
-        all_proposals = local_proposals;  // copy, not move
-      }
-#else
-      all_proposals = local_proposals;  // copy, not move
-#endif
-
-      std::vector<EncounterReply> local_replies;
-      coordinated_encounter_manager_->processProposals(
-          all_proposals, local_proposals, local_replies,
-          encounter_day_type_idx);
-
-      // Phase 3: Exchange replies back to host ranks, then finalize
-      std::vector<EncounterReply> all_replies;
-#ifdef USE_MPI
-      if (domain_mgr_) {
-        domain_mgr_->exchangeEncounterReplies(local_replies, all_replies);
-      } else {
-        all_replies = std::move(local_replies);
-      }
-#else
-      all_replies = std::move(local_replies);
-#endif
-
-      // Accumulate reply stats for debug summary
-      coordinated_encounter_manager_->accumulateReplyStats(all_replies);
-
-      std::vector<CoordinatedEncounter> finalized;
-      coordinated_encounter_manager_->finalizeEncounters(all_replies,
-                                                         finalized);
-
-      // Accumulate finalize stats for debug summary
-      coordinated_encounter_manager_->accumulateFinalizeStats(finalized);
-
-      // Log locally-finalized encounters to HDF5 BEFORE merging remote ones.
-      // This prevents cross-rank encounters from being logged on both ranks.
-      // group_id fans one unique uint64 per real encounter across every
-      // pair-row belonging to it. Rank is packed into the high 16 bits so
-      // counters stay unique across MPI ranks without coordination; the low
-      // 48 bits are a per-rank monotonic counter (2^48 events / rank is
-      // effectively unbounded for realistic simulations).
-      {
-        const uint64_t rank_prefix = static_cast<uint64_t>(rank) << 48;
-        for (const auto& enc : finalized) {
-          const uint64_t group_id = rank_prefix | (next_encounter_group_id_++ &
-                                                   0x0000FFFFFFFFFFFFULL);
-          for (PersonId pid : enc.participants) {
-            if (pid != enc.host_id) {
-              event_logger_.logCoordinatedEncounter(
-                  enc.host_id, pid, current_simulation_time_,
-                  enc.encounter_type_id, enc.slot, group_id);
-            }
-          }
-        }
-      }
-
-      // Phase 4: Exchange finalized encounters so remote participants know
-#ifdef USE_MPI
-      if (domain_mgr_) {
-        std::vector<CoordinatedEncounter> remote_finalized;
-        domain_mgr_->exchangeFinalizedEncounters(finalized, remote_finalized);
-        // Add remote encounters that involve our local people
-        for (auto& enc : remote_finalized) {
-          coordinated_encounter_manager_->addDailyEncounter(enc);
-        }
-      }
-#endif
-    }
+    negotiateAndLogDailyEncounters(day, rank);
 
     // Print daily encounter debug summary
     if (coordinated_encounter_manager_) {
@@ -775,6 +689,93 @@ void Simulator::simulateDay(int day_num) {
     // Granular flush check (triggers max_event_buffer_size mid-day)
     checkAndFlushEvents(false);
   }
+}
+
+void Simulator::negotiateAndLogDailyEncounters(int day, int rank) {
+  if (!coordinated_encounter_manager_) return;
+  coordinated_encounter_manager_->resetDaily();
+
+  int encounter_day_type_idx = config_.schedule.getDayTypeIndex(day);
+
+  // Phase 1: Generate proposals locally
+  std::vector<EncounterProposal> local_proposals;
+  coordinated_encounter_manager_->generateProposals(day, local_proposals,
+                                                    encounter_day_type_idx);
+
+  // Accumulate proposal stats for debug summary
+  coordinated_encounter_manager_->accumulateProposalStats(local_proposals);
+
+  // Phase 2: Exchange proposals across ranks, then process.
+  // Keep local_proposals alive for mutual proposal detection.
+  std::vector<EncounterProposal> all_proposals;
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    domain_mgr_->exchangeEncounterProposals(local_proposals, all_proposals);
+  } else {
+    all_proposals = local_proposals;  // copy, not move
+  }
+#else
+  all_proposals = local_proposals;  // copy, not move
+#endif
+
+  std::vector<EncounterReply> local_replies;
+  coordinated_encounter_manager_->processProposals(
+      all_proposals, local_proposals, local_replies, encounter_day_type_idx);
+
+  // Phase 3: Exchange replies back to host ranks, then finalize
+  std::vector<EncounterReply> all_replies;
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    domain_mgr_->exchangeEncounterReplies(local_replies, all_replies);
+  } else {
+    all_replies = std::move(local_replies);
+  }
+#else
+  all_replies = std::move(local_replies);
+#endif
+
+  // Accumulate reply stats for debug summary
+  coordinated_encounter_manager_->accumulateReplyStats(all_replies);
+
+  std::vector<CoordinatedEncounter> finalized;
+  coordinated_encounter_manager_->finalizeEncounters(all_replies, finalized);
+
+  // Accumulate finalize stats for debug summary
+  coordinated_encounter_manager_->accumulateFinalizeStats(finalized);
+
+  // Log locally-finalized encounters to HDF5 BEFORE merging remote ones.
+  // This prevents cross-rank encounters from being logged on both ranks.
+  // group_id fans one unique uint64 per real encounter across every
+  // pair-row belonging to it. Rank is packed into the high 16 bits so
+  // counters stay unique across MPI ranks without coordination; the low
+  // 48 bits are a per-rank monotonic counter (2^48 events / rank is
+  // effectively unbounded for realistic simulations).
+  {
+    const uint64_t rank_prefix = static_cast<uint64_t>(rank) << 48;
+    for (const auto& enc : finalized) {
+      const uint64_t group_id =
+          rank_prefix | (next_encounter_group_id_++ & 0x0000FFFFFFFFFFFFULL);
+      for (PersonId pid : enc.participants) {
+        if (pid != enc.host_id) {
+          event_logger_.logCoordinatedEncounter(
+              enc.host_id, pid, current_simulation_time_,
+              enc.encounter_type_id, enc.slot, group_id);
+        }
+      }
+    }
+  }
+
+  // Phase 4: Exchange finalized encounters so remote participants know
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    std::vector<CoordinatedEncounter> remote_finalized;
+    domain_mgr_->exchangeFinalizedEncounters(finalized, remote_finalized);
+    // Add remote encounters that involve our local people
+    for (auto& enc : remote_finalized) {
+      coordinated_encounter_manager_->addDailyEncounter(enc);
+    }
+  }
+#endif
 }
 
 void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,

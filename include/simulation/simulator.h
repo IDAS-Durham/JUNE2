@@ -136,6 +136,12 @@ class Simulator {
   void simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
                         int day_type_idx, double delta_hours);
 
+  // Coordinated-encounter daily negotiation: generate proposals locally,
+  // exchange across ranks, process, exchange replies, finalize, log locally,
+  // and broadcast finalized encounters back so remote participants pick them
+  // up. Runs the full Phases 1–4 when coordinated_encounter_manager_ is set.
+  void negotiateAndLogDailyEncounters(int day, int rank);
+
   // Fomite initialization
   void initFomiteState();
 
