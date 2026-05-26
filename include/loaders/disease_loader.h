@@ -31,6 +31,9 @@ class DiseaseLoader {
   // Load outcome rates from filter-column CSV
   static OutcomeRates loadOutcomeRatesFromCSV(const std::string& csv_path);
 
+  static OutcomeRates loadOutcomeRatesFromConfig(const YAML::Node& config,
+                                                 const std::string& yaml_path);
+
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(
       const YAML::Node& trajectories_node);

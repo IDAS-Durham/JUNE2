@@ -238,6 +238,30 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+OutcomeRates DiseaseLoader::loadOutcomeRatesFromConfig(
+    const YAML::Node& config, const std::string& yaml_path) {
+  OutcomeRates outcome_rates;
+  if (!config["outcome_rates_csv"]) return outcome_rates;
+  const auto& csv_node = config["outcome_rates_csv"];
+
+  // Accept either a scalar path ("outcome_rates_csv: path/to/file.csv")
+  // or a mapping with a "file:" key (legacy format).
+  std::string csv_rel_path;
+  if (csv_node.IsScalar()) {
+    csv_rel_path = csv_node.as<std::string>();
+  } else if (csv_node["file"]) {
+    csv_rel_path = csv_node["file"].as<std::string>();
+  } else {
+    throw std::runtime_error(
+        "outcome_rates_csv must be a file path or a mapping with a 'file:' "
+        "key");
+  }
+
+  std::string yaml_dir =
+      yaml_path.substr(0, yaml_path.find_last_of("/\\") + 1);
+  return loadOutcomeRatesFromCSV(yaml_dir + csv_rel_path);
+}
+
 void DiseaseLoader::validateTrajectoryStageRefs(
     const std::vector<TrajectoryDefinition>& trajectories,
     const std::vector<SymptomTag>& symptom_tags) {
@@ -355,30 +379,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 
     validateTrajectoryStageRefs(trajectories, symptom_tags);
 
-    // === Load Outcome Rates CSV ===
-    OutcomeRates outcome_rates;
-    if (config["outcome_rates_csv"]) {
-      const auto& csv_node = config["outcome_rates_csv"];
-
-      // Accept either a scalar path ("outcome_rates_csv: path/to/file.csv")
-      // or a mapping with a "file:" key (legacy format).
-      std::string csv_rel_path;
-      if (csv_node.IsScalar()) {
-        csv_rel_path = csv_node.as<std::string>();
-      } else if (csv_node["file"]) {
-        csv_rel_path = csv_node["file"].as<std::string>();
-      } else {
-        throw std::runtime_error(
-            "outcome_rates_csv must be a file path or a mapping with a 'file:' "
-            "key");
-      }
-
-      std::string yaml_dir =
-          yaml_path.substr(0, yaml_path.find_last_of("/\\") + 1);
-      std::string csv_full_path = yaml_dir + csv_rel_path;
-
-      outcome_rates = loadOutcomeRatesFromCSV(csv_full_path);
-    }
+    OutcomeRates outcome_rates = loadOutcomeRatesFromConfig(config, yaml_path);
 
     // === Load Transmission Parameters ===
     TransmissionParams transmission;
