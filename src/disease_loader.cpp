@@ -264,6 +264,16 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::loadModeCompartmentalUptake(TransmissionMode& tmode,
+                                                int mode_idx) {
+  tmode.type = TransmissionModeType::CompartmentalUptake;
+  CompartmentalUptakeConfig ucfg;
+  ucfg.mode_index = mode_idx;
+  tmode.config = ucfg;
+  std::cout << "[DiseaseLoader] Compartmental uptake mode '" << tmode.name
+            << "' registered at index " << mode_idx << std::endl;
+}
+
 void DiseaseLoader::loadModeCompartmentalDeposition(
     const YAML::Node& mode_node, TransmissionMode& tmode, int mode_idx,
     const std::vector<SymptomTag>& symptom_tags, bool verbose) {
@@ -557,14 +567,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
             if (mode_type == "fomite") {
               loadModeFomite(mode_node, tmode, mode_idx, symptom_tags, verbose);
             } else if (mode_type == "compartmental_uptake") {
-              tmode.type = TransmissionModeType::CompartmentalUptake;
-              CompartmentalUptakeConfig ucfg;
-              ucfg.mode_index = mode_idx;
-              tmode.config = ucfg;
-              std::cout << "[DiseaseLoader] Compartmental uptake mode '"
-                        << tmode.name << "' registered at index " << mode_idx
-                        << std::endl;
-
+              loadModeCompartmentalUptake(tmode, mode_idx);
             } else if (mode_type == "compartmental_deposition") {
               loadModeCompartmentalDeposition(mode_node, tmode, mode_idx,
                                               symptom_tags, verbose);

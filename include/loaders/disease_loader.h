@@ -52,6 +52,8 @@ class DiseaseLoader {
   static void loadModeCompartmentalDeposition(
       const YAML::Node& mode_node, TransmissionMode& tmode, int mode_idx,
       const std::vector<SymptomTag>& symptom_tags, bool verbose);
+  static void loadModeCompartmentalUptake(TransmissionMode& tmode,
+                                          int mode_idx);
 
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(
