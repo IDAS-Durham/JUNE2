@@ -11,6 +11,20 @@
 
 namespace june {
 
+namespace {
+
+void logCurveRescale(const std::string& context_label, const char* type_name,
+                     double max_inf, double factor) {
+  std::cout << "[DEBUG] Curve (" << context_label << "): type=" << type_name
+            << "  old_peak=" << max_inf * factor
+            << "  max_infectiousness=" << max_inf
+            << "  rescale_factor=" << factor
+            << "  (set max_infectiousness: " << max_inf * factor
+            << " in YAML to match previous behaviour)\n";
+}
+
+}  // namespace
+
 // =============================================================================
 // Parse Distribution Parameters from YAML
 // =============================================================================
@@ -562,17 +576,6 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 // =============================================================================
 // Parse an infectiousness curve from YAML
 // =============================================================================
-
-void DiseaseLoader::logCurveRescale(const std::string& context_label,
-                                    const char* type_name, double max_inf,
-                                    double factor) {
-  std::cout << "[DEBUG] Curve (" << context_label << "): type=" << type_name
-            << "  old_peak=" << max_inf * factor
-            << "  max_infectiousness=" << max_inf
-            << "  rescale_factor=" << factor
-            << "  (set max_infectiousness: " << max_inf * factor
-            << " in YAML to match previous behaviour)\n";
-}
 
 std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     const YAML::Node& curve_node, const std::string& context_label,

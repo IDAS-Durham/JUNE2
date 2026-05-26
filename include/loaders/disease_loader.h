@@ -43,10 +43,6 @@ class DiseaseLoader {
   static std::shared_ptr<InfectiousnessCurve> parseCurve(
       const YAML::Node& curve_node, const std::string& context_label = "",
       bool verbose = false);
-
-  static void logCurveRescale(const std::string& context_label,
-                              const char* type_name, double max_inf,
-                              double factor);
 };
 
 }  // namespace june
