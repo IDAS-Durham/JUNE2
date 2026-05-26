@@ -264,6 +264,24 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::loadTransmissionStageDriven(
+    const YAML::Node& trans_node, TransmissionParams& transmission,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  if (trans_node["modes"]) {
+    // Multi-mode: parse modes list with per-mode stage_curves
+    parseStageDrivenModes(trans_node["modes"], transmission, symptom_tags,
+                          verbose);
+    if (trans_node["stage_curves"]) {
+      attachStageCurvesToModes(trans_node["stage_curves"], transmission,
+                               symptom_tags, verbose);
+    }
+    finalizeStageDrivenMultiMode(transmission, symptom_tags);
+  } else {
+    loadTransmissionStageDrivenFlat(trans_node, transmission, symptom_tags,
+                                    verbose);
+  }
+}
+
 void DiseaseLoader::loadTransmissionStageDrivenFlat(
     const YAML::Node& trans_node, TransmissionParams& transmission,
     const std::vector<SymptomTag>& symptom_tags, bool verbose) {
@@ -667,23 +685,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
       if (transmission.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
         loadTransmissionTrajectoryDriven(trans_node, transmission);
       } else {
-        // STAGE-DRIVEN
-        if (trans_node["modes"]) {
-          // Multi-mode: parse modes list with per-mode stage_curves
-          parseStageDrivenModes(trans_node["modes"], transmission, symptom_tags,
-                                verbose);
-
-          // Parse stage_curves as nested: stage_curves[mode_name][symptom_name]
-          if (trans_node["stage_curves"]) {
-            attachStageCurvesToModes(trans_node["stage_curves"], transmission,
-                                     symptom_tags, verbose);
-          }
-
-          finalizeStageDrivenMultiMode(transmission, symptom_tags);
-        } else {
-          loadTransmissionStageDrivenFlat(trans_node, transmission,
-                                          symptom_tags, verbose);
-        }
+        loadTransmissionStageDriven(trans_node, transmission, symptom_tags,
+                                    verbose);
       }
     }
 
