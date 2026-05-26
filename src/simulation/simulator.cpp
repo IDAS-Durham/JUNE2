@@ -265,6 +265,49 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
   return global_eligible_map;
 }
 
+// Per-slot venue distribution print: bin locations by activity index and
+// MPI_Reduce onto rank 0 for printing. Indexed by activity_index over
+// world.activity_names so the Reduce buffer size is identical on every
+// rank — collapsing by name via std::map would break with
+// MPI_ERR_TRUNCATE as soon as ranks diverge in which activities they hold.
+void printSlotVenueDistribution(const WorldState& world,
+                                const std::vector<PersonLocation>& locations,
+                                DomainManager* domain_mgr, int rank) {
+  const size_t num_activities = world.activity_names.size();
+  std::vector<int> local_counts(num_activities, 0);
+  for (const auto& loc : locations) {
+    if (loc.activity_index >= 0 &&
+        loc.activity_index < static_cast<int>(num_activities)) {
+      local_counts[loc.activity_index]++;
+    }
+  }
+  std::vector<int> global_counts(num_activities, 0);
+#ifdef USE_MPI
+  if (domain_mgr) {
+    // Rank-0 print only — Reduce instead of Allreduce; non-root ranks
+    // don't need the aggregated result.
+    MPI_Reduce(local_counts.data(), global_counts.data(),
+               static_cast<int>(num_activities), MPI_INT, MPI_SUM, 0,
+               MPI_COMM_WORLD);
+  } else {
+    global_counts = local_counts;
+  }
+#else
+  (void)domain_mgr;
+  global_counts = local_counts;
+#endif
+  if (rank == 0) {
+    std::cout << "      → ";
+    for (size_t i = 0; i < num_activities; ++i) {
+      if (global_counts[i] > 0) {
+        std::cout << world.activity_names[i] << ": " << global_counts[i]
+                  << "  ";
+      }
+    }
+    std::cout << std::endl;
+  }
+}
+
 // Pass 2: stamp the per-encounter venue_id / encounter_type_id onto every
 // local eligible participant of any encounter that meets its min_required
 // threshold. Then for virtual venues (negative IDs) register the host-rank
@@ -1111,47 +1154,8 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   // Inject Coordinated Encounters for this timeslot into the locations array.
   injectCoordinatedEncountersIntoSlot(time_slot_index);
 
-  // Per-slot venue distribution (aggregated across ranks).
-  // Index by activity_index over the rank-consistent world_.activity_names
-  // so the Allreduce buffer size is identical on every rank. Collapsing by
-  // activity name via std::map produces a rank-local size (the map only
-  // contains keys for activities locally present) and breaks Allreduce with
-  // MPI_ERR_TRUNCATE as soon as ranks diverge — e.g. when one rank has
-  // hospitalised people routed to medical_facility and the other doesn't.
-  {
-    const size_t num_activities = world_.activity_names.size();
-    std::vector<int> local_counts(num_activities, 0);
-    for (const auto& loc : locations_) {
-      if (loc.activity_index >= 0 &&
-          loc.activity_index < static_cast<int>(num_activities)) {
-        local_counts[loc.activity_index]++;
-      }
-    }
-    std::vector<int> global_counts(num_activities, 0);
-#ifdef USE_MPI
-    if (domain_mgr_) {
-      // Rank-0 print only — Reduce instead of Allreduce; non-root ranks
-      // don't need the aggregated result.
-      MPI_Reduce(local_counts.data(), global_counts.data(),
-                 static_cast<int>(num_activities), MPI_INT, MPI_SUM, 0,
-                 MPI_COMM_WORLD);
-    } else {
-      global_counts = local_counts;
-    }
-#else
-    global_counts = local_counts;
-#endif
-    if (rank == 0) {
-      std::cout << "      → ";
-      for (size_t i = 0; i < num_activities; ++i) {
-        if (global_counts[i] > 0) {
-          std::cout << world_.activity_names[i] << ": " << global_counts[i]
-                    << "  ";
-        }
-      }
-      std::cout << std::endl;
-    }
-  }
+  // Per-slot venue distribution print (collective Reduce → rank 0 prints).
+  printSlotVenueDistribution(world_, locations_, domain_mgr_, rank);
 
 #ifdef USE_MPI
   // Step 2: Exchange visitors between domains (parallel mode only)
