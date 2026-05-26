@@ -534,73 +534,77 @@ void Simulator::run() {
               << " of " << total_days_ << std::endl;
   }
   for (int day = resume_from_day_; day < total_days_; ++day) {
-    current_day_num_ = day;
-    current_date_ = addDays(parseDate(config_.simulation.start_date), day);
-
-    if (rank == 0) {
-      std::cout << "\nDay " << day << " (" << formatDate(current_date_) << ")"
-                << std::endl;
-    }
-    MemoryUtils::logGlobalMemoryStats("Start of Day " + std::to_string(day));
-
-    // 0. Update simulation time for start of day
-    current_simulation_time_ = static_cast<double>(day);
-
-    // 1. Run vaccination manager updates at START of day
-    // This ensures efficacy applies to today's interactions
-    if (vaccination_manager_) {
-      vaccination_manager_->update(current_simulation_time_);
-    }
-
-    // 2. Sync death flags across ranks so relationship dissolution can
-    //    detect partners who died on a remote rank during the previous day.
-#ifdef USE_MPI
-    if (domain_mgr_) {
-      domain_mgr_->exchangeDeathFlags();
-    }
-#endif
-
-    // 3. Negotiate Coordinated Encounters
-    negotiateAndLogDailyEncounters(day, rank);
-
-    // Print daily encounter debug summary
-    if (coordinated_encounter_manager_) {
-      coordinated_encounter_manager_->printDailyEncounterSummary(day);
-    }
-
-    simulateDay(day);
-
-    dumpDayHashIfEnabled(day, rank, world_, domain_mgr_);
-
-    // Output statistics periodically
-    if ((day + 1) % config_.simulation.stats_interval_days == 0) {
-      outputStatistics();
-    }
-
-    // End-of-day flush check (triggers flush_interval_days)
-    checkAndFlushEvents(true);
-
-    // Checkpoint trigger (P2: detection only — P3 will write the delta).
-    // Placed after the end-of-day flush so disease progression is done,
-    // events are flushed, and cross-rank buffers are empty.
-    if (config_.simulation.checkpoint.triggersOnDay(
-            day, formatDate(current_date_))) {
-      if (rank == 0) {
-        const auto& cp = config_.simulation.checkpoint;
-        std::cout << "[checkpoint] TRIGGER at end of day " << day << " ("
-                  << formatDate(current_date_)
-                  << "), sim_time=" << current_simulation_time_
-                  << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
-                  << std::endl;
-      }
-      ScopedTimer timer("06_Checkpoint");
-      writeCheckpoint(day, formatDate(current_date_));
-    }
+    runOneDay(day, rank);
   }
 
   writeFinalEventsAndLookups(rank);
 
   if (rank == 0) printRunSummary();
+}
+
+void Simulator::runOneDay(int day, int rank) {
+  current_day_num_ = day;
+  current_date_ = addDays(parseDate(config_.simulation.start_date), day);
+
+  if (rank == 0) {
+    std::cout << "\nDay " << day << " (" << formatDate(current_date_) << ")"
+              << std::endl;
+  }
+  MemoryUtils::logGlobalMemoryStats("Start of Day " + std::to_string(day));
+
+  // 0. Update simulation time for start of day
+  current_simulation_time_ = static_cast<double>(day);
+
+  // 1. Run vaccination manager updates at START of day
+  // This ensures efficacy applies to today's interactions
+  if (vaccination_manager_) {
+    vaccination_manager_->update(current_simulation_time_);
+  }
+
+  // 2. Sync death flags across ranks so relationship dissolution can
+  //    detect partners who died on a remote rank during the previous day.
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    domain_mgr_->exchangeDeathFlags();
+  }
+#endif
+
+  // 3. Negotiate Coordinated Encounters
+  negotiateAndLogDailyEncounters(day, rank);
+
+  // Print daily encounter debug summary
+  if (coordinated_encounter_manager_) {
+    coordinated_encounter_manager_->printDailyEncounterSummary(day);
+  }
+
+  simulateDay(day);
+
+  dumpDayHashIfEnabled(day, rank, world_, domain_mgr_);
+
+  // Output statistics periodically
+  if ((day + 1) % config_.simulation.stats_interval_days == 0) {
+    outputStatistics();
+  }
+
+  // End-of-day flush check (triggers flush_interval_days)
+  checkAndFlushEvents(true);
+
+  // Checkpoint trigger (P2: detection only — P3 will write the delta).
+  // Placed after the end-of-day flush so disease progression is done,
+  // events are flushed, and cross-rank buffers are empty.
+  if (config_.simulation.checkpoint.triggersOnDay(
+          day, formatDate(current_date_))) {
+    if (rank == 0) {
+      const auto& cp = config_.simulation.checkpoint;
+      std::cout << "[checkpoint] TRIGGER at end of day " << day << " ("
+                << formatDate(current_date_)
+                << "), sim_time=" << current_simulation_time_
+                << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
+                << std::endl;
+    }
+    ScopedTimer timer("06_Checkpoint");
+    writeCheckpoint(day, formatDate(current_date_));
+  }
 }
 
 void Simulator::writeFinalEventsAndLookups(int rank) {

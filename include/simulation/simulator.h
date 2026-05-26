@@ -132,6 +132,7 @@ class Simulator {
   }
 
   // Simulation loop functions
+  void runOneDay(int day, int rank);
   void simulateDay(int day_num);
   void simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
                         int day_type_idx, double delta_hours);
