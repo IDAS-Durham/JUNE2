@@ -16,24 +16,6 @@
 
 namespace june {
 
-// Converts a list of activity name strings to a bitmask using the global
-// activity_names registry. Bit i is set if activity_names[i] appears in the
-// input list.
-static ActivityMask computeActivityMask(
-    const std::vector<std::string>& activities,
-    const std::vector<std::string>& activity_names) {
-  ActivityMask mask = 0;
-  for (const auto& act : activities) {
-    for (size_t i = 0; i < activity_names.size(); ++i) {
-      if (activity_names[i] == act) {
-        mask |= (ActivityMask(1) << i);
-        break;
-      }
-    }
-  }
-  return mask;
-}
-
 CoordinatedEncounterManager::CoordinatedEncounterManager(
     const WorldState& world, const Config& config, int mpi_rank)
     : world_(world), config_(config), mpi_rank_(mpi_rank) {
