@@ -19,12 +19,6 @@ void ActivityManager::setPolicyManager(PolicyManager* policy_manager) {
   policy_manager_ = policy_manager;
 }
 
-// void
-// ActivityManager::setCoordinatedEncounterManager(CoordinatedEncounterManager*
-// cem) {
-//     coordinated_encounter_manager_ = cem;
-// }
-
 void ActivityManager::assignScheduleTypes() {
   if (config_.schedule.schedule_types.empty()) {
     std::cerr
@@ -207,8 +201,6 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
         if (day_type_idx <
                 static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
             hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
-          const auto& hop_slots =
-              *hopped_sched.slots_by_day_type_idx[day_type_idx];
           // assignActivities is called with a single slot; use it directly
           int16_t act = selectActivity(person, slot, 0, &hopped_sched,
                                        day_type_idx, time_key_hop);
@@ -217,7 +209,6 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
           locations[i].subset_index = s;
           locations[i].activity_index = act;
           locations[i].encounter_type_id = 255;
-          (void)hop_slots;
         }
       }
 
@@ -521,9 +512,6 @@ void ActivityManager::precomputeSchedules() {
   world_.schedule_starts.assign(world_.people.size() * num_day_types, 0);
   world_.schedule_counts.assign(world_.people.size() * num_day_types, 0);
 
-  size_t total_deterministic = 0;
-  size_t total_stochastic = 0;
-
   for (size_t person_idx = 0; person_idx < world_.people.size(); ++person_idx) {
     auto& person = world_.people[person_idx];
     if (person.is_dead) continue;
@@ -588,25 +576,18 @@ void ActivityManager::precomputeSchedules() {
           auto [venue_id, subset_idx] =
               selectVenue(person, act_idx, slot, precomp_key);
           dt_schedules.emplace_back(act_idx, venue_id, subset_idx, true);
-          total_deterministic++;
         } else if (is_hyb) {
           auto [venue_id, subset_idx] =
               selectVenue(person, act_idx, slot, precomp_key);
           dt_schedules.emplace_back(act_idx, venue_id, subset_idx, false);
-          total_stochastic++;
         } else {
           dt_schedules.emplace_back(act_idx, -1, -1, false);
-          total_stochastic++;
         }
       }
     }
 
     person.schedule_computed = true;
   }
-
-  size_t total_slots = total_deterministic + total_stochastic;
-  double deterministic_pct =
-      total_slots > 0 ? (100.0 * total_deterministic / total_slots) : 0.0;
 }
 
 void ActivityManager::assignActivitiesFromSchedule(
