@@ -16,6 +16,30 @@
 
 namespace june {
 
+namespace {
+
+// Draws an integer count from a Distribution. For BINOMIAL the
+// number-of-trials is taken from `n_for_binomial` (the per-call upper bound).
+// Returns `default_val` when the distribution type is unset/unrecognised.
+template <typename Dist>
+int sampleCountFromDistribution(const Dist& dist, int n_for_binomial,
+                                int default_val, SplitMix64& gen) {
+  if (dist.type == DistributionType::POISSON) {
+    std::poisson_distribution<int> pd(dist.mean);
+    return pd(gen);
+  }
+  if (dist.type == DistributionType::BINOMIAL) {
+    std::binomial_distribution<int> bd(n_for_binomial, dist.p);
+    return bd(gen);
+  }
+  if (dist.type == DistributionType::FIXED) {
+    return dist.count;
+  }
+  return default_val;
+}
+
+}  // namespace
+
 CoordinatedEncounterManager::CoordinatedEncounterManager(
     const WorldState& world, const Config& config, int mpi_rank)
     : world_(world), config_(config), mpi_rank_(mpi_rank) {
@@ -109,17 +133,8 @@ std::vector<int> CoordinatedEncounterManager::getValidSlotsForType(
 int CoordinatedEncounterManager::sampleTypeBudget(
     const CoordinatedEncounterDef& enc_def, int num_valid_slots,
     SplitMix64& gen) const {
-  int budget = 1;
-  const auto& dmd = enc_def.daily_max_distribution;
-  if (dmd.type == DistributionType::POISSON) {
-    std::poisson_distribution<int> poisson_dist(dmd.mean);
-    budget = poisson_dist(gen);
-  } else if (dmd.type == DistributionType::BINOMIAL) {
-    std::binomial_distribution<int> binom_dist(num_valid_slots, dmd.p);
-    budget = binom_dist(gen);
-  } else if (dmd.type == DistributionType::FIXED) {
-    budget = dmd.count;
-  }
+  int budget = sampleCountFromDistribution(enc_def.daily_max_distribution,
+                                           num_valid_slots, 1, gen);
   return std::max(0, std::min(budget, num_valid_slots));
 }
 
@@ -185,17 +200,8 @@ void CoordinatedEncounterManager::emitProposals(
   int num_partners = static_cast<int>(eligible_partners.size());
 
   // Sample invite count from distribution, clamped to [1, num_partners]
-  int to_invite = 1;
-  const auto& idist = enc_def.invite_distribution;
-  if (idist.type == DistributionType::POISSON) {
-    std::poisson_distribution<int> poisson_dist(idist.mean);
-    to_invite = poisson_dist(gen);
-  } else if (idist.type == DistributionType::BINOMIAL) {
-    std::binomial_distribution<int> binom_dist(num_partners, idist.p);
-    to_invite = binom_dist(gen);
-  } else if (idist.type == DistributionType::FIXED) {
-    to_invite = idist.count;
-  }
+  int to_invite = sampleCountFromDistribution(enc_def.invite_distribution,
+                                              num_partners, 1, gen);
   to_invite = std::max(1, std::min(to_invite, num_partners));
 
   // Canonicalize partner order before shuffling. Network partner lists can
