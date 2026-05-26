@@ -238,6 +238,55 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+void DiseaseLoader::loadTransmissionTrajectoryDriven(
+    const YAML::Node& trans_node, TransmissionParams& transmission) {
+  if (trans_node["type"]) {
+    transmission.type = trans_node["type"].as<std::string>();
+  } else {
+    transmission.type = "gamma";
+  }
+
+  // Load infectiousness distribution parameters
+  if (trans_node["max_infectiousness"]) {
+    transmission.max_infectiousness =
+        parseDistribution(trans_node["max_infectiousness"]);
+  }
+  if (trans_node["shape"]) {
+    transmission.shape = parseDistribution(trans_node["shape"]);
+  }
+  if (trans_node["rate"]) {
+    transmission.rate = parseDistribution(trans_node["rate"]);
+  }
+  if (trans_node["shift"]) {
+    transmission.shift = parseDistribution(trans_node["shift"]);
+  }
+
+  // Note: symptom-specific infectiousness scaling is now handled via
+  // infectiousness_factor on each TrajectoryDefinition, applied once at
+  // infection creation (matching original JUNE behaviour).
+
+  // Multi-mode support for TRAJECTORY_DRIVEN: parse optional modes list
+  // for mode names and susceptibility multipliers. No per-mode curves
+  // are loaded — getInfectiousness(m, t) returns the same scalar for all
+  // modes; the multipliers scale susceptibility per-mode at the FOI step.
+  if (trans_node["modes"]) {
+    for (const auto& mode_node : trans_node["modes"]) {
+      TransmissionMode tmode;
+      tmode.name =
+          mode_node["name"] ? mode_node["name"].as<std::string>() : "default";
+      tmode.susceptibility_multiplier =
+          mode_node["susceptibility_multiplier"]
+              ? mode_node["susceptibility_multiplier"].as<double>()
+              : 1.0;
+      transmission.modes.push_back(std::move(tmode));
+    }
+  } else {
+    TransmissionMode tmode;
+    tmode.name = "default";
+    transmission.modes.push_back(std::move(tmode));
+  }
+}
+
 void DiseaseLoader::parseDepositionStages(
     const YAML::Node& mode_node,
     std::vector<std::shared_ptr<InfectiousnessCurve>>& deposition_by_symptom,
@@ -446,51 +495,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
       }
 
       if (transmission.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
-        if (trans_node["type"]) {
-          transmission.type = trans_node["type"].as<std::string>();
-        } else {
-          transmission.type = "gamma";
-        }
-
-        // Load infectiousness distribution parameters
-        if (trans_node["max_infectiousness"]) {
-          transmission.max_infectiousness =
-              parseDistribution(trans_node["max_infectiousness"]);
-        }
-        if (trans_node["shape"]) {
-          transmission.shape = parseDistribution(trans_node["shape"]);
-        }
-        if (trans_node["rate"]) {
-          transmission.rate = parseDistribution(trans_node["rate"]);
-        }
-        if (trans_node["shift"]) {
-          transmission.shift = parseDistribution(trans_node["shift"]);
-        }
-
-        // Note: symptom-specific infectiousness scaling is now handled via
-        // infectiousness_factor on each TrajectoryDefinition, applied once at
-        // infection creation (matching original JUNE behaviour).
-
-        // Multi-mode support for TRAJECTORY_DRIVEN: parse optional modes list
-        // for mode names and susceptibility multipliers. No per-mode curves
-        // are loaded — getInfectiousness(m, t) returns the same scalar for all
-        // modes; the multipliers scale susceptibility per-mode at the FOI step.
-        if (trans_node["modes"]) {
-          for (const auto& mode_node : trans_node["modes"]) {
-            TransmissionMode tmode;
-            tmode.name = mode_node["name"] ? mode_node["name"].as<std::string>()
-                                           : "default";
-            tmode.susceptibility_multiplier =
-                mode_node["susceptibility_multiplier"]
-                    ? mode_node["susceptibility_multiplier"].as<double>()
-                    : 1.0;
-            transmission.modes.push_back(std::move(tmode));
-          }
-        } else {
-          TransmissionMode tmode;
-          tmode.name = "default";
-          transmission.modes.push_back(std::move(tmode));
-        }
+        loadTransmissionTrajectoryDriven(trans_node, transmission);
       } else {
         // STAGE-DRIVEN
         if (trans_node["modes"]) {
