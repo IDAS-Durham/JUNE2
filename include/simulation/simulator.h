@@ -143,6 +143,11 @@ class Simulator {
   // up. Runs the full Phases 1–4 when coordinated_encounter_manager_ is set.
   void negotiateAndLogDailyEncounters(int day, int rank);
 
+  // Log this rank's finalized encounters with a rank-tagged group_id. Called
+  // before the cross-rank merge so paired rows are never double-logged.
+  void logFinalizedEncountersLocally(
+      const std::vector<CoordinatedEncounter>& finalized, int rank);
+
   // End-of-run output: write final epidemic events + lookups (collective on
   // all ranks; appends to the per-rank events file), then on rank 0 print
   // the wall-clock summary, activity/interaction stats, and encounter stats.

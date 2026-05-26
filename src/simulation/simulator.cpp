@@ -756,27 +756,9 @@ void Simulator::negotiateAndLogDailyEncounters(int day, int rank) {
   // Accumulate finalize stats for debug summary
   coordinated_encounter_manager_->accumulateFinalizeStats(finalized);
 
-  // Log locally-finalized encounters to HDF5 BEFORE merging remote ones.
-  // This prevents cross-rank encounters from being logged on both ranks.
-  // group_id fans one unique uint64 per real encounter across every
-  // pair-row belonging to it. Rank is packed into the high 16 bits so
-  // counters stay unique across MPI ranks without coordination; the low
-  // 48 bits are a per-rank monotonic counter (2^48 events / rank is
-  // effectively unbounded for realistic simulations).
-  {
-    const uint64_t rank_prefix = static_cast<uint64_t>(rank) << 48;
-    for (const auto& enc : finalized) {
-      const uint64_t group_id =
-          rank_prefix | (next_encounter_group_id_++ & 0x0000FFFFFFFFFFFFULL);
-      for (PersonId pid : enc.participants) {
-        if (pid != enc.host_id) {
-          event_logger_.logCoordinatedEncounter(
-              enc.host_id, pid, current_simulation_time_,
-              enc.encounter_type_id, enc.slot, group_id);
-        }
-      }
-    }
-  }
+  // Log locally-finalized encounters to HDF5 BEFORE merging remote ones, so
+  // cross-rank encounters never get double-logged.
+  logFinalizedEncountersLocally(finalized, rank);
 
   // Phase 4: Exchange finalized encounters so remote participants know
 #ifdef USE_MPI
@@ -789,6 +771,27 @@ void Simulator::negotiateAndLogDailyEncounters(int day, int rank) {
     }
   }
 #endif
+}
+
+void Simulator::logFinalizedEncountersLocally(
+    const std::vector<CoordinatedEncounter>& finalized, int rank) {
+  // group_id fans one unique uint64 per real encounter across every pair-row
+  // belonging to it. Rank is packed into the high 16 bits so counters stay
+  // unique across MPI ranks without coordination; the low 48 bits are a
+  // per-rank monotonic counter (2^48 events / rank is effectively unbounded
+  // for realistic simulations).
+  const uint64_t rank_prefix = static_cast<uint64_t>(rank) << 48;
+  for (const auto& enc : finalized) {
+    const uint64_t group_id =
+        rank_prefix | (next_encounter_group_id_++ & 0x0000FFFFFFFFFFFFULL);
+    for (PersonId pid : enc.participants) {
+      if (pid != enc.host_id) {
+        event_logger_.logCoordinatedEncounter(
+            enc.host_id, pid, current_simulation_time_, enc.encounter_type_id,
+            enc.slot, group_id);
+      }
+    }
+  }
 }
 
 void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
