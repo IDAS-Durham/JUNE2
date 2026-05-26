@@ -149,6 +149,10 @@ class Simulator {
   void writeFinalEventsAndLookups(int rank);
   void printRunSummary();
 
+  // End-of-day checkpoint trigger. Consults the configured cadence and, if
+  // the day fires, announces on rank 0 and writes a checkpoint.
+  void maybeWriteCheckpoint(int day, int rank);
+
   // Fomite initialization
   void initFomiteState();
 

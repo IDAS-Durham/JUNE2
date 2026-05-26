@@ -589,22 +589,27 @@ void Simulator::runOneDay(int day, int rank) {
   // End-of-day flush check (triggers flush_interval_days)
   checkAndFlushEvents(true);
 
-  // Checkpoint trigger (P2: detection only — P3 will write the delta).
-  // Placed after the end-of-day flush so disease progression is done,
-  // events are flushed, and cross-rank buffers are empty.
-  if (config_.simulation.checkpoint.triggersOnDay(
-          day, formatDate(current_date_))) {
-    if (rank == 0) {
-      const auto& cp = config_.simulation.checkpoint;
-      std::cout << "[checkpoint] TRIGGER at end of day " << day << " ("
-                << formatDate(current_date_)
-                << "), sim_time=" << current_simulation_time_
-                << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
-                << std::endl;
-    }
-    ScopedTimer timer("06_Checkpoint");
-    writeCheckpoint(day, formatDate(current_date_));
+  maybeWriteCheckpoint(day, rank);
+}
+
+void Simulator::maybeWriteCheckpoint(int day, int rank) {
+  // Checkpoint trigger placed after the end-of-day flush so disease
+  // progression is done, events are flushed, and cross-rank buffers are
+  // empty.
+  if (!config_.simulation.checkpoint.triggersOnDay(day,
+                                                   formatDate(current_date_))) {
+    return;
   }
+  if (rank == 0) {
+    const auto& cp = config_.simulation.checkpoint;
+    std::cout << "[checkpoint] TRIGGER at end of day " << day << " ("
+              << formatDate(current_date_)
+              << "), sim_time=" << current_simulation_time_
+              << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
+              << std::endl;
+  }
+  ScopedTimer timer("06_Checkpoint");
+  writeCheckpoint(day, formatDate(current_date_));
 }
 
 void Simulator::writeFinalEventsAndLookups(int rank) {
