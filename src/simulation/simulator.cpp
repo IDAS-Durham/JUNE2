@@ -195,6 +195,37 @@ struct EncounterLookups {
   std::unordered_map<uint8_t, int> min_attendees;
 };
 
+// When both A→B and B→A proposals are accepted in the same slot, two
+// encounters exist for the same pair. Collapse them by keeping the lowest
+// encounter_id; then sort by encounter_id so injection order is
+// deterministic across ranks (later encounters for the same person skip
+// already-assigned slots).
+std::vector<CoordinatedEncounter> dedupAndSortDailyEncounters(
+    std::vector<CoordinatedEncounter> daily_encounters) {
+  std::map<std::pair<std::set<PersonId>, int>, size_t> best;
+  for (size_t i = 0; i < daily_encounters.size(); ++i) {
+    auto key = std::make_pair(daily_encounters[i].participants,
+                              daily_encounters[i].slot);
+    auto it = best.find(key);
+    if (it == best.end()) {
+      best[key] = i;
+    } else if (daily_encounters[i].encounter_id <
+               daily_encounters[it->second].encounter_id) {
+      it->second = i;
+    }
+  }
+  std::vector<CoordinatedEncounter> deduped;
+  deduped.reserve(best.size());
+  for (auto& [key, idx] : best) {
+    deduped.push_back(std::move(daily_encounters[idx]));
+  }
+  std::sort(deduped.begin(), deduped.end(),
+            [](const CoordinatedEncounter& a, const CoordinatedEncounter& b) {
+              return a.encounter_id < b.encounter_id;
+            });
+  return deduped;
+}
+
 EncounterLookups buildEncounterLookups(
     const WorldState& world,
     const std::vector<CoordinatedEncounterDef>& encounters) {
@@ -876,40 +907,9 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
     auto& encounter_trigger_activities = lookups.trigger_activities;
     auto& encounter_min_attendees = lookups.min_attendees;
 
-    // Deduplicate encounters: when both A→B and B→A proposals are
-    // accepted for the same slot, two encounters exist for the same pair.
-    // Keep the one with the lowest encounter_id for determinism across ranks.
-    auto daily_encounters =
-        coordinated_encounter_manager_->getDailyEncounters();
-    {
-      // Build key = sorted participant set + slot -> best encounter_id index
-      std::map<std::pair<std::set<PersonId>, int>, size_t> best;
-      for (size_t i = 0; i < daily_encounters.size(); ++i) {
-        auto key = std::make_pair(daily_encounters[i].participants,
-                                  daily_encounters[i].slot);
-        auto it = best.find(key);
-        if (it == best.end()) {
-          best[key] = i;
-        } else if (daily_encounters[i].encounter_id <
-                   daily_encounters[it->second].encounter_id) {
-          it->second = i;
-        }
-      }
-      std::vector<CoordinatedEncounter> deduped;
-      deduped.reserve(best.size());
-      for (auto& [key, idx] : best) {
-        deduped.push_back(std::move(daily_encounters[idx]));
-      }
-      // Sort by encounter_id for deterministic injection order.
-      // When a person has multiple encounters at the same slot,
-      // the first one processed wins (later ones skip already-assigned people).
-      std::sort(
-          deduped.begin(), deduped.end(),
-          [](const CoordinatedEncounter& a, const CoordinatedEncounter& b) {
-            return a.encounter_id < b.encounter_id;
-          });
-      daily_encounters = std::move(deduped);
-    }
+    auto daily_encounters = dedupAndSortDailyEncounters(
+        coordinated_encounter_manager_->getDailyEncounters());
+
     // === Two-pass encounter injection with MPI eligibility exchange ===
     // Pass 1: Compute local eligibility for ALL encounters in this slot.
     // In MPI mode, remote participants cannot be assumed eligible — they
