@@ -619,6 +619,28 @@ double Infection::evaluateTransmissionProfile(double x) const {
   return 1.0;
 }
 
+void Infection::cacheCurrentSymptom(double lookup_time, uint16_t& symptom_id,
+                                    double& stage_start_time) const {
+  if (lookup_time == last_checked_time_) {
+    symptom_id = cached_symptom_id_;
+    stage_start_time = cached_symptom_start_time_;
+    return;
+  }
+  symptom_id = 0;
+  stage_start_time = infection_time_;
+  for (const auto& trans : trajectory_.transitions) {
+    if (lookup_time >= trans.first) {
+      stage_start_time = trans.first;
+      symptom_id = trans.second;
+    } else {
+      break;
+    }
+  }
+  last_checked_time_ = lookup_time;
+  cached_symptom_id_ = symptom_id;
+  cached_symptom_start_time_ = stage_start_time;
+}
+
 double Infection::getInfectiousness(double current_time) const {
   const auto& trans_params = disease_->getTransmissionParams();
 
@@ -644,29 +666,9 @@ double Infection::getInfectiousness(double current_time) const {
   }
 
   // MODE 2: STAGE-DRIVEN
-  // Find current symptom and how long it has been active
-  uint16_t current_symptom_id = 0;  // "healthy" ID is 0 by default
+  uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  // Use cache to avoid re-scanning trajectory if time hasn't changed
-  if (current_time == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    // Scan trajectory for current symptom ID and its start time
-    for (const auto& trans : trajectory_.transitions) {
-      if (current_time >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    // Update cache
-    last_checked_time_ = current_time;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(current_time, current_symptom_id, stage_start_time);
 
   // Evaluate curve for the specific symptom stage
   if (current_symptom_id < trans_params.symptom_id_curves.size()) {
@@ -705,26 +707,9 @@ double Infection::getInfectiousness(int mode_index, double current_time) const {
   const auto& curves = modes.empty() ? trans_params.symptom_id_curves
                                      : modes[safe_mode].symptom_curves;
 
-  // Get current symptom id and stage start time.
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (current_time == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (current_time >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = current_time;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(current_time, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= curves.size() || !curves[current_symptom_id]) {
     static int missing_curve_count2 = 0;
@@ -766,23 +751,7 @@ double Infection::getIntegratedInfectiousness(int mode_index, double t0,
 
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (t0 == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (t0 >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = t0;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(t0, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= curves.size() || !curves[current_symptom_id]) {
     return 0.0;
@@ -802,26 +771,9 @@ double Infection::getFomiteDepositRate(int fomite_mode_index,
   if (modes[fomite_mode_index].type != TransmissionModeType::Fomite) return 0.0;
   const auto& cfg = std::get<FomiteConfig>(modes[fomite_mode_index].config);
 
-  // Find current symptom id and time in stage (reuse STAGE_DRIVEN cache)
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (current_time == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (current_time >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = current_time;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(current_time, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= cfg.deposition_by_symptom.size()) return 0.0;
   const auto& curve = cfg.deposition_by_symptom[current_symptom_id];
@@ -840,23 +792,7 @@ double Infection::getIntegratedFomiteDeposition(int fomite_mode_index,
 
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (t0 == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (t0 >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = t0;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(t0, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= cfg.deposition_by_symptom.size()) return 0.0;
   const auto& curve = cfg.deposition_by_symptom[current_symptom_id];

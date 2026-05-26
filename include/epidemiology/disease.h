@@ -416,6 +416,12 @@ class Infection {
   struct RestoreTag {};
   Infection(const Disease* disease, RestoreTag) : disease_(disease) {}
 
+  // Resolve current symptom id + stage start time at `lookup_time`, using
+  // the mutable cache when `lookup_time == last_checked_time_` and otherwise
+  // scanning `trajectory_.transitions` and refreshing the cache.
+  void cacheCurrentSymptom(double lookup_time, uint16_t& symptom_id,
+                           double& stage_start_time) const;
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;
