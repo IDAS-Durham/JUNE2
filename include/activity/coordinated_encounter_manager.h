@@ -93,6 +93,15 @@ class CoordinatedEncounterManager {
       const Person& person, size_t person_idx, int day_type_idx,
       std::unordered_map<size_t, std::vector<int>>& remaining_slots) const;
 
+  // Resolves today's per-(person, frequency_group) budget hit on first call
+  // (using a group-specific RNG so the draw is independent of encounter
+  // ordering) and caches the result for the rest of the day. Returns false if
+  // the person has no budget today or has already spent it on a
+  // higher-priority encounter type in the same group.
+  bool isFrequencyGroupBudgetAvailable(const Person& person,
+                                       const std::string& fg_name,
+                                       int current_day);
+
   // Returns the slot indices valid for this encounter type from the person's
   // remaining pool
   std::vector<int> getValidSlotsForType(const Person& person,

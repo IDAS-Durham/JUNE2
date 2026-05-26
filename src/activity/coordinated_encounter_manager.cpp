@@ -83,6 +83,35 @@ int CoordinatedEncounterManager::getVirtualVenueTypeId(
 // generateProposals helpers
 // =============================================================================
 
+bool CoordinatedEncounterManager::isFrequencyGroupBudgetAvailable(
+    const Person& person, const std::string& fg_name, int current_day) {
+  auto& per_person = freq_group_hit_[person.id];
+  if (per_person.find(fg_name) == per_person.end()) {
+    auto fg_it = config_.coordinated_encounters.frequency_groups.find(fg_name);
+    double daily_p = 0.0;
+    if (fg_it != config_.coordinated_encounters.frequency_groups.end()) {
+      daily_p = lookupFrequencyDailyP(person, world_, fg_it->second);
+    }
+    uint64_t group_key = hashGroupName(fg_name);
+    SplitMix64 fg_gen(mix_seed(config_.simulation.random_seed, person.id,
+                               current_day, group_key));
+    std::uniform_real_distribution<double> fg_dist(0.0, 1.0);
+    bool hit = (daily_p > 0.0) && (fg_dist(fg_gen) < daily_p);
+    per_person[fg_name] = hit;
+
+    // Daily-summary accounting (per frequency group). Counted once
+    // per (person, group, day) — not per encounter type.
+    auto& fgs = freq_group_stats_[fg_name];
+    fgs.persons_evaluated++;
+    fgs.sum_daily_p += daily_p;
+    if (hit) fgs.budget_hits++;
+  }
+  if (!per_person[fg_name]) return false;
+  auto& committed = freq_group_committed_[person.id];
+  if (committed[fg_name]) return false;
+  return true;
+}
+
 void CoordinatedEncounterManager::populateInitialRemainingSlotsIfAbsent(
     const Person& person, size_t person_idx, int day_type_idx,
     std::unordered_map<size_t, std::vector<int>>& remaining_slots) const {
@@ -358,34 +387,9 @@ void CoordinatedEncounterManager::generateProposals(
       const std::string* fg_name_ptr = enc_def.frequency_group.has_value()
                                            ? &*enc_def.frequency_group
                                            : nullptr;
-      if (fg_name_ptr) {
-        auto& per_person = freq_group_hit_[person.id];
-        if (per_person.find(*fg_name_ptr) == per_person.end()) {
-          auto fg_it = config_.coordinated_encounters.frequency_groups.find(
-              *fg_name_ptr);
-          double daily_p = 0.0;
-          if (fg_it != config_.coordinated_encounters.frequency_groups.end()) {
-            daily_p = lookupFrequencyDailyP(person, world_, fg_it->second);
-          }
-          uint64_t group_key = hashGroupName(*fg_name_ptr);
-          SplitMix64 fg_gen(mix_seed(config_.simulation.random_seed, person.id,
-                                     current_day, group_key));
-          std::uniform_real_distribution<double> fg_dist(0.0, 1.0);
-          bool hit = (daily_p > 0.0) && (fg_dist(fg_gen) < daily_p);
-          per_person[*fg_name_ptr] = hit;
-
-          // Daily-summary accounting (per frequency group). Counted once
-          // per (person, group, day) — not per encounter type.
-          auto& fgs = freq_group_stats_[*fg_name_ptr];
-          fgs.persons_evaluated++;
-          fgs.sum_daily_p += daily_p;
-          if (hit) fgs.budget_hits++;
-        }
-        // Short-circuit if no budget today, or already spent by an earlier
-        // (higher-priority) encounter type in the same group.
-        if (!per_person[*fg_name_ptr]) continue;
-        auto& committed = freq_group_committed_[person.id];
-        if (committed[*fg_name_ptr]) continue;
+      if (fg_name_ptr &&
+          !isFrequencyGroupBudgetAvailable(person, *fg_name_ptr, current_day)) {
+        continue;
       }
 
       populateInitialRemainingSlotsIfAbsent(person, person_idx, day_type_idx,
