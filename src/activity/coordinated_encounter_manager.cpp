@@ -709,6 +709,28 @@ static std::vector<int> serializePerTypeStats(
   return arr;
 }
 
+// Layout of the frequency-group stats vector (4 fields per group, in
+// fg_names order): 0 persons_evaluated, 1 budget_hits, 2 encounters_emitted,
+// 3 sum_daily_p * 1e6 (scaled to integer for MPI_SUM).
+constexpr int kFgFields = 4;
+
+static std::vector<long long> serializeFreqGroupStats(
+    const std::vector<std::string>& fg_names,
+    const std::unordered_map<
+        std::string, CoordinatedEncounterManager::FreqGroupStats>& freq_group_stats) {
+  std::vector<long long> arr(fg_names.size() * kFgFields, 0);
+  for (size_t gi = 0; gi < fg_names.size(); ++gi) {
+    auto it = freq_group_stats.find(fg_names[gi]);
+    if (it == freq_group_stats.end()) continue;
+    const auto& s = it->second;
+    arr[gi * kFgFields + 0] = s.persons_evaluated;
+    arr[gi * kFgFields + 1] = s.budget_hits;
+    arr[gi * kFgFields + 2] = s.encounters_emitted;
+    arr[gi * kFgFields + 3] = static_cast<long long>(s.sum_daily_p * 1e6);
+  }
+  return arr;
+}
+
 void CoordinatedEncounterManager::accumulateProposalStats(
     const std::vector<EncounterProposal>& proposals) {
   for (const auto& p : proposals) {
@@ -790,17 +812,8 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   for (const auto& kv : fg_map) fg_names.push_back(kv.first);
   std::sort(fg_names.begin(), fg_names.end());
 
-  const int fg_fields = 4;  // persons, hits, emitted, sum_daily_p*1e6
-  std::vector<long long> fg_local(fg_names.size() * fg_fields, 0);
-  for (size_t gi = 0; gi < fg_names.size(); ++gi) {
-    auto it = freq_group_stats_.find(fg_names[gi]);
-    if (it == freq_group_stats_.end()) continue;
-    const auto& s = it->second;
-    fg_local[gi * fg_fields + 0] = s.persons_evaluated;
-    fg_local[gi * fg_fields + 1] = s.budget_hits;
-    fg_local[gi * fg_fields + 2] = s.encounters_emitted;
-    fg_local[gi * fg_fields + 3] = static_cast<long long>(s.sum_daily_p * 1e6);
-  }
+  std::vector<long long> fg_local =
+      serializeFreqGroupStats(fg_names, freq_group_stats_);
   std::vector<long long> fg_global(fg_local);
 #ifdef USE_MPI
   if (!fg_local.empty()) {
@@ -864,10 +877,10 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   if (!fg_names.empty()) {
     std::cout << "      --- frequency_groups (budget rolls) ---" << std::endl;
     for (size_t gi = 0; gi < fg_names.size(); ++gi) {
-      long long persons = fg_global[gi * fg_fields + 0];
-      long long hits = fg_global[gi * fg_fields + 1];
-      long long emitted = fg_global[gi * fg_fields + 2];
-      double sum_p = static_cast<double>(fg_global[gi * fg_fields + 3]) / 1e6;
+      long long persons = fg_global[gi * kFgFields + 0];
+      long long hits = fg_global[gi * kFgFields + 1];
+      long long emitted = fg_global[gi * kFgFields + 2];
+      double sum_p = static_cast<double>(fg_global[gi * kFgFields + 3]) / 1e6;
       double hit_rate = persons > 0 ? 100.0 * hits / persons : 0.0;
       double avg_p = persons > 0 ? sum_p / persons : 0.0;
       double emit_rate = hits > 0 ? 100.0 * emitted / hits : 0.0;

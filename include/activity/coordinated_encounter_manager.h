@@ -68,6 +68,15 @@ class CoordinatedEncounterManager {
   };
   using ProposalSet = std::unordered_set<ProposalKey, ProposalKeyHash>;
 
+  // Daily aggregate frequency-group budget stats for debug reporting.
+  // Public so file-local helpers can name the type.
+  struct FreqGroupStats {
+    int persons_evaluated = 0;
+    int budget_hits = 0;
+    int encounters_emitted = 0;
+    double sum_daily_p = 0.0;
+  };
+
  private:
   const WorldState& world_;
   const Config& config_;
@@ -91,13 +100,6 @@ class CoordinatedEncounterManager {
   std::unordered_map<PersonId, std::unordered_map<std::string, bool>>
       freq_group_committed_;
 
-  // Daily aggregate frequency-group budget stats for debug reporting.
-  struct FreqGroupStats {
-    int persons_evaluated = 0;
-    int budget_hits = 0;
-    int encounters_emitted = 0;
-    double sum_daily_p = 0.0;
-  };
   std::unordered_map<std::string, FreqGroupStats> freq_group_stats_;
 
   // Helper to get virtual venue type ID from the string name
