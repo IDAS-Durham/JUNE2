@@ -264,6 +264,45 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::attachStageCurvesToModes(
+    const YAML::Node& stage_curves_node, TransmissionParams& transmission,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  for (const auto& mode_kv : stage_curves_node) {
+    std::string mname = mode_kv.first.as<std::string>();
+    std::vector<std::shared_ptr<InfectiousnessCurve>> mode_curves(
+        symptom_tags.size(), nullptr);
+    for (auto it = mode_kv.second.begin(); it != mode_kv.second.end(); ++it) {
+      std::string stage_name = it->first.as<std::string>();
+      auto curve =
+          parseCurve(it->second, mname + " / " + stage_name, verbose);
+      transmission.stage_curves[stage_name] = curve;
+      for (const auto& tag : symptom_tags) {
+        if (tag.name == stage_name) {
+          mode_curves[tag.id] = curve;
+          break;
+        }
+      }
+    }
+    // Find mode index by name and store symptom_curves on the mode.
+    for (auto& tmode : transmission.modes) {
+      if (tmode.name == mname) {
+        for (const auto& tag : symptom_tags) {
+          if (tag.id < mode_curves.size() && !mode_curves[tag.id]) {
+            if (tag.value > 0) {
+              std::cerr << "[DiseaseLoader] Warning: mode '" << mname
+                        << "' has no stage_curve for symptom '" << tag.name
+                        << "'; using zero infectiousness." << std::endl;
+            }
+            mode_curves[tag.id] = std::make_shared<ConstantCurve>(0.0);
+          }
+        }
+        tmode.symptom_curves = mode_curves;
+        break;
+      }
+    }
+  }
+}
+
 void DiseaseLoader::parseStageDrivenModes(
     const YAML::Node& modes_node, TransmissionParams& transmission,
     const std::vector<SymptomTag>& symptom_tags, bool verbose) {
@@ -584,43 +623,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 
           // Parse stage_curves as nested: stage_curves[mode_name][symptom_name]
           if (trans_node["stage_curves"]) {
-            for (const auto& mode_kv : trans_node["stage_curves"]) {
-              std::string mname = mode_kv.first.as<std::string>();
-              std::vector<std::shared_ptr<InfectiousnessCurve>> mode_curves(
-                  symptom_tags.size(), nullptr);
-              for (auto it = mode_kv.second.begin(); it != mode_kv.second.end();
-                   ++it) {
-                std::string stage_name = it->first.as<std::string>();
-                auto curve =
-                    parseCurve(it->second, mname + " / " + stage_name, verbose);
-                transmission.stage_curves[stage_name] = curve;
-                for (const auto& tag : symptom_tags) {
-                  if (tag.name == stage_name) {
-                    mode_curves[tag.id] = curve;
-                    break;
-                  }
-                }
-              }
-              // Find mode index by name and store symptom_curves on the mode.
-              for (auto& tmode : transmission.modes) {
-                if (tmode.name == mname) {
-                  for (const auto& tag : symptom_tags) {
-                    if (tag.id < mode_curves.size() && !mode_curves[tag.id]) {
-                      if (tag.value > 0) {
-                        std::cerr << "[DiseaseLoader] Warning: mode '" << mname
-                                  << "' has no stage_curve for symptom '"
-                                  << tag.name << "'; using zero infectiousness."
-                                  << std::endl;
-                      }
-                      mode_curves[tag.id] =
-                          std::make_shared<ConstantCurve>(0.0);
-                    }
-                  }
-                  tmode.symptom_curves = mode_curves;
-                  break;
-                }
-              }
-            }
+            attachStageCurvesToModes(trans_node["stage_curves"], transmission,
+                                     symptom_tags, verbose);
           }
 
           // Fill zero symptom_curves for modes without explicit stage_curves
