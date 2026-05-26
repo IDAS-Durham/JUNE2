@@ -140,6 +140,18 @@ class ActivityManager {
                                           const TimeSlot& slot,
                                           int16_t activity_idx) const;
 
+  // Checks current_slot for a schedule-hop trigger on the chosen activity
+  // (first via the static hop_schedule_by_activity_idx table, then via the
+  // YAML property-dispatched fallback). If a hop target is found, mutates
+  // person.hopped_schedule_id / return_schedule_id / cached_schedule_type_
+  // / temp_slot_progress as required, and — for temporary hops — rolls RNG
+  // for slot 0 of the target and updates scheduled_* outputs.
+  void maybeTriggerScheduleHop(Person& person, const TimeSlot* current_slot,
+                               int day_type_idx, uint64_t time_key,
+                               int16_t& scheduled_activity_index,
+                               VenueId& scheduled_venue_id,
+                               SubsetIndex& scheduled_subset_idx);
+
   // Re-evaluates a non-deterministic precomputed schedule entry at runtime.
   // For hybrid entries, re-rolls participation and reuses the precomputed
   // venue iff the same activity is chosen. For fully-stochastic entries,

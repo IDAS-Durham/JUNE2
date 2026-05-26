@@ -657,50 +657,9 @@ void ActivityManager::assignActivitiesFromSchedule(
       }
 
       // Check for schedule hop trigger
-      int16_t hop_idx = -1;
-      if (current_slot && scheduled_activity_index >= 0 &&
-          scheduled_activity_index <
-              static_cast<int16_t>(
-                  current_slot->hop_schedule_by_activity_idx.size())) {
-        hop_idx = current_slot
-                      ->hop_schedule_by_activity_idx[scheduled_activity_index];
-      }
-      // Generic property-dispatched hop: activity, property name, and schedule
-      // name template are all specified in YAML hop_on_activity; no activity
-      // names or property names are hard-coded here.
-      if (hop_idx == -1 && current_slot) {
-        hop_idx = resolvePropertyDispatchedHopIdx(person, *current_slot,
-                                                  scheduled_activity_index);
-      }
-      if (hop_idx != -1) {
-        const ScheduleType& target = config_.schedule.schedule_types[hop_idx];
-        if (target.is_temporary && !target.flat_slots.empty()) {
-          person.hopped_schedule_id = hop_idx;
-          person.return_schedule_id =
-              (target.return_schedule_idx != -1)
-                  ? target.return_schedule_idx
-                  : static_cast<int16_t>(person.schedule_type_id);
-          person.temp_slot_progress = 0;
-          // Immediate: slot N of old = slot 0 of new schedule
-          const TimeSlot& slot0 = target.flat_slots[0];
-          uint64_t hop_key = mix_seed(base_seed_, person.id, time_key);
-
-          int16_t new_act =
-              selectActivity(person, slot0, 0, &target, day_type_idx, hop_key);
-
-          auto [v, s] = selectVenue(person, new_act, slot0, hop_key);
-          scheduled_activity_index = new_act;
-          scheduled_venue_id = v;
-          scheduled_subset_idx = s;
-          person.temp_slot_progress = 1;
-        } else {
-          // Permanent hop: update schedule pointer, no auto-return
-          person.hopped_schedule_id = hop_idx;
-          person.return_schedule_id = -1;
-          person.cached_schedule_type_ =
-              &config_.schedule.schedule_types[hop_idx];
-        }
-      }
+      maybeTriggerScheduleHop(person, current_slot, day_type_idx, time_key,
+                              scheduled_activity_index, scheduled_venue_id,
+                              scheduled_subset_idx);
 
       // Check for policy overrides (symptom-based, lockdowns, etc.)
       if (applyPolicyOverride(locations[i], person, scheduled_activity_index,
@@ -782,6 +741,55 @@ void ActivityManager::resolveStochasticEntry(
     scheduled_venue_id = venue_id;
     scheduled_subset_idx = subset_idx;
     scheduled_activity_index = runtime_activity_idx;
+  }
+}
+
+void ActivityManager::maybeTriggerScheduleHop(
+    Person& person, const TimeSlot* current_slot, int day_type_idx,
+    uint64_t time_key, int16_t& scheduled_activity_index,
+    VenueId& scheduled_venue_id, SubsetIndex& scheduled_subset_idx) {
+  int16_t hop_idx = -1;
+  if (current_slot && scheduled_activity_index >= 0 &&
+      scheduled_activity_index <
+          static_cast<int16_t>(
+              current_slot->hop_schedule_by_activity_idx.size())) {
+    hop_idx =
+        current_slot->hop_schedule_by_activity_idx[scheduled_activity_index];
+  }
+  // Generic property-dispatched hop: activity, property name, and schedule
+  // name template are all specified in YAML hop_on_activity; no activity
+  // names or property names are hard-coded here.
+  if (hop_idx == -1 && current_slot) {
+    hop_idx = resolvePropertyDispatchedHopIdx(person, *current_slot,
+                                              scheduled_activity_index);
+  }
+  if (hop_idx == -1) return;
+
+  const ScheduleType& target = config_.schedule.schedule_types[hop_idx];
+  if (target.is_temporary && !target.flat_slots.empty()) {
+    person.hopped_schedule_id = hop_idx;
+    person.return_schedule_id =
+        (target.return_schedule_idx != -1)
+            ? target.return_schedule_idx
+            : static_cast<int16_t>(person.schedule_type_id);
+    person.temp_slot_progress = 0;
+    // Immediate: slot N of old = slot 0 of new schedule
+    const TimeSlot& slot0 = target.flat_slots[0];
+    uint64_t hop_key = mix_seed(base_seed_, person.id, time_key);
+
+    int16_t new_act =
+        selectActivity(person, slot0, 0, &target, day_type_idx, hop_key);
+
+    auto [v, s] = selectVenue(person, new_act, slot0, hop_key);
+    scheduled_activity_index = new_act;
+    scheduled_venue_id = v;
+    scheduled_subset_idx = s;
+    person.temp_slot_progress = 1;
+  } else {
+    // Permanent hop: update schedule pointer, no auto-return
+    person.hopped_schedule_id = hop_idx;
+    person.return_schedule_id = -1;
+    person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
 }
 
