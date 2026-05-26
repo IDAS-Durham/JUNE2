@@ -187,6 +187,90 @@ void printDiseaseAudit(const Disease& disease,
   if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
 }
 
+// Env-gated per-day state hash. JUNE_DEBUG_DAY_HASH=1 turns it on; each rank
+// XOR-hashes its local population state, ranks reduce via MPI_BXOR so the
+// final hash is partition-independent, and rank 0 prints. Useful for
+// confirming deterministic divergence between -np 1 and -np N runs.
+void dumpDayHashIfEnabled(int day, int rank, const WorldState& world,
+                          DomainManager* domain_mgr) {
+  static const bool debug_hash_enabled = []() {
+    const char* e = std::getenv("JUNE_DEBUG_DAY_HASH");
+    return e && std::string(e) != "0";
+  }();
+  if (!debug_hash_enabled) return;
+
+  auto mix64 = [](uint64_t x) {
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+  };
+  auto dbits = [](double d) {
+    uint64_t u = 0;
+    std::memcpy(&u, &d, sizeof(u));
+    return u;
+  };
+
+  uint64_t h_dead = 0;
+  uint64_t h_inf = 0;
+  uint64_t h_imm = 0;
+  int n_alive = 0;
+  int n_infected = 0;
+  int n_immune = 0;
+  int n_dead = 0;
+
+  for (size_t i = 0; i < world.people.size(); ++i) {
+    const auto& p = world.people[i];
+    uint64_t base =
+        mix64(static_cast<uint64_t>(p.id) + 0x9e3779b97f4a7c15ULL);
+
+    if (p.is_dead) {
+      n_dead++;
+      h_dead ^= mix64(base ^ 0xDEAD5A10ULL ^ dbits(p.death_time));
+    } else {
+      n_alive++;
+    }
+
+    if (p.infection) {
+      n_infected++;
+      h_inf ^= mix64(base ^ 0x11FEC7EDULL ^
+                     dbits(p.infection->getInfectionTime()));
+    }
+
+    if (p.immunity.natural_acquisition_time >= 0.0) {
+      n_immune++;
+      h_imm ^= mix64(base ^ 0x1EEEEDEDULL ^
+                     dbits(p.immunity.natural_acquisition_time));
+    }
+  }
+
+  uint64_t local_h[3] = {h_dead, h_inf, h_imm};
+  uint64_t global_h[3] = {h_dead, h_inf, h_imm};
+  int local_n[4] = {n_alive, n_dead, n_infected, n_immune};
+  int global_n[4] = {n_alive, n_dead, n_infected, n_immune};
+#ifdef USE_MPI
+  if (domain_mgr) {
+    MPI_Allreduce(local_h, global_h, 3, MPI_UINT64_T, MPI_BXOR,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(local_n, global_n, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
+#else
+  (void)domain_mgr;
+#endif
+  if (rank == 0) {
+    std::ios_base::fmtflags f = std::cout.flags();
+    std::cout << "[DayHash] day=" << day << " alive=" << global_n[0]
+              << " dead=" << global_n[1] << " inf=" << global_n[2]
+              << " imm=" << global_n[3] << std::hex << std::setfill('0')
+              << " H_dead=" << std::setw(16) << global_h[0]
+              << " H_inf=" << std::setw(16) << global_h[1]
+              << " H_imm=" << std::setw(16) << global_h[2] << std::endl;
+    std::cout.flags(f);
+  }
+}
+
 // Rank-0 announcement of the active checkpoint cadence and any out-of-window
 // date entries. Only fires when checkpointing is enabled; callers should
 // gate on rank 0 themselves.
@@ -572,87 +656,7 @@ void Simulator::run() {
 
     simulateDay(day);
 
-    // --- DEBUG: per-day state hash (MPI-invariant XOR) ---
-    // Set JUNE_DEBUG_DAY_HASH=1 to enable. Each rank hashes its local
-    // people; XOR across ranks aggregates into a hash that is independent
-    // of partition layout — so 1-rank and N-rank runs should produce the
-    // exact same per-day hash stream if the simulation is deterministic.
-    {
-      static const bool debug_hash_enabled = []() {
-        const char* e = std::getenv("JUNE_DEBUG_DAY_HASH");
-        return e && std::string(e) != "0";
-      }();
-      if (debug_hash_enabled) {
-        auto mix64 = [](uint64_t x) {
-          x ^= x >> 30;
-          x *= 0xbf58476d1ce4e5b9ULL;
-          x ^= x >> 27;
-          x *= 0x94d049bb133111ebULL;
-          x ^= x >> 31;
-          return x;
-        };
-        auto dbits = [](double d) {
-          uint64_t u = 0;
-          std::memcpy(&u, &d, sizeof(u));
-          return u;
-        };
-
-        uint64_t h_dead = 0;
-        uint64_t h_inf = 0;
-        uint64_t h_imm = 0;
-        int n_alive = 0;
-        int n_infected = 0;
-        int n_immune = 0;
-        int n_dead = 0;
-
-        for (size_t i = 0; i < world_.people.size(); ++i) {
-          const auto& p = world_.people[i];
-          uint64_t base =
-              mix64(static_cast<uint64_t>(p.id) + 0x9e3779b97f4a7c15ULL);
-
-          if (p.is_dead) {
-            n_dead++;
-            h_dead ^= mix64(base ^ 0xDEAD5A10ULL ^ dbits(p.death_time));
-          } else {
-            n_alive++;
-          }
-
-          if (p.infection) {
-            n_infected++;
-            h_inf ^= mix64(base ^ 0x11FEC7EDULL ^
-                           dbits(p.infection->getInfectionTime()));
-          }
-
-          if (p.immunity.natural_acquisition_time >= 0.0) {
-            n_immune++;
-            h_imm ^= mix64(base ^ 0x1EEEEDEDULL ^
-                           dbits(p.immunity.natural_acquisition_time));
-          }
-        }
-
-        uint64_t local_h[3] = {h_dead, h_inf, h_imm};
-        uint64_t global_h[3] = {h_dead, h_inf, h_imm};
-        int local_n[4] = {n_alive, n_dead, n_infected, n_immune};
-        int global_n[4] = {n_alive, n_dead, n_infected, n_immune};
-#ifdef USE_MPI
-        if (domain_mgr_) {
-          MPI_Allreduce(local_h, global_h, 3, MPI_UINT64_T, MPI_BXOR,
-                        MPI_COMM_WORLD);
-          MPI_Allreduce(local_n, global_n, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        }
-#endif
-        if (rank == 0) {
-          std::ios_base::fmtflags f = std::cout.flags();
-          std::cout << "[DayHash] day=" << day << " alive=" << global_n[0]
-                    << " dead=" << global_n[1] << " inf=" << global_n[2]
-                    << " imm=" << global_n[3] << std::hex << std::setfill('0')
-                    << " H_dead=" << std::setw(16) << global_h[0]
-                    << " H_inf=" << std::setw(16) << global_h[1]
-                    << " H_imm=" << std::setw(16) << global_h[2] << std::endl;
-          std::cout.flags(f);
-        }
-      }
-    }
+    dumpDayHashIfEnabled(day, rank, world_, domain_mgr_);
 
     // Output statistics periodically
     if ((day + 1) % config_.simulation.stats_interval_days == 0) {
