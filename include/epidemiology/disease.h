@@ -436,6 +436,14 @@ class Infection {
   std::optional<InfectionTrajectory> tryBuildForcedTrajectory(
       const std::string& key, SplitMix64& rng);
 
+  // Step 1 of rate-based selection: gather a raw rate per trajectory and
+  // their sum. Trajectories with `probability` use that as a fixed weight;
+  // otherwise the rate is looked up from outcome_rates via selection_key.
+  // The returned rates are renormalised to sum to 1 if total > 1.0001.
+  std::pair<std::vector<double>, double> gatherTrajectoryRates(
+      const Person& person, const WorldState* world,
+      const InfectionContext& ctx) const;
+
   const Disease* disease_;
   double infection_time_;
   InfectionTrajectory trajectory_;

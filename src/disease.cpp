@@ -420,6 +420,31 @@ void Infection::buildTransitionsFromStages(
   }
 }
 
+std::pair<std::vector<double>, double> Infection::gatherTrajectoryRates(
+    const Person& person, const WorldState* world,
+    const InfectionContext& ctx) const {
+  const auto& trajectories = disease_->getTrajectories();
+  const auto& outcome_rates = disease_->getOutcomeRates();
+  std::vector<double> rates;
+  rates.reserve(trajectories.size());
+  double total = 0.0;
+  for (const auto& traj_def : trajectories) {
+    double rate = 0.0;
+    if (traj_def.probability.has_value()) {
+      rate = traj_def.probability.value();
+    } else if (!traj_def.selection_key.empty()) {
+      rate = outcome_rates.getRate(person, world, traj_def.selection_key, ctx);
+    }
+    rates.push_back(rate);
+    total += rate;
+  }
+  if (total > 1.0001) {
+    for (double& r : rates) r /= total;
+    total = 1.0;
+  }
+  return {std::move(rates), total};
+}
+
 std::optional<InfectionTrajectory> Infection::tryBuildForcedTrajectory(
     const std::string& key, SplitMix64& rng) {
   const auto& trajectories = disease_->getTrajectories();
@@ -463,7 +488,6 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   InfectionContext infection_ctx{infector_symptom, mode_name};
 
   const auto& trajectories = disease_->getTrajectories();
-  const auto& outcome_rates = disease_->getOutcomeRates();
 
   if (trajectories.empty()) {
     std::cerr << "WARNING: No trajectories defined for disease: "
@@ -485,29 +509,8 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   }
 
   // 1. Gather raw rates for each trajectory.
-  // A trajectory with 'probability' set uses that as a fixed weight; otherwise
-  // the rate is looked up from the outcome rates via 'selection_key'.
-  std::vector<double> trajectory_rates;
-  double total_rate = 0.0;
-
-  for (const auto& traj_def : trajectories) {
-    double rate = 0.0;
-    if (traj_def.probability.has_value()) {
-      rate = traj_def.probability.value();
-    } else if (!traj_def.selection_key.empty()) {
-      rate = outcome_rates.getRate(*person, world, traj_def.selection_key,
-                                   infection_ctx);
-    }
-    trajectory_rates.push_back(rate);
-    total_rate += rate;
-  }
-
-  // Normalize if total_rate > 1 (should not happen with good data, but safety
-  // first)
-  if (total_rate > 1.0001) {
-    for (double& r : trajectory_rates) r /= total_rate;
-    total_rate = 1.0;
-  }
+  auto [trajectory_rates, total_rate] =
+      gatherTrajectoryRates(*person, world, infection_ctx);
 
   // 2. Apply dynamic vaccine efficacy
   if (person->vaccine_trajectory && total_rate > 0.0) {
