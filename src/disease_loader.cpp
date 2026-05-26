@@ -238,6 +238,32 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
+                                   TransmissionMode& tmode, int mode_idx,
+                                   const std::vector<SymptomTag>& symptom_tags,
+                                   bool verbose) {
+  tmode.type = TransmissionModeType::Fomite;
+  FomiteConfig fcfg;
+  fcfg.mode_index = mode_idx;
+  fcfg.max_age =
+      mode_node["max_age"] ? mode_node["max_age"].as<double>() : 14.0;
+  fcfg.sub_bin_time = mode_node["sub_bin_time"]
+                          ? mode_node["sub_bin_time"].as<double>()
+                          : 0.0;
+  if (mode_node["fomite_curve"]) {
+    fcfg.infectiousness_curve =
+        parseCurve(mode_node["fomite_curve"],
+                   "fomite / " + tmode.name + " / fomite_curve", verbose);
+  } else {
+    fcfg.infectiousness_curve = std::make_shared<ConstantCurve>(0.0);
+  }
+  parseDepositionStages(mode_node, fcfg.deposition_by_symptom, "fomite",
+                        tmode.name, symptom_tags, verbose);
+  tmode.config = std::move(fcfg);
+  std::cout << "[DiseaseLoader] Fomite mode '" << tmode.name
+            << "' registered at index " << mode_idx << std::endl;
+}
+
 void DiseaseLoader::loadTransmissionTrajectoryDriven(
     const YAML::Node& trans_node, TransmissionParams& transmission) {
   if (trans_node["type"]) {
@@ -515,30 +541,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
             int mode_idx = static_cast<int>(transmission.modes.size());
 
             if (mode_type == "fomite") {
-              tmode.type = TransmissionModeType::Fomite;
-              FomiteConfig fcfg;
-              fcfg.mode_index = mode_idx;
-              fcfg.max_age = mode_node["max_age"]
-                                 ? mode_node["max_age"].as<double>()
-                                 : 14.0;
-              fcfg.sub_bin_time = mode_node["sub_bin_time"]
-                                      ? mode_node["sub_bin_time"].as<double>()
-                                      : 0.0;
-              if (mode_node["fomite_curve"]) {
-                fcfg.infectiousness_curve = parseCurve(
-                    mode_node["fomite_curve"],
-                    "fomite / " + tmode.name + " / fomite_curve", verbose);
-              } else {
-                fcfg.infectiousness_curve =
-                    std::make_shared<ConstantCurve>(0.0);
-              }
-              parseDepositionStages(mode_node, fcfg.deposition_by_symptom,
-                                    "fomite", tmode.name, symptom_tags,
-                                    verbose);
-              tmode.config = std::move(fcfg);
-              std::cout << "[DiseaseLoader] Fomite mode '" << tmode.name
-                        << "' registered at index " << mode_idx << std::endl;
-
+              loadModeFomite(mode_node, tmode, mode_idx, symptom_tags, verbose);
             } else if (mode_type == "compartmental_uptake") {
               tmode.type = TransmissionModeType::CompartmentalUptake;
               CompartmentalUptakeConfig ucfg;

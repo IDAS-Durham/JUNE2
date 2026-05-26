@@ -45,6 +45,10 @@ class DiseaseLoader {
 
   static void loadTransmissionTrajectoryDriven(const YAML::Node& trans_node,
                                                TransmissionParams& transmission);
+  static void loadModeFomite(const YAML::Node& mode_node,
+                             TransmissionMode& tmode, int mode_idx,
+                             const std::vector<SymptomTag>& symptom_tags,
+                             bool verbose);
 
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(
