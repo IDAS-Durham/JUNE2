@@ -1,6 +1,9 @@
 #pragma once
 
 #include <iostream>
+#include <optional>
+#include <span>
+#include <utility>
 #include <vector>
 
 #include "../core/config.h"
@@ -139,6 +142,15 @@ class ActivityManager {
   int16_t resolvePropertyDispatchedHopIdx(const Person& person,
                                           const TimeSlot& slot,
                                           int16_t activity_idx) const;
+
+  // For slots with a specified_activity that targets activity_idx, picks
+  // a venue from `venues` (optionally filtered by the slot's specified
+  // venue type id) at the slot's specified index. Returns nullopt if the
+  // slot is not specified, the activity does not match, or the filtered
+  // list is empty.
+  std::optional<std::pair<VenueId, SubsetIndex>> tryPickSpecifiedVenue(
+      const TimeSlot& slot, int16_t activity_idx,
+      std::span<const std::pair<VenueId, SubsetIndex>> venues) const;
 
   // Walks `available_indices` in order and returns the first activity that
   // passes its participation roll. Linked activities consult the cached

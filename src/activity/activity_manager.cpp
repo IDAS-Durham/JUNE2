@@ -341,31 +341,8 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
   }
 
   // Check if this time slot specifies a particular activity and index
-  if (slot.specified_activity.has_value()) {
-    const auto& spec_act = slot.specified_activity.value();
-    if (spec_act.cached_activity_idx == activity_idx) {
-      std::vector<std::pair<VenueId, SubsetIndex>> filtered_venues;
-      if (spec_act.cached_venue_type_idx >= 0) {
-        // Filter by pre-resolved venue type ID
-        for (const auto& [venue_id, subset_idx] : venues) {
-          uint8_t v_type_id = world_.getVenueTypeId(venue_id);
-          if (v_type_id == spec_act.cached_venue_type_idx) {
-            filtered_venues.push_back({venue_id, subset_idx});
-          }
-        }
-      } else {
-        filtered_venues.assign(venues.begin(), venues.end());
-      }
-
-      if (!filtered_venues.empty()) {
-        if (spec_act.index >= 0 &&
-            spec_act.index < static_cast<int>(filtered_venues.size())) {
-          return filtered_venues[spec_act.index];
-        } else {
-          return filtered_venues.back();
-        }
-      }
-    }
+  if (auto specified = tryPickSpecifiedVenue(slot, activity_idx, venues)) {
+    return *specified;
   }
 
   // Per-person deterministic RNG for MPI reproducibility
@@ -726,6 +703,35 @@ void ActivityManager::maybeTriggerScheduleHop(
     person.return_schedule_id = -1;
     person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
+}
+
+std::optional<std::pair<VenueId, SubsetIndex>>
+ActivityManager::tryPickSpecifiedVenue(
+    const TimeSlot& slot, int16_t activity_idx,
+    std::span<const std::pair<VenueId, SubsetIndex>> venues) const {
+  if (!slot.specified_activity.has_value()) return std::nullopt;
+  const auto& spec_act = slot.specified_activity.value();
+  if (spec_act.cached_activity_idx != activity_idx) return std::nullopt;
+
+  std::vector<std::pair<VenueId, SubsetIndex>> filtered_venues;
+  if (spec_act.cached_venue_type_idx >= 0) {
+    // Filter by pre-resolved venue type ID
+    for (const auto& [venue_id, subset_idx] : venues) {
+      uint8_t v_type_id = world_.getVenueTypeId(venue_id);
+      if (v_type_id == spec_act.cached_venue_type_idx) {
+        filtered_venues.push_back({venue_id, subset_idx});
+      }
+    }
+  } else {
+    filtered_venues.assign(venues.begin(), venues.end());
+  }
+
+  if (filtered_venues.empty()) return std::nullopt;
+  if (spec_act.index >= 0 &&
+      spec_act.index < static_cast<int>(filtered_venues.size())) {
+    return filtered_venues[spec_act.index];
+  }
+  return filtered_venues.back();
 }
 
 int16_t ActivityManager::pickActivityByRate(
