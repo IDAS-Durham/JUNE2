@@ -580,6 +580,52 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
   return out;
 }
 
+// Overlay one shard's /infection/ records onto world_.people owned by this
+// rank. Each record rebuilds the symptom trajectory from the flat
+// traj_times/traj_symptom_ids arrays, then materialises the Infection via
+// Infection::fromCheckpoint so the disease config is rebound to the
+// currently-loaded Disease pointer. Returns the number of records consumed.
+size_t overlayShardInfection(H5::H5File& f, WorldState& world,
+                             Disease* disease) {
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto I64 = H5::PredType::NATIVE_INT64;
+  const auto U16 = H5::PredType::NATIVE_UINT16;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto ip = readVec<int32_t>(f, "/infection/person_id", I32);
+  auto it_ = readVec<double>(f, "/infection/infection_time", F64);
+  auto mi = readVec<double>(f, "/infection/max_infectiousness", F64);
+  auto sh = readVec<double>(f, "/infection/transmission_shape", F64);
+  auto ra = readVec<double>(f, "/infection/transmission_rate", F64);
+  auto sft = readVec<double>(f, "/infection/transmission_shift", F64);
+  auto tt = readVec<double>(f, "/infection/traj_infection_time", F64);
+  auto tf = readVec<double>(f, "/infection/traj_infectiousness_factor", F64);
+  auto lc = readVec<double>(f, "/infection/last_checked_time", F64);
+  auto csy = readVec<uint16_t>(f, "/infection/cached_symptom_id", U16);
+  auto css = readVec<double>(f, "/infection/cached_symptom_start_time", F64);
+  auto toff = readVec<int64_t>(f, "/infection/traj_offsets", I64);
+  auto tcnt = readVec<int32_t>(f, "/infection/traj_counts", I32);
+  auto ttime = readVec<double>(f, "/infection/traj_times", F64);
+  auto tsym = readVec<uint16_t>(f, "/infection/traj_symptom_ids", U16);
+  size_t n = 0;
+  for (size_t i = 0; i < ip.size(); ++i) {
+    Person* p = world.getPerson(ip[i]);
+    if (!p) continue;
+    InfectionTrajectory tr;
+    tr.infection_time = tt[i];
+    tr.infectiousness_factor = tf[i];
+    int64_t off = toff[i];
+    int32_t cnt = tcnt[i];
+    tr.transitions.reserve(cnt);
+    for (int32_t k = 0; k < cnt; ++k)
+      tr.transitions.emplace_back(ttime[off + k], tsym[off + k]);
+    p->infection =
+        Infection::fromCheckpoint(disease, it_[i], tr, mi[i], sh[i], ra[i],
+                                  sft[i], lc[i], csy[i], css[i]);
+    ++n;
+  }
+  return n;
+}
+
 // Overlay one shard's /vaccine/ records onto world_.people owned by this
 // rank. Efficacy is NOT persisted in the shard — it is re-derived from the
 // active VaccinationConfig by dose position so a resume can apply updated
@@ -776,38 +822,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
       p->vaccine_trajectory.reset();
     }
 
-    // sparse infection
-    auto ip = readVec<int32_t>(f, "/infection/person_id", I32);
-    auto it_ = readVec<double>(f, "/infection/infection_time", F64);
-    auto mi = readVec<double>(f, "/infection/max_infectiousness", F64);
-    auto sh = readVec<double>(f, "/infection/transmission_shape", F64);
-    auto ra = readVec<double>(f, "/infection/transmission_rate", F64);
-    auto sft = readVec<double>(f, "/infection/transmission_shift", F64);
-    auto tt = readVec<double>(f, "/infection/traj_infection_time", F64);
-    auto tf = readVec<double>(f, "/infection/traj_infectiousness_factor", F64);
-    auto lc = readVec<double>(f, "/infection/last_checked_time", F64);
-    auto csy = readVec<uint16_t>(f, "/infection/cached_symptom_id", U16);
-    auto css = readVec<double>(f, "/infection/cached_symptom_start_time", F64);
-    auto toff = readVec<int64_t>(f, "/infection/traj_offsets", I64);
-    auto tcnt = readVec<int32_t>(f, "/infection/traj_counts", I32);
-    auto ttime = readVec<double>(f, "/infection/traj_times", F64);
-    auto tsym = readVec<uint16_t>(f, "/infection/traj_symptom_ids", U16);
-    for (size_t i = 0; i < ip.size(); ++i) {
-      Person* p = world_.getPerson(ip[i]);
-      if (!p) continue;
-      InfectionTrajectory tr;
-      tr.infection_time = tt[i];
-      tr.infectiousness_factor = tf[i];
-      int64_t off = toff[i];
-      int32_t cnt = tcnt[i];
-      tr.transitions.reserve(cnt);
-      for (int32_t k = 0; k < cnt; ++k)
-        tr.transitions.emplace_back(ttime[off + k], tsym[off + k]);
-      p->infection =
-          Infection::fromCheckpoint(disease_.get(), it_[i], tr, mi[i], sh[i],
-                                    ra[i], sft[i], lc[i], csy[i], css[i]);
-      ++n_inf;
-    }
+    n_inf += overlayShardInfection(f, world_, disease_.get());
 
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
 
