@@ -187,6 +187,32 @@ void printDiseaseAudit(const Disease& disease,
   if (!orates.rows.empty()) dumpRow(orates.rows.size() - 1);
 }
 
+// Per-slot lookup tables derived from the coordinated-encounters config:
+// encounter_type_id -> trigger activity indices, and
+// encounter_type_id -> min_attendees threshold.
+struct EncounterLookups {
+  std::unordered_map<uint8_t, std::vector<int16_t>> trigger_activities;
+  std::unordered_map<uint8_t, int> min_attendees;
+};
+
+EncounterLookups buildEncounterLookups(
+    const WorldState& world,
+    const std::vector<CoordinatedEncounterDef>& encounters) {
+  EncounterLookups out;
+  for (const auto& def : encounters) {
+    int type_id = world.getEncounterTypeIndex(def.name);
+    if (type_id < 0) continue;
+    std::vector<int16_t> indices;
+    for (const auto& slot_name : def.trigger_slots) {
+      int idx = world.getActivityIndex(slot_name);
+      if (idx >= 0) indices.push_back(static_cast<int16_t>(idx));
+    }
+    out.trigger_activities[static_cast<uint8_t>(type_id)] = std::move(indices);
+    out.min_attendees[static_cast<uint8_t>(type_id)] = def.min_attendees;
+  }
+  return out;
+}
+
 // Env-gated per-day state hash. JUNE_DEBUG_DAY_HASH=1 turns it on; each rank
 // XOR-hashes its local population state, ranks reduce via MPI_BXOR so the
 // final hash is partition-independent, and rank 0 prints. Useful for
@@ -843,32 +869,12 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   // Inject Coordinated Encounters for this timeslot into the locations
   // array
   if (coordinated_encounter_manager_) {
-    // Build encounter_type_id -> trigger activity indices map (once per slot,
-    // cheap)
-    std::unordered_map<uint8_t, std::vector<int16_t>>
-        encounter_trigger_activities;
-    for (const auto& def : config_.coordinated_encounters.encounters) {
-      int type_id = world_.getEncounterTypeIndex(def.name);
-      if (type_id >= 0) {
-        std::vector<int16_t> indices;
-        for (const auto& slot_name : def.trigger_slots) {
-          int idx = world_.getActivityIndex(slot_name);
-          if (idx >= 0) indices.push_back(static_cast<int16_t>(idx));
-        }
-        encounter_trigger_activities[static_cast<uint8_t>(type_id)] =
-            std::move(indices);
-      }
-    }
-
-    // Build encounter_type_id -> min_attendees lookup
-    std::unordered_map<uint8_t, int> encounter_min_attendees;
-    for (const auto& def : config_.coordinated_encounters.encounters) {
-      int type_id = world_.getEncounterTypeIndex(def.name);
-      if (type_id >= 0) {
-        encounter_min_attendees[static_cast<uint8_t>(type_id)] =
-            def.min_attendees;
-      }
-    }
+    // Per-slot lookup tables (trigger activities + min attendees) keyed by
+    // encounter_type_id. Cheap to rebuild per slot.
+    EncounterLookups lookups = buildEncounterLookups(
+        world_, config_.coordinated_encounters.encounters);
+    auto& encounter_trigger_activities = lookups.trigger_activities;
+    auto& encounter_min_attendees = lookups.min_attendees;
 
     // Deduplicate encounters: when both A→B and B→A proposals are
     // accepted for the same slot, two encounters exist for the same pair.
