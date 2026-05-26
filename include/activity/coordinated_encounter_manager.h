@@ -4,6 +4,7 @@
 #include <random>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "../core/config.h"
@@ -46,6 +47,26 @@ class CoordinatedEncounterManager {
   void addDailyEncounter(const CoordinatedEncounter& enc) {
     daily_encounters_.push_back(enc);
   }
+
+  // Key for mutual-proposal lookup. A proposal (host=A, invitee=B, slot=S,
+  // type=T) is "mutual" iff the reverse (B→A, S, T) is also in the set.
+  // Public so file-local helpers in coordinated_encounter_manager.cpp can
+  // name the type.
+  struct ProposalKey {
+    PersonId host;
+    PersonId invitee;
+    int slot;
+    uint8_t encounter_type_id;
+
+    bool operator==(const ProposalKey& o) const {
+      return host == o.host && invitee == o.invitee && slot == o.slot &&
+             encounter_type_id == o.encounter_type_id;
+    }
+  };
+  struct ProposalKeyHash {
+    size_t operator()(const ProposalKey& k) const;
+  };
+  using ProposalSet = std::unordered_set<ProposalKey, ProposalKeyHash>;
 
  private:
   const WorldState& world_;
@@ -165,6 +186,13 @@ class CoordinatedEncounterManager {
   // Finds the encounter definition matching a proposal's venue type
   const CoordinatedEncounterDef* findMatchingEncounterDef(
       const EncounterProposal& prop) const;
+
+  // Per-proposal decision: produces the reply (status filled in), and
+  // side-effects committed_slots_ on accept. Caller appends the result to
+  // out_replies.
+  EncounterReply replyForOneProposal(const EncounterProposal& prop,
+                                     int day_type_idx,
+                                     const ProposalSet& proposal_set);
 
   // Checks if the invitee's schedule is compatible with the encounter at the
   // given slot

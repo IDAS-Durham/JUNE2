@@ -38,31 +38,8 @@ int sampleCountFromDistribution(const Dist& dist, int n_for_binomial,
   return default_val;
 }
 
-// Key for mutual-proposal lookup. A proposal (host=A, invitee=B, slot=S,
-// type=T) is "mutual" iff the reverse (host=B, invitee=A, slot=S, type=T)
-// is also in the set.
-struct ProposalKey {
-  PersonId host;
-  PersonId invitee;
-  int slot;
-  uint8_t encounter_type_id;
-
-  bool operator==(const ProposalKey& o) const {
-    return host == o.host && invitee == o.invitee && slot == o.slot &&
-           encounter_type_id == o.encounter_type_id;
-  }
-};
-struct ProposalKeyHash {
-  size_t operator()(const ProposalKey& k) const {
-    size_t h = std::hash<int>{}(k.host);
-    h ^= std::hash<int>{}(k.invitee) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= std::hash<int>{}(k.slot) + 0x9e3779b9 + (h << 6) + (h >> 2);
-    h ^= std::hash<uint8_t>{}(k.encounter_type_id) + 0x9e3779b9 + (h << 6) +
-         (h >> 2);
-    return h;
-  }
-};
-using ProposalSet = std::unordered_set<ProposalKey, ProposalKeyHash>;
+using ProposalKey = CoordinatedEncounterManager::ProposalKey;
+using ProposalSet = CoordinatedEncounterManager::ProposalSet;
 
 // Sorts proposals by (invitee, slot, encounter_id, host) so that the same
 // invitee processes proposals for the same slot in the same order regardless
@@ -136,6 +113,16 @@ EncounterReply makeReplySkeleton(const EncounterProposal& prop) {
 }
 
 }  // namespace
+
+size_t CoordinatedEncounterManager::ProposalKeyHash::operator()(
+    const ProposalKey& k) const {
+  size_t h = std::hash<int>{}(k.host);
+  h ^= std::hash<int>{}(k.invitee) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<int>{}(k.slot) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<uint8_t>{}(k.encounter_type_id) + 0x9e3779b9 + (h << 6) +
+       (h >> 2);
+  return h;
+}
 
 CoordinatedEncounterManager::CoordinatedEncounterManager(
     const WorldState& world, const Config& config, int mpi_rank)
@@ -568,68 +555,62 @@ void CoordinatedEncounterManager::processProposals(
       buildProposalKeySet(sorted_proposals, host_proposals);
 
   for (const auto& prop : sorted_proposals) {
-    EncounterReply reply = makeReplySkeleton(prop);
-
-    // Find invitee locally
-    auto it = world_.person_index.find(prop.invitee_id);
-    if (it == world_.person_index.end()) {
-      reply.status = ReplyStatus::REJECTED_NOT_FOUND;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    const Person& invitee = world_.people[it->second];
-    if (invitee.is_dead) {
-      reply.status = ReplyStatus::REJECTED_DEAD;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    // Find matching encounter definition (needed before commitment check
-    // to determine if mutual proposal bypass applies)
-    const CoordinatedEncounterDef* matched_def = findMatchingEncounterDef(prop);
-    if (!matched_def) {
-      reply.status = ReplyStatus::REJECTED_NO_MATCHING_DEF;
-      std::cerr << "[Rank " << mpi_rank_ << "] WARNING: Encounter "
-                << prop.encounter_id << " has venue_type_id "
-                << prop.venue_type_id
-                << " which does not match any encounter definition. Rejecting."
-                << std::endl;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    if (isInviteeSlotBlocked(committed_slots_, invitee.id, prop.slot,
-                             *matched_def, prop, proposal_set)) {
-      reply.status = ReplyStatus::REJECTED_ALREADY_COMMITTED;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    // Schedule validation
-    if (!isScheduleCompatible(invitee, prop.slot, *matched_def, day_type_idx)) {
-      reply.status = ReplyStatus::REJECTED_SCHEDULE_CONFLICT;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    // Acceptance roll — per-invitee deterministic RNG (no mpi_rank).
-    // Mix invitee_id explicitly so that each invitee gets an independent
-    // draw even if encounter_id collisions occur (31-bit truncation).
-    double acceptance_prob = matched_def->acceptance_probability;
-    SplitMix64 gen(mix_seed(config_.simulation.random_seed, prop.encounter_id,
-                            prop.invitee_id, 0xACCE97ULL));
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-
-    if (dist(gen) > acceptance_prob) {
-      reply.status = ReplyStatus::REJECTED_DECLINED;
-    } else {
-      reply.status = ReplyStatus::ACCEPTED;
-      committed_slots_[invitee.id].insert(prop.slot);
-    }
-
-    out_replies.push_back(reply);
+    out_replies.push_back(replyForOneProposal(prop, day_type_idx, proposal_set));
   }
+}
+
+EncounterReply CoordinatedEncounterManager::replyForOneProposal(
+    const EncounterProposal& prop, int day_type_idx,
+    const ProposalSet& proposal_set) {
+  EncounterReply reply = makeReplySkeleton(prop);
+
+  auto it = world_.person_index.find(prop.invitee_id);
+  if (it == world_.person_index.end()) {
+    reply.status = ReplyStatus::REJECTED_NOT_FOUND;
+    return reply;
+  }
+  const Person& invitee = world_.people[it->second];
+  if (invitee.is_dead) {
+    reply.status = ReplyStatus::REJECTED_DEAD;
+    return reply;
+  }
+
+  // Match def first — needed for the mutual-proposal bypass decision below.
+  const CoordinatedEncounterDef* matched_def = findMatchingEncounterDef(prop);
+  if (!matched_def) {
+    reply.status = ReplyStatus::REJECTED_NO_MATCHING_DEF;
+    std::cerr << "[Rank " << mpi_rank_ << "] WARNING: Encounter "
+              << prop.encounter_id << " has venue_type_id "
+              << prop.venue_type_id
+              << " which does not match any encounter definition. Rejecting."
+              << std::endl;
+    return reply;
+  }
+
+  if (isInviteeSlotBlocked(committed_slots_, invitee.id, prop.slot,
+                           *matched_def, prop, proposal_set)) {
+    reply.status = ReplyStatus::REJECTED_ALREADY_COMMITTED;
+    return reply;
+  }
+
+  if (!isScheduleCompatible(invitee, prop.slot, *matched_def, day_type_idx)) {
+    reply.status = ReplyStatus::REJECTED_SCHEDULE_CONFLICT;
+    return reply;
+  }
+
+  // Per-invitee deterministic RNG (no mpi_rank). Mix invitee_id so each
+  // invitee gets an independent draw even if encounter_id collisions occur
+  // (31-bit truncation).
+  SplitMix64 gen(mix_seed(config_.simulation.random_seed, prop.encounter_id,
+                          prop.invitee_id, 0xACCE97ULL));
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+  if (dist(gen) > matched_def->acceptance_probability) {
+    reply.status = ReplyStatus::REJECTED_DECLINED;
+  } else {
+    reply.status = ReplyStatus::ACCEPTED;
+    committed_slots_[invitee.id].insert(prop.slot);
+  }
+  return reply;
 }
 
 void CoordinatedEncounterManager::finalizeEncounters(
