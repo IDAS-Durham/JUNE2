@@ -107,6 +107,10 @@ class ActivityManager {
 
   void ensureIndicesCached();
 
+  // Marks a PersonLocation as belonging to a dead person. Does not touch
+  // person_id / person_array_index — caller sets those if needed.
+  void setDeadLocation(PersonLocation& loc) const;
+
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 

@@ -91,6 +91,13 @@ void ActivityManager::assignScheduleTypes() {
   }
 }
 
+void ActivityManager::setDeadLocation(PersonLocation& loc) const {
+  loc.venue_id = -1;
+  loc.subset_index = -1;
+  loc.activity_index = dead_act_idx_;
+  loc.encounter_type_id = 255;
+}
+
 void ActivityManager::ensureIndicesCached() {
   if (dead_act_idx_ == -1) {
     dead_act_idx_ = static_cast<int16_t>(world_.getActivityIndex("dead"));
@@ -113,10 +120,7 @@ void ActivityManager::initializeLocations(
 
     // Skip dead people - they don't have a location
     if (p.is_dead) {
-      locations[i].venue_id = -1;
-      locations[i].subset_index = -1;
-      locations[i].activity_index = dead_act_idx_;
-      locations[i].encounter_type_id = 255;
+      setDeadLocation(locations[i]);
       continue;
     }
 
@@ -235,10 +239,7 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
 
     // Skip dead people - they don't move
     if (person.is_dead) {
-      locations[i].venue_id = -1;
-      locations[i].subset_index = -1;
-      locations[i].activity_index = dead_act_idx_;
-      locations[i].encounter_type_id = 255;
+      setDeadLocation(locations[i]);
       continue;
     }
 
@@ -657,10 +658,7 @@ void ActivityManager::assignActivitiesFromSchedule(
 
     // Skip dead people
     if (person.is_dead) {
-      locations[i].venue_id = -1;
-      locations[i].subset_index = -1;
-      locations[i].activity_index = dead_act_idx_;
-      locations[i].encounter_type_id = 255;
+      setDeadLocation(locations[i]);
       locations[i].person_id = person.id;
       continue;
     }
