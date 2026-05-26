@@ -124,6 +124,15 @@ class ActivityManager {
                            int16_t activity, VenueId venue, SubsetIndex subset,
                            int time_slot_index);
 
+  // Handles the hopped-schedule branch of assignActivitiesFromSchedule:
+  // dispatches to advanceHoppedSchedule (temporary) or the non-temporary
+  // freeze-in-place day-type-slot path, then applies any policy override
+  // and finalises locations[person_array_idx].
+  void assignHoppedScheduleSlot(Person& person, size_t person_array_idx,
+                                int time_slot_index, int day_type_idx,
+                                uint64_t time_key,
+                                std::vector<PersonLocation>& locations);
+
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 

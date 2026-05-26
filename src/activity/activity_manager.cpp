@@ -612,50 +612,8 @@ void ActivityManager::assignActivitiesFromSchedule(
 
     // Hopped person: bypass precomputed schedule
     if (person.hopped_schedule_id != -1) {
-      const ScheduleType& hopped_sched =
-          config_.schedule.schedule_types[person.hopped_schedule_id];
-
-      if (hopped_sched.is_temporary) {
-        advanceHoppedSchedule(person, locations[i], i, day_type_idx);
-      } else {
-        // Non-temporary hop (e.g. freeze_in_place): execute normal day-type
-        // slots
-        if (day_type_idx <
-                static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
-            hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
-          const auto& slots = *hopped_sched.slots_by_day_type_idx[day_type_idx];
-          if (time_slot_index >= 0 &&
-              time_slot_index < static_cast<int>(slots.size())) {
-            const TimeSlot& hop_slot = slots[time_slot_index];
-            int16_t act = selectActivity(person, hop_slot, time_slot_index,
-                                         &hopped_sched, day_type_idx, time_key);
-            auto [v, s] = selectVenue(person, act, hop_slot, time_key);
-            locations[i].venue_id = v;
-            locations[i].subset_index = s;
-            locations[i].activity_index = act;
-            locations[i].encounter_type_id = 255;
-          }
-        }
-      }
-
-      // Apply policy overrides (e.g. sick traveller freeze / unfreeze)
-      if (policy_manager_ != nullptr) {
-        VenueId effective_venue = locations[i].venue_id;
-        SubsetIndex effective_subset = locations[i].subset_index;
-        // If in transit (no_venue), resolve last real overnight venue so the
-        // policy can pin the person there instead of at home
-        if (effective_venue < 0 && hopped_sched.is_temporary) {
-          auto [lv, ls] = findLastNonNullVenueOnHop(person);
-          effective_venue = lv;
-          effective_subset = ls;
-        }
-        applyPolicyOverride(locations[i], person,
-                            locations[i].activity_index, effective_venue,
-                            effective_subset, time_slot_index);
-      }
-
-      locations[i].person_id = person.id;
-      locations[i].person_array_index = i;
+      assignHoppedScheduleSlot(person, i, time_slot_index, day_type_idx,
+                               time_key, locations);
       continue;
     }
 
@@ -848,6 +806,56 @@ void ActivityManager::assignActivitiesFromSchedule(
     locations[i].person_id = person.id;
     locations[i].person_array_index = i;
   }
+}
+
+void ActivityManager::assignHoppedScheduleSlot(
+    Person& person, size_t person_array_idx, int time_slot_index,
+    int day_type_idx, uint64_t time_key,
+    std::vector<PersonLocation>& locations) {
+  const size_t i = person_array_idx;
+  const ScheduleType& hopped_sched =
+      config_.schedule.schedule_types[person.hopped_schedule_id];
+
+  if (hopped_sched.is_temporary) {
+    advanceHoppedSchedule(person, locations[i], i, day_type_idx);
+  } else {
+    // Non-temporary hop (e.g. freeze_in_place): execute normal day-type
+    // slots
+    if (day_type_idx <
+            static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
+        hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
+      const auto& slots = *hopped_sched.slots_by_day_type_idx[day_type_idx];
+      if (time_slot_index >= 0 &&
+          time_slot_index < static_cast<int>(slots.size())) {
+        const TimeSlot& hop_slot = slots[time_slot_index];
+        int16_t act = selectActivity(person, hop_slot, time_slot_index,
+                                     &hopped_sched, day_type_idx, time_key);
+        auto [v, s] = selectVenue(person, act, hop_slot, time_key);
+        locations[i].venue_id = v;
+        locations[i].subset_index = s;
+        locations[i].activity_index = act;
+        locations[i].encounter_type_id = 255;
+      }
+    }
+  }
+
+  // Apply policy overrides (e.g. sick traveller freeze / unfreeze)
+  if (policy_manager_ != nullptr) {
+    VenueId effective_venue = locations[i].venue_id;
+    SubsetIndex effective_subset = locations[i].subset_index;
+    // If in transit (no_venue), resolve last real overnight venue so the
+    // policy can pin the person there instead of at home
+    if (effective_venue < 0 && hopped_sched.is_temporary) {
+      auto [lv, ls] = findLastNonNullVenueOnHop(person);
+      effective_venue = lv;
+      effective_subset = ls;
+    }
+    applyPolicyOverride(locations[i], person, locations[i].activity_index,
+                        effective_venue, effective_subset, time_slot_index);
+  }
+
+  locations[i].person_id = person.id;
+  locations[i].person_array_index = i;
 }
 
 std::pair<VenueId, SubsetIndex> ActivityManager::findLastNonNullVenueOnHop(
