@@ -745,6 +745,53 @@ static std::vector<int> serializePerTypeStats(
   return arr;
 }
 
+// Rank-0 dump of the global per-type encounter stats. `global_arr` must be
+// laid out per the kFieldsPerType-aware contract from serializePerTypeStats;
+// `enc_defs` supplies the human-readable type names.
+static void printPerTypeSummary(
+    const std::vector<int>& global_arr,
+    const std::vector<CoordinatedEncounterDef>& enc_defs) {
+  int num_types = static_cast<int>(enc_defs.size());
+  for (int i = 0; i < num_types; ++i) {
+    int base = 2 + i * kFieldsPerType;
+    int proposals = global_arr[base + 0];
+    int accepted = global_arr[base + 1];
+    int rej_not_found = global_arr[base + 2];
+    int rej_dead = global_arr[base + 3];
+    int rej_committed = global_arr[base + 4];
+    int rej_no_def = global_arr[base + 5];
+    int rej_schedule = global_arr[base + 6];
+    int rej_declined = global_arr[base + 7];
+    int finalized = global_arr[base + 8];
+    int participants = global_arr[base + 9];
+
+    int total_replies = accepted + rej_not_found + rej_dead + rej_committed +
+                        rej_no_def + rej_schedule + rej_declined;
+    double accept_rate =
+        total_replies > 0 ? 100.0 * accepted / total_replies : 0.0;
+
+    std::cout << "      --- " << enc_defs[i].name << " ---" << std::endl;
+    std::cout << "        Proposals:  " << proposals << std::endl;
+    std::cout << "        Accepted:   " << accepted << " / " << total_replies
+              << " (" << std::fixed << std::setprecision(1) << accept_rate
+              << "%)" << std::endl;
+    if (rej_committed > 0)
+      std::cout << "        Rej(committed): " << rej_committed << std::endl;
+    if (rej_schedule > 0)
+      std::cout << "        Rej(schedule):  " << rej_schedule << std::endl;
+    if (rej_declined > 0)
+      std::cout << "        Rej(declined):  " << rej_declined << std::endl;
+    if (rej_not_found > 0)
+      std::cout << "        Rej(not_found): " << rej_not_found << std::endl;
+    if (rej_dead > 0)
+      std::cout << "        Rej(dead):      " << rej_dead << std::endl;
+    if (rej_no_def > 0)
+      std::cout << "        Rej(no_def):    " << rej_no_def << std::endl;
+    std::cout << "        Finalized:  " << finalized << " encounters, "
+              << participants << " participants" << std::endl;
+  }
+}
+
 // Layout of the frequency-group stats vector (4 fields per group, in
 // fg_names order): 0 persons_evaluated, 1 budget_hits, 2 encounters_emitted,
 // 3 sum_daily_p * 1e6 (scaled to integer for MPI_SUM).
@@ -822,7 +869,6 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   if (!config_.coordinated_encounters.enabled) return;
 
   const auto& enc_defs = config_.coordinated_encounters.encounters;
-  int num_types = static_cast<int>(enc_defs.size());
 
   std::vector<int> local_arr =
       serializePerTypeStats(enc_defs, daily_stats_, world_);
@@ -850,44 +896,7 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   std::cout << "      Total proposals: " << global_arr[0]
             << "  Total finalized: " << global_arr[1] << std::endl;
 
-  for (int i = 0; i < num_types; ++i) {
-    int base = 2 + i * kFieldsPerType;
-    int proposals = global_arr[base + 0];
-    int accepted = global_arr[base + 1];
-    int rej_not_found = global_arr[base + 2];
-    int rej_dead = global_arr[base + 3];
-    int rej_committed = global_arr[base + 4];
-    int rej_no_def = global_arr[base + 5];
-    int rej_schedule = global_arr[base + 6];
-    int rej_declined = global_arr[base + 7];
-    int finalized = global_arr[base + 8];
-    int participants = global_arr[base + 9];
-
-    int total_replies = accepted + rej_not_found + rej_dead + rej_committed +
-                        rej_no_def + rej_schedule + rej_declined;
-    double accept_rate =
-        total_replies > 0 ? 100.0 * accepted / total_replies : 0.0;
-
-    std::cout << "      --- " << enc_defs[i].name << " ---" << std::endl;
-    std::cout << "        Proposals:  " << proposals << std::endl;
-    std::cout << "        Accepted:   " << accepted << " / " << total_replies
-              << " (" << std::fixed << std::setprecision(1) << accept_rate
-              << "%)" << std::endl;
-    if (rej_committed > 0)
-      std::cout << "        Rej(committed): " << rej_committed << std::endl;
-    if (rej_schedule > 0)
-      std::cout << "        Rej(schedule):  " << rej_schedule << std::endl;
-    if (rej_declined > 0)
-      std::cout << "        Rej(declined):  " << rej_declined << std::endl;
-    if (rej_not_found > 0)
-      std::cout << "        Rej(not_found): " << rej_not_found << std::endl;
-    if (rej_dead > 0)
-      std::cout << "        Rej(dead):      " << rej_dead << std::endl;
-    if (rej_no_def > 0)
-      std::cout << "        Rej(no_def):    " << rej_no_def << std::endl;
-    std::cout << "        Finalized:  " << finalized << " encounters, "
-              << participants << " participants" << std::endl;
-  }
+  printPerTypeSummary(global_arr, enc_defs);
 
   if (!fg_names.empty()) {
     std::cout << "      --- frequency_groups (budget rolls) ---" << std::endl;
