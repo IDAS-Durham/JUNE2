@@ -62,6 +62,21 @@ std::shared_ptr<GammaCurve> makeGammaCurve(const YAML::Node& node,
   return curve;
 }
 
+std::shared_ptr<LognormalCurve> makeLognormalCurve(
+    const YAML::Node& node, const std::string& context_label, bool verbose) {
+  double max_inf = node["max_infectiousness"]
+                       ? node["max_infectiousness"].as<double>()
+                       : 1.0;
+  double mu = node["mu"] ? node["mu"].as<double>() : 0.0;
+  double sigma = node["sigma"] ? node["sigma"].as<double>() : 1.0;
+  auto curve = std::make_shared<LognormalCurve>(max_inf, mu, sigma);
+  if (verbose) {
+    logCurveRescale(context_label, "lognormal", max_inf,
+                    curve->peakScalingFactor());
+  }
+  return curve;
+}
+
 }  // namespace
 
 // =============================================================================
@@ -638,17 +653,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
   } else if (type == "linear_ramp") {
     curve = makeLinearRampCurve(curve_node);
   } else if (type == "lognormal") {
-    double max_inf = curve_node["max_infectiousness"]
-                         ? curve_node["max_infectiousness"].as<double>()
-                         : 1.0;
-    double mu = curve_node["mu"] ? curve_node["mu"].as<double>() : 0.0;
-    double sigma = curve_node["sigma"] ? curve_node["sigma"].as<double>() : 1.0;
-    auto lognormal = std::make_shared<LognormalCurve>(max_inf, mu, sigma);
-    if (verbose) {
-      logCurveRescale(context_label, "lognormal", max_inf,
-                      lognormal->peakScalingFactor());
-    }
-    curve = lognormal;
+    curve = makeLognormalCurve(curve_node, context_label, verbose);
   } else if (type == "beta") {
     double max_inf = curve_node["max_infectiousness"]
                          ? curve_node["max_infectiousness"].as<double>()
