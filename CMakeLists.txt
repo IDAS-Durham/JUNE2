@@ -145,6 +145,7 @@ set(JUNE_CORE_SOURCES
     src/epidemiology/epidemiology.cpp
     src/simulation/simulator.cpp
     src/simulation/simulator_checkpoint.cpp
+    src/simulation/simulator_encounters.cpp
     src/simulation/compartmental_model_manager.cpp
     src/loaders/hdf5_loader.cpp
     src/loaders/domain_loader.cpp
