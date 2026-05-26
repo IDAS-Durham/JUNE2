@@ -639,17 +639,9 @@ void ActivityManager::assignActivitiesFromSchedule(
       const ScheduleEntry& entry = schedule[time_slot_index];
 
       // Get the current time slot definition for specified_activity
-      const TimeSlot* current_slot = nullptr;
       const ScheduleType* schedule_type = person.cached_schedule_type_;
-      if (schedule_type &&
-          day_type_idx <
-              static_cast<int>(schedule_type->slots_by_day_type_idx.size()) &&
-          schedule_type->slots_by_day_type_idx[day_type_idx] != nullptr) {
-        const auto& slots = *schedule_type->slots_by_day_type_idx[day_type_idx];
-        if (time_slot_index < static_cast<int>(slots.size())) {
-          current_slot = &slots[time_slot_index];
-        }
-      }
+      const TimeSlot* current_slot =
+          lookupCurrentSlot(schedule_type, day_type_idx, time_slot_index);
 
       // Determine scheduled activity
       VenueId scheduled_venue_id = entry.venue_id;
@@ -673,16 +665,9 @@ void ActivityManager::assignActivitiesFromSchedule(
           sched_type = config_.schedule.getScheduleTypeForPerson(person);
           person.cached_schedule_type_ = sched_type;
         }
-        if (!current_slot && sched_type &&
-            day_type_idx <
-                static_cast<int>(sched_type->slots_by_day_type_idx.size()) &&
-            sched_type->slots_by_day_type_idx[day_type_idx] != nullptr) {
-          const auto& valid_slots =
-              *sched_type->slots_by_day_type_idx[day_type_idx];
-          if (time_slot_index >= 0 &&
-              time_slot_index < static_cast<int>(valid_slots.size())) {
-            current_slot = &valid_slots[time_slot_index];
-          }
+        if (!current_slot) {
+          current_slot =
+              lookupCurrentSlot(sched_type, day_type_idx, time_slot_index);
         }
 
         if (is_hybrid_entry) {
@@ -806,6 +791,25 @@ void ActivityManager::assignActivitiesFromSchedule(
     locations[i].person_id = person.id;
     locations[i].person_array_index = i;
   }
+}
+
+const TimeSlot* ActivityManager::lookupCurrentSlot(
+    const ScheduleType* schedule_type, int day_type_idx,
+    int time_slot_index) const {
+  if (!schedule_type) return nullptr;
+  if (day_type_idx >=
+      static_cast<int>(schedule_type->slots_by_day_type_idx.size())) {
+    return nullptr;
+  }
+  if (schedule_type->slots_by_day_type_idx[day_type_idx] == nullptr) {
+    return nullptr;
+  }
+  const auto& slots = *schedule_type->slots_by_day_type_idx[day_type_idx];
+  if (time_slot_index < 0 ||
+      time_slot_index >= static_cast<int>(slots.size())) {
+    return nullptr;
+  }
+  return &slots[time_slot_index];
 }
 
 void ActivityManager::assignHoppedScheduleSlot(

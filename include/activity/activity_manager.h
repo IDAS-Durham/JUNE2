@@ -124,6 +124,12 @@ class ActivityManager {
                            int16_t activity, VenueId venue, SubsetIndex subset,
                            int time_slot_index);
 
+  // Returns the TimeSlot at time_slot_index for the given schedule type and
+  // day type, or nullptr if any index is out of range / the pointer is null.
+  const TimeSlot* lookupCurrentSlot(const ScheduleType* schedule_type,
+                                    int day_type_idx,
+                                    int time_slot_index) const;
+
   // Handles the hopped-schedule branch of assignActivitiesFromSchedule:
   // dispatches to advanceHoppedSchedule (temporary) or the non-temporary
   // freeze-in-place day-type-slot path, then applies any policy override
