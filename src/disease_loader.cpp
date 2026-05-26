@@ -238,6 +238,32 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+void DiseaseLoader::loadNaturalImmunity(const YAML::Node& config,
+                                        TransmissionParams& transmission) {
+  if (!config["immunity"]) return;
+  auto immunity_node = config["immunity"];
+  transmission.natural_immunity.level =
+      immunity_node["level"] ? immunity_node["level"].as<double>() : 0.95;
+  transmission.natural_immunity.waning_rate =
+      immunity_node["waning_rate"]
+          ? immunity_node["waning_rate"].as<double>()
+          : 0.001;
+}
+
+void DiseaseLoader::validateOutcomeRowSums(const OutcomeRates& outcome_rates) {
+  for (size_t row_i = 0; row_i < outcome_rates.rows.size(); ++row_i) {
+    double row_sum = 0.0;
+    for (const auto& [key, prob] : outcome_rates.rows[row_i].probabilities) {
+      row_sum += prob;
+    }
+    if (!outcome_rates.rows[row_i].probabilities.empty() &&
+        std::abs(row_sum - 1.0) > 0.01) {
+      std::cerr << "WARNING: Outcome rates row " << row_i << " sums to "
+                << row_sum << " (expected 1.0)" << std::endl;
+    }
+  }
+}
+
 OutcomeRates DiseaseLoader::loadOutcomeRatesFromConfig(
     const YAML::Node& config, const std::string& yaml_path) {
   OutcomeRates outcome_rates;
@@ -626,29 +652,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
       }
     }
 
-    // === Load Natural Immunity Parameters ===
-    if (config["immunity"]) {
-      auto immunity_node = config["immunity"];
-      transmission.natural_immunity.level =
-          immunity_node["level"] ? immunity_node["level"].as<double>() : 0.95;
-      transmission.natural_immunity.waning_rate =
-          immunity_node["waning_rate"]
-              ? immunity_node["waning_rate"].as<double>()
-              : 0.001;
-    }
-
-    // Validate that each outcome row sums to ~1.0 across trajectory columns.
-    for (size_t row_i = 0; row_i < outcome_rates.rows.size(); ++row_i) {
-      double row_sum = 0.0;
-      for (const auto& [key, prob] : outcome_rates.rows[row_i].probabilities) {
-        row_sum += prob;
-      }
-      if (!outcome_rates.rows[row_i].probabilities.empty() &&
-          std::abs(row_sum - 1.0) > 0.01) {
-        std::cerr << "WARNING: Outcome rates row " << row_i << " sums to "
-                  << row_sum << " (expected 1.0)" << std::endl;
-      }
-    }
+    loadNaturalImmunity(config, transmission);
+    validateOutcomeRowSums(outcome_rates);
 
     // Create and return Disease object
     return Disease(disease_name, symptom_tags, stage_settings, trajectories,

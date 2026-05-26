@@ -33,6 +33,9 @@ class DiseaseLoader {
 
   static OutcomeRates loadOutcomeRatesFromConfig(const YAML::Node& config,
                                                  const std::string& yaml_path);
+  static void loadNaturalImmunity(const YAML::Node& config,
+                                  TransmissionParams& transmission);
+  static void validateOutcomeRowSums(const OutcomeRates& outcome_rates);
 
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(
