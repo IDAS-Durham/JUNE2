@@ -264,6 +264,35 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::parseStageDrivenModes(
+    const YAML::Node& modes_node, TransmissionParams& transmission,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  for (const auto& mode_node : modes_node) {
+    TransmissionMode tmode;
+    tmode.name =
+        mode_node["name"] ? mode_node["name"].as<std::string>() : "default";
+    tmode.susceptibility_multiplier =
+        mode_node["susceptibility_multiplier"]
+            ? mode_node["susceptibility_multiplier"].as<double>()
+            : 1.0;
+
+    std::string mode_type =
+        mode_node["type"] ? mode_node["type"].as<std::string>() : "";
+    int mode_idx = static_cast<int>(transmission.modes.size());
+
+    if (mode_type == "fomite") {
+      loadModeFomite(mode_node, tmode, mode_idx, symptom_tags, verbose);
+    } else if (mode_type == "compartmental_uptake") {
+      loadModeCompartmentalUptake(tmode, mode_idx);
+    } else if (mode_type == "compartmental_deposition") {
+      loadModeCompartmentalDeposition(mode_node, tmode, mode_idx, symptom_tags,
+                                      verbose);
+    }
+
+    transmission.modes.push_back(std::move(tmode));
+  }
+}
+
 void DiseaseLoader::loadModeCompartmentalUptake(TransmissionMode& tmode,
                                                 int mode_idx) {
   tmode.type = TransmissionModeType::CompartmentalUptake;
@@ -550,31 +579,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
         // STAGE-DRIVEN
         if (trans_node["modes"]) {
           // Multi-mode: parse modes list with per-mode stage_curves
-          const auto& modes_node = trans_node["modes"];
-          for (const auto& mode_node : modes_node) {
-            TransmissionMode tmode;
-            tmode.name = mode_node["name"] ? mode_node["name"].as<std::string>()
-                                           : "default";
-            tmode.susceptibility_multiplier =
-                mode_node["susceptibility_multiplier"]
-                    ? mode_node["susceptibility_multiplier"].as<double>()
-                    : 1.0;
-
-            std::string mode_type =
-                mode_node["type"] ? mode_node["type"].as<std::string>() : "";
-            int mode_idx = static_cast<int>(transmission.modes.size());
-
-            if (mode_type == "fomite") {
-              loadModeFomite(mode_node, tmode, mode_idx, symptom_tags, verbose);
-            } else if (mode_type == "compartmental_uptake") {
-              loadModeCompartmentalUptake(tmode, mode_idx);
-            } else if (mode_type == "compartmental_deposition") {
-              loadModeCompartmentalDeposition(mode_node, tmode, mode_idx,
-                                              symptom_tags, verbose);
-            }
-
-            transmission.modes.push_back(std::move(tmode));
-          }
+          parseStageDrivenModes(trans_node["modes"], transmission, symptom_tags,
+                                verbose);
 
           // Parse stage_curves as nested: stage_curves[mode_name][symptom_name]
           if (trans_node["stage_curves"]) {
