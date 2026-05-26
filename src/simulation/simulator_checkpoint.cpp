@@ -73,6 +73,64 @@ void writeStrs(H5::H5File& f, const std::string& name,
   ds.write(ptrs.data(), st);
 }
 
+// Gather + write the sparse infection shard section. One record per infected
+// person (in sorted `ord` order); the per-person symptom trajectory transitions
+// sit at /infection/traj_times[offset..offset+count). Sorted person order is
+// preserved so reads land in the same layout the partition_index advertises.
+void writeShardInfection(H5::H5File& f, const std::vector<uint32_t>& ord,
+                         const std::vector<Person>& people, int comp) {
+  std::vector<int32_t> inf_pid;
+  std::vector<double> inf_t, inf_mi, inf_sh, inf_ra, inf_sf, inf_tt, inf_tf,
+      inf_lc, inf_cs;
+  std::vector<uint16_t> inf_csym;
+  std::vector<int64_t> traj_off;
+  std::vector<int32_t> traj_cnt;
+  std::vector<double> traj_time;
+  std::vector<uint16_t> traj_sym;
+  for (uint32_t idx : ord) {
+    const Person& p = people[idx];
+    if (!p.infection) continue;
+    const Infection& in = *p.infection;
+    const auto& tr = in.getTrajectory();
+    inf_pid.push_back(p.id);
+    inf_t.push_back(in.getInfectionTime());
+    inf_mi.push_back(in.ckptMaxInfectiousness());
+    inf_sh.push_back(in.ckptTransmissionShape());
+    inf_ra.push_back(in.ckptTransmissionRate());
+    inf_sf.push_back(in.ckptTransmissionShift());
+    inf_tt.push_back(tr.infection_time);
+    inf_tf.push_back(tr.infectiousness_factor);
+    inf_lc.push_back(in.ckptLastCheckedTime());
+    inf_csym.push_back(in.ckptCachedSymptomId());
+    inf_cs.push_back(in.ckptCachedSymptomStartTime());
+    traj_off.push_back(static_cast<int64_t>(traj_time.size()));
+    traj_cnt.push_back(static_cast<int32_t>(tr.transitions.size()));
+    for (auto& [tt, sid] : tr.transitions) {
+      traj_time.push_back(tt);
+      traj_sym.push_back(sid);
+    }
+  }
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto I64 = H5::PredType::NATIVE_INT64;
+  const auto U16 = H5::PredType::NATIVE_UINT16;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  writeVec(f, "/infection/person_id", inf_pid, I32, comp);
+  writeVec(f, "/infection/infection_time", inf_t, F64, comp);
+  writeVec(f, "/infection/max_infectiousness", inf_mi, F64, comp);
+  writeVec(f, "/infection/transmission_shape", inf_sh, F64, comp);
+  writeVec(f, "/infection/transmission_rate", inf_ra, F64, comp);
+  writeVec(f, "/infection/transmission_shift", inf_sf, F64, comp);
+  writeVec(f, "/infection/traj_infection_time", inf_tt, F64, comp);
+  writeVec(f, "/infection/traj_infectiousness_factor", inf_tf, F64, comp);
+  writeVec(f, "/infection/last_checked_time", inf_lc, F64, comp);
+  writeVec(f, "/infection/cached_symptom_id", inf_csym, U16, comp);
+  writeVec(f, "/infection/cached_symptom_start_time", inf_cs, F64, comp);
+  writeVec(f, "/infection/traj_offsets", traj_off, I64, comp);
+  writeVec(f, "/infection/traj_counts", traj_cnt, I32, comp);
+  writeVec(f, "/infection/traj_times", traj_time, F64, comp);
+  writeVec(f, "/infection/traj_symptom_ids", traj_sym, U16, comp);
+}
+
 // Gather + write the sparse vaccine-trajectory shard section. One record per
 // vaccinated person (in sorted `ord` order); per-dose fields sit at
 // /vaccine/dose_*[offset..offset+count). Efficacy is re-derived from config
@@ -370,39 +428,6 @@ void Simulator::writeCheckpoint(int completed_day,
       i = j;
     }
 
-    // sparse infection records (sorted person order preserved)
-    std::vector<int32_t> inf_pid;
-    std::vector<double> inf_t, inf_mi, inf_sh, inf_ra, inf_sf, inf_tt, inf_tf,
-        inf_lc, inf_cs;
-    std::vector<uint16_t> inf_csym;
-    std::vector<int64_t> traj_off;
-    std::vector<int32_t> traj_cnt;
-    std::vector<double> traj_time;
-    std::vector<uint16_t> traj_sym;
-    for (uint32_t idx : ord) {
-      const Person& p = world_.people[idx];
-      if (!p.infection) continue;
-      const Infection& in = *p.infection;
-      const auto& tr = in.getTrajectory();
-      inf_pid.push_back(p.id);
-      inf_t.push_back(in.getInfectionTime());
-      inf_mi.push_back(in.ckptMaxInfectiousness());
-      inf_sh.push_back(in.ckptTransmissionShape());
-      inf_ra.push_back(in.ckptTransmissionRate());
-      inf_sf.push_back(in.ckptTransmissionShift());
-      inf_tt.push_back(tr.infection_time);
-      inf_tf.push_back(tr.infectiousness_factor);
-      inf_lc.push_back(in.ckptLastCheckedTime());
-      inf_csym.push_back(in.ckptCachedSymptomId());
-      inf_cs.push_back(in.ckptCachedSymptomStartTime());
-      traj_off.push_back(static_cast<int64_t>(traj_time.size()));
-      traj_cnt.push_back(static_cast<int32_t>(tr.transitions.size()));
-      for (auto& [tt, sid] : tr.transitions) {
-        traj_time.push_back(tt);
-        traj_sym.push_back(sid);
-      }
-    }
-
     fs::path shard = tmp / ("delta_rank" + std::to_string(rank) + ".h5");
     H5::H5File f(shard.string(), H5F_ACC_TRUNC);
     f.createGroup("/population");
@@ -441,22 +466,7 @@ void Simulator::writeCheckpoint(int completed_day,
     writeVec(f, "/population/return_schedule_id", ret, I32, comp);
     writeVec(f, "/population/temp_slot_progress", tslot, I32, comp);
 
-    writeVec(f, "/infection/person_id", inf_pid, I32, comp);
-    writeVec(f, "/infection/infection_time", inf_t, F64, comp);
-    writeVec(f, "/infection/max_infectiousness", inf_mi, F64, comp);
-    writeVec(f, "/infection/transmission_shape", inf_sh, F64, comp);
-    writeVec(f, "/infection/transmission_rate", inf_ra, F64, comp);
-    writeVec(f, "/infection/transmission_shift", inf_sf, F64, comp);
-    writeVec(f, "/infection/traj_infection_time", inf_tt, F64, comp);
-    writeVec(f, "/infection/traj_infectiousness_factor", inf_tf, F64, comp);
-    writeVec(f, "/infection/last_checked_time", inf_lc, F64, comp);
-    writeVec(f, "/infection/cached_symptom_id", inf_csym, U16, comp);
-    writeVec(f, "/infection/cached_symptom_start_time", inf_cs, F64, comp);
-    writeVec(f, "/infection/traj_offsets", traj_off, I64, comp);
-    writeVec(f, "/infection/traj_counts", traj_cnt, I32, comp);
-    writeVec(f, "/infection/traj_times", traj_time, F64, comp);
-    writeVec(f, "/infection/traj_symptom_ids", traj_sym, U16, comp);
-
+    writeShardInfection(f, ord, world_.people, comp);
     writeShardVaccine(f, ord, world_.people, comp);
     writeShardFomite(f, world_.venues, comp);
 
