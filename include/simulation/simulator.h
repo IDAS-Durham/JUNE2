@@ -142,6 +142,12 @@ class Simulator {
   // up. Runs the full Phases 1–4 when coordinated_encounter_manager_ is set.
   void negotiateAndLogDailyEncounters(int day, int rank);
 
+  // End-of-run output: write final epidemic events + lookups (collective on
+  // all ranks; appends to the per-rank events file), then on rank 0 print
+  // the wall-clock summary, activity/interaction stats, and encounter stats.
+  void writeFinalEventsAndLookups(int rank);
+  void printRunSummary();
+
   // Fomite initialization
   void initFomiteState();
 

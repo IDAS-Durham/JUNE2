@@ -598,6 +598,12 @@ void Simulator::run() {
     }
   }
 
+  writeFinalEventsAndLookups(rank);
+
+  if (rank == 0) printRunSummary();
+}
+
+void Simulator::writeFinalEventsAndLookups(int rank) {
   if (rank == 0) {
     std::cout << "\n=== Simulation Complete ===" << std::endl;
     std::cout << "Saving final epidemic events with lookup tables to "
@@ -618,30 +624,28 @@ void Simulator::run() {
 
   // saveToHDF5WithLookups handles appending if file exists (from previous
   // flushes)
-  {
-    ScopedTimer timer("05_FinalHDF5Save");
-    event_logger_.saveToHDF5WithLookups(
-        events_filename_, world_, config_,
-        remaining_ids.empty() &&
-                config_.simulation.save_full_person_details == "infected_only"
-            ? nullptr
-            : &remaining_ids);
+  ScopedTimer timer("05_FinalHDF5Save");
+  event_logger_.saveToHDF5WithLookups(
+      events_filename_, world_, config_,
+      remaining_ids.empty() &&
+              config_.simulation.save_full_person_details == "infected_only"
+          ? nullptr
+          : &remaining_ids);
+}
+
+void Simulator::printRunSummary() {
+  // Print wall-clock summary AFTER everything is done
+  Profiler::instance().printDetailedResults();
+
+  // Print optimization stats
+  activity_manager_.getStats().print();
+  if (interaction_manager_) {
+    interaction_manager_->getStats().print();
   }
 
-  if (rank == 0) {
-    // Print wall-clock summary AFTER everything is done
-    Profiler::instance().printDetailedResults();
-
-    // Print optimization stats
-    activity_manager_.getStats().print();
-    if (interaction_manager_) {
-      interaction_manager_->getStats().print();
-    }
-
-    // Print encounter stats
-    event_logger_.printEncounterStats(config_.schedule.day_type_names,
-                                      day_type_counts_);
-  }
+  // Print encounter stats
+  event_logger_.printEncounterStats(config_.schedule.day_type_names,
+                                    day_type_counts_);
 }
 
 void Simulator::simulateDay(int day_num) {
