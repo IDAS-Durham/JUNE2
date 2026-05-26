@@ -264,6 +264,29 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::finalizeStageDrivenMultiMode(
+    TransmissionParams& transmission,
+    const std::vector<SymptomTag>& symptom_tags) {
+  // Fill zero symptom_curves for modes without explicit stage_curves
+  // (fomite, compartmental modes have no person-to-person infectiousness).
+  std::vector<std::shared_ptr<InfectiousnessCurve>> zero_curves(
+      symptom_tags.size(), std::make_shared<ConstantCurve>(0.0));
+  for (auto& tmode : transmission.modes) {
+    if (tmode.symptom_curves.empty()) {
+      tmode.symptom_curves = zero_curves;
+    }
+  }
+
+  // Populate flat symptom_id_curves from first Standard mode.
+  transmission.symptom_id_curves.resize(symptom_tags.size(), nullptr);
+  for (const auto& tmode : transmission.modes) {
+    if (tmode.type == TransmissionModeType::Standard) {
+      transmission.symptom_id_curves = tmode.symptom_curves;
+      break;
+    }
+  }
+}
+
 void DiseaseLoader::attachStageCurvesToModes(
     const YAML::Node& stage_curves_node, TransmissionParams& transmission,
     const std::vector<SymptomTag>& symptom_tags, bool verbose) {
@@ -627,25 +650,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
                                      symptom_tags, verbose);
           }
 
-          // Fill zero symptom_curves for modes without explicit stage_curves
-          // (fomite, compartmental modes have no person-to-person
-          // infectiousness).
-          std::vector<std::shared_ptr<InfectiousnessCurve>> zero_curves(
-              symptom_tags.size(), std::make_shared<ConstantCurve>(0.0));
-          for (auto& tmode : transmission.modes) {
-            if (tmode.symptom_curves.empty()) {
-              tmode.symptom_curves = zero_curves;
-            }
-          }
-
-          // Populate flat symptom_id_curves from first Standard mode.
-          transmission.symptom_id_curves.resize(symptom_tags.size(), nullptr);
-          for (const auto& tmode : transmission.modes) {
-            if (tmode.type == TransmissionModeType::Standard) {
-              transmission.symptom_id_curves = tmode.symptom_curves;
-              break;
-            }
-          }
+          finalizeStageDrivenMultiMode(transmission, symptom_tags);
         } else {
           // Flat stage_curves at top level — single Standard mode.
           if (trans_node["stage_curves"]) {
