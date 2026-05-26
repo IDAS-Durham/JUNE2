@@ -28,6 +28,15 @@ std::shared_ptr<ConstantCurve> makeConstantCurve(const YAML::Node& node) {
   return std::make_shared<ConstantCurve>(value);
 }
 
+std::shared_ptr<ExponentialDecayCurve> makeExponentialDecayCurve(
+    const YAML::Node& node) {
+  double initial =
+      node["initial_value"] ? node["initial_value"].as<double>() : 1.0;
+  double decay = node["decay_rate"] ? node["decay_rate"].as<double>() : 0.5;
+  double delay = node["delay"] ? node["delay"].as<double>() : 0.0;
+  return std::make_shared<ExponentialDecayCurve>(initial, decay, delay);
+}
+
 std::shared_ptr<GammaCurve> makeGammaCurve(const YAML::Node& node,
                                            const std::string& context_label,
                                            bool verbose) {
@@ -617,13 +626,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
   } else if (type == "gamma") {
     curve = makeGammaCurve(curve_node, context_label, verbose);
   } else if (type == "exponential_decay") {
-    double initial = curve_node["initial_value"]
-                         ? curve_node["initial_value"].as<double>()
-                         : 1.0;
-    double decay =
-        curve_node["decay_rate"] ? curve_node["decay_rate"].as<double>() : 0.5;
-    double delay = curve_node["delay"] ? curve_node["delay"].as<double>() : 0.0;
-    curve = std::make_shared<ExponentialDecayCurve>(initial, decay, delay);
+    curve = makeExponentialDecayCurve(curve_node);
   } else if (type == "linear_ramp") {
     double start = curve_node["start_value"]
                        ? curve_node["start_value"].as<double>()
