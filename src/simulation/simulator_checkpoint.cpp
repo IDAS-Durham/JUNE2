@@ -57,6 +57,31 @@ void writeVec(H5::H5File& f, const std::string& name,
   ds.write(data.data(), t);
 }
 
+// manifest.yaml is written LAST in the checkpoint dir — its presence is the
+// atomic commit marker for a complete checkpoint (see restoreFromCheckpoint).
+// world_path / world_sha256 are populated in P4 (restore validation);
+// intentionally empty here rather than a misleading placeholder.
+void writeManifest(const fs::path& tmp, int completed_day,
+                   const std::string& date_iso, int nranks,
+                   double current_simulation_time, unsigned int random_seed) {
+  YAML::Emitter m;
+  m << YAML::BeginMap;
+  m << YAML::Key << "format_version" << YAML::Value << 1;
+  m << YAML::Key << "completed_day" << YAML::Value << completed_day;
+  m << YAML::Key << "date" << YAML::Value << date_iso;
+  m << YAML::Key << "current_simulation_time" << YAML::Value
+    << current_simulation_time;
+  m << YAML::Key << "num_ranks" << YAML::Value << nranks;
+  m << YAML::Key << "effective_random_seed" << YAML::Value
+    << static_cast<unsigned long long>(random_seed);
+  m << YAML::Key << "world_path" << YAML::Value << "";
+  m << YAML::Key << "world_sha256" << YAML::Value << "";
+  m << YAML::Key << "shard_index" << YAML::Value << "shard_index.yaml";
+  m << YAML::Key << "state_file" << YAML::Value << "state.h5";
+  m << YAML::EndMap;
+  std::ofstream(tmp / "manifest.yaml") << m.c_str() << "\n";
+}
+
 void writeStrs(H5::H5File& f, const std::string& name,
                const std::vector<std::string>& v) {
   H5::StrType st(H5::PredType::C_S1, H5T_VARIABLE);
@@ -429,27 +454,8 @@ void Simulator::writeCheckpoint(int completed_day,
     std::ofstream(tmp / "shard_index.yaml") << e.c_str() << "\n";
   }
 
-  // -------- manifest.yaml: written LAST = commit marker --------
-  {
-    YAML::Emitter m;
-    m << YAML::BeginMap;
-    m << YAML::Key << "format_version" << YAML::Value << 1;
-    m << YAML::Key << "completed_day" << YAML::Value << completed_day;
-    m << YAML::Key << "date" << YAML::Value << date_iso;
-    m << YAML::Key << "current_simulation_time" << YAML::Value
-      << current_simulation_time_;
-    m << YAML::Key << "num_ranks" << YAML::Value << nranks;
-    m << YAML::Key << "effective_random_seed" << YAML::Value
-      << static_cast<unsigned long long>(config_.simulation.random_seed);
-    // world_path / world_sha256 are populated in P4 (restore validation);
-    // intentionally empty here rather than a misleading placeholder.
-    m << YAML::Key << "world_path" << YAML::Value << "";
-    m << YAML::Key << "world_sha256" << YAML::Value << "";
-    m << YAML::Key << "shard_index" << YAML::Value << "shard_index.yaml";
-    m << YAML::Key << "state_file" << YAML::Value << "state.h5";
-    m << YAML::EndMap;
-    std::ofstream(tmp / "manifest.yaml") << m.c_str() << "\n";
-  }
+  writeManifest(tmp, completed_day, date_iso, nranks,
+                current_simulation_time_, config_.simulation.random_seed);
 
   // -------- atomic commit + latest symlink + keep_last rotation --------
   std::error_code ec;
