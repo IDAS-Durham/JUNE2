@@ -98,6 +98,22 @@ void ActivityManager::setDeadLocation(PersonLocation& loc) const {
   loc.encounter_type_id = 255;
 }
 
+void ActivityManager::setResidenceOrNoneLocation(PersonLocation& loc,
+                                                 const Person& person) {
+  auto residence = world_.getActivityVenues(person, residence_act_idx_);
+  if (!residence.empty()) {
+    auto [venue_id, subset_idx] = residence[0];
+    loc.venue_id = venue_id;
+    loc.subset_index = subset_idx;
+    loc.activity_index = residence_act_idx_;
+  } else {
+    loc.venue_id = -1;
+    loc.subset_index = -1;
+    loc.activity_index = none_act_idx_;
+  }
+  loc.encounter_type_id = 255;
+}
+
 void ActivityManager::ensureIndicesCached() {
   if (dead_act_idx_ == -1) {
     dead_act_idx_ = static_cast<int16_t>(world_.getActivityIndex("dead"));
@@ -125,22 +141,8 @@ void ActivityManager::initializeLocations(
     }
 
     // Find their residence (using cached index)
-    auto residence = world_.getActivityVenues(p, residence_act_idx_);
-    if (!residence.empty()) {
-      auto [venue_id, subset_idx] = residence[0];
-      locations[i].venue_id = venue_id;
-      locations[i].subset_index = subset_idx;
-      locations[i].activity_index = residence_act_idx_;
-      locations[i].encounter_type_id = 255;
-      locations[i].person_array_index = i;
-    } else {
-      // No residence assigned
-      locations[i].venue_id = -1;
-      locations[i].subset_index = -1;
-      locations[i].activity_index = none_act_idx_;
-      locations[i].encounter_type_id = 255;
-      locations[i].person_array_index = i;
-    }
+    setResidenceOrNoneLocation(locations[i], p);
+    locations[i].person_array_index = i;
   }
 }
 
@@ -665,19 +667,7 @@ void ActivityManager::assignActivitiesFromSchedule(
 
     // Fallback to residence if schedule not computed
     if (!person.schedule_computed) {
-      auto residence = world_.getActivityVenues(person, residence_act_idx_);
-      if (!residence.empty()) {
-        auto [venue_id, subset_idx] = residence[0];
-        locations[i].venue_id = venue_id;
-        locations[i].subset_index = subset_idx;
-        locations[i].activity_index = residence_act_idx_;
-        locations[i].encounter_type_id = 255;
-      } else {
-        locations[i].venue_id = -1;
-        locations[i].subset_index = -1;
-        locations[i].activity_index = none_act_idx_;
-        locations[i].encounter_type_id = 255;
-      }
+      setResidenceOrNoneLocation(locations[i], person);
       locations[i].person_id = person.id;
       continue;
     }
@@ -856,19 +846,7 @@ void ActivityManager::assignActivitiesFromSchedule(
 
     } else {
       // Fallback to residence if slot index invalid
-      auto residence = world_.getActivityVenues(person, residence_act_idx_);
-      if (!residence.empty()) {
-        auto [venue_id, subset_idx] = residence[0];
-        locations[i].venue_id = venue_id;
-        locations[i].subset_index = subset_idx;
-        locations[i].activity_index = residence_act_idx_;
-        locations[i].encounter_type_id = 255;
-      } else {
-        locations[i].venue_id = -1;
-        locations[i].subset_index = -1;
-        locations[i].activity_index = none_act_idx_;
-        locations[i].encounter_type_id = 255;
-      }
+      setResidenceOrNoneLocation(locations[i], person);
     }
 
     locations[i].person_id = person.id;

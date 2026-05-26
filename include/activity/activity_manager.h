@@ -111,6 +111,11 @@ class ActivityManager {
   // person_id / person_array_index — caller sets those if needed.
   void setDeadLocation(PersonLocation& loc) const;
 
+  // Sets a PersonLocation to the person's residence if any, otherwise to
+  // none_act_idx_. Used by fallback paths (uninitialised schedule, invalid
+  // slot index). Does not touch person_id / person_array_index.
+  void setResidenceOrNoneLocation(PersonLocation& loc, const Person& person);
+
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 
