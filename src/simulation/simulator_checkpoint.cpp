@@ -580,6 +580,54 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
   return out;
 }
 
+// Overlay one shard's /vaccine/ records onto world_.people owned by this
+// rank. Efficacy is NOT persisted in the shard — it is re-derived from the
+// active VaccinationConfig by dose position so a resume can apply updated
+// efficacy maps. Returns the number of records this rank consumed.
+size_t overlayShardVaccine(H5::H5File& f, WorldState& world,
+                           const VaccinationConfig& vax_cfg) {
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto I64 = H5::PredType::NATIVE_INT64;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto vp = readVec<int32_t>(f, "/vaccine/person_id", I32);
+  auto vname = readStrs(f, "/vaccine/vaccine_name");
+  auto doff = readVec<int64_t>(f, "/vaccine/dose_offsets", I64);
+  auto dcnt = readVec<int32_t>(f, "/vaccine/dose_counts", I32);
+  auto dnum = readVec<int32_t>(f, "/vaccine/dose_number", I32);
+  auto dad = readVec<double>(f, "/vaccine/dose_day_administered", F64);
+  auto deff = readVec<double>(f, "/vaccine/dose_days_to_effective", F64);
+  auto dwan = readVec<double>(f, "/vaccine/dose_days_to_waning", F64);
+  auto dfin = readVec<double>(f, "/vaccine/dose_days_to_finished", F64);
+  auto dwf = readVec<double>(f, "/vaccine/dose_waning_factor", F64);
+  size_t n = 0;
+  for (size_t i = 0; i < vp.size(); ++i) {
+    Person* p = world.getPerson(vp[i]);
+    if (!p) continue;
+    p->vaccine_trajectory = std::make_unique<VaccineTrajectory>();
+    p->vaccine_trajectory->vaccine_name = vname[i];
+    auto vit = vax_cfg.vaccines.find(vname[i]);
+    int64_t off = doff[i];
+    int32_t cnt = dcnt[i];
+    for (int32_t k = 0; k < cnt; ++k) {
+      Dose d;
+      d.number = dnum[off + k];
+      d.day_administered = dad[off + k];
+      d.days_to_effective = deff[off + k];
+      d.days_to_waning = dwan[off + k];
+      d.days_to_finished = dfin[off + k];
+      d.waning_factor = dwf[off + k];
+      if (vit != vax_cfg.vaccines.end() &&
+          k < static_cast<int32_t>(vit->second.doses.size())) {
+        d.infection_efficacy = vit->second.doses[k].infection_efficacy;
+        d.symptom_efficacy = vit->second.doses[k].symptom_efficacy;
+      }
+      p->vaccine_trajectory->addDose(d);
+    }
+    ++n;
+  }
+  return n;
+}
+
 // Overlay one shard's /venue_fomite/ records onto world_.venues owned by this
 // rank. Each record names (venue_id, mode, offset, count); the mode-keyed
 // deque is resized + cleared + repopulated from the flat deposit arrays.
@@ -761,42 +809,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
       ++n_inf;
     }
 
-    // sparse vaccine — efficacy maps re-derived from config by dose position
-    auto vp = readVec<int32_t>(f, "/vaccine/person_id", I32);
-    auto vname = readStrs(f, "/vaccine/vaccine_name");
-    auto doff = readVec<int64_t>(f, "/vaccine/dose_offsets", I64);
-    auto dcnt = readVec<int32_t>(f, "/vaccine/dose_counts", I32);
-    auto dnum = readVec<int32_t>(f, "/vaccine/dose_number", I32);
-    auto dad = readVec<double>(f, "/vaccine/dose_day_administered", F64);
-    auto deff = readVec<double>(f, "/vaccine/dose_days_to_effective", F64);
-    auto dwan = readVec<double>(f, "/vaccine/dose_days_to_waning", F64);
-    auto dfin = readVec<double>(f, "/vaccine/dose_days_to_finished", F64);
-    auto dwf = readVec<double>(f, "/vaccine/dose_waning_factor", F64);
-    for (size_t i = 0; i < vp.size(); ++i) {
-      Person* p = world_.getPerson(vp[i]);
-      if (!p) continue;
-      p->vaccine_trajectory = std::make_unique<VaccineTrajectory>();
-      p->vaccine_trajectory->vaccine_name = vname[i];
-      auto vit = config_.vaccination.vaccines.find(vname[i]);
-      int64_t off = doff[i];
-      int32_t cnt = dcnt[i];
-      for (int32_t k = 0; k < cnt; ++k) {
-        Dose d;
-        d.number = dnum[off + k];
-        d.day_administered = dad[off + k];
-        d.days_to_effective = deff[off + k];
-        d.days_to_waning = dwan[off + k];
-        d.days_to_finished = dfin[off + k];
-        d.waning_factor = dwf[off + k];
-        if (vit != config_.vaccination.vaccines.end() &&
-            k < static_cast<int32_t>(vit->second.doses.size())) {
-          d.infection_efficacy = vit->second.doses[k].infection_efficacy;
-          d.symptom_efficacy = vit->second.doses[k].symptom_efficacy;
-        }
-        p->vaccine_trajectory->addDose(d);
-      }
-      ++n_vax;
-    }
+    n_vax += overlayShardVaccine(f, world_, config_.vaccination);
 
     n_fom += overlayShardFomite(f, world_);
 
