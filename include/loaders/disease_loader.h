@@ -39,6 +39,8 @@ class DiseaseLoader {
   static std::optional<TrajectoryDefinition> parseOneTrajectory(
       const YAML::Node& traj_node);
 
+  static std::vector<SymptomTag> loadSymptomTags(const YAML::Node& config);
+
   // Parse distribution parameters from YAML
   static DistributionParams parseDistribution(const YAML::Node& dist_node);
 

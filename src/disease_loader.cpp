@@ -235,6 +235,25 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 }
 
 // =============================================================================
+// Section helpers for loadFromYAML
+// =============================================================================
+
+std::vector<SymptomTag> DiseaseLoader::loadSymptomTags(
+    const YAML::Node& config) {
+  std::vector<SymptomTag> symptom_tags;
+  if (!config["symptom_tags"]) return symptom_tags;
+  uint16_t current_id = 0;
+  for (const auto& tag_node : config["symptom_tags"]) {
+    SymptomTag tag;
+    tag.name = tag_node["name"].as<std::string>();
+    tag.value = tag_node["value"].as<int>();
+    tag.id = current_id++;
+    symptom_tags.push_back(tag);
+  }
+  return symptom_tags;
+}
+
+// =============================================================================
 // Main Loading Function
 // =============================================================================
 
@@ -253,18 +272,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
     // Get disease name
     std::string disease_name = config["name"].as<std::string>("covid19");
 
-    // === Load Symptom Tags ===
-    std::vector<SymptomTag> symptom_tags;
-    if (config["symptom_tags"]) {
-      uint16_t current_id = 0;
-      for (const auto& tag_node : config["symptom_tags"]) {
-        SymptomTag tag;
-        tag.name = tag_node["name"].as<std::string>();
-        tag.value = tag_node["value"].as<int>();
-        tag.id = current_id++;  // Assign runtime ID
-        symptom_tags.push_back(tag);
-      }
-    }
+    std::vector<SymptomTag> symptom_tags = loadSymptomTags(config);
 
     // === Load Stage Settings ===
     DiseaseStageSettings stage_settings;
