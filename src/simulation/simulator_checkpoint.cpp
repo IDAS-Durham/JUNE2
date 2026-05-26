@@ -580,6 +580,36 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
   return out;
 }
 
+// Overlay one shard's /venue_fomite/ records onto world_.venues owned by this
+// rank. Each record names (venue_id, mode, offset, count); the mode-keyed
+// deque is resized + cleared + repopulated from the flat deposit arrays.
+// Returns the number of records this rank consumed (for diagnostics).
+size_t overlayShardFomite(H5::H5File& f, WorldState& world) {
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  const auto I64 = H5::PredType::NATIVE_INT64;
+  const auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto fv = readVec<int32_t>(f, "/venue_fomite/venue_id", I32);
+  auto fm = readVec<int32_t>(f, "/venue_fomite/mode_index", I32);
+  auto fo = readVec<int64_t>(f, "/venue_fomite/offsets", I64);
+  auto fc = readVec<int32_t>(f, "/venue_fomite/counts", I32);
+  auto ftime = readVec<double>(f, "/venue_fomite/deposit_time", F64);
+  auto famt = readVec<double>(f, "/venue_fomite/deposit_amount", F64);
+  size_t n = 0;
+  for (size_t i = 0; i < fv.size(); ++i) {
+    Venue* v = world.getVenue(fv[i]);
+    if (!v) continue;
+    int m = fm[i];
+    if (static_cast<int>(v->fomite_history.size()) <= m)
+      v->fomite_history.resize(m + 1);
+    auto& dq = v->fomite_history[m];
+    dq.clear();
+    for (int32_t k = 0; k < fc[i]; ++k)
+      dq.push_back({ftime[fo[i] + k], famt[fo[i] + k]});
+    ++n;
+  }
+  return n;
+}
+
 // Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
 // matches the configured seed (no silent override), and return the
 // completed_day to resume from. The caller has already canonicalised cp.
@@ -768,25 +798,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
       ++n_vax;
     }
 
-    // sparse venue fomite history
-    auto fv = readVec<int32_t>(f, "/venue_fomite/venue_id", I32);
-    auto fm = readVec<int32_t>(f, "/venue_fomite/mode_index", I32);
-    auto fo = readVec<int64_t>(f, "/venue_fomite/offsets", I64);
-    auto fc = readVec<int32_t>(f, "/venue_fomite/counts", I32);
-    auto ftime = readVec<double>(f, "/venue_fomite/deposit_time", F64);
-    auto famt = readVec<double>(f, "/venue_fomite/deposit_amount", F64);
-    for (size_t i = 0; i < fv.size(); ++i) {
-      Venue* v = world_.getVenue(fv[i]);
-      if (!v) continue;
-      int m = fm[i];
-      if (static_cast<int>(v->fomite_history.size()) <= m)
-        v->fomite_history.resize(m + 1);
-      auto& dq = v->fomite_history[m];
-      dq.clear();
-      for (int32_t k = 0; k < fc[i]; ++k)
-        dq.push_back({ftime[fo[i] + k], famt[fo[i] + k]});
-      ++n_fom;
-    }
+    n_fom += overlayShardFomite(f, world_);
 
     // per-rank manager state: keep only entries for people THIS rank owns
     // (rank-count independent — keyed on global PersonId).
