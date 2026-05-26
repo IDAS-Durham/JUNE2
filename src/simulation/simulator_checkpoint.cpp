@@ -604,33 +604,35 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed) {
 
 }  // namespace
 
+void Simulator::restoreCheckpointStateFile(const fs::path& cp) {
+  H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
+  auto F64 = H5::PredType::NATIVE_DOUBLE;
+  auto I32 = H5::PredType::NATIVE_INT32;
+  auto cst = readVec<double>(f, "/scalars/current_simulation_time", F64);
+  if (!cst.empty()) current_simulation_time_ = cst[0];
+  auto ng = readVec<uint64_t>(f, "/scalars/next_encounter_group_id",
+                              H5::PredType::NATIVE_UINT64);
+  if (!ng.empty()) next_encounter_group_id_ = ng[0];
+  auto dtc = readVec<int32_t>(f, "/scalars/day_type_counts", I32);
+  day_type_counts_.assign(dtc.begin(), dtc.end());
+
+  if (infection_seeder_) {
+    auto seeds = readStrs(f, "/infection_seeder/applied_seeds");
+    std::set<std::string> s(seeds.begin(), seeds.end());
+    infection_seeder_->setAppliedSeeds(s);
+  }
+}
+
 void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   const int rank = getRank();
   fs::path cp = fs::canonical(checkpoint_dir);  // resolves 'latest' symlink
   int completed_day =
       readAndValidateManifest(cp, config_.simulation.random_seed);
 
-  // ---- state.h5: scalars + non-derivable manager state ----
-  std::unordered_map<PersonId, double> lpt_map;
-  {
-    H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
-    auto F64 = H5::PredType::NATIVE_DOUBLE;
-    auto I32 = H5::PredType::NATIVE_INT32;
-    auto cst = readVec<double>(f, "/scalars/current_simulation_time", F64);
-    if (!cst.empty()) current_simulation_time_ = cst[0];
-    auto ng = readVec<uint64_t>(f, "/scalars/next_encounter_group_id",
-                                H5::PredType::NATIVE_UINT64);
-    if (!ng.empty()) next_encounter_group_id_ = ng[0];
-    auto dtc = readVec<int32_t>(f, "/scalars/day_type_counts", I32);
-    day_type_counts_.assign(dtc.begin(), dtc.end());
+  restoreCheckpointStateFile(cp);
 
-    if (infection_seeder_) {
-      auto seeds = readStrs(f, "/infection_seeder/applied_seeds");
-      std::set<std::string> s(seeds.begin(), seeds.end());
-      infection_seeder_->setAppliedSeeds(s);
-    }
-    // frozen_states_ + lpt are per-rank: accumulated from the shards below.
-  }
+  // frozen_states_ + lpt are per-rank: accumulated from the shards below.
+  std::unordered_map<PersonId, double> lpt_map;
   std::unordered_map<PersonId, FrozenPersonState> frozen_accum;
 
   // ---- delta shards: overlay onto this rank's owned world_ by global id ----

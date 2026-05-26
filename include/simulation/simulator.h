@@ -221,6 +221,12 @@ class Simulator {
   void writeCheckpointRankShard(const std::filesystem::path& tmp, int rank,
                                 int comp);
 
+  // Read the global / scalar restore state from state.h5 into class members
+  // (current_simulation_time_, next_encounter_group_id_, day_type_counts_,
+  // and the infection_seeder's applied_seeds). Per-rank manager state
+  // (lpt, frozen_states) is overlaid from the shards, not from here.
+  void restoreCheckpointStateFile(const std::filesystem::path& cp);
+
   // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
   // (completed_day, current_simulation_time_, next_encounter_group_id_, …),
   // the infection_seeder's applied_seeds, and the rank-0 event-log buffered
