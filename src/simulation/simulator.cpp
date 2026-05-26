@@ -265,6 +265,49 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
   return global_eligible_map;
 }
 
+// Per-rank infection breakdown: walk the local population once and tally
+// currently-infected / immune / dead totals plus a per-symptom-tag
+// histogram. Pure read of world + disease state.
+struct InfectionStatsLocal {
+  int infected = 0;
+  int immune = 0;
+  int dead = 0;
+  std::vector<int> symptom_counts;
+};
+
+InfectionStatsLocal tallyLocalInfectionStats(const WorldState& world,
+                                             double current_simulation_time,
+                                             const Disease& disease) {
+  const auto& s_tags = disease.getSymptomTags();
+  InfectionStatsLocal out;
+  out.symptom_counts.assign(s_tags.size(), 0);
+  for (const auto& person : world.people) {
+    if (person.is_dead) {
+      out.dead++;
+      continue;
+    }
+    if (person.infection != nullptr) {
+      uint16_t s_id =
+          person.infection->getTrajectory().getCurrentSymptomId(
+              current_simulation_time);
+      if (s_id < s_tags.size()) {
+        const auto& tag = s_tags[s_id];
+        if (disease.isFatalStage(tag.name)) {
+          out.dead++;
+        } else {
+          out.infected++;
+        }
+        out.symptom_counts[s_id]++;
+      }
+    }
+    if (person.immunity.getNaturalLevel(current_simulation_time) > 0.01 ||
+        person.vaccine_trajectory != nullptr) {
+      out.immune++;
+    }
+  }
+  return out;
+}
+
 // Per-slot transmission + epidemiology summary print: MPI_Reduce the
 // per-rank totals onto rank 0 and print one line of transmissions + one
 // line of epi transitions/recoveries/deaths if any are non-zero.
@@ -1481,43 +1524,15 @@ void Simulator::outputInfectionStatistics() {
   if (domain_mgr_) size = domain_mgr_->getNumRanks();
 #endif
 
-  // Local counts and breakdown
-  int local_infected = 0;
-  int local_immune = 0;
-  int local_dead = 0;
-
+  // Per-rank tally walks the local population once.
+  const InfectionStatsLocal local_stats =
+      tallyLocalInfectionStats(world_, current_simulation_time_, *disease_);
   const auto& s_tags = disease_->getSymptomTags();
-  std::vector<int> local_symptom_counts(s_tags.size(), 0);
 
-  for (const auto& person : world_.people) {
-    if (person.is_dead) {
-      local_dead++;
-      continue;
-    }
-
-    if (person.infection != nullptr) {
-      uint16_t s_id = person.infection->getTrajectory().getCurrentSymptomId(
-          current_simulation_time_);
-      if (s_id < s_tags.size()) {
-        const auto& tag = s_tags[s_id];
-        if (disease_->isFatalStage(tag.name)) {
-          local_dead++;
-        } else {
-          local_infected++;
-        }
-        local_symptom_counts[s_id]++;
-      }
-    }
-    if (person.immunity.getNaturalLevel(current_simulation_time_) > 0.01 ||
-        person.vaccine_trajectory != nullptr) {
-      local_immune++;
-    }
-  }
-
-  // Prepare for aggregation
-  int local_totals[3] = {local_infected, local_immune, local_dead};
+  int local_totals[3] = {local_stats.infected, local_stats.immune,
+                         local_stats.dead};
   int global_totals[3] = {0, 0, 0};
-
+  const std::vector<int>& local_symptom_counts = local_stats.symptom_counts;
   std::vector<int> global_symptom_counts(s_tags.size(), 0);
 
 #ifdef USE_MPI
