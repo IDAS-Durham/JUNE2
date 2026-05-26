@@ -586,11 +586,10 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
   static constexpr double kTableMaxDays = 90.0;
   static constexpr int kTableNPoints = 2700;
 
+  std::shared_ptr<InfectiousnessCurve> curve;
   if (type == "constant") {
     double value = curve_node["value"] ? curve_node["value"].as<double>() : 1.0;
-    auto curve = std::make_shared<ConstantCurve>(value);
-    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
-    return curve;
+    curve = std::make_shared<ConstantCurve>(value);
   } else if (type == "gamma") {
     double max_inf = curve_node["max_infectiousness"]
                          ? curve_node["max_infectiousness"].as<double>()
@@ -599,13 +598,12 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
         curve_node["shape"] ? curve_node["shape"].as<double>() : 1.56;
     double rate = curve_node["rate"] ? curve_node["rate"].as<double>() : 0.53;
     double shift = curve_node["shift"] ? curve_node["shift"].as<double>() : 0.0;
-    auto curve = std::make_shared<GammaCurve>(max_inf, shape, rate, shift);
+    auto gamma = std::make_shared<GammaCurve>(max_inf, shape, rate, shift);
     if (verbose) {
       logCurveRescale(context_label, "gamma", max_inf,
-                      curve->peakScalingFactor());
+                      gamma->peakScalingFactor());
     }
-    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
-    return curve;
+    curve = gamma;
   } else if (type == "exponential_decay") {
     double initial = curve_node["initial_value"]
                          ? curve_node["initial_value"].as<double>()
@@ -613,9 +611,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     double decay =
         curve_node["decay_rate"] ? curve_node["decay_rate"].as<double>() : 0.5;
     double delay = curve_node["delay"] ? curve_node["delay"].as<double>() : 0.0;
-    auto curve = std::make_shared<ExponentialDecayCurve>(initial, decay, delay);
-    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
-    return curve;
+    curve = std::make_shared<ExponentialDecayCurve>(initial, decay, delay);
   } else if (type == "linear_ramp") {
     double start = curve_node["start_value"]
                        ? curve_node["start_value"].as<double>()
@@ -625,24 +621,19 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     double duration = curve_node["ramp_duration"]
                           ? curve_node["ramp_duration"].as<double>()
                           : 1.0;
-    auto curve = std::make_shared<LinearRampCurve>(start, end, duration);
-    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
-    return curve;
+    curve = std::make_shared<LinearRampCurve>(start, end, duration);
   } else if (type == "lognormal") {
     double max_inf = curve_node["max_infectiousness"]
                          ? curve_node["max_infectiousness"].as<double>()
                          : 1.0;
     double mu = curve_node["mu"] ? curve_node["mu"].as<double>() : 0.0;
-
     double sigma = curve_node["sigma"] ? curve_node["sigma"].as<double>() : 1.0;
-    auto curve = std::make_shared<LognormalCurve>(max_inf, mu, sigma);
+    auto lognormal = std::make_shared<LognormalCurve>(max_inf, mu, sigma);
     if (verbose) {
       logCurveRescale(context_label, "lognormal", max_inf,
-                      curve->peakScalingFactor());
+                      lognormal->peakScalingFactor());
     }
-    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
-    return curve;
-
+    curve = lognormal;
   } else if (type == "beta") {
     double max_inf = curve_node["max_infectiousness"]
                          ? curve_node["max_infectiousness"].as<double>()
@@ -651,16 +642,19 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     double beta = curve_node["beta"] ? curve_node["beta"].as<double>() : 2.0;
     double duration =
         curve_node["duration"] ? curve_node["duration"].as<double>() : 1.0;
-    auto curve = std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
+    auto beta_curve =
+        std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
     if (verbose) {
       logCurveRescale(context_label, "beta", max_inf,
-                      curve->peakScalingFactor());
+                      beta_curve->peakScalingFactor());
     }
-    curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
-    return curve;
+    curve = beta_curve;
+  } else {
+    throw std::runtime_error("Unknown infectiousness curve type: " + type);
   }
 
-  throw std::runtime_error("Unknown infectiousness curve type: " + type);
+  curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
+  return curve;
 }
 
 }  // namespace june
