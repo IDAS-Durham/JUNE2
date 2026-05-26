@@ -143,6 +143,22 @@ class ActivityManager {
                                           const TimeSlot& slot,
                                           int16_t activity_idx) const;
 
+  // Step 1 of selectVenue's hierarchical pick: groups `venues` by their
+  // venue type id into venues_by_id_buffer_, tracks the populated type ids
+  // in venue_type_ids_buffer_, and collects cross-rank / unknown-type
+  // venues into cross_rank_venues_buffer_. All three buffers are cleared
+  // first.
+  void groupVenuesByType(
+      std::span<const std::pair<VenueId, SubsetIndex>> venues);
+
+  // Step 2 of selectVenue's hierarchical pick: picks a venue type id from
+  // venue_type_ids_buffer_ weighted by activity preferences (filling
+  // weights_buffer_ and cumulative_buffer_ as it goes). Caller must have
+  // populated the buffers via groupVenuesByType and verified
+  // !venue_type_ids_buffer_.empty().
+  uint8_t pickWeightedVenueType(const Person& person, int16_t activity_idx,
+                                SplitMix64& rng);
+
   // For slots with a specified_activity that targets activity_idx, picks
   // a venue from `venues` (optionally filtered by the slot's specified
   // venue type id) at the slot's specified index. Returns nullopt if the

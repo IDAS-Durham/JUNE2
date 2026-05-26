@@ -350,28 +350,7 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
 
   // Default: Hierarchical Selection (Category -> Venue)
   // 1. Group available venues by their category (type ID)
-  for (auto& buffer : venues_by_id_buffer_) buffer.clear();
-  venue_type_ids_buffer_.clear();
-  cross_rank_venues_buffer_.clear();
-
-  for (const auto& v_entry : venues) {
-    // Use getVenueTypeId which works for both local and cross-rank venues
-    // (falls back to global_venue_type_map for cross-rank). This ensures
-    // the same hierarchical selection regardless of MPI partitioning.
-    uint8_t v_type_id = world_.getVenueTypeId(v_entry.first);
-    if (v_type_id == 255) {
-      // Unknown venue type — collect for fallback
-      cross_rank_venues_buffer_.push_back(v_entry);
-      continue;
-    }
-
-    if (v_type_id < venues_by_id_buffer_.size()) {
-      if (venues_by_id_buffer_[v_type_id].empty()) {
-        venue_type_ids_buffer_.push_back(v_type_id);
-      }
-      venues_by_id_buffer_[v_type_id].push_back(v_entry);
-    }
-  }
+  groupVenuesByType(venues);
 
   if (venue_type_ids_buffer_.empty()) {
     // No local venues found – fall back to cross-rank venues if any
@@ -383,31 +362,14 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
     return {-1, -1};
   }
 
-  // 2. Select a category weighted by activity preferences (Using activity_idx
-  // and venue_type_id)
-  weights_buffer_.clear();
-  for (uint8_t type_id : venue_type_ids_buffer_) {
-    weights_buffer_.push_back(config_.activity_preferences.getWeight(
-        person, activity_idx, type_id, &world_));
-    stats_.weights_cached++;
-  }
-
-  // Build cumulative weights and sample (replaces std::discrete_distribution
-  // — same complexity, no per-call allocation).
-  double total_w = buildCumulative(weights_buffer_, cumulative_buffer_);
-  size_t chosen_idx = 0;
-  if (total_w > 0.0) {
-    int s = sampleFromCumulative(cumulative_buffer_, rng);
-    if (s >= 0) chosen_idx = static_cast<size_t>(s);
-  }
-  uint8_t chosen_type_id = venue_type_ids_buffer_[chosen_idx];
+  // 2. Select a category weighted by activity preferences
+  uint8_t chosen_type_id = pickWeightedVenueType(person, activity_idx, rng);
 
   // 3. Select a specific venue within that category
   const auto& filtered_venues = venues_by_id_buffer_[chosen_type_id];
   std::uniform_int_distribution<size_t> venue_dist(0,
                                                    filtered_venues.size() - 1);
-  auto result = filtered_venues[venue_dist(rng)];
-  return result;
+  return filtered_venues[venue_dist(rng)];
 }
 
 void ActivityManager::precomputeSchedules() {
@@ -703,6 +665,53 @@ void ActivityManager::maybeTriggerScheduleHop(
     person.return_schedule_id = -1;
     person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
+}
+
+void ActivityManager::groupVenuesByType(
+    std::span<const std::pair<VenueId, SubsetIndex>> venues) {
+  for (auto& buffer : venues_by_id_buffer_) buffer.clear();
+  venue_type_ids_buffer_.clear();
+  cross_rank_venues_buffer_.clear();
+
+  for (const auto& v_entry : venues) {
+    // Use getVenueTypeId which works for both local and cross-rank venues
+    // (falls back to global_venue_type_map for cross-rank). This ensures
+    // the same hierarchical selection regardless of MPI partitioning.
+    uint8_t v_type_id = world_.getVenueTypeId(v_entry.first);
+    if (v_type_id == 255) {
+      // Unknown venue type — collect for fallback
+      cross_rank_venues_buffer_.push_back(v_entry);
+      continue;
+    }
+
+    if (v_type_id < venues_by_id_buffer_.size()) {
+      if (venues_by_id_buffer_[v_type_id].empty()) {
+        venue_type_ids_buffer_.push_back(v_type_id);
+      }
+      venues_by_id_buffer_[v_type_id].push_back(v_entry);
+    }
+  }
+}
+
+uint8_t ActivityManager::pickWeightedVenueType(const Person& person,
+                                               int16_t activity_idx,
+                                               SplitMix64& rng) {
+  weights_buffer_.clear();
+  for (uint8_t type_id : venue_type_ids_buffer_) {
+    weights_buffer_.push_back(config_.activity_preferences.getWeight(
+        person, activity_idx, type_id, &world_));
+    stats_.weights_cached++;
+  }
+
+  // Build cumulative weights and sample (replaces std::discrete_distribution
+  // — same complexity, no per-call allocation).
+  double total_w = buildCumulative(weights_buffer_, cumulative_buffer_);
+  size_t chosen_idx = 0;
+  if (total_w > 0.0) {
+    int s = sampleFromCumulative(cumulative_buffer_, rng);
+    if (s >= 0) chosen_idx = static_cast<size_t>(s);
+  }
+  return venue_type_ids_buffer_[chosen_idx];
 }
 
 std::optional<std::pair<VenueId, SubsetIndex>>
