@@ -69,6 +69,10 @@ class DiseaseLoader {
   static void loadTransmissionStageDriven(
       const YAML::Node& trans_node, TransmissionParams& transmission,
       const std::vector<SymptomTag>& symptom_tags, bool verbose);
+  static void loadTransmission(const YAML::Node& config,
+                               TransmissionParams& transmission,
+                               const std::vector<SymptomTag>& symptom_tags,
+                               bool verbose);
 
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(

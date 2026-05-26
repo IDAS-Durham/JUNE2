@@ -264,6 +264,28 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::loadTransmission(
+    const YAML::Node& config, TransmissionParams& transmission,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  if (!config["transmission"]) return;
+  auto trans_node = config["transmission"];
+
+  // Detect mode (default to Trajectory-Driven)
+  std::string mode_str = trans_node["mode"]
+                             ? trans_node["mode"].as<std::string>()
+                             : "Trajectory-Driven";
+  transmission.mode = (mode_str == "Stage-Driven")
+                          ? InfectiousnessMode::STAGE_DRIVEN
+                          : InfectiousnessMode::TRAJECTORY_DRIVEN;
+
+  if (transmission.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
+    loadTransmissionTrajectoryDriven(trans_node, transmission);
+  } else {
+    loadTransmissionStageDriven(trans_node, transmission, symptom_tags,
+                                verbose);
+  }
+}
+
 void DiseaseLoader::loadTransmissionStageDriven(
     const YAML::Node& trans_node, TransmissionParams& transmission,
     const std::vector<SymptomTag>& symptom_tags, bool verbose) {
@@ -667,28 +689,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 
     OutcomeRates outcome_rates = loadOutcomeRatesFromConfig(config, yaml_path);
 
-    // === Load Transmission Parameters ===
     TransmissionParams transmission;
-    if (config["transmission"]) {
-      auto trans_node = config["transmission"];
-
-      // Detect mode (default to Trajectory-Driven)
-      std::string mode_str = trans_node["mode"]
-                                 ? trans_node["mode"].as<std::string>()
-                                 : "Trajectory-Driven";
-      if (mode_str == "Stage-Driven") {
-        transmission.mode = InfectiousnessMode::STAGE_DRIVEN;
-      } else {
-        transmission.mode = InfectiousnessMode::TRAJECTORY_DRIVEN;
-      }
-
-      if (transmission.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
-        loadTransmissionTrajectoryDriven(trans_node, transmission);
-      } else {
-        loadTransmissionStageDriven(trans_node, transmission, symptom_tags,
-                                    verbose);
-      }
-    }
+    loadTransmission(config, transmission, symptom_tags, verbose);
 
     loadNaturalImmunity(config, transmission);
     validateOutcomeRowSums(outcome_rates);
