@@ -37,6 +37,14 @@ std::shared_ptr<ExponentialDecayCurve> makeExponentialDecayCurve(
   return std::make_shared<ExponentialDecayCurve>(initial, decay, delay);
 }
 
+std::shared_ptr<LinearRampCurve> makeLinearRampCurve(const YAML::Node& node) {
+  double start = node["start_value"] ? node["start_value"].as<double>() : 0.0;
+  double end = node["end_value"] ? node["end_value"].as<double>() : 1.0;
+  double duration =
+      node["ramp_duration"] ? node["ramp_duration"].as<double>() : 1.0;
+  return std::make_shared<LinearRampCurve>(start, end, duration);
+}
+
 std::shared_ptr<GammaCurve> makeGammaCurve(const YAML::Node& node,
                                            const std::string& context_label,
                                            bool verbose) {
@@ -628,15 +636,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
   } else if (type == "exponential_decay") {
     curve = makeExponentialDecayCurve(curve_node);
   } else if (type == "linear_ramp") {
-    double start = curve_node["start_value"]
-                       ? curve_node["start_value"].as<double>()
-                       : 0.0;
-    double end =
-        curve_node["end_value"] ? curve_node["end_value"].as<double>() : 1.0;
-    double duration = curve_node["ramp_duration"]
-                          ? curve_node["ramp_duration"].as<double>()
-                          : 1.0;
-    curve = std::make_shared<LinearRampCurve>(start, end, duration);
+    curve = makeLinearRampCurve(curve_node);
   } else if (type == "lognormal") {
     double max_inf = curve_node["max_infectiousness"]
                          ? curve_node["max_infectiousness"].as<double>()
