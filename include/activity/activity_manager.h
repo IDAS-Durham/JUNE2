@@ -130,6 +130,16 @@ class ActivityManager {
                                     int day_type_idx,
                                     int time_slot_index) const;
 
+  // Resolves a hop schedule index from current_slot's
+  // property_hop_dispatch_by_activity_idx table for the given activity.
+  // The schedule_name_template's "{value}" placeholder is filled with the
+  // person property's int32 value. Returns -1 if no dispatch is configured,
+  // the property is missing or non-positive, or the resulting schedule
+  // name does not exist.
+  int16_t resolvePropertyDispatchedHopIdx(const Person& person,
+                                          const TimeSlot& slot,
+                                          int16_t activity_idx) const;
+
   // Re-evaluates a non-deterministic precomputed schedule entry at runtime.
   // For hybrid entries, re-rolls participation and reuses the precomputed
   // venue iff the same activity is chosen. For fully-stochastic entries,

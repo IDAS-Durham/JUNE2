@@ -669,28 +669,8 @@ void ActivityManager::assignActivitiesFromSchedule(
       // name template are all specified in YAML hop_on_activity; no activity
       // names or property names are hard-coded here.
       if (hop_idx == -1 && current_slot) {
-        auto dispatch_it =
-            current_slot->property_hop_dispatch_by_activity_idx.find(
-                scheduled_activity_index);
-        if (dispatch_it !=
-            current_slot->property_hop_dispatch_by_activity_idx.end()) {
-          const auto& dispatch = dispatch_it->second;
-          if (auto prop =
-                  world_.getPersonProperty(person, dispatch.property_name)) {
-            int32_t value = getOr<int32_t>(*prop, 0);
-            if (value > 0) {
-              std::string sched_name = dispatch.schedule_name_template;
-              const std::string placeholder = "{value}";
-              size_t pos = sched_name.find(placeholder);
-              if (pos != std::string::npos) {
-                sched_name.replace(pos, placeholder.size(),
-                                   std::to_string(value));
-              }
-              hop_idx =
-                  static_cast<int16_t>(world_.getScheduleTypeIndex(sched_name));
-            }
-          }
-        }
+        hop_idx = resolvePropertyDispatchedHopIdx(person, *current_slot,
+                                                  scheduled_activity_index);
       }
       if (hop_idx != -1) {
         const ScheduleType& target = config_.schedule.schedule_types[hop_idx];
@@ -803,6 +783,27 @@ void ActivityManager::resolveStochasticEntry(
     scheduled_subset_idx = subset_idx;
     scheduled_activity_index = runtime_activity_idx;
   }
+}
+
+int16_t ActivityManager::resolvePropertyDispatchedHopIdx(
+    const Person& person, const TimeSlot& slot, int16_t activity_idx) const {
+  auto dispatch_it =
+      slot.property_hop_dispatch_by_activity_idx.find(activity_idx);
+  if (dispatch_it == slot.property_hop_dispatch_by_activity_idx.end()) {
+    return -1;
+  }
+  const auto& dispatch = dispatch_it->second;
+  auto prop = world_.getPersonProperty(person, dispatch.property_name);
+  if (!prop) return -1;
+  int32_t value = getOr<int32_t>(*prop, 0);
+  if (value <= 0) return -1;
+  std::string sched_name = dispatch.schedule_name_template;
+  const std::string placeholder = "{value}";
+  size_t pos = sched_name.find(placeholder);
+  if (pos != std::string::npos) {
+    sched_name.replace(pos, placeholder.size(), std::to_string(value));
+  }
+  return static_cast<int16_t>(world_.getScheduleTypeIndex(sched_name));
 }
 
 const TimeSlot* ActivityManager::lookupCurrentSlot(
