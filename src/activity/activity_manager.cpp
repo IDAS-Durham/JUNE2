@@ -299,22 +299,8 @@ int16_t ActivityManager::selectActivity(const Person& person,
                                         const TimeSlot& slot, size_t slot_idx,
                                         const ScheduleType* schedule_type,
                                         int day_type_idx, uint64_t time_key) {
-  // Filter to activities this person actually has venues for (using
-  // pre-resolved indices)
   static thread_local std::vector<int16_t> available_indices;
-  available_indices.clear();
-
-  for (int16_t act_idx : slot.allowed_activity_indices) {
-    if (act_idx == no_venue_act_idx_ ||
-        slot.property_hop_dispatch_by_activity_idx.count(act_idx)) {
-      available_indices.push_back(act_idx);
-      continue;
-    }
-    bool has_venues = !world_.getActivityVenues(person, act_idx).empty();
-    if (has_venues) {
-      available_indices.push_back(act_idx);
-    }
-  }
+  filterAvailableActivities(person, slot, available_indices);
 
   if (available_indices.empty()) {
     return residence_act_idx_;  // Fallback
@@ -336,43 +322,8 @@ int16_t ActivityManager::selectActivity(const Person& person,
   const auto& participation_by_id =
       participation_ptr ? *participation_ptr : empty_participation;
 
-  // Linked activities: if the schedule type opts in via `linked_activities`
-  // AND this slot's allowed activities touch the linked set, roll ONCE per
-  // (person, sim_day) and reuse the cached decision across every listed
-  // activity. Couples e.g. an outbound route, a primary activity at the
-  // destination, and a return route into a single per-day attendance
-  // decision. Slots that don't touch linked activities (e.g. weekend slots
-  // or non-routing slots) are unaffected. Fully generic — driven by YAML,
-  // no hardcoded activity names.
-  const bool slot_touches_linked =
-      schedule_type->linked_activities_mask != 0 &&
-      (slot.allowed_activity_mask & schedule_type->linked_activities_mask) != 0;
-  if (slot_touches_linked) {
-    int day_now = static_cast<int>(current_simulation_time_);
-    if (person.linked_activities_day != day_now) {
-      // Use the rate of any linked activity from the participation table.
-      // We deliberately do NOT filter by available_indices — the rate is a
-      // schedule-level configuration that shouldn't depend on whether THIS
-      // person happens to have the venue (e.g. a person without a route
-      // leg should still re-roll the same attendance decision used by the
-      // primary-activity slot later in the day). All linked activities
-      // should be configured with the same rate.
-      double linked_rate = 0.0;
-      for (size_t a = 0; a < participation_by_id.size(); ++a) {
-        if ((schedule_type->linked_activities_mask & (ActivityMask(1) << a)) !=
-            0) {
-          linked_rate = participation_by_id[a];
-          break;
-        }
-      }
-      SplitMix64 day_rng(
-          mix_seed(base_seed_, person.id, mix_seed(0xDA17ULL, day_now, 0ULL)));
-      std::uniform_real_distribution<double> day_dist(0.0, 1.0);
-      bool pass = day_dist(day_rng) < linked_rate;
-      const_cast<Person&>(person).linked_activities_day = day_now;
-      const_cast<Person&>(person).linked_activities_pass = pass;
-    }
-  }
+  maybeRollLinkedActivitiesDay(person, slot, *schedule_type,
+                               participation_by_id);
 
   for (int16_t act_idx : available_indices) {
     if (act_idx < 0) continue;
@@ -799,6 +750,63 @@ void ActivityManager::maybeTriggerScheduleHop(
     person.return_schedule_id = -1;
     person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
+}
+
+void ActivityManager::filterAvailableActivities(
+    const Person& person, const TimeSlot& slot,
+    std::vector<int16_t>& available) const {
+  available.clear();
+  for (int16_t act_idx : slot.allowed_activity_indices) {
+    if (act_idx == no_venue_act_idx_ ||
+        slot.property_hop_dispatch_by_activity_idx.count(act_idx)) {
+      available.push_back(act_idx);
+      continue;
+    }
+    bool has_venues = !world_.getActivityVenues(person, act_idx).empty();
+    if (has_venues) {
+      available.push_back(act_idx);
+    }
+  }
+}
+
+// Linked activities: if the schedule type opts in via `linked_activities`
+// AND this slot's allowed activities touch the linked set, roll ONCE per
+// (person, sim_day) and reuse the cached decision across every listed
+// activity. Couples e.g. an outbound route, a primary activity at the
+// destination, and a return route into a single per-day attendance
+// decision. Slots that don't touch linked activities (e.g. weekend slots
+// or non-routing slots) are unaffected. Fully generic — driven by YAML,
+// no hardcoded activity names.
+void ActivityManager::maybeRollLinkedActivitiesDay(
+    const Person& person, const TimeSlot& slot,
+    const ScheduleType& schedule_type,
+    const std::vector<double>& participation_by_id) {
+  const bool slot_touches_linked =
+      schedule_type.linked_activities_mask != 0 &&
+      (slot.allowed_activity_mask & schedule_type.linked_activities_mask) != 0;
+  if (!slot_touches_linked) return;
+  int day_now = static_cast<int>(current_simulation_time_);
+  if (person.linked_activities_day == day_now) return;
+  // Use the rate of any linked activity from the participation table.
+  // We deliberately do NOT filter by available_indices — the rate is a
+  // schedule-level configuration that shouldn't depend on whether THIS
+  // person happens to have the venue (e.g. a person without a route
+  // leg should still re-roll the same attendance decision used by the
+  // primary-activity slot later in the day). All linked activities
+  // should be configured with the same rate.
+  double linked_rate = 0.0;
+  for (size_t a = 0; a < participation_by_id.size(); ++a) {
+    if ((schedule_type.linked_activities_mask & (ActivityMask(1) << a)) != 0) {
+      linked_rate = participation_by_id[a];
+      break;
+    }
+  }
+  SplitMix64 day_rng(
+      mix_seed(base_seed_, person.id, mix_seed(0xDA17ULL, day_now, 0ULL)));
+  std::uniform_real_distribution<double> day_dist(0.0, 1.0);
+  bool pass = day_dist(day_rng) < linked_rate;
+  const_cast<Person&>(person).linked_activities_day = day_now;
+  const_cast<Person&>(person).linked_activities_pass = pass;
 }
 
 int16_t ActivityManager::resolvePropertyDispatchedHopIdx(

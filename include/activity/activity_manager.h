@@ -140,6 +140,23 @@ class ActivityManager {
                                           const TimeSlot& slot,
                                           int16_t activity_idx) const;
 
+  // Fills `available` with the slot's allowed activity indices, restricted
+  // to those the person actually has venues for. no_venue_act_idx_ and
+  // property-dispatch activities are always retained (their venue check
+  // happens later). Output is cleared at the start.
+  void filterAvailableActivities(const Person& person, const TimeSlot& slot,
+                                 std::vector<int16_t>& available) const;
+
+  // For schedules that opt into linked_activities and slots whose allowed
+  // activities touch the linked set, rolls the per-day participation
+  // decision once per (person, sim_day) and caches it on the Person.
+  // No-op if the schedule has no linked activities, the slot doesn't
+  // touch them, or the cached day already matches the current sim day.
+  void maybeRollLinkedActivitiesDay(
+      const Person& person, const TimeSlot& slot,
+      const ScheduleType& schedule_type,
+      const std::vector<double>& participation_by_id);
+
   // Handles a person with a precomputed schedule: looks up the
   // ScheduleEntry at time_slot_index, re-evaluates stochastic/hybrid
   // entries, applies any schedule hop, applies any policy override, and
