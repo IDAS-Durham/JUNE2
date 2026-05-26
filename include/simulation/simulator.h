@@ -227,6 +227,12 @@ class Simulator {
   // (lpt, frozen_states) is overlaid from the shards, not from here.
   void restoreCheckpointStateFile(const std::filesystem::path& cp);
 
+  // Throw if --days / end_date leaves nothing to simulate after a resume.
+  // --days is anchored to the ORIGINAL start_date, not the checkpoint, so a
+  // resume that lands at or past total_days_ would silently no-op — fail
+  // loudly instead, pointing at the right --days value to use.
+  void validateResumeBounds(int completed_day) const;
+
   // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
   // (completed_day, current_simulation_time_, next_encounter_group_id_, …),
   // the infection_seeder's applied_seeds, and the rank-0 event-log buffered
