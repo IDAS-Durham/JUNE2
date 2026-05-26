@@ -131,6 +131,58 @@ DistributionParams DiseaseLoader::parseDistribution(
 // Parse Trajectory Definitions from YAML
 // =============================================================================
 
+std::optional<TrajectoryDefinition> DiseaseLoader::parseOneTrajectory(
+    const YAML::Node& traj_node) {
+  TrajectoryDefinition traj;
+
+  if (traj_node["description"]) {
+    traj.description = traj_node["description"].as<std::string>();
+  }
+
+  if (traj_node["selection_key"]) {
+    traj.selection_key = traj_node["selection_key"].as<std::string>();
+  }
+
+  if (traj_node["probability"]) {
+    traj.probability = traj_node["probability"].as<double>();
+  }
+
+  traj.severity =
+      traj_node["severity"] ? traj_node["severity"].as<double>() : 0.0;
+
+  traj.infectiousness_factor = traj_node["infectiousness_factor"]
+                                   ? traj_node["infectiousness_factor"].as<double>()
+                                   : 1.0;
+
+  if (traj_node["start_stage"]) {
+    traj.start_stage = traj_node["start_stage"].as<std::string>();
+  }
+
+  if (!traj_node["stages"]) {
+    std::cerr << "Warning: Trajectory missing 'stages' field" << std::endl;
+    return std::nullopt;
+  }
+
+  for (const auto& stage_node : traj_node["stages"]) {
+    TrajectoryStage stage;
+
+    if (!stage_node["symptom_tag"]) {
+      std::cerr << "Warning: Stage missing 'symptom_tag' field" << std::endl;
+      continue;
+    }
+
+    stage.symptom_tag = stage_node["symptom_tag"].as<std::string>();
+
+    if (stage_node["completion_time"]) {
+      stage.completion_time = parseDistribution(stage_node["completion_time"]);
+    }
+
+    traj.stages.push_back(stage);
+  }
+
+  return traj;
+}
+
 std::vector<TrajectoryDefinition> DiseaseLoader::parseTrajectories(
     const YAML::Node& trajectories_node) {
   std::vector<TrajectoryDefinition> trajectories;
@@ -142,56 +194,9 @@ std::vector<TrajectoryDefinition> DiseaseLoader::parseTrajectories(
   }
 
   for (const auto& traj_node : trajectories_node) {
-    TrajectoryDefinition traj;
-
-    if (traj_node["description"]) {
-      traj.description = traj_node["description"].as<std::string>();
+    if (auto traj = parseOneTrajectory(traj_node)) {
+      trajectories.push_back(std::move(*traj));
     }
-
-    if (traj_node["selection_key"]) {
-      traj.selection_key = traj_node["selection_key"].as<std::string>();
-    }
-
-    if (traj_node["probability"]) {
-      traj.probability = traj_node["probability"].as<double>();
-    }
-
-    traj.severity =
-        traj_node["severity"] ? traj_node["severity"].as<double>() : 0.0;
-
-    traj.infectiousness_factor =
-        traj_node["infectiousness_factor"]
-            ? traj_node["infectiousness_factor"].as<double>()
-            : 1.0;
-
-    if (traj_node["start_stage"]) {
-      traj.start_stage = traj_node["start_stage"].as<std::string>();
-    }
-
-    if (!traj_node["stages"]) {
-      std::cerr << "Warning: Trajectory missing 'stages' field" << std::endl;
-      continue;
-    }
-
-    for (const auto& stage_node : traj_node["stages"]) {
-      TrajectoryStage stage;
-
-      if (!stage_node["symptom_tag"]) {
-        std::cerr << "Warning: Stage missing 'symptom_tag' field" << std::endl;
-        continue;
-      }
-
-      stage.symptom_tag = stage_node["symptom_tag"].as<std::string>();
-
-      if (stage_node["completion_time"]) {
-        stage.completion_time =
-            parseDistribution(stage_node["completion_time"]);
-      }
-
-      traj.stages.push_back(stage);
-    }
-
-    trajectories.push_back(traj);
   }
 
   return trajectories;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <optional>
 #include <string>
 
 #include "../epidemiology/disease.h"
@@ -33,6 +34,10 @@ class DiseaseLoader {
   // Parse trajectory definitions from YAML
   static std::vector<TrajectoryDefinition> parseTrajectories(
       const YAML::Node& trajectories_node);
+
+  // Parse one trajectory entry; returns nullopt if 'stages' is missing.
+  static std::optional<TrajectoryDefinition> parseOneTrajectory(
+      const YAML::Node& traj_node);
 
   // Parse distribution parameters from YAML
   static DistributionParams parseDistribution(const YAML::Node& dist_node);
