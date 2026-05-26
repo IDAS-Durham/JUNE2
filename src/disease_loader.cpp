@@ -238,6 +238,44 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+DiseaseStageSettings DiseaseLoader::loadStageSettings(
+    const YAML::Node& config) {
+  DiseaseStageSettings stage_settings;
+  if (!config["settings"]) return stage_settings;
+  auto settings = config["settings"];
+
+  if (settings["default_lowest_stage"]) {
+    stage_settings.default_lowest_stage =
+        settings["default_lowest_stage"].as<std::string>();
+  }
+  if (settings["max_mild_symptom_tag"]) {
+    stage_settings.max_mild_symptom_tag =
+        settings["max_mild_symptom_tag"].as<std::string>();
+  }
+
+  auto loadStageList = [](const YAML::Node& node,
+                          std::vector<std::string>& out) {
+    if (!node) return;
+    for (const auto& item : node) {
+      if (item["name"]) {
+        out.push_back(item["name"].as<std::string>());
+      }
+    }
+  };
+
+  loadStageList(settings["stay_at_home_stage"],
+                stage_settings.stay_at_home_stages);
+  loadStageList(settings["severe_symptoms_stay_at_home_stage"],
+                stage_settings.severe_symptoms_stay_at_home_stages);
+  loadStageList(settings["hospitalised_stage"],
+                stage_settings.hospitalised_stages);
+  loadStageList(settings["intensive_care_stage"],
+                stage_settings.intensive_care_stages);
+  loadStageList(settings["fatality_stage"], stage_settings.fatality_stages);
+  loadStageList(settings["recovered_stage"], stage_settings.recovered_stages);
+  return stage_settings;
+}
+
 std::vector<SymptomTag> DiseaseLoader::loadSymptomTags(
     const YAML::Node& config) {
   std::vector<SymptomTag> symptom_tags;
@@ -274,44 +312,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 
     std::vector<SymptomTag> symptom_tags = loadSymptomTags(config);
 
-    // === Load Stage Settings ===
-    DiseaseStageSettings stage_settings;
-    if (config["settings"]) {
-      auto settings = config["settings"];
-
-      if (settings["default_lowest_stage"]) {
-        stage_settings.default_lowest_stage =
-            settings["default_lowest_stage"].as<std::string>();
-      }
-      if (settings["max_mild_symptom_tag"]) {
-        stage_settings.max_mild_symptom_tag =
-            settings["max_mild_symptom_tag"].as<std::string>();
-      }
-
-      // Load stage categories
-      auto loadStageList = [](const YAML::Node& node,
-                              std::vector<std::string>& out) {
-        if (node) {
-          for (const auto& item : node) {
-            if (item["name"]) {
-              out.push_back(item["name"].as<std::string>());
-            }
-          }
-        }
-      };
-
-      loadStageList(settings["stay_at_home_stage"],
-                    stage_settings.stay_at_home_stages);
-      loadStageList(settings["severe_symptoms_stay_at_home_stage"],
-                    stage_settings.severe_symptoms_stay_at_home_stages);
-      loadStageList(settings["hospitalised_stage"],
-                    stage_settings.hospitalised_stages);
-      loadStageList(settings["intensive_care_stage"],
-                    stage_settings.intensive_care_stages);
-      loadStageList(settings["fatality_stage"], stage_settings.fatality_stages);
-      loadStageList(settings["recovered_stage"],
-                    stage_settings.recovered_stages);
-    }
+    DiseaseStageSettings stage_settings = loadStageSettings(config);
 
     // === Parse Trajectories ===
     std::vector<TrajectoryDefinition> trajectories;
