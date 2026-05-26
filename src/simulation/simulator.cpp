@@ -1077,6 +1077,26 @@ void Simulator::logFinalizedEncountersLocally(
 }
 
 #ifdef USE_MPI
+void Simulator::receivePendingAndApply(
+    const std::vector<PendingInfection>& pending_infections) {
+  if (domain_mgr_ == nullptr) return;
+  try {
+    auto mpi_infected =
+        domain_mgr_->receivePendingInfections(pending_infections);
+    for (const auto& applied : mpi_infected) {
+      epidemiology_->trackInfection(applied.person_id);
+      event_logger_.logInfection(
+          applied.person_id, applied.infector_id, applied.venue_id,
+          applied.infection_time, applied.encounter_type_id,
+          applied.infector_symptom_id, applied.transmission_mode_index);
+    }
+  } catch (const std::exception& e) {
+    std::cerr << "[Step 4 Receive Pending] Fatal error: " << e.what()
+              << std::endl;
+    throw;
+  }
+}
+
 void Simulator::exchangeVisitorsAndBuildAugmented(
     double delta_hours, std::vector<PersonLocation>& augmented_locations,
     std::unordered_set<PersonId>& visitor_ids,
@@ -1287,25 +1307,7 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 
 #ifdef USE_MPI
   // Step 4: Send back pending infections to home ranks (parallel mode only)
-  if (domain_mgr_ != nullptr) {
-    int pending_queued = static_cast<int>(pending_infections.size());
-    try {
-      auto mpi_infected =
-          domain_mgr_->receivePendingInfections(pending_infections);
-      for (const auto& applied : mpi_infected) {
-        epidemiology_->trackInfection(applied.person_id);
-        event_logger_.logInfection(
-            applied.person_id, applied.infector_id, applied.venue_id,
-            applied.infection_time, applied.encounter_type_id,
-            applied.infector_symptom_id, applied.transmission_mode_index);
-      }
-
-    } catch (const std::exception& e) {
-      std::cerr << "[Step 4 Receive Pending] Fatal error: " << e.what()
-                << std::endl;
-      throw;
-    }
-  }
+  receivePendingAndApply(pending_infections);
 #endif
 
   // Step 5: Update infection states (symptom changes, recoveries, deaths)

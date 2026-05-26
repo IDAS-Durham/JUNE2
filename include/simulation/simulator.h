@@ -167,6 +167,12 @@ class Simulator {
       std::vector<PersonLocation>& augmented_locations,
       std::unordered_set<PersonId>& visitor_ids,
       std::unordered_map<PersonId, VisitorInfo>& visitor_data_map);
+
+  // Step 4 of simulateTimeSlot in MPI builds: route this rank's
+  // pending_infections back to home ranks, then track + log every
+  // applied infection. Bypass when no DomainManager.
+  void receivePendingAndApply(
+      const std::vector<PendingInfection>& pending_infections);
 #endif
 
   // End-of-run output: write final epidemic events + lookups (collective on
