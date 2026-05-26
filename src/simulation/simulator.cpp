@@ -1076,6 +1076,83 @@ void Simulator::logFinalizedEncountersLocally(
   }
 }
 
+#ifdef USE_MPI
+void Simulator::exchangeVisitorsAndBuildAugmented(
+    double delta_hours, std::vector<PersonLocation>& augmented_locations,
+    std::unordered_set<PersonId>& visitor_ids,
+    std::unordered_map<PersonId, VisitorInfo>& visitor_data_map) {
+  if (domain_mgr_ == nullptr) {
+    augmented_locations = locations_;
+    return;
+  }
+  try {
+    ScopedTimer timer("02_MPI_VisitorExchange");
+    domain_mgr_->exchangeVisitors(locations_, current_simulation_time_,
+                                  delta_hours);
+
+    Domain& domain = domain_mgr_->getDomain();
+
+    // Filter out outgoing visitors (local people at remote venues): we
+    // only keep local people at LOCAL venues. People at remote venues are
+    // handled exclusively as visitors on the owning rank.
+    augmented_locations.reserve(locations_.size() +
+                                domain.incoming_visitors.size());
+    for (const auto& loc : locations_) {
+      if (loc.venue_id == -1) {
+        augmented_locations.push_back(loc);  // unallocated, keep
+        continue;
+      }
+      if (domain.ownsVenue(loc.venue_id)) {
+        augmented_locations.push_back(loc);  // local venue, keep
+      }
+      // remote venue: skip (handled as visitor on owning rank)
+    }
+
+    // Add incoming visitors to augmented locations
+    size_t visitor_start = augmented_locations.size();
+    for (const auto& visitor : domain.incoming_visitors) {
+      PersonLocation visitor_loc;
+      visitor_loc.person_id = visitor.person_id;
+      visitor_loc.venue_id = visitor.venue_id;
+      visitor_loc.subset_index = visitor.subset_idx;
+      visitor_loc.activity_index =
+          static_cast<int16_t>(world_.getActivityIndex("visiting"));
+      visitor_loc.encounter_type_id = visitor.encounter_type_id;
+      augmented_locations.push_back(visitor_loc);
+    }
+
+    // Sort visitor portion by person_id for deterministic processing order
+    // (MPI message arrival order is non-deterministic)
+    std::sort(augmented_locations.begin() + visitor_start,
+              augmented_locations.end(),
+              [](const PersonLocation& a, const PersonLocation& b) {
+                return a.person_id < b.person_id;
+              });
+
+    // Get visitor IDs for InteractionManager
+    visitor_ids = domain_mgr_->getVisitorIds();
+
+    // Populate visitor data map for transmission calculations
+    for (const auto& visitor : domain.incoming_visitors) {
+      VisitorInfo info;
+      info.person_id = visitor.person_id;
+      info.is_infected = visitor.is_infected;
+      info.is_infectious = visitor.is_infectious;
+      info.immunity_level = visitor.immunity_level;
+      info.symptom_id = visitor.symptom_id;
+      info.time_in_stage = visitor.time_in_stage;
+      std::copy(std::begin(visitor.integrated_infectiousness),
+                std::end(visitor.integrated_infectiousness),
+                std::begin(info.integrated_infectiousness));
+      visitor_data_map[visitor.person_id] = info;
+    }
+  } catch (const std::exception& e) {
+    std::cerr << "[Step 2 MPI] Fatal error: " << e.what() << std::endl;
+    throw;
+  }
+}
+#endif
+
 void Simulator::injectCoordinatedEncountersIntoSlot(int time_slot_index) {
   if (!coordinated_encounter_manager_) return;
 
@@ -1162,82 +1239,9 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   std::vector<PersonLocation> augmented_locations;
   std::unordered_set<PersonId> visitor_ids;
   std::vector<PendingInfection> pending_infections;
-  std::unordered_map<PersonId, VisitorInfo>
-      visitor_data_map;  // Visitor data for transmission
-
-  if (domain_mgr_ != nullptr) {
-    try {
-      ScopedTimer timer("02_MPI_VisitorExchange");
-      domain_mgr_->exchangeVisitors(locations_, current_simulation_time_,
-                                    delta_hours);
-
-      Domain& domain = domain_mgr_->getDomain();
-
-      // === Filter out outgoing visitors (local people at remote venues)
-      // ===
-      // We only keep local people at LOCAL venues. People at remote
-      // venues are handled exclusively as visitors on the owning rank.
-
-      augmented_locations.reserve(locations_.size() +
-                                  domain.incoming_visitors.size());
-      int outgoing_filtered = 0;
-      for (const auto& loc : locations_) {
-        if (loc.venue_id == -1) {
-          augmented_locations.push_back(loc);  // unallocated, keep
-          continue;
-        }
-        if (domain.ownsVenue(loc.venue_id)) {
-          augmented_locations.push_back(loc);  // local venue, keep
-        } else {
-          outgoing_filtered++;  // remote venue, skip (handled as visitor)
-        }
-      }
-
-      // Add incoming visitors to augmented locations
-      size_t visitor_start = augmented_locations.size();
-      for (const auto& visitor : domain.incoming_visitors) {
-        PersonLocation visitor_loc;
-        visitor_loc.person_id = visitor.person_id;
-        visitor_loc.venue_id = visitor.venue_id;
-        visitor_loc.subset_index = visitor.subset_idx;
-        visitor_loc.activity_index =
-            static_cast<int16_t>(world_.getActivityIndex("visiting"));
-        visitor_loc.encounter_type_id = visitor.encounter_type_id;
-        augmented_locations.push_back(visitor_loc);
-      }
-
-      // Sort visitor portion by person_id for deterministic processing order
-      // (MPI message arrival order is non-deterministic)
-      std::sort(augmented_locations.begin() + visitor_start,
-                augmented_locations.end(),
-                [](const PersonLocation& a, const PersonLocation& b) {
-                  return a.person_id < b.person_id;
-                });
-
-      // Get visitor IDs for InteractionManager
-      visitor_ids = domain_mgr_->getVisitorIds();
-
-      // Populate visitor data map for transmission calculations
-      for (const auto& visitor : domain.incoming_visitors) {
-        VisitorInfo info;
-        info.person_id = visitor.person_id;
-        info.is_infected = visitor.is_infected;
-        info.is_infectious = visitor.is_infectious;
-        info.immunity_level = visitor.immunity_level;
-        info.symptom_id = visitor.symptom_id;
-        info.time_in_stage = visitor.time_in_stage;
-        std::copy(std::begin(visitor.integrated_infectiousness),
-                  std::end(visitor.integrated_infectiousness),
-                  std::begin(info.integrated_infectiousness));
-        visitor_data_map[visitor.person_id] = info;
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "[Step 2 MPI] Fatal error: " << e.what() << std::endl;
-      throw;
-    }
-  } else {
-    augmented_locations = locations_;
-  }
+  std::unordered_map<PersonId, VisitorInfo> visitor_data_map;
+  exchangeVisitorsAndBuildAugmented(delta_hours, augmented_locations,
+                                    visitor_ids, visitor_data_map);
 
   // Use augmented locations (locals + visitors) for transmission processing
   std::vector<PersonLocation>& transmission_locations =

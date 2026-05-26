@@ -5,7 +5,9 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "../activity/coordinated_encounter_manager.h"
 #include "../activity/runtime_bin_allocator.h"
@@ -153,6 +155,19 @@ class Simulator {
   // Allgatherv global eligibility, then stamp venue_id / encounter_type_id
   // onto every eligible participant's PersonLocation.
   void injectCoordinatedEncountersIntoSlot(int time_slot_index);
+
+#ifdef USE_MPI
+  // Step 2 of simulateTimeSlot in MPI builds: trigger the cross-rank
+  // visitor exchange, then fill `augmented_locations` with this rank's
+  // locals at locally-owned venues plus incoming visitors (sorted by
+  // person_id for deterministic processing order), and populate the
+  // visitor_ids set + visitor_data_map used by transmission processing.
+  void exchangeVisitorsAndBuildAugmented(
+      double delta_hours,
+      std::vector<PersonLocation>& augmented_locations,
+      std::unordered_set<PersonId>& visitor_ids,
+      std::unordered_map<PersonId, VisitorInfo>& visitor_data_map);
+#endif
 
   // End-of-run output: write final epidemic events + lookups (collective on
   // all ranks; appends to the per-rank events file), then on rank 0 print
