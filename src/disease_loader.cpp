@@ -13,6 +13,11 @@ namespace june {
 
 namespace {
 
+std::shared_ptr<ConstantCurve> makeConstantCurve(const YAML::Node& node) {
+  double value = node["value"] ? node["value"].as<double>() : 1.0;
+  return std::make_shared<ConstantCurve>(value);
+}
+
 void logCurveRescale(const std::string& context_label, const char* type_name,
                      double max_inf, double factor) {
   std::cout << "[DEBUG] Curve (" << context_label << "): type=" << type_name
@@ -591,8 +596,7 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
 
   std::shared_ptr<InfectiousnessCurve> curve;
   if (type == "constant") {
-    double value = curve_node["value"] ? curve_node["value"].as<double>() : 1.0;
-    curve = std::make_shared<ConstantCurve>(value);
+    curve = makeConstantCurve(curve_node);
   } else if (type == "gamma") {
     double max_inf = curve_node["max_infectiousness"]
                          ? curve_node["max_infectiousness"].as<double>()
