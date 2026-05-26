@@ -563,6 +563,17 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
 // Parse an infectiousness curve from YAML
 // =============================================================================
 
+void DiseaseLoader::logCurveRescale(const std::string& context_label,
+                                    const char* type_name, double max_inf,
+                                    double factor) {
+  std::cout << "[DEBUG] Curve (" << context_label << "): type=" << type_name
+            << "  old_peak=" << max_inf * factor
+            << "  max_infectiousness=" << max_inf
+            << "  rescale_factor=" << factor
+            << "  (set max_infectiousness: " << max_inf * factor
+            << " in YAML to match previous behaviour)\n";
+}
+
 std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     const YAML::Node& curve_node, const std::string& context_label,
     bool verbose) {
@@ -590,13 +601,8 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     double shift = curve_node["shift"] ? curve_node["shift"].as<double>() : 0.0;
     auto curve = std::make_shared<GammaCurve>(max_inf, shape, rate, shift);
     if (verbose) {
-      double factor = curve->peakScalingFactor();
-      std::cout << "[DEBUG] Curve (" << context_label << "): type=gamma"
-                << "  old_peak=" << max_inf * factor
-                << "  max_infectiousness=" << max_inf
-                << "  rescale_factor=" << factor
-                << "  (set max_infectiousness: " << max_inf * factor
-                << " in YAML to match previous behaviour)\n";
+      logCurveRescale(context_label, "gamma", max_inf,
+                      curve->peakScalingFactor());
     }
     curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
     return curve;
@@ -631,13 +637,8 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
     double sigma = curve_node["sigma"] ? curve_node["sigma"].as<double>() : 1.0;
     auto curve = std::make_shared<LognormalCurve>(max_inf, mu, sigma);
     if (verbose) {
-      double factor = curve->peakScalingFactor();
-      std::cout << "[DEBUG] Curve (" << context_label << "): type=lognormal"
-                << "  old_peak=" << max_inf * factor
-                << "  max_infectiousness=" << max_inf
-                << "  rescale_factor=" << factor
-                << "  (set max_infectiousness: " << max_inf * factor
-                << " in YAML to match previous behaviour)\n";
+      logCurveRescale(context_label, "lognormal", max_inf,
+                      curve->peakScalingFactor());
     }
     curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
     return curve;
@@ -652,13 +653,8 @@ std::shared_ptr<InfectiousnessCurve> DiseaseLoader::parseCurve(
         curve_node["duration"] ? curve_node["duration"].as<double>() : 1.0;
     auto curve = std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
     if (verbose) {
-      double factor = curve->peakScalingFactor();
-      std::cout << "[DEBUG] Curve (" << context_label << "): type=beta"
-                << "  old_peak=" << max_inf * factor
-                << "  max_infectiousness=" << max_inf
-                << "  rescale_factor=" << factor
-                << "  (set max_infectiousness: " << max_inf * factor
-                << " in YAML to match previous behaviour)\n";
+      logCurveRescale(context_label, "beta", max_inf,
+                      curve->peakScalingFactor());
     }
     curve->buildIntegralTable(kTableMaxDays, kTableNPoints);
     return curve;
