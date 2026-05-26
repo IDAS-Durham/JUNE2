@@ -461,27 +461,7 @@ void Simulator::writeCheckpoint(int completed_day,
   if (domain_mgr_) MPI_Barrier(MPI_COMM_WORLD);
 #endif
 
-  // -------- per-rank shard: this rank's owned world_ subset --------
-  {
-    const std::vector<uint32_t> ord = buildOwnedPersonOrder(world_.people);
-
-    fs::path shard = tmp / ("delta_rank" + std::to_string(rank) + ".h5");
-    H5::H5File f(shard.string(), H5F_ACC_TRUNC);
-    f.createGroup("/population");
-    f.createGroup("/population/partition_index");
-    f.createGroup("/infection");
-    f.createGroup("/vaccine");
-    f.createGroup("/venue_fomite");
-
-    writeShardPopulation(f, ord, world_.people, comp);
-    writeShardInfection(f, ord, world_.people, comp);
-    writeShardVaccine(f, ord, world_.people, comp);
-    writeShardFomite(f, world_.venues, comp);
-
-    writeShardEpidemiology(f, epidemiology_.get(), comp);
-    writeShardFrozenStates(f, policy_manager_.get(), comp);
-    f.close();
-  }
+  writeCheckpointRankShard(tmp, rank, comp);
 
 #ifdef USE_MPI
   if (domain_mgr_) MPI_Barrier(MPI_COMM_WORLD);
@@ -501,6 +481,28 @@ void Simulator::writeCheckpoint(int completed_day,
   std::cout << "[checkpoint] wrote " << cp_root.string() << " (day "
             << completed_day << ", " << date_iso << ", " << nranks
             << " shard(s))" << std::endl;
+}
+
+void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
+                                         int comp) {
+  const std::vector<uint32_t> ord = buildOwnedPersonOrder(world_.people);
+
+  fs::path shard = tmp / ("delta_rank" + std::to_string(rank) + ".h5");
+  H5::H5File f(shard.string(), H5F_ACC_TRUNC);
+  f.createGroup("/population");
+  f.createGroup("/population/partition_index");
+  f.createGroup("/infection");
+  f.createGroup("/vaccine");
+  f.createGroup("/venue_fomite");
+
+  writeShardPopulation(f, ord, world_.people, comp);
+  writeShardInfection(f, ord, world_.people, comp);
+  writeShardVaccine(f, ord, world_.people, comp);
+  writeShardFomite(f, world_.venues, comp);
+
+  writeShardEpidemiology(f, epidemiology_.get(), comp);
+  writeShardFrozenStates(f, policy_manager_.get(), comp);
+  f.close();
 }
 
 void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,

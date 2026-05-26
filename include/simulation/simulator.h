@@ -213,6 +213,14 @@ class Simulator {
   // the day fires, announces on rank 0 and writes a checkpoint.
   void maybeWriteCheckpoint(int day, int rank);
 
+  // Per-rank piece of writeCheckpoint: write this rank's owned world_ subset
+  // (population + sparse infection / vaccine / fomite) plus the per-rank
+  // global-id-keyed manager state (epidemiology lpt + policy frozen_states)
+  // into delta_rank<r>.h5, embedding a partition_index so restore can
+  // selectively read by geo_unit.
+  void writeCheckpointRankShard(const std::filesystem::path& tmp, int rank,
+                                int comp);
+
   // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
   // (completed_day, current_simulation_time_, next_encounter_group_id_, …),
   // the infection_seeder's applied_seeds, and the rank-0 event-log buffered
