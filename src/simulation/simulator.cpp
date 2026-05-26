@@ -195,6 +195,79 @@ struct EncounterLookups {
   std::unordered_map<uint8_t, int> min_attendees;
 };
 
+// Pass-1 result for one daily_encounter: which local participants pass the
+// eligibility checks (alive + not policy-blocked at this slot), how many of
+// them, and the threshold needed before this encounter gets injected.
+struct EncounterEligibility {
+  int encounter_idx;                     // index into daily_encounters
+  std::vector<size_t> eligible_indices;  // local people passing policy
+  int local_eligible;
+  int min_required;
+};
+
+// Pass 1: per-encounter, compute the local participants who survive the
+// alive + policy-block checks. Encounters not scheduled for this slot are
+// skipped. Returned vector is index-aligned with the surviving subset of
+// daily_encounters (each entry stores back into the source via
+// .encounter_idx).
+std::vector<EncounterEligibility> computeLocalEligibility(
+    const std::vector<CoordinatedEncounter>& daily_encounters,
+    int time_slot_index, double current_simulation_time,
+    const std::unordered_map<uint8_t, std::vector<int16_t>>&
+        encounter_trigger_activities,
+    const std::unordered_map<uint8_t, int>& encounter_min_attendees,
+    const WorldState& world, const std::vector<PersonLocation>& locations,
+    PolicyManager* policy_manager) {
+  std::vector<EncounterEligibility> slot_encounters;
+  for (int ei = 0; ei < static_cast<int>(daily_encounters.size()); ++ei) {
+    const auto& enc = daily_encounters[ei];
+    if (enc.slot != time_slot_index) continue;
+
+    auto trig_it = encounter_trigger_activities.find(enc.encounter_type_id);
+
+    std::vector<size_t> eligible_indices;
+    for (PersonId pid : enc.participants) {
+      auto it = world.person_index.find(pid);
+      if (it == world.person_index.end()) continue;
+
+      size_t array_idx = it->second;
+      if (array_idx >= locations.size()) continue;
+
+      const Person& person = world.people[array_idx];
+      if (person.is_dead) continue;
+
+      bool policy_blocked = false;
+      if (policy_manager && trig_it != encounter_trigger_activities.end()) {
+        for (int16_t trigger_act_idx : trig_it->second) {
+          auto override = policy_manager->getOverride(
+              const_cast<Person&>(world.people[array_idx]), trigger_act_idx,
+              locations[array_idx].venue_id, locations[array_idx].subset_index,
+              current_simulation_time, time_slot_index);
+          if (override.has_value()) {
+            policy_blocked = true;
+            break;
+          }
+        }
+      }
+      if (!policy_blocked) eligible_indices.push_back(array_idx);
+    }
+
+    int min_required = 2;
+    auto min_it = encounter_min_attendees.find(enc.encounter_type_id);
+    if (min_it != encounter_min_attendees.end()) {
+      min_required = min_it->second;
+    }
+
+    EncounterEligibility ee;
+    ee.encounter_idx = ei;
+    ee.eligible_indices = std::move(eligible_indices);
+    ee.local_eligible = static_cast<int>(ee.eligible_indices.size());
+    ee.min_required = min_required;
+    slot_encounters.push_back(std::move(ee));
+  }
+  return slot_encounters;
+}
+
 // When both A→B and B→A proposals are accepted in the same slot, two
 // encounters exist for the same pair. Collapse them by keeping the lowest
 // encounter_id; then sort by encounter_id so injection order is
@@ -916,63 +989,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
     // may be policy-blocked or dead on their home rank. We exchange
     // local_eligible counts across ranks so every rank sees the true
     // global eligible count before making injection decisions.
-    struct EncounterEligibility {
-      int encounter_idx;                     // index into daily_encounters
-      std::vector<size_t> eligible_indices;  // local people passing policy
-      int local_eligible;
-      int min_required;
-    };
-    std::vector<EncounterEligibility> slot_encounters;
-
-    for (int ei = 0; ei < static_cast<int>(daily_encounters.size()); ++ei) {
-      const auto& enc = daily_encounters[ei];
-      if (enc.slot != time_slot_index) continue;
-
-      auto trig_it = encounter_trigger_activities.find(enc.encounter_type_id);
-
-      std::vector<size_t> eligible_indices;
-      for (PersonId pid : enc.participants) {
-        auto it = world_.person_index.find(pid);
-        if (it == world_.person_index.end()) continue;
-
-        size_t array_idx = it->second;
-        if (array_idx >= locations_.size()) continue;
-
-        const Person& person = world_.people[array_idx];
-        if (person.is_dead) continue;
-
-        bool policy_blocked = false;
-        if (policy_manager_ && trig_it != encounter_trigger_activities.end()) {
-          for (int16_t trigger_act_idx : trig_it->second) {
-            auto override = policy_manager_->getOverride(
-                const_cast<Person&>(world_.people[array_idx]), trigger_act_idx,
-                locations_[array_idx].venue_id,
-                locations_[array_idx].subset_index, current_simulation_time_,
-                time_slot_index);
-            if (override.has_value()) {
-              policy_blocked = true;
-              break;
-            }
-          }
-        }
-        if (!policy_blocked) {
-          eligible_indices.push_back(array_idx);
-        }
-      }
-
-      int min_required = 2;
-      auto min_it = encounter_min_attendees.find(enc.encounter_type_id);
-      if (min_it != encounter_min_attendees.end()) {
-        min_required = min_it->second;
-      }
-
-      EncounterEligibility ee;
-      ee.encounter_idx = ei;
-      ee.eligible_indices = std::move(eligible_indices);
-      ee.local_eligible = static_cast<int>(ee.eligible_indices.size());
-      ee.min_required = min_required;
-      slot_encounters.push_back(std::move(ee));
-    }
+    std::vector<EncounterEligibility> slot_encounters = computeLocalEligibility(
+        daily_encounters, time_slot_index, current_simulation_time_,
+        encounter_trigger_activities, encounter_min_attendees, world_,
+        locations_, policy_manager_.get());
 
     // Build per-encounter global eligible counts. In MPI mode, each rank
     // only knows eligibility for its local participants. We exchange
