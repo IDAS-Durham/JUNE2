@@ -387,44 +387,8 @@ void ActivityManager::precomputeSchedules() {
       for (size_t slot_idx = 0; slot_idx < slots->size(); ++slot_idx) {
         const auto& slot = (*slots)[slot_idx];
         uint64_t precomp_key = mix_seed(0xBE00ULL, slot_idx, dt_idx);
-        int16_t act_idx = selectActivity(person, slot, slot_idx, schedule_type,
-                                         dt_idx, precomp_key);
-
-        bool is_det = config_.performance.isDeterministicIdx(act_idx, &slot);
-        bool is_hyb = config_.performance.isHybridIdx(act_idx);
-
-        // Per-schedule override: demote DETERMINISTIC -> HYBRID for activities
-        // listed in this schedule type's force_hybrid_activities.
-        if (is_det && act_idx >= 0 &&
-            (schedule_type->force_hybrid_mask & (ActivityMask(1) << act_idx)) !=
-                0) {
-          is_det = false;
-          is_hyb = true;
-        }
-        // Linked-activities coupling: if this slot's allowed activities
-        // include any linked activity, force the entry to be re-rolled at
-        // runtime regardless of which outcome precompute chose. Otherwise
-        // the "skip" outcome (e.g. residence) would be stored
-        // deterministically and the person would never re-roll on later
-        // days, freezing their decision.
-        if (is_det && schedule_type->linked_activities_mask != 0 &&
-            (slot.allowed_activity_mask &
-             schedule_type->linked_activities_mask) != 0) {
-          is_det = false;
-          is_hyb = true;
-        }
-
-        if (is_det) {
-          auto [venue_id, subset_idx] =
-              selectVenue(person, act_idx, slot, precomp_key);
-          dt_schedules.emplace_back(act_idx, venue_id, subset_idx, true);
-        } else if (is_hyb) {
-          auto [venue_id, subset_idx] =
-              selectVenue(person, act_idx, slot, precomp_key);
-          dt_schedules.emplace_back(act_idx, venue_id, subset_idx, false);
-        } else {
-          dt_schedules.emplace_back(act_idx, -1, -1, false);
-        }
+        precomputeOneSlot(person, slot, slot_idx, dt_idx, schedule_type,
+                          precomp_key, dt_schedules);
       }
     }
 
@@ -742,6 +706,49 @@ int16_t ActivityManager::pickActivityByRate(
 
   // Default to last available activity (usually residence)
   return available_indices.back();
+}
+
+void ActivityManager::precomputeOneSlot(
+    Person& person, const TimeSlot& slot, size_t slot_idx, int dt_idx,
+    const ScheduleType* schedule_type, uint64_t precomp_key,
+    std::vector<ScheduleEntry>& dt_schedules) {
+  int16_t act_idx = selectActivity(person, slot, slot_idx, schedule_type,
+                                   dt_idx, precomp_key);
+
+  bool is_det = config_.performance.isDeterministicIdx(act_idx, &slot);
+  bool is_hyb = config_.performance.isHybridIdx(act_idx);
+
+  // Per-schedule override: demote DETERMINISTIC -> HYBRID for activities
+  // listed in this schedule type's force_hybrid_activities.
+  if (is_det && act_idx >= 0 &&
+      (schedule_type->force_hybrid_mask & (ActivityMask(1) << act_idx)) != 0) {
+    is_det = false;
+    is_hyb = true;
+  }
+  // Linked-activities coupling: if this slot's allowed activities
+  // include any linked activity, force the entry to be re-rolled at
+  // runtime regardless of which outcome precompute chose. Otherwise
+  // the "skip" outcome (e.g. residence) would be stored
+  // deterministically and the person would never re-roll on later
+  // days, freezing their decision.
+  if (is_det && schedule_type->linked_activities_mask != 0 &&
+      (slot.allowed_activity_mask & schedule_type->linked_activities_mask) !=
+          0) {
+    is_det = false;
+    is_hyb = true;
+  }
+
+  if (is_det) {
+    auto [venue_id, subset_idx] =
+        selectVenue(person, act_idx, slot, precomp_key);
+    dt_schedules.emplace_back(act_idx, venue_id, subset_idx, true);
+  } else if (is_hyb) {
+    auto [venue_id, subset_idx] =
+        selectVenue(person, act_idx, slot, precomp_key);
+    dt_schedules.emplace_back(act_idx, venue_id, subset_idx, false);
+  } else {
+    dt_schedules.emplace_back(act_idx, -1, -1, false);
+  }
 }
 
 void ActivityManager::filterAvailableActivities(

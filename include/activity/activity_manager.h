@@ -178,6 +178,18 @@ class ActivityManager {
                              const std::vector<int16_t>& available_indices,
                              SplitMix64& rng) const;
 
+  // Pre-computes one (person, day-type, slot) entry. Picks the activity
+  // via selectActivity against the per-slot precomp_key, classifies it
+  // as deterministic / hybrid / fully-stochastic (honouring the
+  // per-schedule force_hybrid_mask and the linked-activities-mask
+  // re-roll override), picks the venue for the first two cases, and
+  // appends a ScheduleEntry to dt_schedules.
+  void precomputeOneSlot(Person& person, const TimeSlot& slot,
+                         size_t slot_idx, int dt_idx,
+                         const ScheduleType* schedule_type,
+                         uint64_t precomp_key,
+                         std::vector<ScheduleEntry>& dt_schedules);
+
   // Fills `available` with the slot's allowed activity indices, restricted
   // to those the person actually has venues for. no_venue_act_idx_ and
   // property-dispatch activities are always retained (their venue check
