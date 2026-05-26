@@ -666,6 +666,42 @@ static std::string resolveEncTypeName(uint8_t type_id,
   return "type_" + std::to_string(type_id);
 }
 
+// Sums the local vector into `global` across MPI_COMM_WORLD when running
+// under MPI with more than one rank. Otherwise leaves `global` equal to its
+// caller-supplied copy of the local vector. Two overloads: one for int and
+// one for long long (the only types the encounter summary reduces).
+static void allReduceIfMulti(const std::vector<int>& local,
+                             std::vector<int>& global) {
+#ifdef USE_MPI
+  if (local.empty()) return;
+  int world_size = 1;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  if (world_size > 1) {
+    MPI_Allreduce(local.data(), global.data(), static_cast<int>(local.size()),
+                  MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
+#else
+  (void)local;
+  (void)global;
+#endif
+}
+
+static void allReduceIfMulti(const std::vector<long long>& local,
+                             std::vector<long long>& global) {
+#ifdef USE_MPI
+  if (local.empty()) return;
+  int world_size = 1;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  if (world_size > 1) {
+    MPI_Allreduce(local.data(), global.data(), static_cast<int>(local.size()),
+                  MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+  }
+#else
+  (void)local;
+  (void)global;
+#endif
+}
+
 // Layout of the per-type stats vector built by serializePerTypeStats:
 //   [0] total_proposals
 //   [1] total_finalized
@@ -790,19 +826,8 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
 
   std::vector<int> local_arr =
       serializePerTypeStats(enc_defs, daily_stats_, world_);
-  int arr_size = static_cast<int>(local_arr.size());
-
   std::vector<int> global_arr(local_arr);
-#ifdef USE_MPI
-  {
-    int world_size = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    if (world_size > 1) {
-      MPI_Allreduce(local_arr.data(), global_arr.data(), arr_size, MPI_INT,
-                    MPI_SUM, MPI_COMM_WORLD);
-    }
-  }
-#endif
+  allReduceIfMulti(local_arr, global_arr);
 
   // Per-frequency-group counters — serialize and MPI-reduce on all ranks
   // BEFORE the rank-0 early return (MPI_Allreduce is a collective op).
@@ -815,17 +840,7 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   std::vector<long long> fg_local =
       serializeFreqGroupStats(fg_names, freq_group_stats_);
   std::vector<long long> fg_global(fg_local);
-#ifdef USE_MPI
-  if (!fg_local.empty()) {
-    int world_size = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    if (world_size > 1) {
-      MPI_Allreduce(fg_local.data(), fg_global.data(),
-                    static_cast<int>(fg_local.size()), MPI_LONG_LONG, MPI_SUM,
-                    MPI_COMM_WORLD);
-    }
-  }
-#endif
+  allReduceIfMulti(fg_local, fg_global);
 
   // Only rank 0 prints
   if (mpi_rank_ != 0) return;
