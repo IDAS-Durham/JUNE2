@@ -150,6 +150,16 @@ class CoordinatedEncounterManager {
       std::unordered_map<size_t, std::vector<int>>& remaining_slots,
       std::vector<EncounterProposal>& out_proposals);
 
+  // Per-(person, enc_def) body of generateProposals. Builds the per-person
+  // RNG, runs the frequency-group gate, populates remaining slots, computes
+  // the per-type budget, and iterates the per-slot emit loop.
+  void proposeForOnePersonOneEncounter(
+      const Person& person, size_t person_idx,
+      const CoordinatedEncounterDef& enc_def, int current_day, int day_type_idx,
+      int enc_type_counter, int virtual_v_type,
+      std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+      std::vector<EncounterProposal>& out_proposals);
+
   // --- processProposals helpers ---
 
   // Finds the encounter definition matching a proposal's venue type

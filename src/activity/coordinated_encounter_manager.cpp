@@ -386,7 +386,6 @@ void CoordinatedEncounterManager::generateProposals(
     int current_day, std::vector<EncounterProposal>& out_proposals,
     int day_type_idx) {
   if (!config_.coordinated_encounters.enabled) return;
-  // Progress message removed — sub-second operation
   // Per-person remaining slot tracking for this day
   std::unordered_map<size_t, std::vector<int>> remaining_slots;
 
@@ -394,69 +393,69 @@ void CoordinatedEncounterManager::generateProposals(
   int enc_type_counter = 0;
   for (const auto& enc_def : config_.coordinated_encounters.encounters) {
     if (!enc_def.enabled) continue;
-
-    if (current_day == 0 && mpi_rank_ == 0) {
-      logEncounterConfig(enc_def);
-    }
-
-    int network_idx = enc_def.cached_network_idx;
+    if (current_day == 0 && mpi_rank_ == 0) logEncounterConfig(enc_def);
     // Unresolved (negative) network_idx means the encounter is effectively
     // disabled.
-    if (network_idx < 0) {
-      continue;
-    }
+    if (enc_def.cached_network_idx < 0) continue;
 
     int virtual_v_type = enc_def.cached_virtual_venue_type_id;
-
     for (size_t person_idx = 0; person_idx < world_.people.size();
          ++person_idx) {
-      const auto& person = world_.people[person_idx];
-      if (person.is_dead) continue;
-
-      // Per-person deterministic RNG for MPI reproducibility
-      SplitMix64 gen(mix_seed(config_.simulation.random_seed, person.id,
-                              current_day, enc_type_counter));
-      std::uniform_real_distribution<double> dist(0.0, 1.0);
-
-      // If this encounter is part of a frequency_group, resolve today's
-      // per-person budget-hit once per (person, group). The roll uses a
-      // group-specific RNG so it is independent of enc_type_counter (which
-      // varies across the types sharing the group, and across runs where
-      // encounter ordering may differ).
-      const std::string* fg_name_ptr = enc_def.frequency_group.has_value()
-                                           ? &*enc_def.frequency_group
-                                           : nullptr;
-      if (fg_name_ptr &&
-          !isFrequencyGroupBudgetAvailable(person, *fg_name_ptr, current_day)) {
-        continue;
-      }
-
-      populateInitialRemainingSlotsIfAbsent(person, person_idx, day_type_idx,
-                                            remaining_slots);
-
-      // Filter to slots valid for this encounter type
-      std::vector<int> valid_slots = getValidSlotsForType(
-          person, enc_def, remaining_slots[person_idx], day_type_idx);
-      if (valid_slots.empty()) continue;
-
-      // Sample daily budget, clamped to available slots
-      int type_budget =
-          sampleTypeBudget(enc_def, static_cast<int>(valid_slots.size()), gen);
-      if (type_budget == 0) continue;
-
-      std::shuffle(valid_slots.begin(), valid_slots.end(), gen);
-
-      int proposals_made = 0;
-      for (int slot_idx : valid_slots) {
-        if (proposals_made >= type_budget) break;
-        if (tryEmitForOneSlot(person, person_idx, enc_def, slot_idx,
-                              virtual_v_type, fg_name_ptr, gen, dist,
-                              remaining_slots, out_proposals)) {
-          proposals_made++;
-        }
-      }
+      proposeForOnePersonOneEncounter(
+          world_.people[person_idx], person_idx, enc_def, current_day,
+          day_type_idx, enc_type_counter, virtual_v_type, remaining_slots,
+          out_proposals);
     }
     enc_type_counter++;
+  }
+}
+
+void CoordinatedEncounterManager::proposeForOnePersonOneEncounter(
+    const Person& person, size_t person_idx,
+    const CoordinatedEncounterDef& enc_def, int current_day, int day_type_idx,
+    int enc_type_counter, int virtual_v_type,
+    std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+    std::vector<EncounterProposal>& out_proposals) {
+  if (person.is_dead) return;
+
+  // Per-person deterministic RNG for MPI reproducibility
+  SplitMix64 gen(mix_seed(config_.simulation.random_seed, person.id,
+                          current_day, enc_type_counter));
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+
+  // If this encounter is part of a frequency_group, resolve today's
+  // per-person budget-hit once per (person, group). The roll uses a
+  // group-specific RNG so it is independent of enc_type_counter (which
+  // varies across the types sharing the group, and across runs where
+  // encounter ordering may differ).
+  const std::string* fg_name_ptr =
+      enc_def.frequency_group.has_value() ? &*enc_def.frequency_group : nullptr;
+  if (fg_name_ptr &&
+      !isFrequencyGroupBudgetAvailable(person, *fg_name_ptr, current_day)) {
+    return;
+  }
+
+  populateInitialRemainingSlotsIfAbsent(person, person_idx, day_type_idx,
+                                        remaining_slots);
+
+  std::vector<int> valid_slots = getValidSlotsForType(
+      person, enc_def, remaining_slots[person_idx], day_type_idx);
+  if (valid_slots.empty()) return;
+
+  int type_budget =
+      sampleTypeBudget(enc_def, static_cast<int>(valid_slots.size()), gen);
+  if (type_budget == 0) return;
+
+  std::shuffle(valid_slots.begin(), valid_slots.end(), gen);
+
+  int proposals_made = 0;
+  for (int slot_idx : valid_slots) {
+    if (proposals_made >= type_budget) break;
+    if (tryEmitForOneSlot(person, person_idx, enc_def, slot_idx, virtual_v_type,
+                          fg_name_ptr, gen, dist, remaining_slots,
+                          out_proposals)) {
+      proposals_made++;
+    }
   }
 }
 
