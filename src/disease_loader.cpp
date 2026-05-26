@@ -264,6 +264,20 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
             << "' registered at index " << mode_idx << std::endl;
 }
 
+void DiseaseLoader::loadModeCompartmentalDeposition(
+    const YAML::Node& mode_node, TransmissionMode& tmode, int mode_idx,
+    const std::vector<SymptomTag>& symptom_tags, bool verbose) {
+  tmode.type = TransmissionModeType::CompartmentalDeposition;
+  CompartmentalDepositionConfig dcfg;
+  dcfg.mode_index = mode_idx;
+  parseDepositionStages(mode_node, dcfg.deposition_by_symptom,
+                        "compartmental_deposition", tmode.name, symptom_tags,
+                        verbose);
+  tmode.config = std::move(dcfg);
+  std::cout << "[DiseaseLoader] Compartmental deposition mode '" << tmode.name
+            << "' registered at index " << mode_idx << std::endl;
+}
+
 void DiseaseLoader::loadTransmissionTrajectoryDriven(
     const YAML::Node& trans_node, TransmissionParams& transmission) {
   if (trans_node["type"]) {
@@ -552,16 +566,8 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
                         << std::endl;
 
             } else if (mode_type == "compartmental_deposition") {
-              tmode.type = TransmissionModeType::CompartmentalDeposition;
-              CompartmentalDepositionConfig dcfg;
-              dcfg.mode_index = mode_idx;
-              parseDepositionStages(mode_node, dcfg.deposition_by_symptom,
-                                    "compartmental_deposition", tmode.name,
-                                    symptom_tags, verbose);
-              tmode.config = std::move(dcfg);
-              std::cout << "[DiseaseLoader] Compartmental deposition mode '"
-                        << tmode.name << "' registered at index " << mode_idx
-                        << std::endl;
+              loadModeCompartmentalDeposition(mode_node, tmode, mode_idx,
+                                              symptom_tags, verbose);
             }
 
             transmission.modes.push_back(std::move(tmode));
