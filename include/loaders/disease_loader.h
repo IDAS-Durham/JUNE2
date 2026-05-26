@@ -41,6 +41,9 @@ class DiseaseLoader {
 
   static std::vector<SymptomTag> loadSymptomTags(const YAML::Node& config);
   static DiseaseStageSettings loadStageSettings(const YAML::Node& config);
+  static void validateTrajectoryStageRefs(
+      const std::vector<TrajectoryDefinition>& trajectories,
+      const std::vector<SymptomTag>& symptom_tags);
 
   // Parse distribution parameters from YAML
   static DistributionParams parseDistribution(const YAML::Node& dist_node);

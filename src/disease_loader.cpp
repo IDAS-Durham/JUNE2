@@ -238,6 +238,39 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromCSV(
 // Section helpers for loadFromYAML
 // =============================================================================
 
+void DiseaseLoader::validateTrajectoryStageRefs(
+    const std::vector<TrajectoryDefinition>& trajectories,
+    const std::vector<SymptomTag>& symptom_tags) {
+  std::unordered_set<std::string> valid_tags;
+  for (const auto& tag : symptom_tags) {
+    valid_tags.insert(tag.name);
+  }
+  for (size_t ti = 0; ti < trajectories.size(); ++ti) {
+    const auto& traj = trajectories[ti];
+    const std::string traj_label =
+        traj.description.empty()
+            ? ("trajectory[" + std::to_string(ti) + "]")
+            : ("trajectory \"" + traj.description + "\"");
+    // BUG-S10: start_stage must name a defined symptom tag
+    if (traj.start_stage.has_value() &&
+        valid_tags.find(*traj.start_stage) == valid_tags.end()) {
+      throw std::runtime_error("Disease config error: " + traj_label +
+                               " has start_stage \"" + *traj.start_stage +
+                               "\" which is not a defined symptom tag.");
+    }
+    // BUG-S11: every stage symptom_tag must name a defined symptom tag
+    for (size_t si = 0; si < traj.stages.size(); ++si) {
+      const auto& stage = traj.stages[si];
+      if (valid_tags.find(stage.symptom_tag) == valid_tags.end()) {
+        throw std::runtime_error("Disease config error: " + traj_label +
+                                 " stage[" + std::to_string(si) +
+                                 "] has symptom_tag \"" + stage.symptom_tag +
+                                 "\" which is not a defined symptom tag.");
+      }
+    }
+  }
+}
+
 DiseaseStageSettings DiseaseLoader::loadStageSettings(
     const YAML::Node& config) {
   DiseaseStageSettings stage_settings;
@@ -320,36 +353,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
       trajectories = parseTrajectories(config["trajectories"]);
     }
 
-    // === Validate trajectory stage and start_stage references (BUG-S10,
-    // BUG-S11) === Build set of valid symptom tag names from the parsed tags.
-    std::unordered_set<std::string> valid_tags;
-    for (const auto& tag : symptom_tags) {
-      valid_tags.insert(tag.name);
-    }
-    for (size_t ti = 0; ti < trajectories.size(); ++ti) {
-      const auto& traj = trajectories[ti];
-      const std::string traj_label =
-          traj.description.empty()
-              ? ("trajectory[" + std::to_string(ti) + "]")
-              : ("trajectory \"" + traj.description + "\"");
-      // BUG-S10: start_stage must name a defined symptom tag
-      if (traj.start_stage.has_value() &&
-          valid_tags.find(*traj.start_stage) == valid_tags.end()) {
-        throw std::runtime_error("Disease config error: " + traj_label +
-                                 " has start_stage \"" + *traj.start_stage +
-                                 "\" which is not a defined symptom tag.");
-      }
-      // BUG-S11: every stage symptom_tag must name a defined symptom tag
-      for (size_t si = 0; si < traj.stages.size(); ++si) {
-        const auto& stage = traj.stages[si];
-        if (valid_tags.find(stage.symptom_tag) == valid_tags.end()) {
-          throw std::runtime_error("Disease config error: " + traj_label +
-                                   " stage[" + std::to_string(si) +
-                                   "] has symptom_tag \"" + stage.symptom_tag +
-                                   "\" which is not a defined symptom tag.");
-        }
-      }
-    }
+    validateTrajectoryStageRefs(trajectories, symptom_tags);
 
     // === Load Outcome Rates CSV ===
     OutcomeRates outcome_rates;
