@@ -129,6 +129,9 @@ set(JUNE_CORE_SOURCES
     src/disease.cpp
     src/disease_loader.cpp
     src/interaction_manager.cpp
+    src/interaction_manager_venue.cpp
+    src/interaction_manager_venue_bins.cpp
+    src/interaction_manager_partial_presence.cpp
     src/activity/activity_manager.cpp
     src/activity/activity_manager_selection.cpp
     src/config.cpp
