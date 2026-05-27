@@ -255,6 +255,15 @@ class InteractionManager {
       size_t group_start, size_t group_end,
       const std::unordered_set<PersonId>* visitor_ids);
 
+  // Fast pre-check: true iff processVenueTransmissions could possibly produce
+  // transmission for this venue group, considering fomite history, compartmental
+  // uptake, and the presence of any infectious member in group_members_buffer_.
+  // Used to skip venues with zero infectious source before paying the FOI cost.
+  bool venueGroupHasTransmissionSource(
+      const Venue* venue, VenueId venue_id,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      const CompartmentalModelManager* comp_model) const;
+
   // Compute the bin index for a person under a given contact matrix.
   // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
   // can bin people under the PARENT matrix (which may have a different bin

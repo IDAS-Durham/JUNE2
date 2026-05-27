@@ -320,6 +320,35 @@ void InteractionManager::logCoordinatedEncounterParticipants(
   }
 }
 
+bool InteractionManager::venueGroupHasTransmissionSource(
+    const Venue* venue, VenueId venue_id,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    const CompartmentalModelManager* comp_model) const {
+  bool has_fomite = venue && !venue->fomite_history.empty() &&
+                    std::any_of(venue->fomite_history.begin(),
+                                venue->fomite_history.end(),
+                                [](const auto& v) { return !v.empty(); });
+  bool venue_has_comp_uptake =
+      comp_model != nullptr &&
+      comp_model->venueToLocalNodeIndex(static_cast<int>(venue_id)) >= 0;
+  if (has_fomite || venue_has_comp_uptake) return true;
+
+  for (const auto& m : group_members_buffer_) {
+    if (m.array_index < world_.people.size() &&
+        world_.people[m.array_index].id == m.id &&
+        world_.people[m.array_index].infection != nullptr) {
+      return true;
+    }
+    if (visitor_data) {
+      auto vit = visitor_data->find(m.id);
+      if (vit != visitor_data->end() && vit->second.is_infectious) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 int InteractionManager::processTransmissions(
     const std::vector<PersonLocation>& locations, double current_time,
     double delta_hours, std::unordered_set<PersonId>* active_infections,
@@ -382,35 +411,9 @@ int InteractionManager::processTransmissions(
 
       logCoordinatedEncounterParticipants(group_start, i, visitor_ids);
 
-      // Fast pre-check: skip venue entirely if no transmission is possible.
-      // Fomite check scans mode deques; infectious check is O(N) direct array
-      // access, short-circuiting on the first infectious person found.
-      // Also skip if compartmental uptake could apply to this venue.
-      bool has_fomite = venue && !venue->fomite_history.empty() &&
-                        std::any_of(venue->fomite_history.begin(),
-                                    venue->fomite_history.end(),
-                                    [](const auto& v) { return !v.empty(); });
-      bool venue_has_comp_uptake =
-          comp_model != nullptr && comp_model->venueToLocalNodeIndex(
-                                       static_cast<int>(first.venue_id)) >= 0;
-      if (!has_fomite && !venue_has_comp_uptake) {
-        bool any_infectious = false;
-        for (const auto& m : group_members_buffer_) {
-          if (m.array_index < world_.people.size() &&
-              world_.people[m.array_index].id == m.id &&
-              world_.people[m.array_index].infection != nullptr) {
-            any_infectious = true;
-            break;
-          }
-          if (visitor_data) {
-            auto vit = visitor_data->find(m.id);
-            if (vit != visitor_data->end() && vit->second.is_infectious) {
-              any_infectious = true;
-              break;
-            }
-          }
-        }
-        if (!any_infectious) continue;
+      if (!venueGroupHasTransmissionSource(venue, first.venue_id, visitor_data,
+                                           comp_model)) {
+        continue;
       }
 
       try {
