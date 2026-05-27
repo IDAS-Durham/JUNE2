@@ -1763,6 +1763,15 @@ InteractionManager::computePartialPresenceLambda(
   return result;
 }
 
+std::vector<PersonId> InteractionManager::orderSusceptibles(
+    const std::unordered_map<PersonId, double>& susc_lambda) const {
+  std::vector<PersonId> ordered;
+  ordered.reserve(susc_lambda.size());
+  for (const auto& kv : susc_lambda) ordered.push_back(kv.first);
+  std::sort(ordered.begin(), ordered.end());
+  return ordered;
+}
+
 int InteractionManager::processPartialPresenceVenue(
     const std::vector<InteractionMember>& members, Venue* venue,
     VenueId actual_venue_id, double current_time, double delta_hours,
@@ -1785,10 +1794,7 @@ int InteractionManager::processPartialPresenceVenue(
   // Step 3: per-susceptible Bernoulli draw + infector sampling.
   // ---------------------------------------------------------------------------
   // Iterate susceptibles in person_id order for deterministic per-call work.
-  std::vector<PersonId> ordered_susc;
-  ordered_susc.reserve(susc_lambda.size());
-  for (auto& kv : susc_lambda) ordered_susc.push_back(kv.first);
-  std::sort(ordered_susc.begin(), ordered_susc.end());
+  std::vector<PersonId> ordered_susc = orderSusceptibles(susc_lambda);
 
   int new_infections = 0;
   const uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);

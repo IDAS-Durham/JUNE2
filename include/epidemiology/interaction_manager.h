@@ -478,6 +478,38 @@ class InteractionManager {
       uint8_t encounter_type_id = 255,
       const CompartmentalModelManager* comp_model = nullptr);
 
+  // Return person_ids of susceptibles sorted ascending; the partial-presence
+  // post-pass iterates susceptibles in this order so per-call work is
+  // deterministic across MPI rank counts.
+  std::vector<PersonId> orderSusceptibles(
+      const std::unordered_map<PersonId, double>& susc_lambda) const;
+
+  // Weight-sample one (mode, infector) from accumulated AccumSource entries.
+  // Sorts in place by (mode, infector) for deterministic order, builds the
+  // cumulative weights, and draws one sample with the given RNG. Returns
+  // mode=0, infector=-1 when the source list is empty / all-zero-weight.
+  std::pair<int, PersonId> sampleInfectorFromAccumSources(
+      std::vector<PartialPresenceAccumSource>& srcs, SplitMix64& rng) const;
+
+  // Look up the infector's current symptom id. For local persons reads from
+  // Infection::getTrajectory(); for cross-rank visitors reads from
+  // VisitorInfo::symptom_id. Returns 0 if infector_id is negative or neither
+  // a local infection nor a visitor record exists.
+  uint16_t resolveInfectorSymptomId(
+      PersonId infector_id, double current_time,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
+
+  // Apply a single partial-presence infection: either queue a
+  // PendingInfection for the susceptible's home rank (if visitor susceptible)
+  // or create the Infection in place and log it via event_logger_.
+  void applyPartialPresenceInfection(
+      PersonId susc_id, Person* susc_person, const VisitorInfo* visitor,
+      PersonId infector_id, uint8_t transmission_mode_index,
+      uint16_t infector_symptom_id, double current_time, Venue* venue,
+      uint8_t venue_type_id, VenueId actual_venue_id,
+      std::unordered_set<PersonId>* active_infections,
+      std::vector<PendingInfection>* pending_infections);
+
   // Sibling of processVenueTransmissions for partial-presence venues
   // (transport_line, etc. — anything declared in
   // SimulationConfig::partial_presence). Per-rider carriage assignments come
