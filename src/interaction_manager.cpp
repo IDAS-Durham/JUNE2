@@ -524,6 +524,68 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::clearUsedBins(int num_modes) {
+  for (int b : used_bins_) bins_buffer_[b].clearAfterUse(num_modes);
+  used_bins_.clear();
+}
+
+std::optional<int> InteractionManager::dispatchPartialPresenceIfApplicable(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id, const CompartmentalModelManager* comp_model) {
+  // Partial-presence venues (commute lines, etc.) take a different FOI path:
+  // sub-interval-aware, carriage-grouped, with per-rider effective presence
+  // windows. The gate is a single bit-mask test; venue types not declared in
+  // SimulationConfig::partial_presence pay no cost here.
+  if (!runtime_bin_allocator_ || actual_venue_id < 0 || !venue) return {};
+  const uint8_t vt = venue->type_id;
+  const uint64_t mask =
+      simulation_config_.partial_presence.enabled_venue_type_mask;
+  if (vt >= 64 || ((mask >> vt) & 1ULL) == 0) return {};
+  return processPartialPresenceVenue(
+      members, venue, actual_venue_id, current_time, delta_hours,
+      active_infections, visitor_ids, pending_infections, visitor_data,
+      encounter_type_id, comp_model);
+}
+
+std::vector<double> InteractionManager::binMembersAndPrepareBuffers(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    const ContactMatrix* matrix, int num_bins_needed, int num_modes,
+    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& n_sub_per_mode, double current_time,
+    double delta_hours, uint8_t encounter_type_id,
+    const std::string& venue_type, uint8_t venue_type_id,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
+  // STEP 1: Group people by bin (single pass)
+  for (const auto& member : members) {
+    binOneMember(member, venue, matrix, num_bins_needed, num_modes,
+                 num_fomite_modes, fomite_modes, n_sub_per_mode, current_time,
+                 delta_hours, encounter_type_id, venue_type, venue_type_id,
+                 visitor_data);
+  }
+
+  // STEP 1b: Sort infectious lists by person_id for MPI reproducibility.
+  sortInfectiousByPersonId(num_bins_needed, num_modes);
+
+  // STEP 1c: Sort susceptibles by person_id for deterministic order.
+  sortSusceptiblesByPersonId(num_bins_needed);
+
+  // STEP 2: Pre-calculate per-mode cumulative weight arrays for infectious
+  // bins. cumulative_by_mode[m] is sampled with sampleFromCumulative in
+  // STEP 3b. Replaces std::discrete_distribution construction.
+  buildCumulativeWeightsPerBin(num_bins_needed, num_modes);
+
+  // STEP 2b: Handle fomite deposition and compute per-mode lambda.
+  return recordFomiteDepositionAndLambda(venue, num_bins_needed,
+                                         num_fomite_modes, fomite_modes,
+                                         n_sub_per_mode, current_time,
+                                         delta_hours);
+}
+
 int InteractionManager::processOneSuscBin(
     int susc_bin, int num_bins_needed, int num_modes, int num_fomite_modes,
     bool is_virtual_encounter, uint8_t encounter_type_id, uint8_t venue_type_id,
@@ -1355,24 +1417,12 @@ int InteractionManager::processVenueTransmissions(
     std::vector<PendingInfection>* pending_infections,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
     uint8_t encounter_type_id, const CompartmentalModelManager* comp_model) {
-  // Partial-presence venues (commute lines, etc.) take a different FOI path:
-  // sub-interval-aware, carriage-grouped, with per-rider effective presence
-  // windows. The gate is a single bit-mask test; venue types not declared in
-  // SimulationConfig::partial_presence pay no cost here. The existing
-  // function body below is unchanged for every other venue type.
-  if (runtime_bin_allocator_ && actual_venue_id >= 0 && venue) {
-    const uint8_t vt = venue->type_id;
-    const uint64_t mask =
-        simulation_config_.partial_presence.enabled_venue_type_mask;
-    if (vt < 64 && ((mask >> vt) & 1ULL) != 0) {
-      return processPartialPresenceVenue(
+  if (auto pp = dispatchPartialPresenceIfApplicable(
           members, venue, actual_venue_id, current_time, delta_hours,
           active_infections, visitor_ids, pending_infections, visitor_data,
-          encounter_type_id, comp_model);
-    }
+          encounter_type_id, comp_model)) {
+    return *pp;
   }
-
-  int new_infections = 0;
 
   std::string venue_type;
   uint8_t venue_type_id = 255;
@@ -1381,13 +1431,9 @@ int InteractionManager::processVenueTransmissions(
                             venue_type, venue_type_id, matrix);
   const bool is_virtual_encounter = actual_venue_id < 0;
 
-  // Determine number of bins needed
   int num_bins_needed = matrix ? static_cast<int>(matrix->bins.size()) : 1;
   if (num_bins_needed == 0) num_bins_needed = 1;
-
-  int num_modes = disease_->numModes();
-  if (num_modes == 0) num_modes = 1;
-
+  int num_modes = std::max(1, disease_->numModes());
   const auto& trans_params = disease_->getTransmissionParams();
 
   std::vector<FomiteModeRef> fomite_modes;
@@ -1400,55 +1446,27 @@ int InteractionManager::processVenueTransmissions(
   prepareBinsBuffer(num_bins_needed, num_modes, num_fomite_modes,
                     n_sub_per_mode);
 
-  // === STEP 1: Group people by bin (single pass) ===
-  for (const auto& member : members) {
-    binOneMember(member, venue, matrix, num_bins_needed, num_modes,
-                 num_fomite_modes, fomite_modes, n_sub_per_mode, current_time,
-                 delta_hours, encounter_type_id, venue_type, venue_type_id,
-                 visitor_data);
-  }
+  std::vector<double> lambda_fomite_by_mode = binMembersAndPrepareBuffers(
+      members, venue, matrix, num_bins_needed, num_modes, num_fomite_modes,
+      fomite_modes, n_sub_per_mode, current_time, delta_hours,
+      encounter_type_id, venue_type, venue_type_id, visitor_data);
 
-  // === STEP 1b: Sort infectious lists by person_id for MPI reproducibility.
-  // Ensures discrete_distribution index k always maps to the same person
-  // regardless of which rank processes this venue or in what order.
-  sortInfectiousByPersonId(num_bins_needed, num_modes);
-
-  // === STEP 1c: Sort susceptibles by person_id for deterministic order.
-  sortSusceptiblesByPersonId(num_bins_needed);
-
-  // === STEP 2: Pre-calculate per-mode cumulative weight arrays for
-  // infectious bins. cumulative_by_mode[m] is sampled with
-  // sampleFromCumulative in STEP 3b. Replaces std::discrete_distribution
-  // construction — buildCumulative is the same O(k) work but avoids the
-  // distribution's internal vector allocation/destruction.
-  buildCumulativeWeightsPerBin(num_bins_needed, num_modes);
-
-  // === STEP 2b: Handle Fomite Deposition and Compute Lambda ===
-  std::vector<double> lambda_fomite_by_mode = recordFomiteDepositionAndLambda(
-      venue, num_bins_needed, num_fomite_modes, fomite_modes, n_sub_per_mode,
-      current_time, delta_hours);
-
-  // Early exit if no transmission possible
   if (venueHasNoTransmissionPossible(num_bins_needed, comp_uptake_modes,
                                      lambda_fomite_by_mode, actual_venue_id,
                                      comp_model)) {
-    for (int b : used_bins_) bins_buffer_[b].clearAfterUse(num_modes);
-    used_bins_.clear();
+    clearUsedBins(num_modes);
     return 0;
   }
 
-  // Sibling-mixing setup. If this venue has a parent and that parent has
-  // an aggregate from buildParentAggregates, we add a per-mode "sibling"
-  // source representing infectious people in OTHER children of the same
-  // parent (e.g. other classrooms of the same school). The parent's own
-  // contact matrix (e.g. `school` entry in contact_matrices.yaml) governs
-  // contacts/beta for this term.
+  // Sibling-mixing setup: per-mode "sibling" source representing infectious
+  // people in OTHER children of the same parent.
   const ParentAggregate* parent_agg = nullptr;
   const ContactMatrix* parent_flat_matrix = nullptr;
   std::tie(parent_agg, parent_flat_matrix) =
       getParentAggregateForVenue(venue, is_virtual_encounter);
 
-  // === STEP 3: Process transmissions (Mixing Model) — mode-aware ===
+  // STEP 3: Process transmissions (Mixing Model) — mode-aware.
+  int new_infections = 0;
   for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
     new_infections += processOneSuscBin(
         susc_bin, num_bins_needed, num_modes, num_fomite_modes,
@@ -1459,11 +1477,7 @@ int InteractionManager::processVenueTransmissions(
   }
 
   // Clear person-proportional fields while bins are still cache-hot.
-  for (int b : used_bins_) {
-    bins_buffer_[b].clearAfterUse(num_modes);
-  }
-  used_bins_.clear();
-
+  clearUsedBins(num_modes);
   return new_infections;
 }
 

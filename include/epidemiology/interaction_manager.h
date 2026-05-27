@@ -583,6 +583,38 @@ class InteractionManager {
                                InfectionSource& infection_source_out,
                                uint8_t& transmission_mode_index_out);
 
+  // Clear per-bin person-proportional state on every bin index touched this
+  // call (per used_bins_), then reset used_bins_. Called at both early-exit
+  // and end-of-call sites of processVenueTransmissions.
+  void clearUsedBins(int num_modes);
+
+  // Partial-presence dispatch. If runtime_bin_allocator_ is wired AND the
+  // venue's type is enabled in simulation_config_.partial_presence.enabled_
+  // venue_type_mask, delegate to processPartialPresenceVenue and return its
+  // new_infections. Otherwise returns std::nullopt to signal the caller
+  // should proceed with the regular FOI path.
+  std::optional<int> dispatchPartialPresenceIfApplicable(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      VenueId actual_venue_id, double current_time, double delta_hours,
+      std::unordered_set<PersonId>* active_infections,
+      const std::unordered_set<PersonId>* visitor_ids,
+      std::vector<PendingInfection>* pending_infections,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      uint8_t encounter_type_id, const CompartmentalModelManager* comp_model);
+
+  // Bin every member, deterministically sort bins, build per-mode cumulative
+  // weights, and record per-fomite-mode deposition + lambda. Bundles
+  // STEP 1, 1b, 1c, 2, and 2b of processVenueTransmissions into one named
+  // step. Returns the per-fomite-mode lambda vector.
+  std::vector<double> binMembersAndPrepareBuffers(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      const ContactMatrix* matrix, int num_bins_needed, int num_modes,
+      int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& n_sub_per_mode, double current_time,
+      double delta_hours, uint8_t encounter_type_id,
+      const std::string& venue_type, uint8_t venue_type_id,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
+
   // STEP 3 per-susceptible-bin orchestrator: build the four kinds of source
   // (direct contact, sibling mixing, fomite, comp uptake), apply regional-risk
   // multiplier, short-circuit if total_risk == 0, build the cumulative weights
