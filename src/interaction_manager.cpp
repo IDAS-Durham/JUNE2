@@ -524,6 +524,65 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::sortInfectiousByPersonId(int num_bins_needed,
+                                                  int num_modes) {
+  for (int b = 0; b < num_bins_needed; ++b) {
+    auto& group = bins_buffer_[b];
+    size_t n = group.infectious_ids.size();
+    if (n <= 1) continue;
+
+    // Build index permutation sorted by person_id
+    std::vector<size_t> perm(n);
+    std::iota(perm.begin(), perm.end(), 0);
+    std::sort(perm.begin(), perm.end(), [&](size_t a, size_t b_idx) {
+      return group.infectious_ids[a] < group.infectious_ids[b_idx];
+    });
+
+    // Apply permutation to infectious_ids and each mode's infectiousness
+    std::vector<PersonId> sorted_ids(n);
+    for (size_t i = 0; i < n; ++i)
+      sorted_ids[i] = group.infectious_ids[perm[i]];
+    group.infectious_ids = std::move(sorted_ids);
+
+    for (int m = 0; m < num_modes; ++m) {
+      auto& inf_m = group.infectiousness_by_mode[m];
+      if (inf_m.size() != n) continue;
+      std::vector<double> sorted_inf(n);
+      for (size_t i = 0; i < n; ++i) sorted_inf[i] = inf_m[perm[i]];
+      inf_m = std::move(sorted_inf);
+    }
+  }
+}
+
+void InteractionManager::sortSusceptiblesByPersonId(int num_bins_needed) {
+  for (int b = 0; b < num_bins_needed; ++b) {
+    auto& susc = bins_buffer_[b].susceptible;
+    if (susc.size() > 1) {
+      std::sort(susc.begin(), susc.end(),
+                [](const SusceptibleMember& a, const SusceptibleMember& b) {
+                  return a.id < b.id;
+                });
+    }
+  }
+}
+
+void InteractionManager::buildCumulativeWeightsPerBin(int num_bins_needed,
+                                                      int num_modes) {
+  for (int b = 0; b < num_bins_needed; ++b) {
+    auto& group = bins_buffer_[b];
+    if (group.infectious_ids.empty()) continue;
+
+    for (int m = 0; m < num_modes; ++m) {
+      const auto& w = group.infectiousness_by_mode[m];
+      double total = buildCumulative(w, group.cumulative_by_mode[m]);
+      if (!(total > 0.0)) {
+        // No positive weight — clear so callers know to skip sampling.
+        group.cumulative_by_mode[m].clear();
+      }
+    }
+  }
+}
+
 void InteractionManager::binOneMember(
     const InteractionMember& member, Venue* venue,
     const ContactMatrix* matrix, int num_bins_needed, int num_modes,
@@ -848,65 +907,20 @@ int InteractionManager::processVenueTransmissions(
                  visitor_data);
   }
 
-  // === STEP 1b: Sort infectious lists by person_id for MPI reproducibility ===
+  // === STEP 1b: Sort infectious lists by person_id for MPI reproducibility.
   // Ensures discrete_distribution index k always maps to the same person
   // regardless of which rank processes this venue or in what order.
-  for (int b = 0; b < num_bins_needed; ++b) {
-    auto& group = bins_buffer_[b];
-    size_t n = group.infectious_ids.size();
-    if (n <= 1) continue;
+  sortInfectiousByPersonId(num_bins_needed, num_modes);
 
-    // Build index permutation sorted by person_id
-    std::vector<size_t> perm(n);
-    std::iota(perm.begin(), perm.end(), 0);
-    std::sort(perm.begin(), perm.end(), [&](size_t a, size_t b_idx) {
-      return group.infectious_ids[a] < group.infectious_ids[b_idx];
-    });
-
-    // Apply permutation to infectious_ids and each mode's infectiousness
-    std::vector<PersonId> sorted_ids(n);
-    for (size_t i = 0; i < n; ++i)
-      sorted_ids[i] = group.infectious_ids[perm[i]];
-    group.infectious_ids = std::move(sorted_ids);
-
-    for (int m = 0; m < num_modes; ++m) {
-      auto& inf_m = group.infectiousness_by_mode[m];
-      if (inf_m.size() != n) continue;
-      std::vector<double> sorted_inf(n);
-      for (size_t i = 0; i < n; ++i) sorted_inf[i] = inf_m[perm[i]];
-      inf_m = std::move(sorted_inf);
-    }
-  }
-
-  // === STEP 1c: Sort susceptibles by person_id for deterministic order ===
-  for (int b = 0; b < num_bins_needed; ++b) {
-    auto& susc = bins_buffer_[b].susceptible;
-    if (susc.size() > 1) {
-      std::sort(susc.begin(), susc.end(),
-                [](const SusceptibleMember& a, const SusceptibleMember& b) {
-                  return a.id < b.id;
-                });
-    }
-  }
+  // === STEP 1c: Sort susceptibles by person_id for deterministic order.
+  sortSusceptiblesByPersonId(num_bins_needed);
 
   // === STEP 2: Pre-calculate per-mode cumulative weight arrays for
   // infectious bins. cumulative_by_mode[m] is sampled with
   // sampleFromCumulative in STEP 3b. Replaces std::discrete_distribution
   // construction — buildCumulative is the same O(k) work but avoids the
   // distribution's internal vector allocation/destruction.
-  for (int b = 0; b < num_bins_needed; ++b) {
-    auto& group = bins_buffer_[b];
-    if (group.infectious_ids.empty()) continue;
-
-    for (int m = 0; m < num_modes; ++m) {
-      const auto& w = group.infectiousness_by_mode[m];
-      double total = buildCumulative(w, group.cumulative_by_mode[m]);
-      if (!(total > 0.0)) {
-        // No positive weight — clear so callers know to skip sampling.
-        group.cumulative_by_mode[m].clear();
-      }
-    }
-  }
+  buildCumulativeWeightsPerBin(num_bins_needed, num_modes);
 
   // === STEP 2b: Handle Fomite Deposition and Compute Lambda ===
   std::vector<double> lambda_fomite_by_mode(num_fomite_modes, 0.0);

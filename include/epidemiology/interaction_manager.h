@@ -478,6 +478,20 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // STEP 1b: sort each bin's infectious_ids by person_id and apply the same
+  // permutation to infectiousness_by_mode[m] for every mode. Ensures the
+  // discrete_distribution index → person mapping is the same regardless of
+  // which rank or in what order the venue was processed.
+  void sortInfectiousByPersonId(int num_bins_needed, int num_modes);
+
+  // STEP 1c: sort each bin's susceptible vector by person_id.
+  void sortSusceptiblesByPersonId(int num_bins_needed);
+
+  // STEP 2: pre-calculate per-mode cumulative weight arrays for infectious
+  // bins. Sampling sites later read these via sampleFromCumulative. Bins with
+  // all-zero weight per mode are left empty so callers can skip sampling.
+  void buildCumulativeWeightsPerBin(int num_bins_needed, int num_modes);
+
   // STEP 1 per-member body in processVenueTransmissions: resolve
   // person/visitor, compute bin_index (with DEBUG fallback log), update
   // used_bins_ + total_size, then dispatch infectiousness (visitor or local),
