@@ -1446,6 +1446,71 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
+void InteractionManager::accumulatePartialLambdaContributions(
+    const std::vector<PartialPresenceSubBin>& sub_bins,
+    const std::vector<std::vector<const CarriageMember*>>& susc_by_bin,
+    uint8_t venue_type_id, const ContactMatrix* matrix, int num_bins_needed,
+    int num_modes, const TransmissionParams& trans_params,
+    PartialPresenceLambdaResult& result) const {
+  using AccumSource = PartialPresenceAccumSource;
+  auto& susc_lambda = result.susc_lambda;
+  auto& susc_sources = result.susc_sources;
+
+  for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
+    if (susc_by_bin[susc_bin].empty()) continue;
+
+    for (int mode = 0; mode < num_modes; ++mode) {
+      const ContactMatrix* mode_matrix =
+          contact_matrices_.getMatrix(venue_type_id, mode);
+      double mode_susc_mult =
+          (mode < static_cast<int>(trans_params.modes.size()))
+              ? trans_params.modes[mode].susceptibility_multiplier
+              : 1.0;
+
+      for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
+        double total_inf = sub_bins[inf_bin].total_inf_by_mode[mode];
+        if (!(total_inf > 0.0)) continue;
+
+        double contacts = contact_matrices_.default_contacts;
+        if (mode_matrix &&
+            susc_bin < static_cast<int>(mode_matrix->contacts.size()) &&
+            inf_bin <
+                static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
+          contacts = mode_matrix->contacts[susc_bin][inf_bin];
+        } else if (susc_bin < static_cast<int>(matrix->contacts.size()) &&
+                   inf_bin <
+                       static_cast<int>(matrix->contacts[susc_bin].size())) {
+          contacts = matrix->getContacts(susc_bin, inf_bin);
+        }
+        if (!(contacts > 0.0)) continue;
+
+        int bin_size = sub_bins[inf_bin].total_size;
+        if (susc_bin == inf_bin) bin_size = std::max(1, bin_size - 1);
+        double omega = contacts / bin_size;
+        double contrib = omega * total_inf * mode_susc_mult;
+        if (!(contrib > 0.0)) continue;
+
+        for (const CarriageMember* sm : susc_by_bin[susc_bin]) {
+          susc_lambda[sm->pid] += contrib;
+          // Pick an infector for this contribution by weight-sampling
+          // proportional to per-person infectiousness in this sub-interval.
+          // We record one AccumSource per (susc, mode, inf_bin, sub) with
+          // the FULL bin contribution; per-person sampling happens at
+          // the single Bernoulli site below.
+          const auto& ids = sub_bins[inf_bin].infectious_ids;
+          const auto& per = sub_bins[inf_bin].inf_per_person_by_mode[mode];
+          for (size_t pi = 0; pi < ids.size(); ++pi) {
+            if (pi >= per.size() || !(per[pi] > 0.0)) continue;
+            double w = omega * per[pi] * mode_susc_mult;
+            if (!(w > 0.0)) continue;
+            susc_sources[sm->pid].push_back(AccumSource{mode, ids[pi], w});
+          }
+        }
+      }
+    }
+  }
+}
+
 void InteractionManager::classifyMembersInSubInterval(
     const std::vector<CarriageMember>& car, float t0, float t1, double scale,
     double current_time, double delta_hours, int num_modes,
@@ -1642,10 +1707,6 @@ InteractionManager::computePartialPresenceLambda(
   // Step 2: walk (carriage × sub-interval), accumulate per-susceptible λ and
   // per-source attribution weights.
   // ---------------------------------------------------------------------------
-  using AccumSource = PartialPresenceAccumSource;
-  auto& susc_lambda = result.susc_lambda;
-  auto& susc_sources = result.susc_sources;
-
   // Per-bin scratch reused across sub-intervals (cleared per sub-interval).
   std::vector<PartialPresenceSubBin> sub_bins(num_bins_needed);
 
@@ -1674,60 +1735,9 @@ InteractionManager::computePartialPresenceLambda(
                                    delta_hours, num_modes, sub_bins,
                                    susc_by_bin);
 
-      // Per-susceptible bin: accumulate λ contributions over (mode, inf_bin).
-      for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
-        if (susc_by_bin[susc_bin].empty()) continue;
-
-        for (int mode = 0; mode < num_modes; ++mode) {
-          const ContactMatrix* mode_matrix =
-              contact_matrices_.getMatrix(venue_type_id, mode);
-          double mode_susc_mult =
-              (mode < static_cast<int>(trans_params.modes.size()))
-                  ? trans_params.modes[mode].susceptibility_multiplier
-                  : 1.0;
-
-          for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
-            double total_inf = sub_bins[inf_bin].total_inf_by_mode[mode];
-            if (!(total_inf > 0.0)) continue;
-
-            double contacts = contact_matrices_.default_contacts;
-            if (mode_matrix &&
-                susc_bin < static_cast<int>(mode_matrix->contacts.size()) &&
-                inf_bin <
-                    static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
-              contacts = mode_matrix->contacts[susc_bin][inf_bin];
-            } else if (susc_bin < static_cast<int>(matrix->contacts.size()) &&
-                       inf_bin < static_cast<int>(
-                                     matrix->contacts[susc_bin].size())) {
-              contacts = matrix->getContacts(susc_bin, inf_bin);
-            }
-            if (!(contacts > 0.0)) continue;
-
-            int bin_size = sub_bins[inf_bin].total_size;
-            if (susc_bin == inf_bin) bin_size = std::max(1, bin_size - 1);
-            double omega = contacts / bin_size;
-            double contrib = omega * total_inf * mode_susc_mult;
-            if (!(contrib > 0.0)) continue;
-
-            for (const CarriageMember* sm : susc_by_bin[susc_bin]) {
-              susc_lambda[sm->pid] += contrib;
-              // Pick an infector for this contribution by weight-sampling
-              // proportional to per-person infectiousness in this sub-interval.
-              // We record one AccumSource per (susc, mode, inf_bin, sub) with
-              // the FULL bin contribution; per-person sampling happens at
-              // the single Bernoulli site below.
-              const auto& ids = sub_bins[inf_bin].infectious_ids;
-              const auto& per = sub_bins[inf_bin].inf_per_person_by_mode[mode];
-              for (size_t pi = 0; pi < ids.size(); ++pi) {
-                if (pi >= per.size() || !(per[pi] > 0.0)) continue;
-                double w = omega * per[pi] * mode_susc_mult;
-                if (!(w > 0.0)) continue;
-                susc_sources[sm->pid].push_back(AccumSource{mode, ids[pi], w});
-              }
-            }
-          }
-        }
-      }
+      accumulatePartialLambdaContributions(sub_bins, susc_by_bin, venue_type_id,
+                                           matrix, num_bins_needed, num_modes,
+                                           trans_params, result);
     }
   }
 

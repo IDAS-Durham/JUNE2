@@ -365,6 +365,19 @@ class InteractionManager {
       std::vector<PartialPresenceSubBin>& sub_bins,
       std::vector<std::vector<const CarriageMember*>>& susc_by_bin) const;
 
+  // For one (carriage, sub-interval), iterate (susc_bin, mode, inf_bin) over
+  // pre-classified sub_bins + susc_by_bin and accumulate per-susceptible λ
+  // contributions into susc_lambda and per-(susc, source) attribution
+  // AccumSources into susc_sources. Pure FOI-math step; no infection writes,
+  // no RNG. mode_matrix lookup, default-contacts fallback, and the
+  // own-bin minus-one adjustment match the main-loop semantics.
+  void accumulatePartialLambdaContributions(
+      const std::vector<PartialPresenceSubBin>& sub_bins,
+      const std::vector<std::vector<const CarriageMember*>>& susc_by_bin,
+      uint8_t venue_type_id, const ContactMatrix* matrix, int num_bins_needed,
+      int num_modes, const TransmissionParams& trans_params,
+      PartialPresenceLambdaResult& result) const;
+
   // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
   // compute parent_bin under parent_matrix, bump headcount in agg/csize,
   // gather per-mode infectiousness, and (if positive) accumulate into
