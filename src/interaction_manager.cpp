@@ -1148,14 +1148,47 @@ void InteractionManager::buildCumulativeWeightsPerBin(int num_bins_needed,
   }
 }
 
+int InteractionManager::resolveMemberBinIndex(
+    const InteractionMember& member, const Person* person, Venue* venue,
+    const ContactMatrix* matrix, int num_bins_needed,
+    uint8_t encounter_type_id,
+    [[maybe_unused]] const std::string& venue_type,
+    [[maybe_unused]] uint8_t venue_type_id) {
+  if (matrix) stats_.bin_lookups++;
+  int bin_index = computeBinIndexForMatrix(person, venue, member.subset_index,
+                                           encounter_type_id, matrix,
+                                           num_bins_needed);
+  if (bin_index >= 0 && bin_index < num_bins_needed) return bin_index;
+
+#ifdef DEBUG_TRANSMISSION
+  static int bin_fallback_count = 0;
+  if (bin_fallback_count < 20) {
+    std::cerr << "[DEBUG_TRANSMISSION] bin_index fallback to 0: "
+              << "person=" << member.id
+              << " age=" << (person ? (int)person->age : -1)
+              << " sex=" << (person ? (int)person->sex : -1)
+              << " venue_type=" << venue_type
+              << " venue_type_id=" << (int)venue_type_id
+              << " num_bins=" << num_bins_needed
+              << " original_bin=" << bin_index
+              << " encounter_type=" << (int)encounter_type_id << std::endl;
+    bin_fallback_count++;
+    if (bin_fallback_count == 20)
+      std::cerr << "[DEBUG_TRANSMISSION] (suppressing further bin_index "
+                   "fallback warnings)"
+                << std::endl;
+  }
+#endif
+  return 0;
+}
+
 void InteractionManager::binOneMember(
     const InteractionMember& member, Venue* venue,
     const ContactMatrix* matrix, int num_bins_needed, int num_modes,
     int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
     const std::vector<int>& n_sub_per_mode, double current_time,
     double delta_hours, uint8_t encounter_type_id,
-    [[maybe_unused]] const std::string& venue_type,
-    [[maybe_unused]] uint8_t venue_type_id,
+    const std::string& venue_type, uint8_t venue_type_id,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
   PersonId pid = member.id;
   Person* person = nullptr;
@@ -1166,34 +1199,9 @@ void InteractionManager::binOneMember(
     person = world_.getPerson(pid);
   }
 
-  if (matrix) stats_.bin_lookups++;
-  int bin_index = computeBinIndexForMatrix(person, venue, member.subset_index,
-                                           encounter_type_id, matrix,
-                                           num_bins_needed);
-
-  // Safety check for bin_index - if still not found, default to 0.
-  if (bin_index < 0 || bin_index >= num_bins_needed) {
-#ifdef DEBUG_TRANSMISSION
-    static int bin_fallback_count = 0;
-    if (bin_fallback_count < 20) {
-      std::cerr << "[DEBUG_TRANSMISSION] bin_index fallback to 0: "
-                << "person=" << pid
-                << " age=" << (person ? (int)person->age : -1)
-                << " sex=" << (person ? (int)person->sex : -1)
-                << " venue_type=" << venue_type
-                << " venue_type_id=" << (int)venue_type_id
-                << " num_bins=" << num_bins_needed
-                << " original_bin=" << bin_index
-                << " encounter_type=" << (int)encounter_type_id << std::endl;
-      bin_fallback_count++;
-      if (bin_fallback_count == 20)
-        std::cerr << "[DEBUG_TRANSMISSION] (suppressing further bin_index "
-                     "fallback warnings)"
-                  << std::endl;
-    }
-#endif
-    bin_index = 0;
-  }
+  int bin_index =
+      resolveMemberBinIndex(member, person, venue, matrix, num_bins_needed,
+                            encounter_type_id, venue_type, venue_type_id);
 
   // Track which bins are used (for selective clearing next call)
   if (bins_buffer_[bin_index].total_size == 0) {

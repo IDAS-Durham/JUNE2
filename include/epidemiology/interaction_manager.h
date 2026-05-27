@@ -672,6 +672,17 @@ class InteractionManager {
       std::unordered_set<PersonId>* active_infections,
       std::vector<PendingInfection>* pending_infections);
 
+  // Resolve the matrix bin for a member: route through computeBinIndexForMatrix,
+  // bump stats_.bin_lookups when matrix is non-null, and clamp to
+  // [0, num_bins_needed). Emits a (rate-limited) DEBUG_TRANSMISSION line if
+  // the clamp fired.
+  int resolveMemberBinIndex(const InteractionMember& member,
+                            const Person* person, Venue* venue,
+                            const ContactMatrix* matrix, int num_bins_needed,
+                            uint8_t encounter_type_id,
+                            const std::string& venue_type,
+                            uint8_t venue_type_id);
+
   // STEP 1 per-member body in processVenueTransmissions: resolve
   // person/visitor, compute bin_index (with DEBUG fallback log), update
   // used_bins_ + total_size, then dispatch infectiousness (visitor or local),
