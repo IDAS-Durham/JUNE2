@@ -155,6 +155,17 @@ struct CarriageMember {
 };
 
 // =============================================================================
+// FomiteModeRef — per-FomiteConfig handle pre-resolved before the binning
+// loop in processVenueTransmissions. mode_index points into
+// disease_->getTransmissionParams().modes; cfg points into the same
+// underlying TransmissionMode::config variant.
+// =============================================================================
+struct FomiteModeRef {
+  int mode_index;
+  const FomiteConfig* cfg;
+};
+
+// =============================================================================
 // PartialPresenceSubBin — per-(matrix-bin) scratch accumulator reused across
 // sub-intervals in computePartialPresenceLambda. reset() clears storage to
 // start a new sub-interval.
@@ -466,6 +477,15 @@ class InteractionManager {
                                SubsetIndex subset_index,
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
+
+  // Walk the disease's transmission modes and split them into a flat list of
+  // FomiteModeRefs and a separate list of CompartmentalUptake mode indices.
+  // Also compute n_sub_per_mode from each fomite mode's sub_bin_time and
+  // delta_hours.
+  void collectFomiteAndCompUptakeModes(
+      double delta_hours, std::vector<FomiteModeRef>& fomite_modes_out,
+      std::vector<int>& comp_uptake_modes_out,
+      std::vector<int>& n_sub_per_mode_out) const;
 
   // Resolve the venue type id, human-readable type label, and contact matrix
   // for a venue group. For VIRTUAL encounters (actual_venue_id < 0) the

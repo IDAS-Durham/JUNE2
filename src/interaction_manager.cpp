@@ -524,6 +524,31 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::collectFomiteAndCompUptakeModes(
+    double delta_hours, std::vector<FomiteModeRef>& fomite_modes_out,
+    std::vector<int>& comp_uptake_modes_out,
+    std::vector<int>& n_sub_per_mode_out) const {
+  fomite_modes_out.clear();
+  comp_uptake_modes_out.clear();
+  const auto& trans_params = disease_->getTransmissionParams();
+  for (int midx = 0; midx < (int)trans_params.modes.size(); ++midx) {
+    const auto& tmode = trans_params.modes[midx];
+    if (tmode.type == TransmissionModeType::Fomite) {
+      fomite_modes_out.push_back(
+          FomiteModeRef{midx, &std::get<FomiteConfig>(tmode.config)});
+    } else if (tmode.type == TransmissionModeType::CompartmentalUptake) {
+      comp_uptake_modes_out.push_back(midx);
+    }
+  }
+  const int num_fomite_modes = static_cast<int>(fomite_modes_out.size());
+  n_sub_per_mode_out.assign(num_fomite_modes, 1);
+  for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
+    double sbt = fomite_modes_out[local_fm].cfg->sub_bin_time;
+    n_sub_per_mode_out[local_fm] =
+        (sbt > 0.0) ? std::max(1, (int)(delta_hours / sbt)) : 1;
+  }
+}
+
 void InteractionManager::resolveVenueTypeAndMatrix(
     Venue* venue, VenueId actual_venue_id, uint8_t encounter_type_id,
     std::string& venue_type_out, uint8_t& venue_type_id_out,
@@ -610,31 +635,12 @@ int InteractionManager::processVenueTransmissions(
 
   const auto& trans_params = disease_->getTransmissionParams();
 
-  // Build ordered lists of fomite and compartmental uptake mode refs.
-  struct FomiteModeRef {
-    int mode_index;
-    const FomiteConfig* cfg;
-  };
   std::vector<FomiteModeRef> fomite_modes;
   std::vector<int> comp_uptake_modes;
-  for (int midx = 0; midx < (int)trans_params.modes.size(); ++midx) {
-    const auto& tmode = trans_params.modes[midx];
-    if (tmode.type == TransmissionModeType::Fomite) {
-      fomite_modes.push_back(
-          FomiteModeRef{midx, &std::get<FomiteConfig>(tmode.config)});
-    } else if (tmode.type == TransmissionModeType::CompartmentalUptake) {
-      comp_uptake_modes.push_back(midx);
-    }
-  }
+  std::vector<int> n_sub_per_mode;
+  collectFomiteAndCompUptakeModes(delta_hours, fomite_modes, comp_uptake_modes,
+                                  n_sub_per_mode);
   int num_fomite_modes = static_cast<int>(fomite_modes.size());
-
-  // Compute n_sub per fomite mode from sub_bin_time and delta_hours
-  std::vector<int> n_sub_per_mode(num_fomite_modes, 1);
-  for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
-    double sbt = fomite_modes[local_fm].cfg->sub_bin_time;
-    n_sub_per_mode[local_fm] =
-        (sbt > 0.0) ? std::max(1, (int)(delta_hours / sbt)) : 1;
-  }
 
   // Grow buffer if needed; new BinGroup objects are default-initialised.
   if (static_cast<int>(bins_buffer_.size()) < num_bins_needed) {
