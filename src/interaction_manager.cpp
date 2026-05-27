@@ -524,6 +524,92 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::accumulateVisitorInfectiousnessAndFomite(
+    const VisitorInfo* visitor, PersonId pid, int bin_index, int num_modes,
+    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& n_sub_per_mode, double delta_hours) {
+  // Use pre-computed integrated infectiousness from the sending rank.
+  // These values were computed using the identical code path as local
+  // people (Infection::getIntegratedInfectiousness), guaranteeing
+  // bit-identical FP results regardless of local vs visitor status.
+  im_scratch_buffer_.assign(num_modes, 0.0);
+  double total_im_visitor = 0.0;
+  for (int m = 0; m < num_modes; ++m) {
+    im_scratch_buffer_[m] = (m < VisitorInfo::MAX_MODES)
+                                ? visitor->integrated_infectiousness[m]
+                                : 0.0;
+    total_im_visitor += im_scratch_buffer_[m];
+  }
+  if (total_im_visitor > 0.0) {
+    bins_buffer_[bin_index].infectious_ids.push_back(pid);
+    for (int m = 0; m < num_modes; ++m) {
+      bins_buffer_[bin_index].infectiousness_by_mode[m].push_back(
+          im_scratch_buffer_[m]);
+      bins_buffer_[bin_index].total_infectiousness_by_mode[m] +=
+          im_scratch_buffer_[m];
+    }
+  }
+  // Fomite deposition for visitors (per temporal sub-bin)
+  for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
+    int n_sub = n_sub_per_mode[local_fm];
+    double dt_sub_stage = delta_hours / n_sub / 24.0;
+    for (int k = 0; k < n_sub; ++k) {
+      double t_stage_k_s = visitor->time_in_stage + k * dt_sub_stage;
+      double t_stage_k_e = visitor->time_in_stage + (k + 1) * dt_sub_stage;
+      double dep_k = disease_->integrateFomiteDeposition(
+          fomite_modes[local_fm].mode_index, visitor->symptom_id, t_stage_k_s,
+          t_stage_k_e);
+      if (dep_k > 0.0)
+        bins_buffer_[bin_index].total_fomite_deposition_sub[local_fm][k] +=
+            dep_k;
+    }
+  }
+}
+
+void InteractionManager::accumulateLocalInfectiousness(
+    const Person* person, PersonId pid, int bin_index, int num_modes,
+    double current_time, double delta_hours) {
+  const double t1 = current_time + delta_hours / 24.0;
+  // Compute per-mode integrated infectiousness (hour-units: 24*∫I dt)
+  im_scratch_buffer_.resize(num_modes);
+  double infectiousness_total = 0.0;
+  for (int m = 0; m < num_modes; ++m) {
+    im_scratch_buffer_[m] = person->infection->getIntegratedInfectiousness(
+        m, current_time, t1);
+    infectiousness_total += im_scratch_buffer_[m];
+  }
+  if (infectiousness_total > 0.0) {
+    bins_buffer_[bin_index].infectious_ids.push_back(pid);
+    for (int m = 0; m < num_modes; ++m) {
+      bins_buffer_[bin_index].infectiousness_by_mode[m].push_back(
+          im_scratch_buffer_[m]);
+      bins_buffer_[bin_index].total_infectiousness_by_mode[m] +=
+          im_scratch_buffer_[m];
+    }
+  }
+}
+
+void InteractionManager::accumulateLocalFomiteDeposition(
+    const Person* person, int bin_index, int num_fomite_modes,
+    const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& n_sub_per_mode, double current_time,
+    double delta_hours) {
+  const double t1 = current_time + delta_hours / 24.0;
+  for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
+    int n_sub = n_sub_per_mode[local_fm];
+    double dt_sub = (t1 - current_time) / n_sub;
+    for (int k = 0; k < n_sub; ++k) {
+      double t_sub_s = current_time + k * dt_sub;
+      double t_sub_e = current_time + (k + 1) * dt_sub;
+      double dep_k = person->infection->getIntegratedFomiteDeposition(
+          fomite_modes[local_fm].mode_index, t_sub_s, t_sub_e);
+      if (dep_k > 0.0)
+        bins_buffer_[bin_index].total_fomite_deposition_sub[local_fm][k] +=
+            dep_k;
+    }
+  }
+}
+
 void InteractionManager::prepareBinsBuffer(
     int num_bins_needed, int num_modes, int num_fomite_modes,
     const std::vector<int>& n_sub_per_mode) {
@@ -724,43 +810,9 @@ int InteractionManager::processVenueTransmissions(
         visitor = &visitor_it->second;
 
         if (visitor->is_infectious) {
-          // Use pre-computed integrated infectiousness from the sending rank.
-          // These values were computed using the identical code path as local
-          // people (Infection::getIntegratedInfectiousness), guaranteeing
-          // bit-identical FP results regardless of local vs visitor status.
-          im_scratch_buffer_.assign(num_modes, 0.0);
-          double total_im_visitor = 0.0;
-          for (int m = 0; m < num_modes; ++m) {
-            im_scratch_buffer_[m] = (m < VisitorInfo::MAX_MODES)
-                                        ? visitor->integrated_infectiousness[m]
-                                        : 0.0;
-            total_im_visitor += im_scratch_buffer_[m];
-          }
-          if (total_im_visitor > 0.0) {
-            bins_buffer_[bin_index].infectious_ids.push_back(pid);
-            for (int m = 0; m < num_modes; ++m) {
-              bins_buffer_[bin_index].infectiousness_by_mode[m].push_back(
-                  im_scratch_buffer_[m]);
-              bins_buffer_[bin_index].total_infectiousness_by_mode[m] +=
-                  im_scratch_buffer_[m];
-            }
-          }
-          // Fomite deposition for visitors (per temporal sub-bin)
-          for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
-            int n_sub = n_sub_per_mode[local_fm];
-            double dt_sub_stage = delta_hours / n_sub / 24.0;
-            for (int k = 0; k < n_sub; ++k) {
-              double t_stage_k_s = visitor->time_in_stage + k * dt_sub_stage;
-              double t_stage_k_e =
-                  visitor->time_in_stage + (k + 1) * dt_sub_stage;
-              double dep_k = disease_->integrateFomiteDeposition(
-                  fomite_modes[local_fm].mode_index, visitor->symptom_id,
-                  t_stage_k_s, t_stage_k_e);
-              if (dep_k > 0.0)
-                bins_buffer_[bin_index]
-                    .total_fomite_deposition_sub[local_fm][k] += dep_k;
-            }
-          }
+          accumulateVisitorInfectiousnessAndFomite(
+              visitor, pid, bin_index, num_modes, num_fomite_modes,
+              fomite_modes, n_sub_per_mode, delta_hours);
         } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
           susceptibility = 1.0 - visitor->immunity_level;
           bins_buffer_[bin_index].susceptible.push_back(
@@ -768,27 +820,10 @@ int InteractionManager::processVenueTransmissions(
         }
       }
     } else if (person && !person->is_dead) {
-      const double t1 = current_time + delta_hours / 24.0;
       // Classify as infectious or susceptible
       if (person->infection && person->infection->isInfectious(current_time)) {
-        // Compute per-mode integrated infectiousness (hour-units: 24*∫I dt)
-        im_scratch_buffer_.resize(num_modes);
-        double infectiousness_total = 0.0;
-        for (int m = 0; m < num_modes; ++m) {
-          im_scratch_buffer_[m] =
-              person->infection->getIntegratedInfectiousness(m, current_time,
-                                                             t1);
-          infectiousness_total += im_scratch_buffer_[m];
-        }
-        if (infectiousness_total > 0.0) {
-          bins_buffer_[bin_index].infectious_ids.push_back(pid);
-          for (int m = 0; m < num_modes; ++m) {
-            bins_buffer_[bin_index].infectiousness_by_mode[m].push_back(
-                im_scratch_buffer_[m]);
-            bins_buffer_[bin_index].total_infectiousness_by_mode[m] +=
-                im_scratch_buffer_[m];
-          }
-        }
+        accumulateLocalInfectiousness(person, pid, bin_index, num_modes,
+                                      current_time, delta_hours);
       } else if (!person->infection) {
         susceptibility =
             person->getSusceptibility(current_time, disease_->getName());
@@ -797,22 +832,10 @@ int InteractionManager::processVenueTransmissions(
               {pid, susceptibility, visitor, member.encounter_type_id});
         }
       }
-      // Fomite deposition: independent of direct-contact infectiousness (per
-      // temporal sub-bin)
       if (person->infection && num_fomite_modes > 0) {
-        for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
-          int n_sub = n_sub_per_mode[local_fm];
-          double dt_sub = (t1 - current_time) / n_sub;
-          for (int k = 0; k < n_sub; ++k) {
-            double t_sub_s = current_time + k * dt_sub;
-            double t_sub_e = current_time + (k + 1) * dt_sub;
-            double dep_k = person->infection->getIntegratedFomiteDeposition(
-                fomite_modes[local_fm].mode_index, t_sub_s, t_sub_e);
-            if (dep_k > 0.0)
-              bins_buffer_[bin_index]
-                  .total_fomite_deposition_sub[local_fm][k] += dep_k;
-          }
-        }
+        accumulateLocalFomiteDeposition(person, bin_index, num_fomite_modes,
+                                        fomite_modes, n_sub_per_mode,
+                                        current_time, delta_hours);
       }
     }
   }

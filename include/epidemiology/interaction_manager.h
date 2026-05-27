@@ -478,6 +478,32 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // Append a cross-rank visitor's per-mode infectiousness (pre-computed on
+  // the sending rank) into bins_buffer_[bin_index] and accumulate its
+  // per-sub-bin fomite deposition. Caller has already confirmed
+  // visitor->is_infectious. Uses im_scratch_buffer_ as scratch.
+  void accumulateVisitorInfectiousnessAndFomite(
+      const VisitorInfo* visitor, PersonId pid, int bin_index, int num_modes,
+      int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& n_sub_per_mode, double delta_hours);
+
+  // Append a local infectious person's per-mode integrated infectiousness
+  // into bins_buffer_[bin_index]. Caller has already confirmed
+  // person->infection && person->infection->isInfectious(current_time). Uses
+  // im_scratch_buffer_ as scratch.
+  void accumulateLocalInfectiousness(const Person* person, PersonId pid,
+                                     int bin_index, int num_modes,
+                                     double current_time, double delta_hours);
+
+  // Accumulate a local infected person's fomite deposition into
+  // bins_buffer_[bin_index].total_fomite_deposition_sub. Only called when
+  // person->infection != nullptr and num_fomite_modes > 0.
+  void accumulateLocalFomiteDeposition(
+      const Person* person, int bin_index, int num_fomite_modes,
+      const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& n_sub_per_mode, double current_time,
+      double delta_hours);
+
   // Resize bins_buffer_ to at least num_bins_needed entries, then ensure
   // every active bin has correctly-sized per-mode vectors and pre-sized
   // fomite sub-bins for this slot's delta_hours / sub_bin_time. Re-initialises
