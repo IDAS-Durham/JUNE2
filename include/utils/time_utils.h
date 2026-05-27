@@ -63,7 +63,7 @@ inline std::tm parseDate(const std::string& date_str) {
   return tm;
 }
 
-// Convert a calendar date to a Julian Day Number — works for any year,
+// Convert a calendar date to a Julian Day Number. Works for any year,
 // including pre-1970 dates that mktime cannot handle.
 inline long long toJulianDay(int year, int month, int day) {
   long long a = (14 - month) / 12;

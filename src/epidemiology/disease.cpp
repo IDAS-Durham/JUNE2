@@ -292,7 +292,7 @@ std::unique_ptr<Infection> Infection::fromCheckpoint(
     double transmission_shape, double transmission_rate,
     double transmission_shift, double last_checked_time,
     uint16_t cached_symptom_id, double cached_symptom_start_time) {
-  // Bypass the sampling constructor entirely — restore every
+  // Bypass the sampling constructor entirely; restore every
   // behaviour-defining field verbatim so the resumed run is bit-identical.
   std::unique_ptr<Infection> inf(new Infection(disease, RestoreTag{}));
   inf->infection_time_ = infection_time;
@@ -399,6 +399,115 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
   return 0.0;
 }
 
+void Infection::buildTransitionsFromStages(InfectionTrajectory& traj,
+                                           const TrajectoryDefinition& traj_def,
+                                           const std::string& start_target,
+                                           SplitMix64& rng) {
+  int start_stage_idx = 0;
+  if (!start_target.empty()) {
+    for (int s = 0; s < (int)traj_def.stages.size(); ++s) {
+      if (traj_def.stages[s].symptom_tag == start_target) {
+        start_stage_idx = s;
+        break;
+      }
+    }
+  }
+  double current_time = infection_time_;
+  for (int s = start_stage_idx; s < (int)traj_def.stages.size(); ++s) {
+    const auto& stage = traj_def.stages[s];
+    traj.transitions.push_back(
+        {current_time, disease_->getSymptomId(stage.symptom_tag)});
+    current_time += sampleFromDistribution(stage.completion_time, rng);
+  }
+}
+
+std::pair<std::vector<double>, double> Infection::gatherTrajectoryRates(
+    const Person& person, const WorldState* world,
+    const InfectionContext& ctx) const {
+  const auto& trajectories = disease_->getTrajectories();
+  const auto& outcome_rates = disease_->getOutcomeRates();
+  std::vector<double> rates;
+  rates.reserve(trajectories.size());
+  double total = 0.0;
+  for (const auto& traj_def : trajectories) {
+    double rate = 0.0;
+    if (traj_def.probability.has_value()) {
+      rate = traj_def.probability.value();
+    } else if (!traj_def.selection_key.empty()) {
+      rate = outcome_rates.getRate(person, world, traj_def.selection_key, ctx);
+    }
+    rates.push_back(rate);
+    total += rate;
+  }
+  if (total > 1.0001) {
+    for (double& r : rates) r /= total;
+    total = 1.0;
+  }
+  return {std::move(rates), total};
+}
+
+int Infection::sampleTrajectoryIndex(const std::vector<double>& rates,
+                                     double total_rate, SplitMix64& rng) {
+  if (total_rate <= 0.0) return 0;
+  std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
+  double rand_val = prob_dist(rng);
+  double cumulative = 0.0;
+  for (size_t i = 0; i < rates.size(); ++i) {
+    cumulative += rates[i];
+    if (rand_val <= cumulative) {
+      return static_cast<int>(i);
+    }
+  }
+  return 0;
+}
+
+void Infection::applyVaccineEfficacyShift(std::vector<double>& rates,
+                                          const Person& person,
+                                          double infection_time,
+                                          double total_rate) const {
+  if (!person.vaccine_trajectory || total_rate <= 0.0) return;
+  double ve_symptoms = person.vaccine_trajectory->getEfficacy(
+      infection_time, disease_->getName(), person.age, true);
+  if (ve_symptoms <= 0.0) return;
+
+  const auto& trajectories = disease_->getTrajectories();
+  size_t safe_idx = 0;
+  double min_severity = trajectories[0].severity;
+  for (size_t i = 1; i < trajectories.size(); ++i) {
+    if (trajectories[i].severity < min_severity) {
+      min_severity = trajectories[i].severity;
+      safe_idx = i;
+    }
+  }
+
+  double total_shifted = 0.0;
+  for (size_t i = 0; i < trajectories.size(); ++i) {
+    if (i == safe_idx) continue;
+    if (trajectories[i].severity > min_severity) {
+      double shift = rates[i] * ve_symptoms;
+      rates[i] -= shift;
+      total_shifted += shift;
+    }
+  }
+  rates[safe_idx] += total_shifted;
+}
+
+std::optional<InfectionTrajectory> Infection::tryBuildForcedTrajectory(
+    const std::string& key, SplitMix64& rng) {
+  const auto& trajectories = disease_->getTrajectories();
+  for (const auto& traj_def : trajectories) {
+    if (traj_def.selection_key == key) {
+      InfectionTrajectory traj;
+      traj.infection_time = infection_time_;
+      buildTransitionsFromStages(traj, traj_def,
+                                 traj_def.start_stage.value_or(""), rng);
+      traj.infectiousness_factor = traj_def.infectiousness_factor;
+      return traj;
+    }
+  }
+  return std::nullopt;
+}
+
 InfectionTrajectory Infection::generateTrajectoryFromRates(
     SplitMix64& rng, const Person* person, const WorldState* world,
     const std::string& venue_type, int venue_id, float severity_factor,
@@ -415,168 +524,39 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   InfectionTrajectory traj;
   traj.infection_time = infection_time_;
 
-  // Resolve the infector's symptom name for use in CSV rate lookup.
-  const std::string infector_symptom =
-      disease_->getSymptomName(infector_symptom_id);
-
-  // Resolve the transmission mode name for use in CSV rate lookup.
-  const std::string mode_name = disease_->getModeName(transmission_mode_index);
-
-  // Build infection context for outcome rate filtering.
-  InfectionContext infection_ctx{infector_symptom, mode_name};
-
   const auto& trajectories = disease_->getTrajectories();
-  const auto& outcome_rates = disease_->getOutcomeRates();
-
   if (trajectories.empty()) {
     std::cerr << "WARNING: No trajectories defined for disease: "
               << disease_->getName() << std::endl;
     return traj;
   }
 
-  std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
-
-  // If a specific trajectory key is requested, find it and skip probability
-  // sampling.
   if (!trajectory_key_override.empty()) {
-    for (int i = 0; i < (int)trajectories.size(); ++i) {
-      if (trajectories[i].selection_key == trajectory_key_override) {
-        const auto& forced_def = trajectories[i];
-        int start_stage_idx = 0;
-        if (forced_def.start_stage.has_value()) {
-          for (int s = 0; s < (int)forced_def.stages.size(); ++s) {
-            if (forced_def.stages[s].symptom_tag ==
-                forced_def.start_stage.value()) {
-              start_stage_idx = s;
-              break;
-            }
-          }
-        }
-        double current_time = infection_time_;
-        for (int s = start_stage_idx; s < (int)forced_def.stages.size(); ++s) {
-          const auto& stage = forced_def.stages[s];
-          traj.transitions.push_back(
-              {current_time, disease_->getSymptomId(stage.symptom_tag)});
-          current_time += sampleFromDistribution(stage.completion_time, rng);
-        }
-        traj.infectiousness_factor = forced_def.infectiousness_factor;
-        return traj;
-      }
+    if (auto forced = tryBuildForcedTrajectory(trajectory_key_override, rng)) {
+      return std::move(*forced);
     }
     std::cerr << "WARNING: trajectory_key_override '" << trajectory_key_override
               << "' not found; falling back to rate-based selection."
               << std::endl;
   }
 
-  // 1. Gather raw rates for each trajectory.
-  // A trajectory with 'probability' set uses that as a fixed weight; otherwise
-  // the rate is looked up from the outcome rates via 'selection_key'.
-  std::vector<double> trajectory_rates;
-  double total_rate = 0.0;
+  InfectionContext infection_ctx{
+      disease_->getSymptomName(infector_symptom_id),
+      disease_->getModeName(transmission_mode_index)};
+  auto [trajectory_rates, total_rate] =
+      gatherTrajectoryRates(*person, world, infection_ctx);
+  applyVaccineEfficacyShift(trajectory_rates, *person, traj.infection_time,
+                            total_rate);
+  int selected_idx = sampleTrajectoryIndex(trajectory_rates, total_rate, rng);
 
-  for (const auto& traj_def : trajectories) {
-    double rate = 0.0;
-    if (traj_def.probability.has_value()) {
-      rate = traj_def.probability.value();
-    } else if (!traj_def.selection_key.empty()) {
-      rate = outcome_rates.getRate(*person, world, traj_def.selection_key,
-                                   infection_ctx);
-    }
-    trajectory_rates.push_back(rate);
-    total_rate += rate;
-  }
-
-  // Normalize if total_rate > 1 (should not happen with good data, but safety
-  // first)
-  if (total_rate > 1.0001) {
-    for (double& r : trajectory_rates) r /= total_rate;
-    total_rate = 1.0;
-  }
-
-  // 2. Apply dynamic vaccine efficacy
-  if (person->vaccine_trajectory && total_rate > 0.0) {
-    double ve_symptoms = person->vaccine_trajectory->getEfficacy(
-        traj.infection_time, disease_->getName(), person->age, true);
-
-    if (ve_symptoms > 0.0) {
-      // Find the lowest severity trajectory (the "safe" target)
-      size_t safe_idx = 0;
-      double min_severity = trajectories[0].severity;
-      for (size_t i = 1; i < trajectories.size(); ++i) {
-        if (trajectories[i].severity < min_severity) {
-          min_severity = trajectories[i].severity;
-          safe_idx = i;
-        }
-      }
-
-      // Shift mass from "severe" trajectories to the "safe" one
-      double total_shifted = 0.0;
-      for (size_t i = 0; i < trajectories.size(); ++i) {
-        if (i == safe_idx) continue;
-
-        // Only shift if the trajectory is more severe than the safe one
-        if (trajectories[i].severity > min_severity) {
-          double shift = trajectory_rates[i] * ve_symptoms;
-          trajectory_rates[i] -= shift;
-          total_shifted += shift;
-        }
-      }
-      trajectory_rates[safe_idx] += total_shifted;
-    }
-  }
-
-  // 3. Selection
-  int selected_idx = 0;
-  if (total_rate > 0.0) {
-    double rand_val = prob_dist(rng);
-    double cumulative = 0.0;
-    bool found = false;
-
-    for (size_t i = 0; i < trajectory_rates.size(); ++i) {
-      cumulative += trajectory_rates[i];
-      if (rand_val <= cumulative) {
-        selected_idx = static_cast<int>(i);
-        found = true;
-        break;
-      }
-    }
-
-    // If normalization/precision issues, default to first trajectory
-    if (!found) {
-      selected_idx = 0;
-    }
-  }
-
-  // 4. Generate timing
   const auto& final_def = trajectories[selected_idx];
   traj.infectiousness_factor = final_def.infectiousness_factor;
-  double current_time = infection_time_;
-
-  // Determine the entry point into the stage list.
   // start_symptom_override (from seeding) takes priority over the trajectory's
   // start_stage field.
-  int start_stage_idx = 0;
-  const std::string& start_target =
-      !start_symptom_override.empty()
-          ? start_symptom_override
-          : (final_def.start_stage.has_value() ? final_def.start_stage.value()
-                                               : "");
-  if (!start_target.empty()) {
-    for (int s = 0; s < (int)final_def.stages.size(); ++s) {
-      if (final_def.stages[s].symptom_tag == start_target) {
-        start_stage_idx = s;
-        break;
-      }
-    }
-  }
-
-  for (int s = start_stage_idx; s < (int)final_def.stages.size(); ++s) {
-    const auto& stage = final_def.stages[s];
-    traj.transitions.push_back(
-        {current_time, disease_->getSymptomId(stage.symptom_tag)});
-    current_time += sampleFromDistribution(stage.completion_time, rng);
-  }
-
+  const std::string start_target = !start_symptom_override.empty()
+                                       ? start_symptom_override
+                                       : final_def.start_stage.value_or("");
+  buildTransitionsFromStages(traj, final_def, start_target, rng);
   return traj;
 }
 
@@ -619,6 +599,28 @@ double Infection::evaluateTransmissionProfile(double x) const {
   return 1.0;
 }
 
+void Infection::cacheCurrentSymptom(double lookup_time, uint16_t& symptom_id,
+                                    double& stage_start_time) const {
+  if (lookup_time == last_checked_time_) {
+    symptom_id = cached_symptom_id_;
+    stage_start_time = cached_symptom_start_time_;
+    return;
+  }
+  symptom_id = 0;
+  stage_start_time = infection_time_;
+  for (const auto& trans : trajectory_.transitions) {
+    if (lookup_time >= trans.first) {
+      stage_start_time = trans.first;
+      symptom_id = trans.second;
+    } else {
+      break;
+    }
+  }
+  last_checked_time_ = lookup_time;
+  cached_symptom_id_ = symptom_id;
+  cached_symptom_start_time_ = stage_start_time;
+}
+
 double Infection::getInfectiousness(double current_time) const {
   const auto& trans_params = disease_->getTransmissionParams();
 
@@ -644,29 +646,9 @@ double Infection::getInfectiousness(double current_time) const {
   }
 
   // MODE 2: STAGE-DRIVEN
-  // Find current symptom and how long it has been active
-  uint16_t current_symptom_id = 0;  // "healthy" ID is 0 by default
+  uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  // Use cache to avoid re-scanning trajectory if time hasn't changed
-  if (current_time == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    // Scan trajectory for current symptom ID and its start time
-    for (const auto& trans : trajectory_.transitions) {
-      if (current_time >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    // Update cache
-    last_checked_time_ = current_time;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(current_time, current_symptom_id, stage_start_time);
 
   // Evaluate curve for the specific symptom stage
   if (current_symptom_id < trans_params.symptom_id_curves.size()) {
@@ -705,26 +687,9 @@ double Infection::getInfectiousness(int mode_index, double current_time) const {
   const auto& curves = modes.empty() ? trans_params.symptom_id_curves
                                      : modes[safe_mode].symptom_curves;
 
-  // Get current symptom id and stage start time.
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (current_time == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (current_time >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = current_time;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(current_time, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= curves.size() || !curves[current_symptom_id]) {
     static int missing_curve_count2 = 0;
@@ -766,23 +731,7 @@ double Infection::getIntegratedInfectiousness(int mode_index, double t0,
 
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (t0 == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (t0 >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = t0;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(t0, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= curves.size() || !curves[current_symptom_id]) {
     return 0.0;
@@ -802,26 +751,9 @@ double Infection::getFomiteDepositRate(int fomite_mode_index,
   if (modes[fomite_mode_index].type != TransmissionModeType::Fomite) return 0.0;
   const auto& cfg = std::get<FomiteConfig>(modes[fomite_mode_index].config);
 
-  // Find current symptom id and time in stage (reuse STAGE_DRIVEN cache)
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (current_time == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (current_time >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = current_time;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(current_time, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= cfg.deposition_by_symptom.size()) return 0.0;
   const auto& curve = cfg.deposition_by_symptom[current_symptom_id];
@@ -840,23 +772,7 @@ double Infection::getIntegratedFomiteDeposition(int fomite_mode_index,
 
   uint16_t current_symptom_id = 0;
   double stage_start_time = infection_time_;
-
-  if (t0 == last_checked_time_) {
-    current_symptom_id = cached_symptom_id_;
-    stage_start_time = cached_symptom_start_time_;
-  } else {
-    for (const auto& trans : trajectory_.transitions) {
-      if (t0 >= trans.first) {
-        stage_start_time = trans.first;
-        current_symptom_id = trans.second;
-      } else {
-        break;
-      }
-    }
-    last_checked_time_ = t0;
-    cached_symptom_id_ = current_symptom_id;
-    cached_symptom_start_time_ = stage_start_time;
-  }
+  cacheCurrentSymptom(t0, current_symptom_id, stage_start_time);
 
   if (current_symptom_id >= cfg.deposition_by_symptom.size()) return 0.0;
   const auto& curve = cfg.deposition_by_symptom[current_symptom_id];

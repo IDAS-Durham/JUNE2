@@ -1,6 +1,6 @@
 #ifdef USE_MPI
 
-#include "../../include/parallel/domain_manager.h"
+#include "parallel/domain_manager.h"
 
 #include <algorithm>
 #include <cstring>
@@ -8,8 +8,8 @@
 #include <iostream>
 #include <limits>
 
-#include "../../include/loaders/hdf5_loader.h"
-#include "../../include/parallel/mpi_utils.h"
+#include "loaders/hdf5_loader.h"
+#include "parallel/mpi_utils.h"
 
 namespace june {
 
@@ -27,6 +27,130 @@ void chunkedBroadcast(void* data, uint64_t count, size_t element_size,
     MPI_Bcast(static_cast<char*>(data) + sent * element_size, chunk, type, root,
               MPI_COMM_WORLD);
     sent += chunk;
+  }
+}
+
+// Pack a local registry of strings into a single null-separated buffer and
+// MPI_Allgatherv-concatenate the same on every rank.
+std::vector<char> gatherPackedValuesAcrossRanks(
+    const std::vector<std::string>& local_registry, int num_ranks) {
+  std::string local_packed;
+  for (const auto& val : local_registry) {
+    local_packed += val;
+    local_packed += '\0';
+  }
+
+  int local_size = static_cast<int>(local_packed.size());
+  std::vector<int> all_sizes(num_ranks);
+  MPI_Allgather(&local_size, 1, MPI_INT, all_sizes.data(), 1, MPI_INT,
+                MPI_COMM_WORLD);
+
+  std::vector<int> displs;
+  int total_size;
+  mpi_utils::computeDisplacements(all_sizes, displs, total_size);
+
+  std::vector<char> all_packed(total_size);
+  MPI_Allgatherv(local_packed.data(), local_size, MPI_CHAR, all_packed.data(),
+                 all_sizes.data(), displs.data(), MPI_CHAR, MPI_COMM_WORLD);
+  return all_packed;
+}
+
+// Parse a null-separated packed buffer into a sorted, deduplicated registry.
+std::vector<std::string> buildGlobalRegistryFromPacked(
+    const std::vector<char>& all_packed) {
+  std::set<std::string> unique_vals;
+  size_t pos = 0;
+  const size_t total_size = all_packed.size();
+  while (pos < total_size) {
+    size_t end = pos;
+    while (end < total_size && all_packed[end] != '\0') ++end;
+    if (end > pos)
+      unique_vals.insert(std::string(all_packed.data() + pos, end - pos));
+    pos = end + 1;
+  }
+  return std::vector<std::string>(unique_vals.begin(), unique_vals.end());
+}
+
+// Build a remap from a local registry's old indices to the corresponding
+// indices in the global registry (-1 if not present).
+std::vector<int32_t> buildRemapToGlobal(
+    const std::vector<std::string>& local_registry,
+    const std::vector<std::string>& global_registry) {
+  std::unordered_map<std::string, int32_t> new_index;
+  for (size_t i = 0; i < global_registry.size(); ++i) {
+    new_index[global_registry[i]] = static_cast<int32_t>(i);
+  }
+  std::vector<int32_t> remap(local_registry.size(), -1);
+  for (size_t i = 0; i < local_registry.size(); ++i) {
+    auto it = new_index.find(local_registry[i]);
+    if (it != new_index.end()) remap[i] = it->second;
+  }
+  return remap;
+}
+
+// Print per-rank and aggregate domain-load stats from already-gathered
+// per-rank pop / venue / RSS vectors. Caller restricts to rank 0.
+void printDomainStats(const std::string& label, int num_ranks,
+                      const std::vector<uint64_t>& pops,
+                      const std::vector<uint64_t>& venues,
+                      const std::vector<double>& rss) {
+  std::cout << "\n=== Domain Statistics [" << label << "] ===" << std::endl;
+  uint64_t total_p = 0, max_p = 0;
+  uint64_t total_v = 0;
+  double total_rss = 0, max_rss = 0;
+
+  for (int r = 0; r < num_ranks; ++r) {
+    total_p += pops[r];
+    max_p = std::max(max_p, pops[r]);
+    total_v += venues[r];
+    total_rss += rss[r];
+    max_rss = std::max(max_rss, rss[r]);
+
+    if (num_ranks <= 64 || r < 4 || r >= num_ranks - 4) {
+      std::cout << "  Rank " << std::setw(3) << r << ": Pop=" << std::setw(10)
+                << pops[r] << " | Venues=" << std::setw(8) << venues[r]
+                << " | Mem=" << std::fixed << std::setprecision(2)
+                << std::setw(6) << rss[r] << " GB" << std::endl;
+    } else if (r == 4) {
+      std::cout << "  ... (omitted) ..." << std::endl;
+    }
+  }
+
+  double avg_p = static_cast<double>(total_p) / num_ranks;
+  double avg_v = static_cast<double>(total_v) / num_ranks;
+  double avg_rss = total_rss / num_ranks;
+
+  std::cout << "  --------------------------------------------------"
+            << std::endl;
+  std::cout << "  TOTAL:    Pop=" << total_p << " | Venues=" << total_v
+            << " | Mem=" << total_rss << " GB" << std::endl;
+  std::cout << "  AVERAGE:  Pop=" << std::fixed << std::setprecision(0) << avg_p
+            << " | Venues=" << avg_v << " | Mem=" << std::fixed
+            << std::setprecision(2) << avg_rss << " GB" << std::endl;
+
+  if (avg_p > 0)
+    std::cout << "  Pop Imbalance: " << std::fixed << std::setprecision(2)
+              << (max_p / avg_p - 1.0) * 100.0 << "%" << std::endl;
+  if (avg_rss > 0)
+    std::cout << "  Mem Imbalance: " << std::fixed << std::setprecision(2)
+              << (max_rss / avg_rss - 1.0) * 100.0 << "%" << std::endl;
+  std::cout << "====================================================\n"
+            << std::endl;
+}
+
+// Apply a (old → new) index remap to every person's stored value for one
+// property, in-place on the world's person_properties buffer.
+void remapPersonPropertyValues(WorldState& world, const std::string& prop_name,
+                               const std::vector<int32_t>& remap) {
+  int prop_idx = world.getPersonPropertyIndex(prop_name);
+  if (prop_idx < 0) return;
+  for (auto& person : world.people) {
+    size_t base = person.properties_start + prop_idx;
+    if (base >= world.person_properties.size()) continue;
+    int32_t old_val = world.person_properties[base];
+    if (old_val >= 0 && old_val < static_cast<int32_t>(remap.size())) {
+      world.person_properties[base] = remap[old_val];
+    }
   }
 }
 
@@ -418,21 +542,15 @@ void DomainManager::exchangeGlobalProperty(
 }
 
 void DomainManager::exchangeDeathFlags() {
-#ifdef USE_MPI
   exchangeGlobalProperty<uint8_t>(
       global_death_flags_, 0, MPI_UINT8_T, MPI_MAX,
       [&](const Person& p) -> uint8_t { return p.is_dead ? 1 : 0; });
-#endif
 }
 
 void DomainManager::exchangeScheduleTypes() {
-#ifdef USE_MPI
-
   exchangeGlobalProperty<uint16_t>(
       global_person_schedule_type_, 65535, MPI_UNSIGNED_SHORT, MPI_MIN,
       [](const Person& p) -> uint16_t { return p.schedule_type_id; });
-
-#endif
 }
 
 uint16_t DomainManager::getGlobalScheduleType(PersonId pid) const {
@@ -452,8 +570,6 @@ void DomainManager::setGlobalScheduleType(PersonId pid, uint16_t type_id) {
 }
 
 void DomainManager::exchangeActivityMasks() {
-#ifdef USE_MPI
-
   if (rank_ == 0)
     std::cout << "MPI: Exchanging global activity/venue availability masks..."
               << std::endl;
@@ -494,7 +610,6 @@ void DomainManager::exchangeActivityMasks() {
     std::cout << "  Synchronized activity masks for "
               << global_person_activity_mask_.size() << " people." << std::endl;
   }
-#endif
 }
 
 ActivityMask DomainManager::getGlobalActivityMask(PersonId pid) const {
@@ -541,71 +656,20 @@ void DomainManager::synchronizeRegistries() {
 
   for (auto& [prop_name, local_registry] :
        world_.person_property_value_registries) {
-    // 1. Gather all unique values from all ranks
-    // Pack local values into a single string with null separators
-    std::string local_packed;
-    for (const auto& val : local_registry) {
-      local_packed += val;
-      local_packed += '\0';
-    }
-
-    // Exchange packed string sizes
-    int local_size = static_cast<int>(local_packed.size());
-    std::vector<int> all_sizes(num_ranks_);
-    MPI_Allgather(&local_size, 1, MPI_INT, all_sizes.data(), 1, MPI_INT,
-                  MPI_COMM_WORLD);
-
-    std::vector<int> displs;
-    int total_size;
-    mpi_utils::computeDisplacements(all_sizes, displs, total_size);
-
-    std::vector<char> all_packed(total_size);
-    MPI_Allgatherv(local_packed.data(), local_size, MPI_CHAR, all_packed.data(),
-                   all_sizes.data(), displs.data(), MPI_CHAR, MPI_COMM_WORLD);
+    // 1. Gather all unique values from all ranks (null-separated packed)
+    std::vector<char> all_packed =
+        gatherPackedValuesAcrossRanks(local_registry, num_ranks_);
 
     // 2. Build a sorted, deduplicated global registry
-    std::set<std::string> unique_vals;
-    size_t pos = 0;
-    while (pos < static_cast<size_t>(total_size)) {
-      size_t end = pos;
-      while (end < static_cast<size_t>(total_size) && all_packed[end] != '\0')
-        ++end;
-      if (end > pos)
-        unique_vals.insert(std::string(all_packed.data() + pos, end - pos));
-      pos = end + 1;
-    }
+    std::vector<std::string> global_registry =
+        buildGlobalRegistryFromPacked(all_packed);
 
-    std::vector<std::string> global_registry(unique_vals.begin(),
-                                             unique_vals.end());
-    // std::set is already sorted, so global_registry is deterministic
-
-    // 3. Build old→new index mapping for this rank
-    std::unordered_map<std::string, int32_t> new_index;
-    for (size_t i = 0; i < global_registry.size(); ++i) {
-      new_index[global_registry[i]] = static_cast<int32_t>(i);
-    }
-
-    // Build remap from old local index → new global index
-    std::vector<int32_t> remap(local_registry.size(), -1);
-    for (size_t i = 0; i < local_registry.size(); ++i) {
-      auto it = new_index.find(local_registry[i]);
-      if (it != new_index.end()) remap[i] = it->second;
-    }
+    // 3. Build remap from old local index → new global index
+    std::vector<int32_t> remap =
+        buildRemapToGlobal(local_registry, global_registry);
 
     // 4. Remap all person property values for this property
-    int prop_idx = world_.getPersonPropertyIndex(prop_name);
-    if (prop_idx >= 0) {
-      int num_props = static_cast<int>(world_.person_property_names.size());
-      for (auto& person : world_.people) {
-        size_t base = person.properties_start + prop_idx;
-        if (base < world_.person_properties.size()) {
-          int32_t old_val = world_.person_properties[base];
-          if (old_val >= 0 && old_val < static_cast<int32_t>(remap.size())) {
-            world_.person_properties[base] = remap[old_val];
-          }
-        }
-      }
-    }
+    remapPersonPropertyValues(world_, prop_name, remap);
 
     // 5. Replace local registry with global registry
     local_registry = global_registry;
@@ -615,10 +679,6 @@ void DomainManager::synchronizeRegistries() {
 void DomainManager::reportDomainStats(const std::string& label) const {
   size_t local_pop = world_.people.size();
   size_t local_venues = world_.venues.size();
-  size_t local_residences = 0;
-  for (const auto& v : world_.venues)
-    if (v.is_residence) local_residences++;
-
   double local_rss_gb = MemoryUtils::getRSS() / (1024.0 * 1024.0);
 
   // Exchange stats
@@ -636,57 +696,7 @@ void DomainManager::reportDomainStats(const std::string& label) const {
   MPI_Allgather(&local_rss_gb, 1, MPI_DOUBLE, rss.data(), 1, MPI_DOUBLE,
                 MPI_COMM_WORLD);
 
-  if (rank_ == 0) {
-    std::cout << "\n=== Domain Statistics [" << label << "] ===" << std::endl;
-    uint64_t total_p = 0, max_p = 0,
-             min_p = std::numeric_limits<uint64_t>::max();
-    uint64_t total_v = 0, max_v = 0,
-             min_v = std::numeric_limits<uint64_t>::max();
-    double total_rss = 0, max_rss = 0,
-           min_rss = std::numeric_limits<double>::max();
-
-    for (int r = 0; r < num_ranks_; ++r) {
-      total_p += pops[r];
-      max_p = std::max(max_p, pops[r]);
-      min_p = std::min(min_p, pops[r]);
-      total_v += venues[r];
-      max_v = std::max(max_v, venues[r]);
-      min_v = std::min(min_v, venues[r]);
-      total_rss += rss[r];
-      max_rss = std::max(max_rss, rss[r]);
-      min_rss = std::min(min_rss, rss[r]);
-
-      if (num_ranks_ <= 64 || r < 4 || r >= num_ranks_ - 4) {
-        std::cout << "  Rank " << std::setw(3) << r << ": Pop=" << std::setw(10)
-                  << pops[r] << " | Venues=" << std::setw(8) << venues[r]
-                  << " | Mem=" << std::fixed << std::setprecision(2)
-                  << std::setw(6) << rss[r] << " GB" << std::endl;
-      } else if (r == 4) {
-        std::cout << "  ... (omitted) ..." << std::endl;
-      }
-    }
-
-    double avg_p = (double)total_p / num_ranks_;
-    double avg_v = (double)total_v / num_ranks_;
-    double avg_rss = total_rss / num_ranks_;
-
-    std::cout << "  --------------------------------------------------"
-              << std::endl;
-    std::cout << "  TOTAL:    Pop=" << total_p << " | Venues=" << total_v
-              << " | Mem=" << total_rss << " GB" << std::endl;
-    std::cout << "  AVERAGE:  Pop=" << std::fixed << std::setprecision(0)
-              << avg_p << " | Venues=" << avg_v << " | Mem=" << std::fixed
-              << std::setprecision(2) << avg_rss << " GB" << std::endl;
-
-    if (avg_p > 0)
-      std::cout << "  Pop Imbalance: " << std::fixed << std::setprecision(2)
-                << (max_p / avg_p - 1.0) * 100.0 << "%" << std::endl;
-    if (avg_rss > 0)
-      std::cout << "  Mem Imbalance: " << std::fixed << std::setprecision(2)
-                << (max_rss / avg_rss - 1.0) * 100.0 << "%" << std::endl;
-    std::cout << "====================================================\n"
-              << std::endl;
-  }
+  if (rank_ == 0) printDomainStats(label, num_ranks_, pops, venues, rss);
 }
 
 }  // namespace june

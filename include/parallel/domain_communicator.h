@@ -5,16 +5,17 @@
 #include <mpi.h>
 
 #include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "../activity/coordinated_encounter_types.h"
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../epidemiology/disease.h"
+#include "activity/coordinated_encounter_types.h"
+#include "core/config.h"
+#include "core/world_state.h"
 #include "domain.h"
+#include "epidemiology/disease.h"
 
 namespace june {
 class DomainManager;
@@ -69,6 +70,37 @@ class DomainCommunicator {
   void performP2PVisitorExchange(
       const std::vector<std::vector<Domain::VisitorData>>& outgoing,
       const std::vector<int>& send_counts, const std::vector<int>& recv_counts);
+
+  // Sparsity-driven dispatch: chooses among all-to-all, P2P, or very-sparse
+  // P2P based on the cross-rank send-pair density (MPI_Allreduce), then
+  // records the outgoing visitors locally.
+  void dispatchVisitorExchange(
+      const std::vector<std::vector<Domain::VisitorData>>& outgoing,
+      const std::vector<int>& send_counts);
+
+  // Join the local PendingInfections against incoming_visitors to find the
+  // home rank that needs to be notified for each. Returns the per-rank
+  // updates table and corresponding send_counts vector.
+  void routePendingByHomeRank(
+      const std::vector<PendingInfection>& pending,
+      std::vector<std::vector<PendingInfection>>& updates,
+      std::vector<int>& send_counts);
+
+  // Walks the receive buffer of an Alltoallv exchange of PendingInfections,
+  // unpacks each record, and delegates to applyOnePendingInfection. Returns
+  // the vector of newly-applied records.
+  std::vector<PendingInfection> unpackAndApplyIncoming(
+      const std::vector<char>& rbuf, const std::vector<int>& rd,
+      const std::vector<int>& recv_counts);
+
+  // Construct the local Infection for one successfully-unpacked pending
+  // record and return the resulting PendingInfection. Returns std::nullopt
+  // if the record was skipped (person not owned, already infected, or no
+  // disease loaded).
+  std::optional<PendingInfection> applyOnePendingInfection(
+      PersonId pid, PersonId infector_id, double t, uint8_t v_type,
+      uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
+      uint8_t transmission_mode_index);
 
   WorldState& world_;
   const Config& config_;

@@ -22,7 +22,7 @@ inline constexpr uint64_t mix_seed(uint64_t base, uint64_t key1,
 
 // SplitMix64: lightweight RNG satisfying C++ UniformRandomBitGenerator.
 // 8 bytes state, ~1 ns/draw, excellent statistical quality.
-// Designed for per-entity ephemeral use — construct from mix_seed() output.
+// Designed for per-entity ephemeral use; construct from mix_seed() output.
 class SplitMix64 {
  public:
   using result_type = uint64_t;

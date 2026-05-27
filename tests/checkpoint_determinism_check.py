@@ -23,6 +23,7 @@ Exit status: 0 = PASS, 1 = FAIL, 77 = SKIP (world/bin missing).
 """
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,34 @@ import tempfile
 
 import h5py
 import numpy as np
+
+
+def write_checkpoint_config(src, dst, ckpt_day):
+    """Copy src -> dst, replacing any existing top-level `checkpoint:` block
+    with a fresh one that fires once at `ckpt_day`. The simulator's yaml-cpp
+    keeps the FIRST occurrence on duplicate keys (unlike PyYAML), so we have
+    to splice in place rather than append.
+    """
+    block = (
+        "checkpoint:\n"
+        "  enabled: true\n"
+        "  output_dir: checkpoints/\n"
+        f"  every_n_days: {ckpt_day + 1}\n"
+        "  on_dates: null\n"
+        "  keep_last: 3\n"
+    )
+    with open(src) as fh:
+        text = fh.read()
+    # Match the existing block: `checkpoint:` at column 0 + its indented body.
+    pat = re.compile(r"(?m)^checkpoint:\n(?:[ \t]+.*\n?)*")
+    if pat.search(text):
+        text = pat.sub(block, text, count=1)
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += "\n" + block
+    with open(dst, "w") as fh:
+        fh.write(text)
 
 
 def run(cmd):
@@ -102,11 +131,7 @@ def main():
     # checkpoint-enabled config: original + every_n_days so it fires exactly
     # once, at the end of ckpt_day (i.e. (day+1) % (ckpt_day+1) == 0).
     cfg = os.path.join(work, "sim_ckpt.yaml")
-    shutil.copyfile(a.config, cfg)
-    with open(cfg, "a") as fh:
-        fh.write(f"\ncheckpoint:\n  enabled: true\n  output_dir: "
-                 f"checkpoints/\n  every_n_days: {a.ckpt_day + 1}\n"
-                 f"  keep_last: 3\n")
+    write_checkpoint_config(a.config, cfg, a.ckpt_day)
 
     def launch(np_, run_id, extra):
         cmd = []

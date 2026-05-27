@@ -1,6 +1,6 @@
 #ifdef USE_MPI
 
-#include "../../include/parallel/geography_partitioner.h"
+#include "parallel/geography_partitioner.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -9,7 +9,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "../../include/loaders/hdf5_loader.h"
+#include "loaders/hdf5_loader.h"
 
 #ifdef USE_METIS
 #include <metis.h>

@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "../core/config.h"  // SelectionCriterion
-#include "../core/types.h"   // Person
+#include "core/config.h"  // SelectionCriterion
+#include "core/types.h"   // Person
 
 namespace june {
 
@@ -13,7 +13,7 @@ struct WorldState;
 /// Context passed to matchesCriteria for infection-specific filter columns.
 ///
 /// Carries per-infection metadata that cannot be derived from the Person struct
-/// alone — specifically, information about the transmission event that created
+/// alone, specifically information about the transmission event that created
 /// the infection. Used when evaluating `filter.infector_symptom` and
 /// `filter.transmission_mode` CSV columns.
 struct InfectionContext {
@@ -33,7 +33,7 @@ struct InfectionContext {
 ///
 /// ## Overview
 ///
-/// A CSV file can declare zero or more **filter columns** — columns whose
+/// A CSV file can declare zero or more **filter columns**: columns whose
 /// header begins with `filter.`. Each row then applies only to persons (and
 /// infection events) that satisfy *all* non-empty filter cells on that row.
 /// Rows are evaluated top-to-bottom; the first matching row wins.
@@ -46,8 +46,8 @@ struct InfectionContext {
 ///
 /// A `filter.X` header means "this cell is a direct comparison against person
 /// (or infection-context) attribute `X`." Columns that need caller-side joins
-/// or lookups — e.g. resolving a `geo_level` + `geo_unit` pair against the
-/// world graph to emit an `in` criterion over descendant ids — MUST NOT use
+/// or lookups (e.g. resolving a `geo_level` + `geo_unit` pair against the
+/// world graph to emit an `in` criterion over descendant ids) MUST NOT use
 /// the `filter.` prefix. They are value columns interpreted by the caller.
 ///
 /// ## Available filter columns
@@ -187,7 +187,7 @@ bool matchesAnyGroup(
 /// Builds a list of SelectionCriterion from the filter columns of a single CSV
 /// row.
 ///
-/// Empty cells are skipped — they impose no constraint. Only non-empty cells
+/// Empty cells are skipped; they impose no constraint. Only non-empty cells
 /// contribute a criterion, meaning the row matches all values for that
 /// property.
 ///

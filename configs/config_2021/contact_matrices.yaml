@@ -276,3 +276,41 @@ contact_matrices:
         beta: 0.00255
         bins: *id031
         contacts: *id032
+  # Commute venues. One venue per transport
+  # line; carriages are runtime subsets allocated by the carriage allocator
+  # (task 14). contacts values are per-hour starting guesses — calibrate
+  # against transit attack-rate data. physical_contact
+  # beta is 0 (transit transmission is essentially respiratory only).
+  train_line:
+    modes:
+      respiratory:
+        beta: 0.04
+        bins: &id033 [rider]
+        contacts: &id034
+        - [8]
+      physical_contact:
+        beta: 0.0
+        bins: *id033
+        contacts: *id034
+  tube_line:
+    modes:
+      respiratory:
+        beta: 0.06
+        bins: &id035 [rider]
+        contacts: &id036
+        - [12]
+      physical_contact:
+        beta: 0.0
+        bins: *id035
+        contacts: *id036
+  bus_line:
+    modes:
+      respiratory:
+        beta: 0.05
+        bins: &id037 [rider]
+        contacts: &id038
+        - [10]
+      physical_contact:
+        beta: 0.0
+        bins: *id037
+        contacts: *id038

@@ -4,9 +4,6 @@ parallel:
   # Enable parallel mode (requires MPI build)
   enabled: true
 
-  # Toggle verbose MPI debug logs (e.g., [MPI_XRANK], [CROSS_RANK_INFECTION_APPLIED])
-  verbose_mpi: false
-
   # Geographic partitioning settings
   partitioning:
     # Which geographic level to partition on (e.g., "SGU", "MGU", "LGU", "XLGU")

@@ -10,7 +10,8 @@
 #include <mpi.h>
 #endif
 
-#include "utils/event_logger.h"
+#include "utils/event_logging/event_logger.h"
+#include "utils/event_logging/event_writer_detail.h"
 
 namespace {
 // Returns true when the caller is the rank that should produce
@@ -28,50 +29,34 @@ bool isLogRank() {
 #endif
   return true;
 }
+
+// Write a string-registry vector as a chunked variable-length string dataset.
+// No-op when the registry is empty or the dataset already exists.
+void writeStringRegistry(H5::Group& registries_group,
+                         const std::string& dataset_name,
+                         const std::vector<std::string>& names) {
+  if (names.empty()) return;
+  if (H5Lexists(registries_group.getId(), dataset_name.c_str(), H5P_DEFAULT))
+    return;
+
+  hsize_t dims[1] = {names.size()};
+  H5::DataSpace space(1, dims);
+  H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
+  H5::DSetCreatPropList plist;
+  hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
+  if (chunk_dims[0] == 0) chunk_dims[0] = 1;
+  plist.setChunk(1, chunk_dims);
+
+  H5::DataSet ds =
+      registries_group.createDataSet(dataset_name, type, space, plist);
+  std::vector<const char*> c_strs;
+  c_strs.reserve(names.size());
+  for (const auto& s : names) c_strs.push_back(s.c_str());
+  ds.write(c_strs.data(), type);
+}
 }  // namespace
 
 namespace june {
-
-void EventWriter::saveToHDF5(const EventLogger& logger,
-                             const std::string& filename,
-                             const Config& config) {
-  std::cout << "\n=== Saving Events to HDF5: " << filename
-            << " ===" << std::endl;
-  std::cout << "  Compression level: " << config.simulation.compression_level
-            << std::endl;
-  std::cout << "  Infection events: " << logger.infections_.size() << std::endl;
-  // ... other counts ...
-
-  try {
-    bool exists = std::filesystem::exists(filename);
-    H5::H5File file;
-    if (exists) {
-      file = H5::H5File(filename, H5F_ACC_RDWR);
-    } else {
-      file = H5::H5File(filename, H5F_ACC_TRUNC);
-      file.createGroup("/events");
-    }
-
-    writeInfectionEvents(file, logger, config.simulation.compression_level);
-    writeSymptomChangeEvents(file, logger, config.simulation.compression_level);
-    writeDeathEvents(file, logger, config.simulation.compression_level);
-    writeHospitalAdmissionEvents(file, logger,
-                                 config.simulation.compression_level);
-    writeICUAdmissionEvents(file, logger, config.simulation.compression_level);
-    writeHospitalDischargeEvents(file, logger,
-                                 config.simulation.compression_level);
-    writeVaccinationEvents(file, logger, config.simulation.compression_level);
-    writeRelationshipEvents(file, logger, config.simulation.compression_level);
-    writeCoordinatedEncounterEvents(file, logger,
-                                    config.simulation.compression_level);
-
-    std::cout << "Events saved successfully!" << std::endl;
-  } catch (const H5::Exception& e) {
-    std::cerr << "HDF5 error while saving events: " << e.getDetailMsg()
-              << std::endl;
-    throw std::runtime_error("Failed to save events to HDF5 file");
-  }
-}
 
 void EventWriter::saveToHDF5WithLookups(
     const EventLogger& logger, const std::string& filename,
@@ -106,12 +91,8 @@ void EventWriter::saveToHDF5WithLookups(
                                     config.simulation.compression_level);
 
     // Always write lookups and metadata at the end, even if file exists
-    H5::Group lookups_group;
-    if (H5Lexists(file.getId(), "/lookups", H5P_DEFAULT)) {
-      lookups_group = file.openGroup("/lookups");
-    } else {
-      lookups_group = file.createGroup("/lookups");
-    }
+    H5::Group lookups_group =
+        event_writer_detail::openOrCreateGroup(file, "/lookups");
 
     if (config.simulation.save_full_person_details != "none") {
       writePersonLookupTable(file, world, config, logger, exists,
@@ -130,68 +111,15 @@ void EventWriter::saveToHDF5WithLookups(
                                  person_ids_filter);
     }
 
-    H5::Group metadata_group;
-    if (H5Lexists(file.getId(), "/metadata", H5P_DEFAULT)) {
-      metadata_group = file.openGroup("/metadata");
-    } else {
-      metadata_group = file.createGroup("/metadata");
-    }
+    H5::Group metadata_group =
+        event_writer_detail::openOrCreateGroup(file, "/metadata");
+    H5::Group registries_group =
+        event_writer_detail::openOrCreateGroup(metadata_group, "registries");
 
-    H5::Group registries_group;
-    if (H5Lexists(file.getId(), "/metadata/registries", H5P_DEFAULT)) {
-      registries_group = file.openGroup("/metadata/registries");
-    } else {
-      registries_group = metadata_group.createGroup("registries");
-    }
-
-    if (!world.encounter_type_names.empty() &&
-        !H5Lexists(registries_group.getId(), "encounter_types", H5P_DEFAULT)) {
-      hsize_t dims[1] = {world.encounter_type_names.size()};
-      H5::DataSpace space(1, dims);
-      H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-      H5::DataSet ds =
-          registries_group.createDataSet("encounter_types", type, space, plist);
-      std::vector<const char*> c_strs;
-      for (const auto& s : world.encounter_type_names)
-        c_strs.push_back(s.c_str());
-      ds.write(c_strs.data(), type);
-    }
-
-    if (!world.activity_names.empty() &&
-        !H5Lexists(registries_group.getId(), "activities", H5P_DEFAULT)) {
-      hsize_t dims[1] = {world.activity_names.size()};
-      H5::DataSpace space(1, dims);
-      H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-      H5::DataSet ds =
-          registries_group.createDataSet("activities", type, space, plist);
-      std::vector<const char*> c_strs;
-      for (const auto& s : world.activity_names) c_strs.push_back(s.c_str());
-      ds.write(c_strs.data(), type);
-    }
-
-    if (!world.symptom_names.empty() &&
-        !H5Lexists(registries_group.getId(), "symptoms", H5P_DEFAULT)) {
-      hsize_t dims[1] = {world.symptom_names.size()};
-      H5::DataSpace space(1, dims);
-      H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-      H5::DataSet ds =
-          registries_group.createDataSet("symptoms", type, space, plist);
-      std::vector<const char*> c_strs;
-      for (const auto& s : world.symptom_names) c_strs.push_back(s.c_str());
-      ds.write(c_strs.data(), type);
-    }
+    writeStringRegistry(registries_group, "encounter_types",
+                        world.encounter_type_names);
+    writeStringRegistry(registries_group, "activities", world.activity_names);
+    writeStringRegistry(registries_group, "symptoms", world.symptom_names);
 
     if (isLogRank()) {
       std::cout << "Events and lookup tables saved successfully!" << std::endl;
@@ -374,473 +302,6 @@ void EventWriter::writeVaccinationEvents(H5::H5File& file,
                     H5::PredType::NATIVE_DOUBLE);
   writeDatasetTemplate(file, "/events/vaccinations", records, type,
                        compression_level);
-}
-
-void EventWriter::writePersonLookupTable(
-    H5::H5File& file, const WorldState& world, const Config& config,
-    const EventLogger& logger, bool append,
-    const std::unordered_set<PersonId>* person_ids_filter) {
-  std::unordered_set<PersonId> people_to_save;
-  if (person_ids_filter) {
-    people_to_save = *person_ids_filter;
-  } else if (config.simulation.save_full_person_details == "all") {
-    if (append) return;  // All people already saved in first write
-    for (const auto& person : world.people) people_to_save.insert(person.id);
-  } else if (config.simulation.save_full_person_details == "infected_only") {
-    people_to_save = logger.getInfectedPersonIds();
-  } else
-    return;
-
-  size_t n = people_to_save.size();
-  if (n == 0) return;
-
-  std::vector<detail::PersonRecord> records;
-  records.reserve(n);
-  for (const auto& person : world.people) {
-    if (!people_to_save.count(person.id)) continue;
-    detail::PersonRecord record;
-    record.person_id = person.id;
-    record.age = person.age;
-    std::string sex_str = (person.sex == Sex::MALE)     ? "male"
-                          : (person.sex == Sex::FEMALE) ? "female"
-                                                        : "unknown";
-    strncpy(record.sex, sex_str.c_str(), 15);
-    record.sex[15] = '\0';
-    record.geo_unit_id = person.geo_unit_id;
-    record.is_dead = person.is_dead ? 1 : 0;
-    record.death_time = person.death_time;
-    std::string sched_type =
-        person.schedule_type_id < world.schedule_type_names.size()
-            ? world.schedule_type_names[person.schedule_type_id]
-            : "unknown";
-    strncpy(record.schedule_type, sched_type.c_str(), 63);
-    record.schedule_type[63] = '\0';
-    record.num_activities =
-        static_cast<int>(world.getActivityMetas(person).size());
-    record.num_residence_venues =
-        static_cast<int>(world.getActivityVenues(person, "residence").size());
-    record.num_primary_activities = static_cast<int>(
-        world.getActivityVenues(person, "primary_activity").size());
-    record.num_leisure_venues =
-        static_cast<int>(world.getActivityVenues(person, "leisure").size());
-    record.num_medical_facilities = static_cast<int>(
-        world.getActivityVenues(person, "medical_facility").size());
-    records.push_back(record);
-  }
-
-  H5::StrType sex_type(H5::PredType::C_S1, 16);
-  H5::StrType schedule_type(H5::PredType::C_S1, 64);
-  H5::CompType person_type(sizeof(detail::PersonRecord));
-  person_type.insertMember("person_id",
-                           HOFFSET(detail::PersonRecord, person_id),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("age", HOFFSET(detail::PersonRecord, age),
-                           H5::PredType::NATIVE_DOUBLE);
-  person_type.insertMember("sex", HOFFSET(detail::PersonRecord, sex), sex_type);
-  person_type.insertMember("geo_unit_id",
-                           HOFFSET(detail::PersonRecord, geo_unit_id),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("is_dead", HOFFSET(detail::PersonRecord, is_dead),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("death_time",
-                           HOFFSET(detail::PersonRecord, death_time),
-                           H5::PredType::NATIVE_DOUBLE);
-  person_type.insertMember("schedule_type",
-                           HOFFSET(detail::PersonRecord, schedule_type),
-                           schedule_type);
-  person_type.insertMember("num_activities",
-                           HOFFSET(detail::PersonRecord, num_activities),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember("num_residence_venues",
-                           HOFFSET(detail::PersonRecord, num_residence_venues),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember(
-      "num_primary_activities",
-      HOFFSET(detail::PersonRecord, num_primary_activities),
-      H5::PredType::NATIVE_INT);
-  person_type.insertMember("num_leisure_venues",
-                           HOFFSET(detail::PersonRecord, num_leisure_venues),
-                           H5::PredType::NATIVE_INT);
-  person_type.insertMember(
-      "num_medical_facilities",
-      HOFFSET(detail::PersonRecord, num_medical_facilities),
-      H5::PredType::NATIVE_INT);
-
-  hsize_t dims[1] = {records.size()};
-  H5::DataSpace dataspace(1, dims);
-  writeDatasetTemplate(file, "/lookups/people", records, person_type,
-                       config.simulation.compression_level);
-
-  if (!world.person_property_names.empty()) {
-    H5::Group prop_group;
-    if (H5Lexists(file.getId(), "/lookups/people_properties", H5P_DEFAULT)) {
-      prop_group = file.openGroup("/lookups/people_properties");
-    } else {
-      prop_group = file.createGroup("/lookups/people_properties");
-    }
-    for (const auto& key : world.person_property_names) {
-      // Network-typed properties (e.g. friendships) are
-      // stored in Person::NetworkMeta rather than the flat property table.
-      // getPersonProperty returns nullopt for them; fall back to serialising
-      // partner ids in the same "[id1 id2 ...]" shape the world loader reads.
-      const int network_type_id = world.getNetworkTypeIndex(key);
-      std::vector<std::string> values;
-      values.reserve(n);
-      for (const auto& person : world.people) {
-        if (!people_to_save.count(person.id)) continue;
-        auto prop = world.getPersonProperty(person, key);
-        if (prop.has_value()) {
-          const auto& val = *prop;
-          if (std::holds_alternative<std::string>(val))
-            values.push_back(std::get<std::string>(val));
-          else if (std::holds_alternative<int32_t>(val)) {
-            int32_t iv = std::get<int32_t>(val);
-            auto rit = world.person_property_value_registries.find(key);
-            if (rit != world.person_property_value_registries.end() &&
-                iv >= 0 && (size_t)iv < rit->second.size())
-              values.push_back(rit->second[iv]);
-            else
-              values.push_back(std::to_string(iv));
-          } else if (std::holds_alternative<bool>(val))
-            values.push_back(std::get<bool>(val) ? "true" : "false");
-          else if (std::holds_alternative<double>(val))
-            values.push_back(std::to_string(std::get<double>(val)));
-          else
-            values.push_back("unknown");
-        } else if (network_type_id >= 0) {
-          auto partners = world.getNetworkPartners(person, network_type_id);
-          if (partners.empty()) {
-            values.push_back("");
-          } else {
-            std::string s = "[";
-            for (size_t i = 0; i < partners.size(); ++i) {
-              if (i > 0) s.push_back(' ');
-              s += std::to_string(partners[i]);
-            }
-            s.push_back(']');
-            values.push_back(std::move(s));
-          }
-        } else {
-          values.push_back("");
-        }
-      }
-      hsize_t out_dims[1] = {values.size()};
-      hsize_t out_maxdims[1] = {H5S_UNLIMITED};
-      H5::DataSpace out_space(1, out_dims, out_maxdims);
-      H5::StrType out_type(H5::PredType::C_S1, H5T_VARIABLE);
-
-      H5::DSetCreatPropList plist;
-      hsize_t chunk_dims[1] = {std::min(out_dims[0], hsize_t(100000))};
-      if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-      plist.setChunk(1, chunk_dims);
-
-      H5::DataSet pds;
-      std::vector<const char*> pc_strs;
-      for (const auto& s : values) pc_strs.push_back(s.c_str());
-
-      if (H5Lexists(prop_group.getId(), key.c_str(), H5P_DEFAULT)) {
-        // Dataset exists, open it and extend
-        pds = prop_group.openDataSet(key);
-        hsize_t current_dims[1];
-        pds.getSpace().getSimpleExtentDims(current_dims);
-        hsize_t new_dims[1] = {current_dims[0] + values.size()};
-        pds.extend(new_dims);
-
-        H5::DataSpace file_space = pds.getSpace();
-        file_space.selectHyperslab(H5S_SELECT_SET, out_dims, current_dims);
-        pds.write(pc_strs.data(), out_type, out_space, file_space);
-      } else {
-        // Dataset does not exist, create it
-        pds = prop_group.createDataSet(key, out_type, out_space, plist);
-        pds.write(pc_strs.data(), out_type);
-      }
-    }
-  }
-}
-
-void EventWriter::writeVenueLookupTable(H5::H5File& file,
-                                        const WorldState& world,
-                                        const Config& config) {
-  size_t n = world.venues.size();
-  std::vector<detail::VenueRecord> records(n + 1);
-  records[0].venue_id = INFECTION_SEED_VENUE_ID;
-  strncpy(records[0].name, "infection_seed", 127);
-  records[0].name[127] = '\0';
-  strncpy(records[0].type, "infection_seed", 63);
-  records[0].type[63] = '\0';
-  records[0].geo_unit_id = -1;
-  records[0].n_subsets = 0;
-
-  for (size_t i = 0; i < n; ++i) {
-    const Venue& venue = world.venues[i];
-    records[i + 1].venue_id = venue.id;
-    std::string vname =
-        (venue.id < 0 && venue.id != INFECTION_SEED_VENUE_ID)
-            ? "Virtual Coordinated Site (Rank " +
-                  std::to_string((-(static_cast<long long>(venue.id) + 1000)) %
-                                 1000000) +
-                  ")"
-            : "Venue_" + std::to_string(venue.id);
-    strncpy(records[i + 1].name, vname.c_str(), 127);
-    records[i + 1].name[127] = '\0';
-    std::string vtype = (venue.id < 0 && venue.id != INFECTION_SEED_VENUE_ID)
-                            ? "coordinated_encounter"
-                            : (venue.type_id < world.venue_type_names.size()
-                                   ? world.venue_type_names[venue.type_id]
-                                   : "unknown");
-    strncpy(records[i + 1].type, vtype.c_str(), 63);
-    records[i + 1].type[63] = '\0';
-    records[i + 1].geo_unit_id = venue.geo_unit_id;
-    records[i + 1].n_subsets = static_cast<int>(venue.subset_count);
-  }
-
-  H5::StrType ntype(H5::PredType::C_S1, 128);
-  H5::StrType ttype(H5::PredType::C_S1, 64);
-  H5::CompType vtype(sizeof(detail::VenueRecord));
-  vtype.insertMember("venue_id", HOFFSET(detail::VenueRecord, venue_id),
-                     H5::PredType::NATIVE_INT);
-  vtype.insertMember("name", HOFFSET(detail::VenueRecord, name), ntype);
-  vtype.insertMember("type", HOFFSET(detail::VenueRecord, type), ttype);
-  vtype.insertMember("geo_unit_id", HOFFSET(detail::VenueRecord, geo_unit_id),
-                     H5::PredType::NATIVE_INT);
-  vtype.insertMember("n_subsets", HOFFSET(detail::VenueRecord, n_subsets),
-                     H5::PredType::NATIVE_INT);
-
-  hsize_t vdims[1] = {n + 1};
-  H5::DataSpace vspace(1, vdims);
-  H5::DataSet vds =
-      createCompressedDataset(file, "/lookups/venues", vtype, vspace,
-                              config.simulation.compression_level);
-  vds.write(records.data(), vtype);
-}
-
-void EventWriter::writePersonActivitiesTable(
-    H5::H5File& file, const WorldState& world, const Config& config,
-    const EventLogger& logger, bool append,
-    const std::unordered_set<PersonId>* person_ids_filter) {
-  std::unordered_set<PersonId> people_to_save;
-  if (person_ids_filter) {
-    people_to_save = *person_ids_filter;
-  } else if (config.simulation.save_person_activities == "all") {
-    if (append) return;  // All people's activities already saved in first write
-    for (const auto& person : world.people) people_to_save.insert(person.id);
-  } else if (config.simulation.save_person_activities == "infected_only") {
-    people_to_save = logger.getInfectedPersonIds();
-  } else
-    return;
-
-  size_t total_entries = 0;
-  for (const auto& person : world.people) {
-    if (!people_to_save.count(person.id)) continue;
-    for (const auto& meta : world.getActivityMetas(person))
-      total_entries += world.getActivityVenues(meta).size();
-  }
-  if (total_entries == 0) return;
-
-  std::vector<detail::PersonActivityRecord> records;
-  records.reserve(total_entries);
-  for (const auto& person : world.people) {
-    if (!people_to_save.count(person.id)) continue;
-    for (const auto& meta : world.getActivityMetas(person)) {
-      if (meta.activity_index < 0 ||
-          meta.activity_index >= (int16_t)world.activity_names.size())
-        continue;
-      const std::string& aname = world.activity_names[meta.activity_index];
-      auto venues = world.getActivityVenues(meta);
-      for (size_t idx = 0; idx < venues.size(); ++idx) {
-        detail::PersonActivityRecord record;
-        record.person_id = person.id;
-        strncpy(record.activity_name, aname.c_str(), 63);
-        record.activity_name[63] = '\0';
-        record.venue_id = venues[idx].first;
-        record.subset_index = venues[idx].second;
-        record.activity_index = static_cast<int>(idx);
-        records.push_back(record);
-      }
-    }
-  }
-
-  H5::StrType aname_type(H5::PredType::C_S1, 64);
-  H5::CompType atype(sizeof(detail::PersonActivityRecord));
-  atype.insertMember("person_id",
-                     HOFFSET(detail::PersonActivityRecord, person_id),
-                     H5::PredType::NATIVE_INT);
-  atype.insertMember("activity_name",
-                     HOFFSET(detail::PersonActivityRecord, activity_name),
-                     aname_type);
-  atype.insertMember("venue_id",
-                     HOFFSET(detail::PersonActivityRecord, venue_id),
-                     H5::PredType::NATIVE_INT);
-  atype.insertMember("subset_index",
-                     HOFFSET(detail::PersonActivityRecord, subset_index),
-                     H5::PredType::NATIVE_INT);
-  atype.insertMember("activity_index",
-                     HOFFSET(detail::PersonActivityRecord, activity_index),
-                     H5::PredType::NATIVE_INT);
-
-  hsize_t adims[1] = {records.size()};
-  H5::DataSpace aspace(1, adims);
-  writeDatasetTemplate(file, "/lookups/person_activities", records, atype,
-                       config.simulation.compression_level);
-}
-
-void EventWriter::writePopulationSummary(H5::H5File& file,
-                                         const WorldState& world,
-                                         const Config& config) {
-  size_t n = world.people.size();
-  if (n == 0) return;
-
-  std::vector<std::string> summary_props = config.simulation.summary_properties;
-  if (summary_props.size() > 4) summary_props.resize(4);
-
-  struct PropInfo {
-    std::string name;
-    int index;
-    const std::vector<std::string>* registry = nullptr;
-  };
-  std::vector<PropInfo> props_metadata;
-  for (const auto& name : summary_props) {
-    int idx = world.getPersonPropertyIndex(name);
-    if (idx >= 0) {
-      PropInfo pi;
-      pi.name = name;
-      pi.index = idx;
-      auto it = world.person_property_value_registries.find(name);
-      if (it != world.person_property_value_registries.end())
-        pi.registry = &it->second;
-      props_metadata.push_back(pi);
-    }
-  }
-
-  std::vector<PopulationSummaryRecord> records(n);
-  for (size_t i = 0; i < n; ++i) {
-    const Person& person = world.people[i];
-    records[i].person_id = person.id;
-    records[i].age_group =
-        std::min(static_cast<uint8_t>(person.age / 5), uint8_t(17));
-    records[i].sex_code = static_cast<uint8_t>(person.sex);
-    records[i].schedule_type_code =
-        static_cast<uint8_t>(person.schedule_type_id % 256);
-    records[i].reserved = 0;
-    records[i].geo_unit_id = person.geo_unit_id;
-    for (size_t k = 0; k < 4; ++k) {
-      records[i].extra_codes[k] = 0;
-      if (k < props_metadata.size()) {
-        auto p_opt = world.getPersonProperty(person, props_metadata[k].name);
-        if (p_opt) {
-          if (std::holds_alternative<int32_t>(*p_opt))
-            records[i].extra_codes[k] =
-                (uint8_t)(std::get<int32_t>(*p_opt) % 256);
-          else if (std::holds_alternative<bool>(*p_opt))
-            records[i].extra_codes[k] = std::get<bool>(*p_opt) ? 1 : 0;
-        }
-      }
-    }
-  }
-
-  H5::CompType ptype(sizeof(PopulationSummaryRecord));
-  ptype.insertMember("person_id", HOFFSET(PopulationSummaryRecord, person_id),
-                     H5::PredType::NATIVE_INT);
-  ptype.insertMember("age_group", HOFFSET(PopulationSummaryRecord, age_group),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("sex_code", HOFFSET(PopulationSummaryRecord, sex_code),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("schedule_type_code",
-                     HOFFSET(PopulationSummaryRecord, schedule_type_code),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("reserved", HOFFSET(PopulationSummaryRecord, reserved),
-                     H5::PredType::NATIVE_UINT8);
-  ptype.insertMember("geo_unit_id",
-                     HOFFSET(PopulationSummaryRecord, geo_unit_id),
-                     H5::PredType::NATIVE_INT);
-  hsize_t adims[1] = {4};
-  H5::ArrayType atype(H5::PredType::NATIVE_UINT8, 1, adims);
-  ptype.insertMember("extra_codes",
-                     HOFFSET(PopulationSummaryRecord, extra_codes), atype);
-
-  hsize_t pdims[1] = {n};
-  H5::DataSpace pspace(1, pdims);
-  H5::DataSet pds =
-      createCompressedDataset(file, "/lookups/population_summary", ptype,
-                              pspace, config.simulation.compression_level);
-  pds.write(records.data(), ptype);
-
-  for (size_t k = 0; k < props_metadata.size(); ++k) {
-    H5::StrType stype(H5::PredType::C_S1, H5T_VARIABLE);
-    H5::Attribute attr = pds.createAttribute("extra_prop_" + std::to_string(k),
-                                             stype, H5::DataSpace(H5S_SCALAR));
-    attr.write(stype, props_metadata[k].name);
-  }
-}
-
-void EventWriter::writePopulationNetworks(H5::H5File& file,
-                                          const WorldState& world,
-                                          const Config& config) {
-  if (world.people.empty() || world.network_names.empty()) return;
-
-  H5::Group lookups_group;
-  if (H5Lexists(file.getId(), "/lookups", H5P_DEFAULT)) {
-    lookups_group = file.openGroup("/lookups");
-  } else {
-    lookups_group = file.createGroup("/lookups");
-  }
-
-  H5::Group networks_group;
-  if (H5Lexists(lookups_group.getId(), "population_networks", H5P_DEFAULT)) {
-    networks_group = lookups_group.openGroup("population_networks");
-  } else {
-    networks_group = lookups_group.createGroup("population_networks");
-  }
-
-  for (const auto& network_name : world.network_names) {
-    const int type_id = world.getNetworkTypeIndex(network_name);
-    if (type_id < 0) continue;
-
-    std::vector<int32_t> persons;
-    std::vector<int32_t> partners;
-    persons.reserve(world.people.size());
-    partners.reserve(world.people.size());
-
-    bool has_any = false;
-    for (const auto& person : world.people) {
-      auto partner_ids = world.getNetworkPartners(person, type_id);
-      if (partner_ids.empty()) continue;
-      has_any = true;
-      for (const auto& pid : partner_ids) {
-        persons.push_back(person.id);
-        partners.push_back(static_cast<int32_t>(pid));
-      }
-    }
-    if (!has_any) continue;
-
-    H5::Group net_group;
-    if (H5Lexists(networks_group.getId(), network_name.c_str(), H5P_DEFAULT)) {
-      net_group = networks_group.openGroup(network_name);
-    } else {
-      net_group = networks_group.createGroup(network_name);
-    }
-
-    hsize_t dims[1] = {persons.size()};
-    H5::DataSpace space(1, dims);
-    H5::DSetCreatPropList plist;
-    hsize_t chunk_dims[1] = {std::min(dims[0], hsize_t(100000))};
-    if (chunk_dims[0] == 0) chunk_dims[0] = 1;
-    plist.setChunk(1, chunk_dims);
-    plist.setDeflate(config.simulation.compression_level);
-
-    if (H5Lexists(net_group.getId(), "person_id", H5P_DEFAULT))
-      net_group.unlink("person_id");
-    if (H5Lexists(net_group.getId(), "partner_id", H5P_DEFAULT))
-      net_group.unlink("partner_id");
-
-    H5::DataSet p_ds = net_group.createDataSet(
-        "person_id", H5::PredType::NATIVE_INT32, space, plist);
-    p_ds.write(persons.data(), H5::PredType::NATIVE_INT32);
-
-    H5::DataSet q_ds = net_group.createDataSet(
-        "partner_id", H5::PredType::NATIVE_INT32, space, plist);
-    q_ds.write(partners.data(), H5::PredType::NATIVE_INT32);
-  }
 }
 
 H5::DataSet EventWriter::createCompressedDataset(H5::H5File& file,

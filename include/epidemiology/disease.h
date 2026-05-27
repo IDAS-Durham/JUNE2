@@ -8,11 +8,11 @@
 #include <variant>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/types.h"
-#include "../utils/deterministic_rng.h"
-#include "../utils/filtering.h"
+#include "core/config.h"
+#include "core/types.h"
 #include "infectiousness_curves.h"
+#include "utils/deterministic_rng.h"
+#include "utils/filtering.h"
 
 namespace june {
 
@@ -150,7 +150,7 @@ struct CompartmentalUptakeConfig {
 };
 
 // Configuration for a compartmental-deposition transmission mode.
-// Per-symptom deposition rate curves — same layout as
+// Per-symptom deposition rate curves, same layout as
 // FomiteConfig::deposition_by_symptom.
 struct CompartmentalDepositionConfig {
   int mode_index = -1;
@@ -159,7 +159,7 @@ struct CompartmentalDepositionConfig {
 };
 
 // =============================================================================
-// Unified transmission mode — replaces parallel is_fomite_mode /
+// Unified transmission mode. Replaces parallel is_fomite_mode /
 // is_compartmental_uptake_mode / is_compartmental_deposition_mode vectors.
 // =============================================================================
 
@@ -371,7 +371,7 @@ class Infection {
   }
 
   // Reconstruct an Infection from checkpoint state WITHOUT re-sampling any
-  // RNG — every behaviour-defining field is restored verbatim so a resumed
+  // RNG. Every behaviour-defining field is restored verbatim so a resumed
   // run is bit-identical.
   static std::unique_ptr<Infection> fromCheckpoint(
       const Disease* disease, double infection_time,
@@ -415,6 +415,50 @@ class Infection {
   // Tag ctor for checkpoint restore: sets only disease_, skips all sampling.
   struct RestoreTag {};
   Infection(const Disease* disease, RestoreTag) : disease_(disease) {}
+
+  // Resolve current symptom id + stage start time at `lookup_time`, using
+  // the mutable cache when `lookup_time == last_checked_time_` and otherwise
+  // scanning `trajectory_.transitions` and refreshing the cache.
+  void cacheCurrentSymptom(double lookup_time, uint16_t& symptom_id,
+                           double& stage_start_time) const;
+
+  // Append transitions to `traj` by walking `traj_def.stages` from the first
+  // stage whose symptom_tag matches `start_target` (or index 0 if empty / not
+  // found), sampling each stage's completion_time from `rng` to advance time.
+  void buildTransitionsFromStages(InfectionTrajectory& traj,
+                                  const TrajectoryDefinition& traj_def,
+                                  const std::string& start_target,
+                                  SplitMix64& rng);
+
+  // Build a trajectory directly from the trajectory whose selection_key
+  // matches `key`, skipping rate-based selection. Returns empty if no
+  // trajectory has that key.
+  std::optional<InfectionTrajectory> tryBuildForcedTrajectory(
+      const std::string& key, SplitMix64& rng);
+
+  // Step 1 of rate-based selection: gather a raw rate per trajectory and
+  // their sum. Trajectories with `probability` use that as a fixed weight;
+  // otherwise the rate is looked up from outcome_rates via selection_key.
+  // The returned rates are renormalised to sum to 1 if total > 1.0001.
+  std::pair<std::vector<double>, double> gatherTrajectoryRates(
+      const Person& person, const WorldState* world,
+      const InfectionContext& ctx) const;
+
+  // Step 2 of rate-based selection: shift probability mass from severe
+  // trajectories to the lowest-severity ("safe") trajectory in proportion
+  // to the person's symptom-reducing vaccine efficacy at `infection_time`.
+  // No-op if the person is unvaccinated or efficacy is zero. Preserves the
+  // sum (total_rate) since mass is redistributed.
+  void applyVaccineEfficacyShift(std::vector<double>& rates,
+                                 const Person& person, double infection_time,
+                                 double total_rate) const;
+
+  // Step 3 of rate-based selection: draw a uniform [0,1) sample and return
+  // the index of the first trajectory whose cumulative mass crosses it.
+  // Returns 0 if `total_rate <= 0` or if no cumulative bucket is hit (due
+  // to normalisation / precision drift).
+  static int sampleTrajectoryIndex(const std::vector<double>& rates,
+                                   double total_rate, SplitMix64& rng);
 
   const Disease* disease_;
   double infection_time_;

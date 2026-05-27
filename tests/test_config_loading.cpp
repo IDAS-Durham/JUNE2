@@ -1,4 +1,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <filesystem>
+
 #include "core/world_state.h"
 #include "doctest.h"
 #include "epidemiology/vaccine.h"

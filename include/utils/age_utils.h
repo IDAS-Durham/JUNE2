@@ -3,12 +3,12 @@
 #include <string>
 #include <vector>
 
-#include "../core/config.h"
+#include "core/config.h"
 
 namespace june {
 
 // =============================================================================
-// Canonical 5-year age bands — single source of truth used by both
+// Canonical 5-year age bands: single source of truth used by both
 // getAgeBracketString() (runtime lookups) and normalisedAgeBrackets()
 // (CSV loading).  Add or change bands here and both sites update automatically.
 // =============================================================================

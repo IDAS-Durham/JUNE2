@@ -9,8 +9,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../core/types.h"
-#include "../core/world_state.h"
+#include "core/types.h"
+#include "core/world_state.h"
 
 namespace june {
 
@@ -63,7 +63,7 @@ class Domain {
     // rank using the same code path as locals, ensuring bit-identical FP).
     // Sized at runtime to disease->numModes() at the visitor-build site
     // (DomainCommunicator::buildOutgoing). Wire format reads/writes the
-    // active count's worth of doubles — see packVisitor/unpackVisitor.
+    // active count's worth of doubles. See packVisitor/unpackVisitor.
     std::vector<double> integrated_infectiousness;
 
     // Return data: infection status changes

@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "../../core/types.h"
+#include "core/types.h"
 
 namespace june {
 
@@ -91,7 +91,7 @@ struct RelationshipEvent {
 
 struct CoordinatedEncounterEvent {
   PersonId person_a;  // Always the host of the encounter.
-  PersonId person_b;  // A guest — the host fans one pair-row out per guest.
+  PersonId person_b;  // A guest. The host fans one pair-row out per guest.
   double time;
   uint8_t encounter_type_id;
   int slot;
