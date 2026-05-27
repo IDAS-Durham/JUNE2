@@ -1148,6 +1148,46 @@ void InteractionManager::buildCumulativeWeightsPerBin(int num_bins_needed,
   }
 }
 
+void InteractionManager::binMemberClassification(
+    const InteractionMember& member, Person* person,
+    const VisitorInfo* visitor, int bin_index, int num_modes,
+    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& n_sub_per_mode, double current_time,
+    double delta_hours) {
+  PersonId pid = member.id;
+  if (visitor) {
+    if (visitor->is_infectious) {
+      accumulateVisitorInfectiousnessAndFomite(visitor, pid, bin_index,
+                                               num_modes, num_fomite_modes,
+                                               fomite_modes, n_sub_per_mode,
+                                               delta_hours);
+    } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
+      double susceptibility = 1.0 - visitor->immunity_level;
+      bins_buffer_[bin_index].susceptible.push_back(
+          {pid, susceptibility, visitor, member.encounter_type_id});
+    }
+    return;
+  }
+  if (!person || person->is_dead) return;
+
+  if (person->infection && person->infection->isInfectious(current_time)) {
+    accumulateLocalInfectiousness(person, pid, bin_index, num_modes,
+                                  current_time, delta_hours);
+  } else if (!person->infection) {
+    double susceptibility =
+        person->getSusceptibility(current_time, disease_->getName());
+    if (susceptibility > 0.0) {
+      bins_buffer_[bin_index].susceptible.push_back(
+          {pid, susceptibility, /*visitor=*/nullptr, member.encounter_type_id});
+    }
+  }
+  if (person->infection && num_fomite_modes > 0) {
+    accumulateLocalFomiteDeposition(person, bin_index, num_fomite_modes,
+                                    fomite_modes, n_sub_per_mode, current_time,
+                                    delta_hours);
+  }
+}
+
 int InteractionManager::resolveMemberBinIndex(
     const InteractionMember& member, const Person* person, Venue* venue,
     const ContactMatrix* matrix, int num_bins_needed,
@@ -1212,42 +1252,14 @@ void InteractionManager::binOneMember(
     bins_buffer_[bin_index].total_size++;
   }
 
-  double susceptibility = 0.0;
   const VisitorInfo* visitor = nullptr;
-
   if (!person && visitor_data != nullptr) {
-    auto visitor_it = visitor_data->find(pid);
-    if (visitor_it != visitor_data->end()) {
-      visitor = &visitor_it->second;
-
-      if (visitor->is_infectious) {
-        accumulateVisitorInfectiousnessAndFomite(
-            visitor, pid, bin_index, num_modes, num_fomite_modes, fomite_modes,
-            n_sub_per_mode, delta_hours);
-      } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
-        susceptibility = 1.0 - visitor->immunity_level;
-        bins_buffer_[bin_index].susceptible.push_back(
-            {pid, susceptibility, visitor, member.encounter_type_id});
-      }
-    }
-  } else if (person && !person->is_dead) {
-    if (person->infection && person->infection->isInfectious(current_time)) {
-      accumulateLocalInfectiousness(person, pid, bin_index, num_modes,
-                                    current_time, delta_hours);
-    } else if (!person->infection) {
-      susceptibility =
-          person->getSusceptibility(current_time, disease_->getName());
-      if (susceptibility > 0.0) {
-        bins_buffer_[bin_index].susceptible.push_back(
-            {pid, susceptibility, visitor, member.encounter_type_id});
-      }
-    }
-    if (person->infection && num_fomite_modes > 0) {
-      accumulateLocalFomiteDeposition(person, bin_index, num_fomite_modes,
-                                      fomite_modes, n_sub_per_mode,
-                                      current_time, delta_hours);
-    }
+    auto it = visitor_data->find(pid);
+    if (it != visitor_data->end()) visitor = &it->second;
   }
+  binMemberClassification(member, person, visitor, bin_index, num_modes,
+                          num_fomite_modes, fomite_modes, n_sub_per_mode,
+                          current_time, delta_hours);
 }
 
 void InteractionManager::accumulateVisitorInfectiousnessAndFomite(

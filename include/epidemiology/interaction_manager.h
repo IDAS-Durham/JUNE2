@@ -672,6 +672,16 @@ class InteractionManager {
       std::unordered_set<PersonId>* active_infections,
       std::vector<PendingInfection>* pending_infections);
 
+  // STEP 1 classification dispatch for one (member, person, visitor) tuple
+  // already pinned to bin_index. Pushes susceptible into bins_buffer_[bin_index]
+  // or routes to accumulate{Visitor,Local}* helpers when infectious.
+  void binMemberClassification(
+      const InteractionMember& member, Person* person,
+      const VisitorInfo* visitor, int bin_index, int num_modes,
+      int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& n_sub_per_mode, double current_time,
+      double delta_hours);
+
   // Resolve the matrix bin for a member: route through computeBinIndexForMatrix,
   // bump stats_.bin_lookups when matrix is non-null, and clamp to
   // [0, num_bins_needed). Emits a (rate-limited) DEBUG_TRANSMISSION line if
