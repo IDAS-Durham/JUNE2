@@ -1446,6 +1446,52 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
+std::vector<std::vector<CarriageMember>>
+InteractionManager::buildPartialPresenceCarriages(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, const ContactMatrix* matrix, int num_bins_needed,
+    uint16_t num_bins,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
+  std::vector<std::vector<CarriageMember>> carriages(num_bins);
+
+  for (const auto& m : members) {
+    const uint16_t carriage =
+        runtime_bin_allocator_->getBinIndex(actual_venue_id, m.id);
+    if (carriage == RuntimeBinAllocator::kNoBin || carriage >= num_bins)
+      continue;
+
+    Person* person = nullptr;
+    const VisitorInfo* visitor = nullptr;
+    if (!resolvePersonAndVisitor(m.id, m.array_index, visitor_data, person,
+                                 visitor)) {
+      continue;
+    }
+
+    // Window from the allocator's global broadcast — identical on every
+    // rank for the same (venue, person) pair.
+    const EffectiveWindow win =
+        runtime_bin_allocator_->getPresenceWindow(actual_venue_id, m.id);
+
+    int matrix_bin =
+        computeBinIndexForMatrix(person, venue, m.subset_index,
+                                 m.encounter_type_id, matrix, num_bins_needed);
+    if (matrix_bin < 0 || matrix_bin >= num_bins_needed) matrix_bin = 0;
+
+    carriages[carriage].push_back(CarriageMember{
+        m.id, m.array_index, m.subset_index, m.encounter_type_id, person,
+        visitor, win.eff_board, win.eff_alight, matrix_bin});
+  }
+
+  // Deterministic per-carriage order (FP-stable accumulation across ranks).
+  for (auto& car : carriages) {
+    std::sort(car.begin(), car.end(),
+              [](const CarriageMember& a, const CarriageMember& b) {
+                return a.pid < b.pid;
+              });
+  }
+  return carriages;
+}
+
 void InteractionManager::validatePartialPresencePreconditions(
     const Venue* venue, VenueId actual_venue_id,
     uint8_t encounter_type_id) const {
@@ -1506,51 +1552,9 @@ InteractionManager::computePartialPresenceLambda(
   // Step 1: resolve each member's (carriage, matrix_bin, eff_board, eff_alight)
   // and group by carriage.
   // ---------------------------------------------------------------------------
-  std::vector<std::vector<CarriageMember>> carriages(num_bins);
-
-  for (const auto& m : members) {
-    const uint16_t carriage =
-        runtime_bin_allocator_->getBinIndex(actual_venue_id, m.id);
-    if (carriage == RuntimeBinAllocator::kNoBin || carriage >= num_bins)
-      continue;
-
-    Person* person = nullptr;
-    if (m.array_index < world_.people.size()) {
-      person = &world_.people[m.array_index];
-      if (person->id != m.id) person = world_.getPerson(m.id);
-    } else {
-      person = world_.getPerson(m.id);
-    }
-
-    const VisitorInfo* visitor = nullptr;
-    if (!person && visitor_data) {
-      auto it = visitor_data->find(m.id);
-      if (it != visitor_data->end()) visitor = &it->second;
-    }
-    if (!person && !visitor) continue;
-
-    // Window from the allocator's global broadcast — identical on every
-    // rank for the same (venue, person) pair.
-    const EffectiveWindow win =
-        runtime_bin_allocator_->getPresenceWindow(actual_venue_id, m.id);
-
-    int matrix_bin =
-        computeBinIndexForMatrix(person, venue, m.subset_index,
-                                 m.encounter_type_id, matrix, num_bins_needed);
-    if (matrix_bin < 0 || matrix_bin >= num_bins_needed) matrix_bin = 0;
-
-    carriages[carriage].push_back(CarriageMember{
-        m.id, m.array_index, m.subset_index, m.encounter_type_id, person,
-        visitor, win.eff_board, win.eff_alight, matrix_bin});
-  }
-
-  // Deterministic per-carriage order (FP-stable accumulation across ranks).
-  for (auto& car : carriages) {
-    std::sort(car.begin(), car.end(),
-              [](const CarriageMember& a, const CarriageMember& b) {
-                return a.pid < b.pid;
-              });
-  }
+  std::vector<std::vector<CarriageMember>> carriages =
+      buildPartialPresenceCarriages(members, venue, actual_venue_id, matrix,
+                                    num_bins_needed, num_bins, visitor_data);
 
   // ---------------------------------------------------------------------------
   // Step 2: walk (carriage × sub-interval), accumulate per-susceptible λ and
