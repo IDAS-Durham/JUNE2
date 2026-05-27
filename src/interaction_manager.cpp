@@ -349,6 +349,35 @@ bool InteractionManager::venueGroupHasTransmissionSource(
   return false;
 }
 
+size_t InteractionManager::collectAndSortGroupMembers(size_t group_start) {
+  const auto& first = active_locations_buffer_[group_start];
+  group_members_buffer_.clear();
+  size_t i = group_start;
+  while (i < active_locations_buffer_.size() &&
+         active_locations_buffer_[i].venue_id == first.venue_id &&
+         (first.venue_id >= 0 ||
+          active_locations_buffer_[i].encounter_type_id ==
+              first.encounter_type_id)) {
+    group_members_buffer_.push_back(
+        {active_locations_buffer_[i].person_id,
+         active_locations_buffer_[i].person_array_index,
+         active_locations_buffer_[i].subset_index,
+         active_locations_buffer_[i].encounter_type_id});
+    i++;
+  }
+
+  // Sort members by person_id BEFORE binning to ensure deterministic
+  // floating-point accumulation order for total_infectiousness_by_mode.
+  // In MPI mode, locals and visitors arrive in different order than
+  // single-rank mode — without this sort, the sum of infectiousness
+  // values can differ in the last bits due to FP non-associativity.
+  std::sort(group_members_buffer_.begin(), group_members_buffer_.end(),
+            [](const InteractionMember& a, const InteractionMember& b) {
+              return a.id < b.id;
+            });
+  return i;
+}
+
 int InteractionManager::processTransmissions(
     const std::vector<PersonLocation>& locations, double current_time,
     double delta_hours, std::unordered_set<PersonId>* active_infections,
@@ -376,32 +405,9 @@ int InteractionManager::processTransmissions(
     size_t group_start = i;
     const auto& first = active_locations_buffer_[group_start];
 
-    // Find end of this group
-    group_members_buffer_.clear();
-    while (
-        i < active_locations_buffer_.size() &&
-        active_locations_buffer_[i].venue_id == first.venue_id &&
-        (first.venue_id >= 0 || active_locations_buffer_[i].encounter_type_id ==
-                                    first.encounter_type_id)) {
-      group_members_buffer_.push_back(
-          {active_locations_buffer_[i].person_id,
-           active_locations_buffer_[i].person_array_index,
-           active_locations_buffer_[i].subset_index,
-           active_locations_buffer_[i].encounter_type_id});
-      i++;
-    }
+    i = collectAndSortGroupMembers(group_start);
 
     if (group_members_buffer_.size() > 0) {
-      // Sort members by person_id BEFORE binning to ensure deterministic
-      // floating-point accumulation order for total_infectiousness_by_mode.
-      // In MPI mode, locals and visitors arrive in different order than
-      // single-rank mode — without this sort, the sum of infectiousness
-      // values can differ in the last bits due to FP non-associativity.
-      std::sort(group_members_buffer_.begin(), group_members_buffer_.end(),
-                [](const InteractionMember& a, const InteractionMember& b) {
-                  return a.id < b.id;
-                });
-
       Venue* venue = world_.getVenue(first.venue_id);
 
       // Skip if person has no venue AND no encounter type

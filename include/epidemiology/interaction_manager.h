@@ -264,6 +264,14 @@ class InteractionManager {
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
       const CompartmentalModelManager* comp_model) const;
 
+  // Starting at group_start (an index into active_locations_buffer_), advance
+  // past every contiguous entry that shares the same venue_id (and, for virtual
+  // venues, encounter_type_id) and copy each into group_members_buffer_. The
+  // buffer is cleared first, then sorted by person_id at the end so that
+  // FP accumulation in STEP 1 is deterministic across rank counts.
+  // Returns the index one past the end of the group.
+  size_t collectAndSortGroupMembers(size_t group_start);
+
   // Compute the bin index for a person under a given contact matrix.
   // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
   // can bin people under the PARENT matrix (which may have a different bin
