@@ -583,6 +583,19 @@ class InteractionManager {
                                InfectionSource& infection_source_out,
                                uint8_t& transmission_mode_index_out);
 
+  // STEP 3b body for one susceptible: derive its deterministic RNG, Bernoulli-
+  // draw against total_risk * susc.susceptibility, sample (mode, infector) +
+  // symptom on success, and apply the infection. Returns true iff a new
+  // infection was created.
+  bool processOneVenueSusceptible(
+      const SusceptibleMember& susc_mem, double total_risk, int susc_bin,
+      bool have_source_dist, uint64_t time_bits, double current_time,
+      VenueId actual_venue_id, Venue* venue, uint8_t venue_type_id,
+      const ParentAggregate* parent_agg,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      std::unordered_set<PersonId>* active_infections,
+      std::vector<PendingInfection>* pending_infections);
+
   // STEP 3b apply step for a single susceptible whose Bernoulli draw was
   // positive. Queues a PendingInfection for cross-rank visitors or creates
   // an Infection in place + logs it. Mirrors applyPartialPresenceInfection

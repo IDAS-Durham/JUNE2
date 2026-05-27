@@ -524,6 +524,54 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+bool InteractionManager::processOneVenueSusceptible(
+    const SusceptibleMember& susc_mem, double total_risk, int susc_bin,
+    bool have_source_dist, uint64_t time_bits, double current_time,
+    VenueId actual_venue_id, Venue* venue, uint8_t venue_type_id,
+    const ParentAggregate* parent_agg,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    std::unordered_set<PersonId>* active_infections,
+    std::vector<PendingInfection>* pending_infections) {
+  PersonId susceptible_id = susc_mem.id;
+  double prob = 1.0 - std::exp(-total_risk * susc_mem.susceptibility);
+  if (!(prob > 1e-12)) return false;
+
+  // Per-susceptible deterministic RNG for MPI reproducibility.
+  // For virtual venues (id <= -1000), extract the host's person_id
+  // so the RNG seed is deterministic regardless of which rank hosts
+  // the encounter.
+  uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
+  if (actual_venue_id <= -1000) {
+    // Virtual venue IDs encode the host's person_id: id = -1000 - pid.
+    venue_key =
+        static_cast<uint64_t>(-static_cast<int64_t>(actual_venue_id) - 1000);
+  }
+  SplitMix64 susc_rng(
+      mix_seed(base_seed_, susceptible_id, venue_key, time_bits));
+
+  double rng_roll = uniform_dist_(susc_rng);
+  if (!(rng_roll < prob)) return false;
+
+  int src_idx = have_source_dist
+                    ? sampleFromCumulative(source_cumulative_buffer_, susc_rng)
+                    : 0;
+  if (src_idx < 0) src_idx = 0;
+
+  InfectionSource infection_source = InfectionSource::Person;
+  uint8_t transmission_mode_index = 0;
+  PersonId infector_id = sampleVenueInfector(
+      src_idx, susc_bin, actual_venue_id, venue, susceptible_id, parent_agg,
+      susc_rng, infection_source, transmission_mode_index);
+  uint16_t infector_symptom_id =
+      resolveInfectorSymptomId(infector_id, current_time, visitor_data);
+
+  applyVenueInfection(susc_mem, infector_id, infection_source,
+                      transmission_mode_index, infector_symptom_id,
+                      current_time, venue_type_id, actual_venue_id, venue_key,
+                      visitor_data, active_infections, pending_infections);
+  return true;
+}
+
 PersonId InteractionManager::sampleVenueInfector(
     int src_idx, int susc_bin, VenueId actual_venue_id, const Venue* venue,
     PersonId susceptible_id, const ParentAggregate* parent_agg,
@@ -1422,48 +1470,11 @@ int InteractionManager::processVenueTransmissions(
     // 3b. Process each susceptible in this bin
     uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);
     for (const auto& susc_mem : susc_group.susceptible) {
-      PersonId susceptible_id = susc_mem.id;
-      double susceptibility = susc_mem.susceptibility;
-      double prob = 1.0 - std::exp(-total_risk * susceptibility);
-
-      // Per-susceptible deterministic RNG for MPI reproducibility.
-      // For virtual venues (id <= -1000), extract the host's person_id
-      // so the RNG seed is deterministic regardless of which rank hosts
-      // the encounter.
-      uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
-      if (actual_venue_id <= -1000) {
-        // Virtual venue IDs encode the host's person_id: id = -1000 - pid.
-        // Extract the person_id for deterministic RNG seeding.
-        venue_key = static_cast<uint64_t>(
-            -static_cast<int64_t>(actual_venue_id) - 1000);
-      }
-      SplitMix64 susc_rng(
-          mix_seed(base_seed_, susceptible_id, venue_key, time_bits));
-
-      double rng_roll = uniform_dist_(susc_rng);
-      bool got_infected = prob > 1e-12 && rng_roll < prob;
-
-      if (got_infected) {
-        int src_idx =
-            have_source_dist
-                ? sampleFromCumulative(source_cumulative_buffer_, susc_rng)
-                : 0;
-        if (src_idx < 0) src_idx = 0;
-
-        InfectionSource infection_source = InfectionSource::Person;
-        uint8_t transmission_mode_index = 0;
-        PersonId infector_id = sampleVenueInfector(
-            src_idx, susc_bin, actual_venue_id, venue, susceptible_id,
-            parent_agg, susc_rng, infection_source, transmission_mode_index);
-        uint16_t infector_symptom_id =
-            resolveInfectorSymptomId(infector_id, current_time, visitor_data);
-
-        applyVenueInfection(susc_mem, infector_id, infection_source,
-                            transmission_mode_index, infector_symptom_id,
-                            current_time, venue_type_id, actual_venue_id,
-                            venue_key, visitor_data, active_infections,
-                            pending_infections);
-
+      if (processOneVenueSusceptible(susc_mem, total_risk, susc_bin,
+                                     have_source_dist, time_bits, current_time,
+                                     actual_venue_id, venue, venue_type_id,
+                                     parent_agg, visitor_data,
+                                     active_infections, pending_infections)) {
         new_infections++;
       }
     }
