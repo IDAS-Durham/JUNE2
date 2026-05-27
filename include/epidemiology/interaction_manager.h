@@ -138,6 +138,42 @@ struct ParentAggregate {
 };
 
 // =============================================================================
+// CarriageMember — per-member record in a runtime carriage of a
+// partial-presence venue. Built by buildPartialPresenceCarriages, consumed
+// by the sub-interval accumulator inside computePartialPresenceLambda.
+// =============================================================================
+struct CarriageMember {
+  PersonId pid;
+  size_t array_index;
+  SubsetIndex subset_index;
+  uint8_t enc_type_id;
+  Person* person;  // null for visitors
+  const VisitorInfo* visitor;
+  float eff_board;
+  float eff_alight;
+  int matrix_bin;
+};
+
+// =============================================================================
+// PartialPresenceSubBin — per-(matrix-bin) scratch accumulator reused across
+// sub-intervals in computePartialPresenceLambda. reset() clears storage to
+// start a new sub-interval.
+// =============================================================================
+struct PartialPresenceSubBin {
+  std::vector<double> total_inf_by_mode;  // size num_modes
+  std::vector<PersonId> infectious_ids;
+  // Per (mode) → flat list aligned with infectious_ids for sampling.
+  std::vector<std::vector<double>> inf_per_person_by_mode;  // [mode][i]
+  int total_size = 0;
+  void reset(int num_modes_) {
+    total_inf_by_mode.assign(num_modes_, 0.0);
+    infectious_ids.clear();
+    inf_per_person_by_mode.assign(num_modes_, {});
+    total_size = 0;
+  }
+};
+
+// =============================================================================
 // InteractionManager - Handles disease transmission through interactions
 // =============================================================================
 
@@ -298,6 +334,17 @@ class InteractionManager {
   void validatePartialPresencePreconditions(const Venue* venue,
                                             VenueId actual_venue_id,
                                             uint8_t encounter_type_id) const;
+
+  // Step 1 of computePartialPresenceLambda: resolve each member's carriage
+  // (via runtime_bin_allocator_), matrix_bin, and effective presence window,
+  // and group them into one carriage bucket each. Each bucket is sorted by
+  // person_id at the end so per-carriage FP accumulation matches across
+  // ranks. Returns one bucket per carriage; some may be empty.
+  std::vector<std::vector<CarriageMember>> buildPartialPresenceCarriages(
+      const std::vector<InteractionMember>& members, Venue* venue,
+      VenueId actual_venue_id, const ContactMatrix* matrix,
+      int num_bins_needed, uint16_t num_bins,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
   // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
   // compute parent_bin under parent_matrix, bump headcount in agg/csize,

@@ -18,41 +18,6 @@
 
 namespace june {
 
-namespace {
-
-// Per-member record bound to a runtime carriage. Built by
-// buildPartialPresenceCarriages and consumed by the sub-interval accumulator.
-struct CarriageMember {
-  PersonId pid;
-  size_t array_index;
-  SubsetIndex subset_index;
-  uint8_t enc_type_id;
-  Person* person;  // null for visitors
-  const VisitorInfo* visitor;
-  float eff_board;
-  float eff_alight;
-  int matrix_bin;
-};
-
-// Per-(matrix-bin) scratch accumulator reused across sub-intervals in
-// computePartialPresenceLambda. reset() clears storage to start a new
-// sub-interval.
-struct PartialPresenceSubBin {
-  std::vector<double> total_inf_by_mode;  // size num_modes
-  std::vector<PersonId> infectious_ids;
-  // Per (mode) → flat list aligned with infectious_ids for sampling.
-  std::vector<std::vector<double>> inf_per_person_by_mode;  // [mode][i]
-  int total_size = 0;
-  void reset(int num_modes_) {
-    total_inf_by_mode.assign(num_modes_, 0.0);
-    infectious_ids.clear();
-    inf_per_person_by_mode.assign(num_modes_, {});
-    total_size = 0;
-  }
-};
-
-}  // namespace
-
 InteractionManager::InteractionManager(
     WorldState& world, const ContactMatrixConfig& contact_matrices,
     const SimulationConfig& simulation_config,
