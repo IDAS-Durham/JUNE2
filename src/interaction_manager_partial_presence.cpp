@@ -290,18 +290,10 @@ InteractionManager::computePartialPresenceLambda(
   const uint16_t num_bins = runtime_bin_allocator_->getNumBins(actual_venue_id);
   if (num_bins == 0) return result;
 
-  // ---------------------------------------------------------------------------
-  // Step 1: resolve each member's (carriage, matrix_bin, eff_board, eff_alight)
-  // and group by carriage.
-  // ---------------------------------------------------------------------------
   std::vector<std::vector<CarriageMember>> carriages =
       buildPartialPresenceCarriages(members, venue, actual_venue_id, matrix,
                                     num_bins_needed, num_bins, visitor_data);
 
-  // ---------------------------------------------------------------------------
-  // Step 2: walk (carriage × sub-interval), accumulate per-susceptible λ and
-  // per-source attribution weights.
-  // ---------------------------------------------------------------------------
   // Per-bin scratch reused across sub-intervals (cleared per sub-interval).
   std::vector<PartialPresenceSubBin> sub_bins(num_bins_needed);
 
@@ -492,10 +484,8 @@ int InteractionManager::processPartialPresenceVenue(
 
   const uint8_t venue_type_id = venue->type_id;
 
-  // ---------------------------------------------------------------------------
-  // Step 3: per-susceptible Bernoulli draw + infector sampling.
-  // ---------------------------------------------------------------------------
-  // Iterate susceptibles in person_id order for deterministic per-call work.
+  // Per-susceptible Bernoulli draws (person_id-ordered for deterministic
+  // per-call work).
   std::vector<PersonId> ordered_susc = orderSusceptibles(susc_lambda);
 
   int new_infections = 0;
