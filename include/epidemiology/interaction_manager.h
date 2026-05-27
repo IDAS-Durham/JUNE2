@@ -248,6 +248,13 @@ class InteractionManager {
   void filterAndSortActiveLocations(
       const std::vector<PersonLocation>& locations);
 
+  // Count local (non-visitor) members of the current venue group whose
+  // encounter_type_id names a coordinated encounter, and log via event_logger_
+  // if any. group_start/group_end index into active_locations_buffer_.
+  void logCoordinatedEncounterParticipants(
+      size_t group_start, size_t group_end,
+      const std::unordered_set<PersonId>* visitor_ids);
+
   // Compute the bin index for a person under a given contact matrix.
   // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
   // can bin people under the PARENT matrix (which may have a different bin

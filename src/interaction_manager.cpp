@@ -301,6 +301,25 @@ void InteractionManager::filterAndSortActiveLocations(
             });
 }
 
+void InteractionManager::logCoordinatedEncounterParticipants(
+    size_t group_start, size_t group_end,
+    const std::unordered_set<PersonId>* visitor_ids) {
+  if (!event_logger_) return;
+  int encounter_participants = 0;
+  for (size_t idx = group_start; idx < group_end; ++idx) {
+    PersonId pid = active_locations_buffer_[idx].person_id;
+    bool is_visitor = (visitor_ids && visitor_ids->count(pid) > 0);
+    if (!is_visitor && active_locations_buffer_[idx].encounter_type_id <
+                           world_.encounter_type_names.size()) {
+      encounter_participants++;
+    }
+  }
+  if (encounter_participants > 0) {
+    event_logger_->logEncounterStats(current_day_type_idx_, true,
+                                     encounter_participants);
+  }
+}
+
 int InteractionManager::processTransmissions(
     const std::vector<PersonLocation>& locations, double current_time,
     double delta_hours, std::unordered_set<PersonId>* active_infections,
@@ -361,22 +380,7 @@ int InteractionManager::processTransmissions(
         continue;
       }
 
-      // --- Logging Coordinated Encounters ---
-      if (event_logger_) {
-        int encounter_participants = 0;
-        for (size_t idx = group_start; idx < i; ++idx) {
-          PersonId pid = active_locations_buffer_[idx].person_id;
-          bool is_visitor = (visitor_ids && visitor_ids->count(pid) > 0);
-          if (!is_visitor && active_locations_buffer_[idx].encounter_type_id <
-                                 world_.encounter_type_names.size()) {
-            encounter_participants++;
-          }
-        }
-        if (encounter_participants > 0) {
-          event_logger_->logEncounterStats(current_day_type_idx_, true,
-                                           encounter_participants);
-        }
-      }
+      logCoordinatedEncounterParticipants(group_start, i, visitor_ids);
 
       // Fast pre-check: skip venue entirely if no transmission is possible.
       // Fomite check scans mode deques; infectious check is O(N) direct array
