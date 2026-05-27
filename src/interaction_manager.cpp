@@ -672,53 +672,15 @@ int InteractionManager::processVenueTransmissions(
       person = world_.getPerson(pid);
     }
 
-    int bin_index = -1;
+    if (matrix) stats_.bin_lookups++;
+    int bin_index = computeBinIndexForMatrix(person, venue, member.subset_index,
+                                             encounter_type_id, matrix,
+                                             num_bins_needed);
 
-    // --- SUBSET BINNING ---
-    if (matrix) {
-      stats_.bin_lookups++;
-      // 1. STAGE 1a: Explicit Encounter Subset Override (High Priority)
-      if (encounter_type_id != 255) {
-        auto it = encounter_subset_overrides_.find(encounter_type_id);
-        if (it != encounter_subset_overrides_.end()) {
-          bin_index = matrix->findBinIndex(it->second);
-        }
-      }
-
-      // 2. STAGE 2: Location-Based Subset Index (Inheritance from host)
-      if ((bin_index < 0) && venue && member.subset_index >= 0) {
-        auto subsets = world_.getSubsets(*venue);
-        if (member.subset_index < (int)subsets.size()) {
-          const auto& subset = subsets[member.subset_index];
-          // Use pre-resolved bin_by_subset_type instead of string lookup
-          if (subset.subset_type_id < matrix->bin_by_subset_type.size()) {
-            bin_index = matrix->bin_by_subset_type[subset.subset_type_id];
-          }
-        }
-      }
-
-      // 3. STAGE 3: Property-Based Binning Fallback (Age/Sex)
-      if (bin_index < 0) {
-        if (person) {
-          // Try sex-based matching using pre-resolved bins
-          int sex_bin = (person->sex == Sex::MALE)     ? matrix->male_bin
-                        : (person->sex == Sex::FEMALE) ? matrix->female_bin
-                                                       : -1;
-          if (sex_bin >= 0) {
-            bin_index = sex_bin;
-          } else {
-            // Use pre-computed age-to-bin lookup table (no string allocation)
-            // Clamp ages >= 100 to 99 so they map to the highest age band
-            int age_int = std::min(static_cast<int>(person->age), 99);
-            if (age_int >= 0) {
-              bin_index = matrix->age_to_bin[age_int];
-            }
-          }
-        }
-      }
-    }
-
-    // Safety check for bin_index - if still not found, default to 0
+    // Safety check for bin_index - if still not found, default to 0.
+    // computeBinIndexForMatrix already clamps internally; the DEBUG-only
+    // diagnostic below catches the rare case where bin_index came back outside
+    // [0, num_bins_needed) and we replace it with 0.
     if (bin_index < 0 || bin_index >= num_bins_needed) {
 #ifdef DEBUG_TRANSMISSION
       static int bin_fallback_count = 0;
