@@ -277,16 +277,8 @@ void InteractionManager::buildParentAggregates(
   }
 }
 
-int InteractionManager::processTransmissions(
-    const std::vector<PersonLocation>& locations, double current_time,
-    double delta_hours, std::unordered_set<PersonId>* active_infections,
-    const std::unordered_set<PersonId>* visitor_ids,
-    std::vector<PendingInfection>* pending_infections,
-    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
-    const CompartmentalModelManager* comp_model) {
-  int total_new_infections = 0;
-
-  // 1. Filter out unallocated people into the active buffer
+void InteractionManager::filterAndSortActiveLocations(
+    const std::vector<PersonLocation>& locations) {
   active_locations_buffer_.clear();
   active_locations_buffer_.reserve(locations.size());
   for (const auto& loc : locations) {
@@ -295,9 +287,8 @@ int InteractionManager::processTransmissions(
     }
   }
 
-  if (active_locations_buffer_.empty()) return 0;
+  if (active_locations_buffer_.empty()) return;
 
-  // 2. Sort by interaction site: venue_id or encounter_type_id
   stats_.grouping_ops++;
   std::sort(active_locations_buffer_.begin(), active_locations_buffer_.end(),
             [](const PersonLocation& a, const PersonLocation& b) {
@@ -308,6 +299,19 @@ int InteractionManager::processTransmissions(
                 return a.encounter_type_id < b.encounter_type_id;
               return false;
             });
+}
+
+int InteractionManager::processTransmissions(
+    const std::vector<PersonLocation>& locations, double current_time,
+    double delta_hours, std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    const CompartmentalModelManager* comp_model) {
+  int total_new_infections = 0;
+
+  filterAndSortActiveLocations(locations);
+  if (active_locations_buffer_.empty()) return 0;
 
   // 2b. Build parent-venue aggregates (sibling-mixing). Walks the same
   // venue groups but under each PARENT's contact matrix. All child venues

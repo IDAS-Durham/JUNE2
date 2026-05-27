@@ -242,6 +242,12 @@ class InteractionManager {
       double current_time, double delta_hours,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
 
+  // Populate active_locations_buffer_ with non-unallocated entries from
+  // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
+  // Bumps stats_.grouping_ops.
+  void filterAndSortActiveLocations(
+      const std::vector<PersonLocation>& locations);
+
   // Compute the bin index for a person under a given contact matrix.
   // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
   // can bin people under the PARENT matrix (which may have a different bin
