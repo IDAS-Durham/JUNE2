@@ -583,6 +583,27 @@ class InteractionManager {
                                InfectionSource& infection_source_out,
                                uint8_t& transmission_mode_index_out);
 
+  // STEP 3 per-susceptible-bin orchestrator: build the four kinds of source
+  // (direct contact, sibling mixing, fomite, comp uptake), apply regional-risk
+  // multiplier, short-circuit if total_risk == 0, build the cumulative weights
+  // once, and iterate susceptibles via processOneVenueSusceptible. Returns the
+  // number of new infections produced.
+  int processOneSuscBin(
+      int susc_bin, int num_bins_needed, int num_modes, int num_fomite_modes,
+      bool is_virtual_encounter, uint8_t encounter_type_id,
+      uint8_t venue_type_id, const ContactMatrix* matrix, Venue* venue,
+      VenueId actual_venue_id, const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& comp_uptake_modes,
+      const std::vector<double>& lambda_fomite_by_mode,
+      const TransmissionParams& trans_params,
+      const ParentAggregate* parent_agg,
+      const ContactMatrix* parent_flat_matrix,
+      const CompartmentalModelManager* comp_model, double current_time,
+      double delta_hours,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      std::unordered_set<PersonId>* active_infections,
+      std::vector<PendingInfection>* pending_infections);
+
   // STEP 3b body for one susceptible: derive its deterministic RNG, Bernoulli-
   // draw against total_risk * susc.susceptibility, sample (mode, infector) +
   // symptom on success, and apply the infection. Returns true iff a new

@@ -524,6 +524,68 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+int InteractionManager::processOneSuscBin(
+    int susc_bin, int num_bins_needed, int num_modes, int num_fomite_modes,
+    bool is_virtual_encounter, uint8_t encounter_type_id, uint8_t venue_type_id,
+    const ContactMatrix* matrix, Venue* venue, VenueId actual_venue_id,
+    const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& comp_uptake_modes,
+    const std::vector<double>& lambda_fomite_by_mode,
+    const TransmissionParams& trans_params, const ParentAggregate* parent_agg,
+    const ContactMatrix* parent_flat_matrix,
+    const CompartmentalModelManager* comp_model, double current_time,
+    double delta_hours,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    std::unordered_set<PersonId>* active_infections,
+    std::vector<PendingInfection>* pending_infections) {
+  const auto& susc_group = bins_buffer_[susc_bin];
+  if (susc_group.susceptible.empty()) return 0;
+
+  // 3a. Pre-calculate total Force of Infection across all modes and bins.
+  sources_buffer_.clear();
+  source_weights_buffer_.clear();
+  double total_lambda_eff = 0.0;
+
+  appendDirectContactSources(susc_bin, num_bins_needed, num_modes,
+                             is_virtual_encounter, encounter_type_id,
+                             venue_type_id, matrix, trans_params,
+                             total_lambda_eff);
+  appendSiblingMixingSources(susc_bin, num_modes, actual_venue_id, venue,
+                             parent_agg, parent_flat_matrix, trans_params,
+                             total_lambda_eff);
+  appendFomiteSources(num_fomite_modes, fomite_modes, lambda_fomite_by_mode,
+                      trans_params, total_lambda_eff);
+  appendCompUptakeSources(actual_venue_id, venue_type_id, comp_uptake_modes,
+                          comp_model, trans_params, total_lambda_eff);
+
+  double total_risk = total_lambda_eff;
+  if (simulation_config_.regional_risk.enabled && venue) {
+    total_risk *= venue->transmission_factor;
+  }
+  if (total_risk <= 0.0) return 0;
+
+  // Build cumulative source weights once per susc_bin; each susceptible
+  // samples from it via sampleFromCumulative below. Avoids the per-bin
+  // std::discrete_distribution construction that dominated the 60M run.
+  bool have_source_dist =
+      source_weights_buffer_.size() > 1 &&
+      buildCumulative(source_weights_buffer_, source_cumulative_buffer_) > 0.0;
+
+  uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);
+  int new_infections = 0;
+  for (const auto& susc_mem : susc_group.susceptible) {
+    if (processOneVenueSusceptible(susc_mem, total_risk, susc_bin,
+                                   have_source_dist, time_bits, current_time,
+                                   actual_venue_id, venue, venue_type_id,
+                                   parent_agg, visitor_data, active_infections,
+                                   pending_infections)) {
+      new_infections++;
+    }
+  }
+  (void)delta_hours;  // present in signature for future DEBUG_TRANSMISSION use
+  return new_infections;
+}
+
 bool InteractionManager::processOneVenueSusceptible(
     const SusceptibleMember& susc_mem, double total_risk, int susc_bin,
     bool have_source_dist, uint64_t time_bits, double current_time,
@@ -1388,96 +1450,12 @@ int InteractionManager::processVenueTransmissions(
 
   // === STEP 3: Process transmissions (Mixing Model) — mode-aware ===
   for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
-    const auto& susc_group = bins_buffer_[susc_bin];
-    if (susc_group.susceptible.empty()) continue;
-
-    // 3a. Pre-calculate total Force of Infection across all modes and bins.
-    sources_buffer_.clear();
-    source_weights_buffer_.clear();
-    double total_lambda_eff = 0.0;
-
-    appendDirectContactSources(susc_bin, num_bins_needed, num_modes,
-                               is_virtual_encounter, encounter_type_id,
-                               venue_type_id, matrix, trans_params,
-                               total_lambda_eff);
-    appendSiblingMixingSources(susc_bin, num_modes, actual_venue_id, venue,
-                               parent_agg, parent_flat_matrix, trans_params,
-                               total_lambda_eff);
-    appendFomiteSources(num_fomite_modes, fomite_modes, lambda_fomite_by_mode,
-                        trans_params, total_lambda_eff);
-    appendCompUptakeSources(actual_venue_id, venue_type_id, comp_uptake_modes,
-                            comp_model, trans_params, total_lambda_eff);
-
-    double total_risk = total_lambda_eff;
-
-    // Regional Risk: Apply transmission factor if enabled
-    if (simulation_config_.regional_risk.enabled && venue) {
-      total_risk *= venue->transmission_factor;
-    }
-
-#ifdef DEBUG_TRANSMISSION
-    // Log actual force-of-infection when infectious people are present
-    if (has_infectious) {
-      static int foi_log_count = 0;
-      if (foi_log_count < 50) {
-        // Gather per-mode infectiousness totals for this bin combination
-        std::cerr << "[DEBUG_TRANSMISSION] FOI: venue_type=" << venue_type
-                  << " susc_bin=" << susc_bin
-                  << " n_susceptible=" << susc_group.susceptible.size()
-                  << " total_lambda_eff=" << total_lambda_eff
-                  << " total_risk=" << total_risk << " delta_h=" << delta_hours;
-        for (int m = 0; m < num_modes; ++m) {
-          double mode_inf_total = 0.0;
-          for (int b = 0; b < num_bins_needed; ++b)
-            mode_inf_total += bins_buffer_[b].total_infectiousness_by_mode[m];
-          if (mode_inf_total > 0.0) {
-            std::cerr << " mode[" << m << "](" << disease_->getModeName(m)
-                      << ")_inf=" << mode_inf_total;
-          }
-        }
-        // Show contact rates used
-        for (size_t si = 0; si < source_weights_buffer_.size(); ++si) {
-          std::cerr << " src[m=" << sources_buffer_[si].mode
-                    << ",b=" << sources_buffer_[si].inf_bin
-                    << "]=" << source_weights_buffer_[si];
-        }
-        // Show example susceptibility
-        if (!susc_group.susceptible.empty()) {
-          std::cerr << " example_susc="
-                    << susc_group.susceptible[0].susceptibility;
-          double p = 1.0 - std::exp(-total_risk *
-                                    susc_group.susceptible[0].susceptibility);
-          std::cerr << " example_prob=" << p;
-        }
-        std::cerr << std::endl;
-        foi_log_count++;
-        if (foi_log_count == 50)
-          std::cerr << "[DEBUG_TRANSMISSION] (suppressing further FOI logs)"
-                    << std::endl;
-      }
-    }
-#endif
-
-    if (total_risk <= 0.0) continue;
-
-    // Build cumulative source weights once per susc_bin; each susceptible
-    // samples from it via sampleFromCumulative below. Avoids the per-bin
-    // std::discrete_distribution construction that dominated the 60M run.
-    bool have_source_dist = source_weights_buffer_.size() > 1 &&
-                            buildCumulative(source_weights_buffer_,
-                                            source_cumulative_buffer_) > 0.0;
-
-    // 3b. Process each susceptible in this bin
-    uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);
-    for (const auto& susc_mem : susc_group.susceptible) {
-      if (processOneVenueSusceptible(susc_mem, total_risk, susc_bin,
-                                     have_source_dist, time_bits, current_time,
-                                     actual_venue_id, venue, venue_type_id,
-                                     parent_agg, visitor_data,
-                                     active_infections, pending_infections)) {
-        new_infections++;
-      }
-    }
+    new_infections += processOneSuscBin(
+        susc_bin, num_bins_needed, num_modes, num_fomite_modes,
+        is_virtual_encounter, encounter_type_id, venue_type_id, matrix, venue,
+        actual_venue_id, fomite_modes, comp_uptake_modes, lambda_fomite_by_mode,
+        trans_params, parent_agg, parent_flat_matrix, comp_model, current_time,
+        delta_hours, visitor_data, active_infections, pending_infections);
   }
 
   // Clear person-proportional fields while bins are still cache-hot.
