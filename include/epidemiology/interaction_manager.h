@@ -565,6 +565,16 @@ class InteractionManager {
                                const TransmissionParams& trans_params,
                                double& total_lambda_eff);
 
+  // Build cumulative weights over the parent's infector pool for one mode,
+  // excluding entries whose origin child_venue_id matches actual_venue_id, then
+  // weight-sample one entry with susc_rng. Returns the chosen infector's
+  // PersonId or -1 if the pool is empty after exclusion. Uses the scratch
+  // sibling_cum_buffer_ / sibling_pool_indices_buffer_.
+  PersonId sampleSiblingInfector(int sampled_mode, int pbin,
+                                 VenueId actual_venue_id,
+                                 const ParentAggregate& parent_agg,
+                                 SplitMix64& susc_rng);
+
   // STEP 3b infector dispatch: given a SourceEntry index into sources_buffer_,
   // resolve the InfectionSource enum + transmission mode index + infector
   // PersonId for one chosen susceptible. Handles all four sentinel cases:

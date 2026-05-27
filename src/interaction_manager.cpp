@@ -696,6 +696,31 @@ bool InteractionManager::processOneVenueSusceptible(
   return true;
 }
 
+PersonId InteractionManager::sampleSiblingInfector(
+    int sampled_mode, int pbin, VenueId actual_venue_id,
+    const ParentAggregate& parent_agg, SplitMix64& susc_rng) {
+  if (pbin < 0 || pbin >= (int)parent_agg.infectors_by_bin.size()) return -1;
+  const auto& pool = parent_agg.infectors_by_bin[pbin];
+  sibling_cum_buffer_.clear();
+  sibling_pool_indices_buffer_.clear();
+  double acc = 0.0;
+  for (size_t pe_idx = 0; pe_idx < pool.size(); ++pe_idx) {
+    const auto& pe = pool[pe_idx];
+    if (pe.child_venue_id == actual_venue_id) continue;
+    double w = (sampled_mode < (int)pe.inf_by_mode.size())
+                   ? pe.inf_by_mode[sampled_mode]
+                   : 0.0;
+    if (w <= 0.0) continue;
+    acc += w;
+    sibling_cum_buffer_.push_back(acc);
+    sibling_pool_indices_buffer_.push_back(pe_idx);
+  }
+  if (!(acc > 0.0) || sibling_cum_buffer_.empty()) return -1;
+  int idx = sampleFromCumulative(sibling_cum_buffer_, susc_rng);
+  if (idx < 0 || idx >= (int)sibling_pool_indices_buffer_.size()) return -1;
+  return pool[sibling_pool_indices_buffer_[idx]].person_id;
+}
+
 PersonId InteractionManager::sampleVenueInfector(
     int src_idx, int susc_bin, VenueId actual_venue_id, const Venue* venue,
     PersonId susceptible_id, const ParentAggregate* parent_agg,
@@ -704,7 +729,6 @@ PersonId InteractionManager::sampleVenueInfector(
   int sampled_mode = sources_buffer_[src_idx].mode;
   int sampled_inf_bin = sources_buffer_[src_idx].inf_bin;
   transmission_mode_index_out = static_cast<uint8_t>(sampled_mode);
-  PersonId infector_id = -1;
 
   if (sampled_inf_bin == -2) {
     infection_source_out = InfectionSource::Compartmental;
@@ -716,46 +740,23 @@ PersonId InteractionManager::sampleVenueInfector(
   }
   if (sampled_inf_bin == SIBLING_INF_BIN_SENTINEL) {
     // Sibling-venue source: still a Person infector, but in a DIFFERENT
-    // child venue under the same parent. Two-stage sample:
-    //   1) build cumulative over the parent's infector pool for this
-    //      mode, EXCLUDING entries from the susceptible's own venue;
-    //   2) sample one entry with the same susc_rng — the same RNG
-    //      already used for source-selection, so the byte stream
-    //      depends only on (susceptible_id, venue_id, time).
+    // child venue under the same parent. Two-stage sample: build cumulative
+    // over the parent's infector pool for this mode (excluding the
+    // susceptible's own venue), then sample with susc_rng — the same RNG
+    // already used for source-selection.
     infection_source_out = InfectionSource::Person;
+    PersonId infector_id = -1;
     if (parent_agg) {
       int pbin = sources_buffer_[src_idx].sibling_parent_inf_bin;
-      if (pbin >= 0 && pbin < (int)parent_agg->infectors_by_bin.size()) {
-        const auto& pool = parent_agg->infectors_by_bin[pbin];
-        sibling_cum_buffer_.clear();
-        sibling_pool_indices_buffer_.clear();
-        double acc = 0.0;
-        for (size_t pe_idx = 0; pe_idx < pool.size(); ++pe_idx) {
-          const auto& pe = pool[pe_idx];
-          if (pe.child_venue_id == actual_venue_id) continue;
-          double w = (sampled_mode < (int)pe.inf_by_mode.size())
-                         ? pe.inf_by_mode[sampled_mode]
-                         : 0.0;
-          if (w <= 0.0) continue;
-          acc += w;
-          sibling_cum_buffer_.push_back(acc);
-          sibling_pool_indices_buffer_.push_back(pe_idx);
-        }
-        if (acc > 0.0 && !sibling_cum_buffer_.empty()) {
-          int idx = sampleFromCumulative(sibling_cum_buffer_, susc_rng);
-          if (idx >= 0 && idx < (int)sibling_pool_indices_buffer_.size()) {
-            infector_id = pool[sibling_pool_indices_buffer_[idx]].person_id;
-          }
-        }
-      }
+      infector_id = sampleSiblingInfector(sampled_mode, pbin, actual_venue_id,
+                                          *parent_agg, susc_rng);
     }
     if (debug_parent_mixing_ && dbg_sample_infection_prints_ < 20) {
       std::cerr << "[PMIX] sibling_infection susc=" << susceptible_id
                 << " venue=" << actual_venue_id
                 << " parent=" << (venue ? venue->parent_id : -1)
                 << " mode=" << sampled_mode << " infector=" << infector_id
-                << " infector_pool_size="
-                << sibling_pool_indices_buffer_.size()
+                << " infector_pool_size=" << sibling_pool_indices_buffer_.size()
                 << " susc_bin=" << susc_bin << std::endl;
       dbg_sample_infection_prints_++;
     }
@@ -765,6 +766,7 @@ PersonId InteractionManager::sampleVenueInfector(
 
   // sampled_inf_bin >= 0: in-bin Person source
   infection_source_out = InfectionSource::Person;
+  PersonId infector_id = -1;
   auto& inf_group = bins_buffer_[sampled_inf_bin];
   const auto& cum = inf_group.cumulative_by_mode[sampled_mode];
   if (!cum.empty() && !inf_group.infectious_ids.empty()) {
