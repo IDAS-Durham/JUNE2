@@ -353,6 +353,18 @@ class InteractionManager {
   std::vector<float> collectSubIntervalEventTimes(
       const std::vector<CarriageMember>& car, float slot_duration_min) const;
 
+  // For sub-interval [t0, t1) of carriage `car`, walk every member present
+  // throughout the sub-interval and classify it: (a) infectious — append to
+  // sub_bins[bin].infectious_ids + push per-mode integrated infectiousness
+  // scaled by `scale`; (b) susceptible — append &member to
+  // susc_by_bin[bin]; (c) dead/no role — only update headcount. sub_bins is
+  // pre-reset by the caller for this sub-interval.
+  void classifyMembersInSubInterval(
+      const std::vector<CarriageMember>& car, float t0, float t1, double scale,
+      double current_time, double delta_hours, int num_modes,
+      std::vector<PartialPresenceSubBin>& sub_bins,
+      std::vector<std::vector<const CarriageMember*>>& susc_by_bin) const;
+
   // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
   // compute parent_bin under parent_matrix, bump headcount in agg/csize,
   // gather per-mode infectiousness, and (if positive) accumulate into

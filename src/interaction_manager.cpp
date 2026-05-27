@@ -1446,6 +1446,68 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
+void InteractionManager::classifyMembersInSubInterval(
+    const std::vector<CarriageMember>& car, float t0, float t1, double scale,
+    double current_time, double delta_hours, int num_modes,
+    std::vector<PartialPresenceSubBin>& sub_bins,
+    std::vector<std::vector<const CarriageMember*>>& susc_by_bin) const {
+  for (const auto& m : car) {
+    // Present iff [eff_board, eff_alight) covers [t0, t1).
+    if (!(m.eff_board <= t0 + 1e-5f && m.eff_alight + 1e-5f >= t1)) continue;
+
+    const int bin = m.matrix_bin;
+    const bool dead = (m.person && m.person->is_dead);
+    if (!dead) sub_bins[bin].total_size++;
+
+    // Infectious?
+    bool added_inf = false;
+    if (m.visitor && m.visitor->is_infectious) {
+      for (int mode = 0; mode < num_modes; ++mode) {
+        double inf_full = (mode < VisitorInfo::MAX_MODES)
+                              ? m.visitor->integrated_infectiousness[mode]
+                              : 0.0;
+        double inf_sub = inf_full * scale;
+        if (inf_sub > 0.0) {
+          if (!added_inf) {
+            sub_bins[bin].infectious_ids.push_back(m.pid);
+            added_inf = true;
+          }
+          sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
+          sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
+        } else if (added_inf) {
+          // Keep arrays aligned across modes.
+          sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
+        }
+      }
+    } else if (m.person && m.person->infection &&
+               m.person->infection->isInfectious(current_time)) {
+      const double t_end_d = current_time + delta_hours / 24.0;
+      for (int mode = 0; mode < num_modes; ++mode) {
+        double inf_full = m.person->infection->getIntegratedInfectiousness(
+            mode, current_time, t_end_d);
+        double inf_sub = inf_full * scale;
+        if (inf_sub > 0.0) {
+          if (!added_inf) {
+            sub_bins[bin].infectious_ids.push_back(m.pid);
+            added_inf = true;
+          }
+          sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
+          sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
+        } else if (added_inf) {
+          sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
+        }
+      }
+    } else if (m.person && !m.person->infection && !dead) {
+      double susc =
+          m.person->getSusceptibility(current_time, disease_->getName());
+      if (susc > 0.0) susc_by_bin[bin].push_back(&m);
+    } else if (m.visitor && !m.visitor->is_infected &&
+               m.visitor->immunity_level < 1.0) {
+      susc_by_bin[bin].push_back(&m);
+    }
+  }
+}
+
 std::vector<float> InteractionManager::collectSubIntervalEventTimes(
     const std::vector<CarriageMember>& car, float slot_duration_min) const {
   std::vector<float> events;
@@ -1608,62 +1670,9 @@ InteractionManager::computePartialPresenceLambda(
       std::vector<std::vector<const CarriageMember*>> susc_by_bin(
           num_bins_needed);
 
-      for (const auto& m : car) {
-        // Present iff [eff_board, eff_alight) covers [t0, t1).
-        if (!(m.eff_board <= t0 + 1e-5f && m.eff_alight + 1e-5f >= t1))
-          continue;
-
-        const int bin = m.matrix_bin;
-        const bool dead = (m.person && m.person->is_dead);
-        if (!dead) sub_bins[bin].total_size++;
-
-        // Infectious?
-        bool added_inf = false;
-        if (m.visitor && m.visitor->is_infectious) {
-          for (int mode = 0; mode < num_modes; ++mode) {
-            double inf_full = (mode < VisitorInfo::MAX_MODES)
-                                  ? m.visitor->integrated_infectiousness[mode]
-                                  : 0.0;
-            double inf_sub = inf_full * scale;
-            if (inf_sub > 0.0) {
-              if (!added_inf) {
-                sub_bins[bin].infectious_ids.push_back(m.pid);
-                added_inf = true;
-              }
-              sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
-              sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
-            } else if (added_inf) {
-              // Keep arrays aligned across modes.
-              sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
-            }
-          }
-        } else if (m.person && m.person->infection &&
-                   m.person->infection->isInfectious(current_time)) {
-          const double t_end_d = current_time + delta_hours / 24.0;
-          for (int mode = 0; mode < num_modes; ++mode) {
-            double inf_full = m.person->infection->getIntegratedInfectiousness(
-                mode, current_time, t_end_d);
-            double inf_sub = inf_full * scale;
-            if (inf_sub > 0.0) {
-              if (!added_inf) {
-                sub_bins[bin].infectious_ids.push_back(m.pid);
-                added_inf = true;
-              }
-              sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
-              sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
-            } else if (added_inf) {
-              sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
-            }
-          }
-        } else if (m.person && !m.person->infection && !dead) {
-          double susc =
-              m.person->getSusceptibility(current_time, disease_->getName());
-          if (susc > 0.0) susc_by_bin[bin].push_back(&m);
-        } else if (m.visitor && !m.visitor->is_infected &&
-                   m.visitor->immunity_level < 1.0) {
-          susc_by_bin[bin].push_back(&m);
-        }
-      }
+      classifyMembersInSubInterval(car, t0, t1, scale, current_time,
+                                   delta_hours, num_modes, sub_bins,
+                                   susc_by_bin);
 
       // Per-susceptible bin: accumulate λ contributions over (mode, inf_bin).
       for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
