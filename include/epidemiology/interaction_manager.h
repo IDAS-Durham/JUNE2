@@ -285,6 +285,14 @@ class InteractionManager {
   std::vector<PersonLocation> buildPersonIdSortedMembers(
       size_t group_start, size_t group_end) const;
 
+  // Resolve `pid` to a local Person* (preferring the hint at array_index)
+  // or to a VisitorInfo* from visitor_data. Returns true iff at least one
+  // resolved. Either out param is set to nullptr if not found.
+  bool resolvePersonAndVisitor(
+      PersonId pid, size_t array_index,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      Person*& person_out, const VisitorInfo*& visitor_out) const;
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.

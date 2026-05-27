@@ -123,6 +123,25 @@ void InteractionManager::buildParentAggregates(
   dumpParentAggregatesDebug(current_time, delta_hours);
 }
 
+bool InteractionManager::resolvePersonAndVisitor(
+    PersonId pid, size_t array_index,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    Person*& person_out, const VisitorInfo*& visitor_out) const {
+  person_out = nullptr;
+  visitor_out = nullptr;
+  if (array_index < world_.people.size()) {
+    person_out = &world_.people[array_index];
+    if (person_out->id != pid) person_out = world_.getPerson(pid);
+  } else {
+    person_out = world_.getPerson(pid);
+  }
+  if (!person_out && visitor_data) {
+    auto it = visitor_data->find(pid);
+    if (it != visitor_data->end()) visitor_out = &it->second;
+  }
+  return person_out != nullptr || visitor_out != nullptr;
+}
+
 std::vector<PersonLocation> InteractionManager::buildPersonIdSortedMembers(
     size_t group_start, size_t group_end) const {
   std::vector<PersonLocation> mem_sorted;
@@ -225,19 +244,11 @@ void InteractionManager::aggregateOneVenueGroupForParent(
   for (const auto& loc : mem_sorted) {
     PersonId pid = loc.person_id;
     Person* person = nullptr;
-    if (loc.person_array_index < world_.people.size()) {
-      person = &world_.people[loc.person_array_index];
-      if (person->id != pid) person = world_.getPerson(pid);
-    } else {
-      person = world_.getPerson(pid);
-    }
-
     const VisitorInfo* visitor = nullptr;
-    if (!person && visitor_data) {
-      auto vit = visitor_data->find(pid);
-      if (vit != visitor_data->end()) visitor = &vit->second;
+    if (!resolvePersonAndVisitor(pid, loc.person_array_index, visitor_data,
+                                 person, visitor)) {
+      continue;
     }
-    if (!person && !visitor) continue;
     if (person && person->is_dead) continue;
 
     int parent_bin = computeBinIndexForMatrix(person, venue, loc.subset_index,
