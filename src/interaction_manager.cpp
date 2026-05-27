@@ -228,52 +228,54 @@ void InteractionManager::buildParentAggregates(
     }
   }
 
-  if (debug_parent_mixing_) {
-    // Summary: per-parent totals. Sort keys for deterministic print order.
-    std::vector<VenueId> keys;
-    keys.reserve(parent_aggregates_.size());
-    for (const auto& kv : parent_aggregates_) keys.push_back(kv.first);
-    std::sort(keys.begin(), keys.end());
+  dumpParentAggregatesDebug(current_time, delta_hours);
+}
 
-    int nonzero = 0;
-    for (VenueId pid : keys) {
-      const auto& a = parent_aggregates_[pid];
-      double total_inf = 0.0;
-      int total_people = 0;
-      for (int b = 0; b < (int)a.total_inf_by_bin_mode.size(); ++b) {
-        total_people += a.size_by_bin[b];
-        for (double v : a.total_inf_by_bin_mode[b]) total_inf += v;
-      }
-      if (total_inf > 0.0) nonzero++;
-    }
-    std::cerr << "[PMIX] t=" << current_time << " dt=" << delta_hours
-              << " n_parents=" << parent_aggregates_.size()
-              << " n_parents_with_infectious=" << nonzero << std::endl;
+void InteractionManager::dumpParentAggregatesDebug(double current_time,
+                                                   double delta_hours) const {
+  if (!debug_parent_mixing_) return;
 
-    // Print details of up to 3 parents with non-zero infectiousness
-    int printed = 0;
-    for (VenueId pid : keys) {
-      if (printed >= 3) break;
-      const auto& a = parent_aggregates_[pid];
-      double total_inf = 0.0;
-      for (auto& v : a.total_inf_by_bin_mode)
-        for (double x : v) total_inf += x;
-      if (total_inf <= 0.0) continue;
-      std::cerr << "[PMIX]   parent_venue=" << pid
-                << " parent_type=" << (int)a.parent_venue_type_id
-                << " n_children=" << a.child_size_by_bin.size();
-      for (int b = 0; b < (int)a.total_inf_by_bin_mode.size(); ++b) {
-        std::cerr << " bin[" << b << "](size=" << a.size_by_bin[b]
-                  << ",inf=" << a.infectors_by_bin[b].size() << ",I=[";
-        for (int m = 0; m < (int)a.total_inf_by_bin_mode[b].size(); ++m) {
-          if (m) std::cerr << ",";
-          std::cerr << a.total_inf_by_bin_mode[b][m];
-        }
-        std::cerr << "])";
+  // Summary: per-parent totals. Sort keys for deterministic print order.
+  std::vector<VenueId> keys;
+  keys.reserve(parent_aggregates_.size());
+  for (const auto& kv : parent_aggregates_) keys.push_back(kv.first);
+  std::sort(keys.begin(), keys.end());
+
+  int nonzero = 0;
+  for (VenueId pid : keys) {
+    const auto& a = parent_aggregates_.at(pid);
+    double total_inf = 0.0;
+    for (const auto& by_mode : a.total_inf_by_bin_mode)
+      for (double v : by_mode) total_inf += v;
+    if (total_inf > 0.0) nonzero++;
+  }
+  std::cerr << "[PMIX] t=" << current_time << " dt=" << delta_hours
+            << " n_parents=" << parent_aggregates_.size()
+            << " n_parents_with_infectious=" << nonzero << std::endl;
+
+  // Print details of up to 3 parents with non-zero infectiousness
+  int printed = 0;
+  for (VenueId pid : keys) {
+    if (printed >= 3) break;
+    const auto& a = parent_aggregates_.at(pid);
+    double total_inf = 0.0;
+    for (const auto& v : a.total_inf_by_bin_mode)
+      for (double x : v) total_inf += x;
+    if (total_inf <= 0.0) continue;
+    std::cerr << "[PMIX]   parent_venue=" << pid
+              << " parent_type=" << (int)a.parent_venue_type_id
+              << " n_children=" << a.child_size_by_bin.size();
+    for (int b = 0; b < (int)a.total_inf_by_bin_mode.size(); ++b) {
+      std::cerr << " bin[" << b << "](size=" << a.size_by_bin[b]
+                << ",inf=" << a.infectors_by_bin[b].size() << ",I=[";
+      for (int m = 0; m < (int)a.total_inf_by_bin_mode[b].size(); ++m) {
+        if (m) std::cerr << ",";
+        std::cerr << a.total_inf_by_bin_mode[b][m];
       }
-      std::cerr << std::endl;
-      printed++;
+      std::cerr << "])";
     }
+    std::cerr << std::endl;
+    printed++;
   }
 }
 

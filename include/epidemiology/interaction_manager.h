@@ -242,6 +242,13 @@ class InteractionManager {
       double current_time, double delta_hours,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
 
+  // Emit the per-tick parent-aggregate summary lines under
+  // JUNE_DEBUG_PARENT_MIXING. Iterates parent_aggregates_ in sorted-key order
+  // (deterministic across runs) and prints headline counts plus details of
+  // up to 3 parents with non-zero infectiousness.
+  void dumpParentAggregatesDebug(double current_time,
+                                 double delta_hours) const;
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.
