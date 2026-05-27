@@ -259,6 +259,15 @@ class InteractionManager {
       double delta_hours, int num_modes,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
 
+  // Look up parent_aggregates_[parent_id], lazily initialising its per-bin
+  // arrays + the per-child-venue contribution entries. Returns the
+  // ParentAggregate reference so the caller can accumulate into it directly.
+  ParentAggregate& ensureParentAggregateInitialised(VenueId parent_id,
+                                                    VenueId child_venue_id,
+                                                    uint8_t parent_type_id,
+                                                    int parent_num_bins,
+                                                    int num_modes);
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.

@@ -123,6 +123,27 @@ void InteractionManager::buildParentAggregates(
   dumpParentAggregatesDebug(current_time, delta_hours);
 }
 
+ParentAggregate& InteractionManager::ensureParentAggregateInitialised(
+    VenueId parent_id, VenueId child_venue_id, uint8_t parent_type_id,
+    int parent_num_bins, int num_modes) {
+  auto& agg = parent_aggregates_[parent_id];
+  if (agg.total_inf_by_bin_mode.empty()) {
+    agg.total_inf_by_bin_mode.assign(parent_num_bins,
+                                     std::vector<double>(num_modes, 0.0));
+    agg.size_by_bin.assign(parent_num_bins, 0);
+    agg.infectors_by_bin.assign(parent_num_bins, {});
+    agg.parent_venue_type_id = parent_type_id;
+  }
+
+  auto& csize = agg.child_size_by_bin[child_venue_id];
+  if (csize.empty()) csize.assign(parent_num_bins, 0);
+  auto& cinf = agg.child_inf_by_bin_mode[child_venue_id];
+  if (cinf.empty()) {
+    cinf.assign(parent_num_bins, std::vector<double>(num_modes, 0.0));
+  }
+  return agg;
+}
+
 void InteractionManager::aggregateOneVenueGroupForParent(
     size_t group_start, size_t group_end, double current_time,
     double delta_hours, int num_modes,
@@ -145,21 +166,11 @@ void InteractionManager::aggregateOneVenueGroupForParent(
   int parent_num_bins =
       std::max(1, static_cast<int>(parent_matrix->bins.size()));
 
-  auto& agg = parent_aggregates_[venue->parent_id];
-  if (agg.total_inf_by_bin_mode.empty()) {
-    agg.total_inf_by_bin_mode.assign(parent_num_bins,
-                                     std::vector<double>(num_modes, 0.0));
-    agg.size_by_bin.assign(parent_num_bins, 0);
-    agg.infectors_by_bin.assign(parent_num_bins, {});
-    agg.parent_venue_type_id = parent_type_id;
-  }
-
+  ParentAggregate& agg = ensureParentAggregateInitialised(
+      venue->parent_id, first.venue_id, parent_type_id, parent_num_bins,
+      num_modes);
   auto& csize = agg.child_size_by_bin[first.venue_id];
-  if (csize.empty()) csize.assign(parent_num_bins, 0);
   auto& cinf = agg.child_inf_by_bin_mode[first.venue_id];
-  if (cinf.empty()) {
-    cinf.assign(parent_num_bins, std::vector<double>(num_modes, 0.0));
-  }
 
   // Walk members of this venue group. The locations buffer is already
   // sorted by venue_id but NOT by person_id within a venue — match the
