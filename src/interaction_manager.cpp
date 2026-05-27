@@ -524,6 +524,49 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::resolveVenueTypeAndMatrix(
+    Venue* venue, VenueId actual_venue_id, uint8_t encounter_type_id,
+    std::string& venue_type_out, uint8_t& venue_type_id_out,
+    const ContactMatrix*& matrix_out) {
+  venue_type_out = "unknown";
+  venue_type_id_out = 255;
+  matrix_out = nullptr;
+
+  // For VIRTUAL encounters (venue_id < 0), use the encounter type's contact
+  // matrix — these are purpose-built venues with no physical type.
+  // Virtual-encounter matrices are keyed by encounter_type_id via
+  // virtual_matrices_by_encounter_id, NOT by venue_type_id; aliasing the
+  // latter produced a silent bug where every sexual-channel transmission
+  // pulled contact rates from whatever unrelated venue happened to sit at
+  // that integer slot.
+  //
+  // For PHYSICAL venues (venue_id >= 0), always use the venue's own type
+  // for contact matrix selection, even if some members are encounter
+  // participants. This is critical for MPI reproducibility: the encounter
+  // group at a physical venue is mixed with regular patrons, and the
+  // encounter_type_id of the "first" person in the group is arbitrary
+  // (depends on person order, which varies with rank count).
+  const bool is_virtual_encounter = actual_venue_id < 0;
+  if (is_virtual_encounter &&
+      encounter_type_id < world_.encounter_type_names.size()) {
+    venue_type_id_out = encounter_type_id;
+    auto vm_it = contact_matrices_.virtual_matrix_names.find(encounter_type_id);
+    if (vm_it != contact_matrices_.virtual_matrix_names.end()) {
+      venue_type_out = vm_it->second;
+    } else {
+      venue_type_out = world_.encounter_type_names[encounter_type_id];
+    }
+    matrix_out = contact_matrices_.getVirtualMatrix(encounter_type_id);
+  } else if (venue) {
+    venue_type_id_out = venue->type_id;
+    if (venue_type_id_out < world_.venue_type_names.size()) {
+      venue_type_out = world_.venue_type_names[venue_type_id_out];
+    }
+    stats_.matrix_lookups++;
+    matrix_out = contact_matrices_.getMatrix(venue_type_id_out);
+  }
+}
+
 int InteractionManager::processVenueTransmissions(
     const std::vector<InteractionMember>& members, Venue* venue,
     VenueId actual_venue_id, double current_time, double delta_hours,
@@ -551,44 +594,12 @@ int InteractionManager::processVenueTransmissions(
 
   int new_infections = 0;
 
-  // Determine venue type for parameters
-  std::string venue_type = "unknown";
+  std::string venue_type;
   uint8_t venue_type_id = 255;
   const ContactMatrix* matrix = nullptr;
-
-  // For VIRTUAL encounters (venue_id < 0), use the encounter type's contact
-  // matrix — these are purpose-built venues with no physical type.
-  // Virtual-encounter matrices are keyed by encounter_type_id via
-  // virtual_matrices_by_encounter_id, NOT by venue_type_id; aliasing the
-  // latter produced a silent bug where every sexual-channel transmission
-  // pulled contact rates from whatever unrelated venue happened to sit at
-  // that integer slot.
-  //
-  // For PHYSICAL venues (venue_id >= 0), always use the venue's own type
-  // for contact matrix selection, even if some members are encounter
-  // participants. This is critical for MPI reproducibility: the encounter
-  // group at a physical venue is mixed with regular patrons, and the
-  // encounter_type_id of the "first" person in the group is arbitrary
-  // (depends on person order, which varies with rank count).
+  resolveVenueTypeAndMatrix(venue, actual_venue_id, encounter_type_id,
+                            venue_type, venue_type_id, matrix);
   const bool is_virtual_encounter = actual_venue_id < 0;
-  if (is_virtual_encounter &&
-      encounter_type_id < world_.encounter_type_names.size()) {
-    venue_type_id = encounter_type_id;
-    auto vm_it = contact_matrices_.virtual_matrix_names.find(encounter_type_id);
-    if (vm_it != contact_matrices_.virtual_matrix_names.end()) {
-      venue_type = vm_it->second;
-    } else {
-      venue_type = world_.encounter_type_names[encounter_type_id];
-    }
-    matrix = contact_matrices_.getVirtualMatrix(encounter_type_id);
-  } else if (venue) {
-    venue_type_id = venue->type_id;
-    if (venue_type_id < world_.venue_type_names.size()) {
-      venue_type = world_.venue_type_names[venue_type_id];
-    }
-    stats_.matrix_lookups++;
-    matrix = contact_matrices_.getMatrix(venue_type_id);
-  }
 
   // Determine number of bins needed
   int num_bins_needed = matrix ? static_cast<int>(matrix->bins.size()) : 1;

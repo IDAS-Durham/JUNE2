@@ -467,6 +467,18 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // Resolve the venue type id, human-readable type label, and contact matrix
+  // for a venue group. For VIRTUAL encounters (actual_venue_id < 0) the
+  // encounter_type_id is used as the key (via virtual_matrix_names /
+  // getVirtualMatrix). For PHYSICAL venues the venue's own type is used,
+  // even if some members are encounter participants. Bumps stats_.matrix_lookups
+  // for physical venues. Out params get sensible defaults if no matrix found.
+  void resolveVenueTypeAndMatrix(Venue* venue, VenueId actual_venue_id,
+                                 uint8_t encounter_type_id,
+                                 std::string& venue_type_out,
+                                 uint8_t& venue_type_id_out,
+                                 const ContactMatrix*& matrix_out);
+
   // Process transmissions within a single venue/subset
   int processVenueTransmissions(
       const std::vector<InteractionMember>& members, Venue* venue,
