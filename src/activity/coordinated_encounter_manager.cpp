@@ -1,4 +1,4 @@
-#include "../../include/activity/coordinated_encounter_manager.h"
+#include "activity/coordinated_encounter_manager.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -7,8 +7,8 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "../../include/loaders/config_loader.h"
-#include "../../include/utils/filtering.h"
+#include "loaders/config_loader.h"
+#include "utils/filtering.h"
 
 #ifdef USE_MPI
 #include <mpi.h>
@@ -16,22 +16,111 @@
 
 namespace june {
 
-// Converts a list of activity name strings to a bitmask using the global
-// activity_names registry. Bit i is set if activity_names[i] appears in the
-// input list.
-static ActivityMask computeActivityMask(
-    const std::vector<std::string>& activities,
-    const std::vector<std::string>& activity_names) {
-  ActivityMask mask = 0;
-  for (const auto& act : activities) {
-    for (size_t i = 0; i < activity_names.size(); ++i) {
-      if (activity_names[i] == act) {
-        mask |= (ActivityMask(1) << i);
-        break;
-      }
-    }
+namespace {
+
+// Draws an integer count from a Distribution. For BINOMIAL the
+// number-of-trials is taken from `n_for_binomial` (the per-call upper bound).
+// Returns `default_val` when the distribution type is unset/unrecognised.
+template <typename Dist>
+int sampleCountFromDistribution(const Dist& dist, int n_for_binomial,
+                                int default_val, SplitMix64& gen) {
+  if (dist.type == DistributionType::POISSON) {
+    std::poisson_distribution<int> pd(dist.mean);
+    return pd(gen);
   }
-  return mask;
+  if (dist.type == DistributionType::BINOMIAL) {
+    std::binomial_distribution<int> bd(n_for_binomial, dist.p);
+    return bd(gen);
+  }
+  if (dist.type == DistributionType::FIXED) {
+    return dist.count;
+  }
+  return default_val;
+}
+
+using ProposalKey = CoordinatedEncounterManager::ProposalKey;
+using ProposalSet = CoordinatedEncounterManager::ProposalSet;
+
+// Sorts proposals by (invitee, slot, encounter_id, host) so that the same
+// invitee processes proposals for the same slot in the same order regardless
+// of which rank generated them. Required for MPI-determinism of the
+// committed_slots_ decisions.
+std::vector<EncounterProposal> buildSortedProposals(
+    const std::vector<EncounterProposal>& in_proposals) {
+  std::vector<EncounterProposal> sorted(in_proposals.begin(),
+                                        in_proposals.end());
+  std::sort(sorted.begin(), sorted.end(),
+            [](const EncounterProposal& a, const EncounterProposal& b) {
+              if (a.invitee_id != b.invitee_id)
+                return a.invitee_id < b.invitee_id;
+              if (a.slot != b.slot) return a.slot < b.slot;
+              if (a.encounter_id != b.encounter_id)
+                return a.encounter_id < b.encounter_id;
+              return a.host_id < b.host_id;
+            });
+  return sorted;
+}
+
+// Builds the (host, invitee, slot, encounter_type) lookup set from BOTH
+// incoming and local-host proposals, so the mutual-proposal check works
+// across MPI ranks.
+ProposalSet buildProposalKeySet(
+    const std::vector<EncounterProposal>& incoming,
+    const std::vector<EncounterProposal>& host_proposals) {
+  ProposalSet s;
+  s.reserve(incoming.size() + host_proposals.size());
+  for (const auto& p : incoming) {
+    s.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
+  }
+  for (const auto& p : host_proposals) {
+    s.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
+  }
+  return s;
+}
+
+bool hasMutualProposal(const ProposalSet& s, const EncounterProposal& prop) {
+  return s.count({prop.invitee_id, prop.host_id, prop.slot,
+                  prop.encounter_type_id}) > 0;
+}
+
+// Returns true iff the invitee's slot is committed AND the mutual-proposal
+// bypass does not apply (i.e. this proposal should be
+// REJECTED_ALREADY_COMMITTED). Mutual proposals on 1:1 virtual encounters
+// bypass commitment to avoid the deadlock where both partners commit the
+// slot as hosts and then reject each other as invitees.
+bool isInviteeSlotBlocked(
+    const std::unordered_map<PersonId, std::set<int>>& committed_slots,
+    PersonId invitee_id, int slot, const CoordinatedEncounterDef& matched_def,
+    const EncounterProposal& prop, const ProposalSet& proposal_set) {
+  auto it = committed_slots.find(invitee_id);
+  if (it == committed_slots.end() || it->second.count(slot) == 0) return false;
+  return !(matched_def.is_virtual && hasMutualProposal(proposal_set, prop));
+}
+
+// Populates the proposal-derived fields of a reply (all but status, which
+// is set by the per-proposal decision logic).
+EncounterReply makeReplySkeleton(const EncounterProposal& prop) {
+  EncounterReply reply;
+  reply.encounter_id = prop.encounter_id;
+  reply.host_id = prop.host_id;
+  reply.invitee_id = prop.invitee_id;
+  reply.venue_id = prop.venue_id;
+  reply.venue_type_id = prop.venue_type_id;
+  reply.slot = prop.slot;
+  reply.encounter_type_id = prop.encounter_type_id;
+  return reply;
+}
+
+}  // namespace
+
+size_t CoordinatedEncounterManager::ProposalKeyHash::operator()(
+    const ProposalKey& k) const {
+  size_t h = std::hash<int>{}(k.host);
+  h ^= std::hash<int>{}(k.invitee) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<int>{}(k.slot) + 0x9e3779b9 + (h << 6) + (h >> 2);
+  h ^= std::hash<uint8_t>{}(k.encounter_type_id) + 0x9e3779b9 + (h << 6) +
+       (h >> 2);
+  return h;
 }
 
 CoordinatedEncounterManager::CoordinatedEncounterManager(
@@ -76,6 +165,93 @@ int CoordinatedEncounterManager::getVirtualVenueTypeId(
 // =============================================================================
 // generateProposals helpers
 // =============================================================================
+
+bool CoordinatedEncounterManager::tryEmitForOneSlot(
+    const Person& person, size_t person_idx,
+    const CoordinatedEncounterDef& enc_def, int slot_idx, int virtual_v_type,
+    const std::string* fg_name_ptr, SplitMix64& gen,
+    std::uniform_real_distribution<double>& dist,
+    std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+    std::vector<EncounterProposal>& out_proposals) {
+  // Rate gate: frequency_group bypass (budget-hit verified once per day) or
+  // the legacy scalar proposal_probability roll.
+  if (!fg_name_ptr) {
+    if (dist(gen) > enc_def.proposal_probability) return false;
+  }
+
+  VenueSelection venue = selectVenue(person, enc_def, virtual_v_type, gen);
+  if (enc_def.is_virtual) {
+    // Virtual venue IDs use the host's person_id directly, making collisions
+    // impossible by construction. A person can only host one encounter per
+    // slot per type, so person_id is a unique key.
+    venue.id = -1000 - person.id;
+  } else if (!venue.valid) {
+    return false;
+  }
+
+  std::vector<PersonId> partners = gatherEligiblePartners(person, enc_def);
+  if (partners.empty()) return false;
+
+  emitProposals(person, enc_def, slot_idx, venue, partners, gen, out_proposals);
+
+  committed_slots_[person.id].insert(slot_idx);
+  auto& rem = remaining_slots[person_idx];
+  rem.erase(std::remove(rem.begin(), rem.end(), slot_idx), rem.end());
+
+  if (fg_name_ptr) {
+    freq_group_committed_[person.id][*fg_name_ptr] = true;
+    freq_group_stats_[*fg_name_ptr].encounters_emitted++;
+  }
+  return true;
+}
+
+bool CoordinatedEncounterManager::isFrequencyGroupBudgetAvailable(
+    const Person& person, const std::string& fg_name, int current_day) {
+  auto& per_person = freq_group_hit_[person.id];
+  if (per_person.find(fg_name) == per_person.end()) {
+    auto fg_it = config_.coordinated_encounters.frequency_groups.find(fg_name);
+    double daily_p = 0.0;
+    if (fg_it != config_.coordinated_encounters.frequency_groups.end()) {
+      daily_p = lookupFrequencyDailyP(person, world_, fg_it->second);
+    }
+    uint64_t group_key = hashGroupName(fg_name);
+    SplitMix64 fg_gen(mix_seed(config_.simulation.random_seed, person.id,
+                               current_day, group_key));
+    std::uniform_real_distribution<double> fg_dist(0.0, 1.0);
+    bool hit = (daily_p > 0.0) && (fg_dist(fg_gen) < daily_p);
+    per_person[fg_name] = hit;
+
+    // Daily-summary accounting (per frequency group). Counted once
+    // per (person, group, day), not per encounter type.
+    auto& fgs = freq_group_stats_[fg_name];
+    fgs.persons_evaluated++;
+    fgs.sum_daily_p += daily_p;
+    if (hit) fgs.budget_hits++;
+  }
+  if (!per_person[fg_name]) return false;
+  auto& committed = freq_group_committed_[person.id];
+  if (committed[fg_name]) return false;
+  return true;
+}
+
+void CoordinatedEncounterManager::populateInitialRemainingSlotsIfAbsent(
+    const Person& person, size_t person_idx, int day_type_idx,
+    std::unordered_map<size_t, std::vector<int>>& remaining_slots) const {
+  if (remaining_slots.find(person_idx) != remaining_slots.end()) return;
+  std::vector<int> all_valid;
+  if (person.cached_schedule_type_ != nullptr) {
+    const auto* sched = person.cached_schedule_type_;
+    if (day_type_idx >= 0 &&
+        day_type_idx < static_cast<int>(sched->slots_by_day_type_idx.size()) &&
+        sched->slots_by_day_type_idx[day_type_idx] != nullptr) {
+      const auto& slots = *sched->slots_by_day_type_idx[day_type_idx];
+      for (size_t s = 0; s < slots.size(); ++s) {
+        all_valid.push_back(static_cast<int>(s));
+      }
+    }
+  }
+  remaining_slots[person_idx] = all_valid;
+}
 
 void CoordinatedEncounterManager::logEncounterConfig(
     const CoordinatedEncounterDef& enc_def) const {
@@ -127,17 +303,8 @@ std::vector<int> CoordinatedEncounterManager::getValidSlotsForType(
 int CoordinatedEncounterManager::sampleTypeBudget(
     const CoordinatedEncounterDef& enc_def, int num_valid_slots,
     SplitMix64& gen) const {
-  int budget = 1;
-  const auto& dmd = enc_def.daily_max_distribution;
-  if (dmd.type == DistributionType::POISSON) {
-    std::poisson_distribution<int> poisson_dist(dmd.mean);
-    budget = poisson_dist(gen);
-  } else if (dmd.type == DistributionType::BINOMIAL) {
-    std::binomial_distribution<int> binom_dist(num_valid_slots, dmd.p);
-    budget = binom_dist(gen);
-  } else if (dmd.type == DistributionType::FIXED) {
-    budget = dmd.count;
-  }
+  int budget = sampleCountFromDistribution(enc_def.daily_max_distribution,
+                                           num_valid_slots, 1, gen);
   return std::max(0, std::min(budget, num_valid_slots));
 }
 
@@ -203,17 +370,8 @@ void CoordinatedEncounterManager::emitProposals(
   int num_partners = static_cast<int>(eligible_partners.size());
 
   // Sample invite count from distribution, clamped to [1, num_partners]
-  int to_invite = 1;
-  const auto& idist = enc_def.invite_distribution;
-  if (idist.type == DistributionType::POISSON) {
-    std::poisson_distribution<int> poisson_dist(idist.mean);
-    to_invite = poisson_dist(gen);
-  } else if (idist.type == DistributionType::BINOMIAL) {
-    std::binomial_distribution<int> binom_dist(num_partners, idist.p);
-    to_invite = binom_dist(gen);
-  } else if (idist.type == DistributionType::FIXED) {
-    to_invite = idist.count;
-  }
+  int to_invite = sampleCountFromDistribution(enc_def.invite_distribution,
+                                              num_partners, 1, gen);
   to_invite = std::max(1, std::min(to_invite, num_partners));
 
   // Canonicalize partner order before shuffling. Network partner lists can
@@ -310,7 +468,6 @@ void CoordinatedEncounterManager::generateProposals(
     int current_day, std::vector<EncounterProposal>& out_proposals,
     int day_type_idx) {
   if (!config_.coordinated_encounters.enabled) return;
-  // Progress message removed — sub-second operation
   // Per-person remaining slot tracking for this day
   std::unordered_map<size_t, std::vector<int>> remaining_slots;
 
@@ -318,148 +475,69 @@ void CoordinatedEncounterManager::generateProposals(
   int enc_type_counter = 0;
   for (const auto& enc_def : config_.coordinated_encounters.encounters) {
     if (!enc_def.enabled) continue;
-
-    if (current_day == 0 && mpi_rank_ == 0) {
-      logEncounterConfig(enc_def);
-    }
-
-    int network_idx = enc_def.cached_network_idx;
+    if (current_day == 0 && mpi_rank_ == 0) logEncounterConfig(enc_def);
     // Unresolved (negative) network_idx means the encounter is effectively
     // disabled.
-    if (network_idx < 0) {
-      continue;
-    }
+    if (enc_def.cached_network_idx < 0) continue;
 
     int virtual_v_type = enc_def.cached_virtual_venue_type_id;
-
     for (size_t person_idx = 0; person_idx < world_.people.size();
          ++person_idx) {
-      const auto& person = world_.people[person_idx];
-      if (person.is_dead) continue;
-
-      // Per-person deterministic RNG for MPI reproducibility
-      SplitMix64 gen(mix_seed(config_.simulation.random_seed, person.id,
-                              current_day, enc_type_counter));
-      std::uniform_real_distribution<double> dist(0.0, 1.0);
-
-      // If this encounter is part of a frequency_group, resolve today's
-      // per-person budget-hit once per (person, group). The roll uses a
-      // group-specific RNG so it is independent of enc_type_counter (which
-      // varies across the types sharing the group, and across runs where
-      // encounter ordering may differ).
-      const std::string* fg_name_ptr = enc_def.frequency_group.has_value()
-                                           ? &*enc_def.frequency_group
-                                           : nullptr;
-      if (fg_name_ptr) {
-        auto& per_person = freq_group_hit_[person.id];
-        if (per_person.find(*fg_name_ptr) == per_person.end()) {
-          auto fg_it = config_.coordinated_encounters.frequency_groups.find(
-              *fg_name_ptr);
-          double daily_p = 0.0;
-          if (fg_it != config_.coordinated_encounters.frequency_groups.end()) {
-            daily_p = lookupFrequencyDailyP(person, world_, fg_it->second);
-          }
-          uint64_t group_key = hashGroupName(*fg_name_ptr);
-          SplitMix64 fg_gen(mix_seed(config_.simulation.random_seed, person.id,
-                                     current_day, group_key));
-          std::uniform_real_distribution<double> fg_dist(0.0, 1.0);
-          bool hit = (daily_p > 0.0) && (fg_dist(fg_gen) < daily_p);
-          per_person[*fg_name_ptr] = hit;
-
-          // Daily-summary accounting (per frequency group). Counted once
-          // per (person, group, day) — not per encounter type.
-          auto& fgs = freq_group_stats_[*fg_name_ptr];
-          fgs.persons_evaluated++;
-          fgs.sum_daily_p += daily_p;
-          if (hit) fgs.budget_hits++;
-        }
-        // Short-circuit if no budget today, or already spent by an earlier
-        // (higher-priority) encounter type in the same group.
-        if (!per_person[*fg_name_ptr]) continue;
-        auto& committed = freq_group_committed_[person.id];
-        if (committed[*fg_name_ptr]) continue;
-      }
-
-      // On first encounter type for this person, populate all slot indices
-      if (remaining_slots.find(person_idx) == remaining_slots.end()) {
-        std::vector<int> all_valid;
-        if (person.cached_schedule_type_ != nullptr) {
-          const auto* sched = person.cached_schedule_type_;
-          if (day_type_idx >= 0 &&
-              day_type_idx <
-                  static_cast<int>(sched->slots_by_day_type_idx.size()) &&
-              sched->slots_by_day_type_idx[day_type_idx] != nullptr) {
-            const auto& slots = *sched->slots_by_day_type_idx[day_type_idx];
-            for (size_t s = 0; s < slots.size(); ++s) {
-              all_valid.push_back(static_cast<int>(s));
-            }
-          }
-        }
-        remaining_slots[person_idx] = all_valid;
-      }
-
-      // Filter to slots valid for this encounter type
-      std::vector<int> valid_slots = getValidSlotsForType(
-          person, enc_def, remaining_slots[person_idx], day_type_idx);
-      if (valid_slots.empty()) continue;
-
-      // Sample daily budget, clamped to available slots
-      int type_budget =
-          sampleTypeBudget(enc_def, static_cast<int>(valid_slots.size()), gen);
-      if (type_budget == 0) continue;
-
-      std::shuffle(valid_slots.begin(), valid_slots.end(), gen);
-
-      int proposals_made = 0;
-      for (int slot_idx : valid_slots) {
-        if (proposals_made >= type_budget) break;
-
-        // Rate gate: either a frequency_group budget-hit (already resolved
-        // once above; no per-slot roll needed), or the legacy scalar
-        // proposal_probability roll.
-        if (fg_name_ptr) {
-          // Budget-hit already verified; no per-slot roll.
-        } else {
-          if (dist(gen) > enc_def.proposal_probability) continue;
-        }
-
-        // Select venue
-        VenueSelection venue =
-            selectVenue(person, enc_def, virtual_v_type, gen);
-        if (enc_def.is_virtual) {
-          // Virtual venue IDs use the host's person_id directly, making
-          // collisions impossible by construction. A person can only host
-          // one encounter per slot per type, so person_id is a
-          // unique key.
-          venue.id = -1000 - person.id;
-        } else if (!venue.valid) {
-          continue;
-        }
-
-        // Gather partners
-        std::vector<PersonId> partners =
-            gatherEligiblePartners(person, enc_def);
-        if (partners.empty()) continue;
-
-        // Emit proposals for this slot
-        emitProposals(person, enc_def, slot_idx, venue, partners, gen,
-                      out_proposals);
-
-        // Mark slot as committed for the host
-        committed_slots_[person.id].insert(slot_idx);
-        auto& rem = remaining_slots[person_idx];
-        rem.erase(std::remove(rem.begin(), rem.end(), slot_idx), rem.end());
-
-        // Mark frequency-group budget spent for this person.
-        if (fg_name_ptr) {
-          freq_group_committed_[person.id][*fg_name_ptr] = true;
-          freq_group_stats_[*fg_name_ptr].encounters_emitted++;
-        }
-
-        proposals_made++;
-      }
+      proposeForOnePersonOneEncounter(world_.people[person_idx], person_idx,
+                                      enc_def, current_day, day_type_idx,
+                                      enc_type_counter, virtual_v_type,
+                                      remaining_slots, out_proposals);
     }
     enc_type_counter++;
+  }
+}
+
+void CoordinatedEncounterManager::proposeForOnePersonOneEncounter(
+    const Person& person, size_t person_idx,
+    const CoordinatedEncounterDef& enc_def, int current_day, int day_type_idx,
+    int enc_type_counter, int virtual_v_type,
+    std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+    std::vector<EncounterProposal>& out_proposals) {
+  if (person.is_dead) return;
+
+  // Per-person deterministic RNG for MPI reproducibility
+  SplitMix64 gen(mix_seed(config_.simulation.random_seed, person.id,
+                          current_day, enc_type_counter));
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+
+  // If this encounter is part of a frequency_group, resolve today's
+  // per-person budget-hit once per (person, group). The roll uses a
+  // group-specific RNG so it is independent of enc_type_counter (which
+  // varies across the types sharing the group, and across runs where
+  // encounter ordering may differ).
+  const std::string* fg_name_ptr =
+      enc_def.frequency_group.has_value() ? &*enc_def.frequency_group : nullptr;
+  if (fg_name_ptr &&
+      !isFrequencyGroupBudgetAvailable(person, *fg_name_ptr, current_day)) {
+    return;
+  }
+
+  populateInitialRemainingSlotsIfAbsent(person, person_idx, day_type_idx,
+                                        remaining_slots);
+
+  std::vector<int> valid_slots = getValidSlotsForType(
+      person, enc_def, remaining_slots[person_idx], day_type_idx);
+  if (valid_slots.empty()) return;
+
+  int type_budget =
+      sampleTypeBudget(enc_def, static_cast<int>(valid_slots.size()), gen);
+  if (type_budget == 0) return;
+
+  std::shuffle(valid_slots.begin(), valid_slots.end(), gen);
+
+  int proposals_made = 0;
+  for (int slot_idx : valid_slots) {
+    if (proposals_made >= type_budget) break;
+    if (tryEmitForOneSlot(person, person_idx, enc_def, slot_idx, virtual_v_type,
+                          fg_name_ptr, gen, dist, remaining_slots,
+                          out_proposals)) {
+      proposals_made++;
+    }
   }
 }
 
@@ -468,160 +546,76 @@ void CoordinatedEncounterManager::processProposals(
     const std::vector<EncounterProposal>& host_proposals,
     std::vector<EncounterReply>& out_replies, int day_type_idx) {
   if (!config_.coordinated_encounters.enabled) return;
-  // Progress message removed — sub-second operation
 
-  // Sort proposals by a deterministic key so committed_slots_ decisions
-  // are order-independent of MPI rank layout. Sort by (invitee, slot,
-  // encounter_id, host) ensures the same invitee processes proposals for
-  // the same slot in the same order regardless of which rank generated them.
-  std::vector<EncounterProposal> sorted_proposals(in_proposals.begin(),
-                                                  in_proposals.end());
-  std::sort(sorted_proposals.begin(), sorted_proposals.end(),
-            [](const EncounterProposal& a, const EncounterProposal& b) {
-              if (a.invitee_id != b.invitee_id)
-                return a.invitee_id < b.invitee_id;
-              if (a.slot != b.slot) return a.slot < b.slot;
-              if (a.encounter_id != b.encounter_id)
-                return a.encounter_id < b.encounter_id;
-              return a.host_id < b.host_id;
-            });
-
-  // Build a set of (host, invitee, slot, encounter_type) tuples so we can
-  // detect mutual proposals: if A proposed to B at slot S, and B also proposed
-  // to A at slot S for the same encounter type, the invitee's commitment as a
-  // host is not a conflict — both parties want the same encounter.
-  // Without this, single-slot schedules (e.g. weekday workers with only one
-  // evening leisure slot) deadlock: both partners commit the slot as hosts,
-  // then both reject each other as invitees.
-  struct ProposalKey {
-    PersonId host;
-    PersonId invitee;
-    int slot;
-    uint8_t encounter_type_id;
-
-    bool operator==(const ProposalKey& o) const {
-      return host == o.host && invitee == o.invitee && slot == o.slot &&
-             encounter_type_id == o.encounter_type_id;
-    }
-  };
-  struct ProposalKeyHash {
-    size_t operator()(const ProposalKey& k) const {
-      size_t h = std::hash<int>{}(k.host);
-      h ^= std::hash<int>{}(k.invitee) + 0x9e3779b9 + (h << 6) + (h >> 2);
-      h ^= std::hash<int>{}(k.slot) + 0x9e3779b9 + (h << 6) + (h >> 2);
-      h ^= std::hash<uint8_t>{}(k.encounter_type_id) + 0x9e3779b9 + (h << 6) +
-           (h >> 2);
-      return h;
-    }
-  };
-  // Build proposal set from BOTH incoming proposals (invitee is local) AND
-  // host proposals (host is local). This ensures mutual proposal detection
-  // works across MPI ranks: if A (rank 0) proposed to B (rank 1) and B
-  // proposed to A, rank 0 sees (B→A) in sorted_proposals and (A→B) in
-  // host_proposals.
-  std::unordered_set<ProposalKey, ProposalKeyHash> proposal_set;
-  proposal_set.reserve(sorted_proposals.size() + host_proposals.size());
-  for (const auto& p : sorted_proposals) {
-    proposal_set.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
-  }
-  for (const auto& p : host_proposals) {
-    proposal_set.insert({p.host_id, p.invitee_id, p.slot, p.encounter_type_id});
-  }
-
-  auto hasMutualProposal = [&](const EncounterProposal& prop) -> bool {
-    return proposal_set.count({prop.invitee_id, prop.host_id, prop.slot,
-                               prop.encounter_type_id}) > 0;
-  };
+  std::vector<EncounterProposal> sorted_proposals =
+      buildSortedProposals(in_proposals);
+  ProposalSet proposal_set =
+      buildProposalKeySet(sorted_proposals, host_proposals);
 
   for (const auto& prop : sorted_proposals) {
-    EncounterReply reply;
-    reply.encounter_id = prop.encounter_id;
-    reply.host_id = prop.host_id;
-    reply.invitee_id = prop.invitee_id;
-    reply.venue_id = prop.venue_id;
-    reply.venue_type_id = prop.venue_type_id;
-    reply.slot = prop.slot;
-    reply.encounter_type_id = prop.encounter_type_id;
-
-    // Find invitee locally
-    auto it = world_.person_index.find(prop.invitee_id);
-    if (it == world_.person_index.end()) {
-      reply.status = ReplyStatus::REJECTED_NOT_FOUND;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    const Person& invitee = world_.people[it->second];
-    if (invitee.is_dead) {
-      reply.status = ReplyStatus::REJECTED_DEAD;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    // Find matching encounter definition (needed before commitment check
-    // to determine if mutual proposal bypass applies)
-    const CoordinatedEncounterDef* matched_def = findMatchingEncounterDef(prop);
-    if (!matched_def) {
-      reply.status = ReplyStatus::REJECTED_NO_MATCHING_DEF;
-      std::cerr << "[Rank " << mpi_rank_ << "] WARNING: Encounter "
-                << prop.encounter_id << " has venue_type_id "
-                << prop.venue_type_id
-                << " which does not match any encounter definition. Rejecting."
-                << std::endl;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    // Check if invitee's slot is already committed
-    auto committed_it = committed_slots_.find(invitee.id);
-    if (committed_it != committed_slots_.end() &&
-        committed_it->second.count(prop.slot) > 0) {
-      // For 1:1 virtual encounters (e.g. romantic), both partners propose
-      // to each other at the same slot, causing a deadlock where both
-      // reject. Bypass commitment check only for these mutual proposals.
-      // Multi-invitee encounters (social) should NOT bypass — the slot
-      // commitment is legitimate.
-      bool bypass = false;
-      if (matched_def->is_virtual && hasMutualProposal(prop)) {
-        bypass = true;
-      }
-      if (!bypass) {
-        reply.status = ReplyStatus::REJECTED_ALREADY_COMMITTED;
-        out_replies.push_back(reply);
-        continue;
-      }
-    }
-
-    // Schedule validation
-    if (!isScheduleCompatible(invitee, prop.slot, *matched_def, day_type_idx)) {
-      reply.status = ReplyStatus::REJECTED_SCHEDULE_CONFLICT;
-      out_replies.push_back(reply);
-      continue;
-    }
-
-    // Acceptance roll — per-invitee deterministic RNG (no mpi_rank).
-    // Mix invitee_id explicitly so that each invitee gets an independent
-    // draw even if encounter_id collisions occur (31-bit truncation).
-    double acceptance_prob = matched_def->acceptance_probability;
-    SplitMix64 gen(mix_seed(config_.simulation.random_seed, prop.encounter_id,
-                            prop.invitee_id, 0xACCE97ULL));
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-
-    if (dist(gen) > acceptance_prob) {
-      reply.status = ReplyStatus::REJECTED_DECLINED;
-    } else {
-      reply.status = ReplyStatus::ACCEPTED;
-      committed_slots_[invitee.id].insert(prop.slot);
-    }
-
-    out_replies.push_back(reply);
+    out_replies.push_back(
+        replyForOneProposal(prop, day_type_idx, proposal_set));
   }
+}
+
+EncounterReply CoordinatedEncounterManager::replyForOneProposal(
+    const EncounterProposal& prop, int day_type_idx,
+    const ProposalSet& proposal_set) {
+  EncounterReply reply = makeReplySkeleton(prop);
+
+  auto it = world_.person_index.find(prop.invitee_id);
+  if (it == world_.person_index.end()) {
+    reply.status = ReplyStatus::REJECTED_NOT_FOUND;
+    return reply;
+  }
+  const Person& invitee = world_.people[it->second];
+  if (invitee.is_dead) {
+    reply.status = ReplyStatus::REJECTED_DEAD;
+    return reply;
+  }
+
+  // Match def first; needed for the mutual-proposal bypass decision below.
+  const CoordinatedEncounterDef* matched_def = findMatchingEncounterDef(prop);
+  if (!matched_def) {
+    reply.status = ReplyStatus::REJECTED_NO_MATCHING_DEF;
+    std::cerr << "[Rank " << mpi_rank_ << "] WARNING: Encounter "
+              << prop.encounter_id << " has venue_type_id "
+              << prop.venue_type_id
+              << " which does not match any encounter definition. Rejecting."
+              << std::endl;
+    return reply;
+  }
+
+  if (isInviteeSlotBlocked(committed_slots_, invitee.id, prop.slot,
+                           *matched_def, prop, proposal_set)) {
+    reply.status = ReplyStatus::REJECTED_ALREADY_COMMITTED;
+    return reply;
+  }
+
+  if (!isScheduleCompatible(invitee, prop.slot, *matched_def, day_type_idx)) {
+    reply.status = ReplyStatus::REJECTED_SCHEDULE_CONFLICT;
+    return reply;
+  }
+
+  // Per-invitee deterministic RNG (no mpi_rank). Mix invitee_id so each
+  // invitee gets an independent draw even if encounter_id collisions occur
+  // (31-bit truncation).
+  SplitMix64 gen(mix_seed(config_.simulation.random_seed, prop.encounter_id,
+                          prop.invitee_id, 0xACCE97ULL));
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+  if (dist(gen) > matched_def->acceptance_probability) {
+    reply.status = ReplyStatus::REJECTED_DECLINED;
+  } else {
+    reply.status = ReplyStatus::ACCEPTED;
+    committed_slots_[invitee.id].insert(prop.slot);
+  }
+  return reply;
 }
 
 void CoordinatedEncounterManager::finalizeEncounters(
     const std::vector<EncounterReply>& replies,
     std::vector<CoordinatedEncounter>& out_finalized) {
-  // Progress message removed — sub-second operation
+  // Progress message removed (sub-second operation)
   std::map<std::pair<int, PersonId>, std::vector<EncounterReply>> grouper;
   for (const auto& r : replies) {
     grouper[{r.encounter_id, r.host_id}].push_back(r);
@@ -661,214 +655,6 @@ void CoordinatedEncounterManager::resetDaily() {
   freq_group_hit_.clear();
   freq_group_committed_.clear();
   freq_group_stats_.clear();
-}
-
-// Helper: resolve encounter_type_id to name
-static std::string resolveEncTypeName(uint8_t type_id,
-                                      const WorldState& world) {
-  if (type_id < world.encounter_type_names.size())
-    return world.encounter_type_names[type_id];
-  return "type_" + std::to_string(type_id);
-}
-
-void CoordinatedEncounterManager::accumulateProposalStats(
-    const std::vector<EncounterProposal>& proposals) {
-  for (const auto& p : proposals) {
-    std::string name = resolveEncTypeName(p.encounter_type_id, world_);
-    daily_stats_.by_type[name].proposals_generated++;
-    daily_stats_.total_proposals++;
-  }
-}
-
-void CoordinatedEncounterManager::accumulateReplyStats(
-    const std::vector<EncounterReply>& replies) {
-  for (const auto& r : replies) {
-    std::string name = resolveEncTypeName(r.encounter_type_id, world_);
-    auto& ts = daily_stats_.by_type[name];
-    switch (r.status) {
-      case ReplyStatus::ACCEPTED:
-        ts.accepted++;
-        break;
-      case ReplyStatus::REJECTED_NOT_FOUND:
-        ts.rejected_not_found++;
-        break;
-      case ReplyStatus::REJECTED_DEAD:
-        ts.rejected_dead++;
-        break;
-      case ReplyStatus::REJECTED_ALREADY_COMMITTED:
-        ts.rejected_committed++;
-        break;
-      case ReplyStatus::REJECTED_NO_MATCHING_DEF:
-        ts.rejected_no_def++;
-        break;
-      case ReplyStatus::REJECTED_SCHEDULE_CONFLICT:
-        ts.rejected_schedule++;
-        break;
-      case ReplyStatus::REJECTED_DECLINED:
-        ts.rejected_declined++;
-        break;
-    }
-  }
-}
-
-void CoordinatedEncounterManager::accumulateFinalizeStats(
-    const std::vector<CoordinatedEncounter>& finalized) {
-  for (const auto& enc : finalized) {
-    std::string name = resolveEncTypeName(enc.encounter_type_id, world_);
-    auto& ts = daily_stats_.by_type[name];
-    ts.finalized_encounters++;
-    ts.total_participants += static_cast<int>(enc.participants.size());
-    daily_stats_.total_finalized++;
-  }
-}
-
-void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
-  if (!config_.coordinated_encounters.enabled) return;
-
-  // Serialize per-type stats into flat arrays for MPI reduction.
-  // Order matches config_.coordinated_encounters.encounters (same on all
-  // ranks). 9 fields per type: proposals, accepted, rej_not_found, rej_dead,
-  //   rej_committed, rej_no_def, rej_schedule, rej_declined, finalized,
-  //   participants  => 10 fields per type + 2 globals
-  const auto& enc_defs = config_.coordinated_encounters.encounters;
-  int num_types = static_cast<int>(enc_defs.size());
-  int fields_per_type = 10;
-  int arr_size = num_types * fields_per_type + 2;  // +2 for global totals
-
-  std::vector<int> local_arr(arr_size, 0);
-  local_arr[0] = daily_stats_.total_proposals;
-  local_arr[1] = daily_stats_.total_finalized;
-
-  for (int i = 0; i < num_types; ++i) {
-    std::string name =
-        resolveEncTypeName(enc_defs[i].cached_encounter_type_id, world_);
-    auto it = daily_stats_.by_type.find(name);
-    if (it == daily_stats_.by_type.end()) continue;
-    const auto& ts = it->second;
-    int base = 2 + i * fields_per_type;
-    local_arr[base + 0] = ts.proposals_generated;
-    local_arr[base + 1] = ts.accepted;
-    local_arr[base + 2] = ts.rejected_not_found;
-    local_arr[base + 3] = ts.rejected_dead;
-    local_arr[base + 4] = ts.rejected_committed;
-    local_arr[base + 5] = ts.rejected_no_def;
-    local_arr[base + 6] = ts.rejected_schedule;
-    local_arr[base + 7] = ts.rejected_declined;
-    local_arr[base + 8] = ts.finalized_encounters;
-    local_arr[base + 9] = ts.total_participants;
-  }
-
-  std::vector<int> global_arr(local_arr);
-#ifdef USE_MPI
-  {
-    int world_size = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    if (world_size > 1) {
-      MPI_Allreduce(local_arr.data(), global_arr.data(), arr_size, MPI_INT,
-                    MPI_SUM, MPI_COMM_WORLD);
-    }
-  }
-#endif
-
-  // Per-frequency-group counters — serialize and MPI-reduce on all ranks
-  // BEFORE the rank-0 early return (MPI_Allreduce is a collective op).
-  const auto& fg_map = config_.coordinated_encounters.frequency_groups;
-  std::vector<std::string> fg_names;
-  fg_names.reserve(fg_map.size());
-  for (const auto& kv : fg_map) fg_names.push_back(kv.first);
-  std::sort(fg_names.begin(), fg_names.end());
-
-  const int fg_fields = 4;  // persons, hits, emitted, sum_daily_p*1e6
-  std::vector<long long> fg_local(fg_names.size() * fg_fields, 0);
-  for (size_t gi = 0; gi < fg_names.size(); ++gi) {
-    auto it = freq_group_stats_.find(fg_names[gi]);
-    if (it == freq_group_stats_.end()) continue;
-    const auto& s = it->second;
-    fg_local[gi * fg_fields + 0] = s.persons_evaluated;
-    fg_local[gi * fg_fields + 1] = s.budget_hits;
-    fg_local[gi * fg_fields + 2] = s.encounters_emitted;
-    fg_local[gi * fg_fields + 3] = static_cast<long long>(s.sum_daily_p * 1e6);
-  }
-  std::vector<long long> fg_global(fg_local);
-#ifdef USE_MPI
-  if (!fg_local.empty()) {
-    int world_size = 1;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-    if (world_size > 1) {
-      MPI_Allreduce(fg_local.data(), fg_global.data(),
-                    static_cast<int>(fg_local.size()), MPI_LONG_LONG, MPI_SUM,
-                    MPI_COMM_WORLD);
-    }
-  }
-#endif
-
-  // Only rank 0 prints
-  if (mpi_rank_ != 0) return;
-
-  std::cout << "\n      ========== [ENCOUNTER DAILY SUMMARY] Day " << day
-            << " ==========" << std::endl;
-  std::cout << "      Total proposals: " << global_arr[0]
-            << "  Total finalized: " << global_arr[1] << std::endl;
-
-  for (int i = 0; i < num_types; ++i) {
-    int base = 2 + i * fields_per_type;
-    int proposals = global_arr[base + 0];
-    int accepted = global_arr[base + 1];
-    int rej_not_found = global_arr[base + 2];
-    int rej_dead = global_arr[base + 3];
-    int rej_committed = global_arr[base + 4];
-    int rej_no_def = global_arr[base + 5];
-    int rej_schedule = global_arr[base + 6];
-    int rej_declined = global_arr[base + 7];
-    int finalized = global_arr[base + 8];
-    int participants = global_arr[base + 9];
-
-    int total_replies = accepted + rej_not_found + rej_dead + rej_committed +
-                        rej_no_def + rej_schedule + rej_declined;
-    double accept_rate =
-        total_replies > 0 ? 100.0 * accepted / total_replies : 0.0;
-
-    std::cout << "      --- " << enc_defs[i].name << " ---" << std::endl;
-    std::cout << "        Proposals:  " << proposals << std::endl;
-    std::cout << "        Accepted:   " << accepted << " / " << total_replies
-              << " (" << std::fixed << std::setprecision(1) << accept_rate
-              << "%)" << std::endl;
-    if (rej_committed > 0)
-      std::cout << "        Rej(committed): " << rej_committed << std::endl;
-    if (rej_schedule > 0)
-      std::cout << "        Rej(schedule):  " << rej_schedule << std::endl;
-    if (rej_declined > 0)
-      std::cout << "        Rej(declined):  " << rej_declined << std::endl;
-    if (rej_not_found > 0)
-      std::cout << "        Rej(not_found): " << rej_not_found << std::endl;
-    if (rej_dead > 0)
-      std::cout << "        Rej(dead):      " << rej_dead << std::endl;
-    if (rej_no_def > 0)
-      std::cout << "        Rej(no_def):    " << rej_no_def << std::endl;
-    std::cout << "        Finalized:  " << finalized << " encounters, "
-              << participants << " participants" << std::endl;
-  }
-
-  if (!fg_names.empty()) {
-    std::cout << "      --- frequency_groups (budget rolls) ---" << std::endl;
-    for (size_t gi = 0; gi < fg_names.size(); ++gi) {
-      long long persons = fg_global[gi * fg_fields + 0];
-      long long hits = fg_global[gi * fg_fields + 1];
-      long long emitted = fg_global[gi * fg_fields + 2];
-      double sum_p = static_cast<double>(fg_global[gi * fg_fields + 3]) / 1e6;
-      double hit_rate = persons > 0 ? 100.0 * hits / persons : 0.0;
-      double avg_p = persons > 0 ? sum_p / persons : 0.0;
-      double emit_rate = hits > 0 ? 100.0 * emitted / hits : 0.0;
-      std::cout << "        [" << fg_names[gi] << "] persons=" << persons
-                << " avg_daily_p=" << std::fixed << std::setprecision(4)
-                << avg_p << " hits=" << hits << " (" << std::fixed
-                << std::setprecision(1) << hit_rate << "%) emitted=" << emitted
-                << " (" << std::fixed << std::setprecision(1) << emit_rate
-                << "% of hits)" << std::endl;
-    }
-  }
-  std::cout << "      =================================================="
-            << std::endl;
 }
 
 }  // namespace june

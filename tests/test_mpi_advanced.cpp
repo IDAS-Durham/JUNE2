@@ -258,7 +258,6 @@ struct CrossRankIntegrationFixture {
     // --- Config ---
     config.parallel.partition_level = "LGU";
     config.parallel.geo_unit_chunk_size = 1000;
-    config.parallel.verbose_mpi = true;
 
     // --- DomainManager (test mode) ---
     dm = std::make_unique<DomainManager>(world, config);

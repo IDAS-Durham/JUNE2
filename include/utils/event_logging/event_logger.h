@@ -6,10 +6,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/types.h"
-#include "../core/world_state.h"
-#include "event_logging/event_types.h"
+#include "core/config.h"
+#include "core/types.h"
+#include "core/world_state.h"
+#include "event_types.h"
 
 namespace june {
 
@@ -48,9 +48,6 @@ class EventLogger {
   void logCoordinatedEncounter(PersonId person_a, PersonId person_b,
                                double time, uint8_t encounter_type_id, int slot,
                                uint64_t group_id);
-
-  // Save all events to HDF5 file
-  void saveToHDF5(const std::string& filename, const Config& config);
 
   // Save all events + lookup tables to HDF5 file (with config-based selective
   // saving)

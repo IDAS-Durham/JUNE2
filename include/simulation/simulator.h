@@ -5,30 +5,32 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
-#include "../activity/coordinated_encounter_manager.h"
-#include "../activity/runtime_bin_allocator.h"
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../epidemiology/disease.h"
-#include "../epidemiology/epidemiology.h"
-#include "../epidemiology/infection_seed.h"
-#include "../epidemiology/interaction_manager.h"
-#include "../epidemiology/policy.h"
-#include "../epidemiology/vaccination_manager.h"
-#include "../loaders/disease_loader.h"
-#include "../loaders/policy_loader.h"
-#include "../utils/event_logger.h"
-#include "../utils/memory_utils.h"
-#include "../utils/profiler.h"
-#include "../utils/random.h"
-#include "../utils/time_utils.h"
+#include "activity/coordinated_encounter_manager.h"
+#include "activity/runtime_bin_allocator.h"
+#include "core/config.h"
+#include "core/world_state.h"
+#include "epidemiology/disease.h"
+#include "epidemiology/epidemiology.h"
+#include "epidemiology/infection_seed.h"
+#include "epidemiology/interaction_manager.h"
+#include "epidemiology/policy.h"
+#include "epidemiology/vaccination_manager.h"
+#include "loaders/disease_loader.h"
+#include "loaders/policy_loader.h"
 #include "simulation/compartmental_model_manager.h"
+#include "utils/event_logging/event_logger.h"
+#include "utils/memory_utils.h"
+#include "utils/profiler.h"
+#include "utils/random.h"
+#include "utils/time_utils.h"
 
 #ifdef USE_MPI
-#include "../parallel/domain.h"
-#include "../parallel/domain_manager.h"
+#include "parallel/domain.h"
+#include "parallel/domain_manager.h"
 #endif
 
 namespace june {
@@ -119,15 +121,123 @@ class Simulator {
   // Incremental lookup tracking
   std::unordered_set<PersonId>
       lookups_written_;  // Tracks which people have been saved to HDF5
-  std::unordered_set<VenueId>
-      venues_written_;  // Tracks which venues have been saved to HDF5
 
   std::unique_ptr<Epidemiology> epidemiology_;
 
+  // Returns the MPI rank of this process, or 0 for serial / no-MPI builds.
+  int getRank() const {
+#ifdef USE_MPI
+    return domain_mgr_ ? domain_mgr_->getRank() : 0;
+#else
+    return 0;
+#endif
+  }
+
+  // Returns the MPI world size, or 1 for serial / no-MPI builds.
+  int getNumRanks() const {
+#ifdef USE_MPI
+    return domain_mgr_ ? domain_mgr_->getNumRanks() : 1;
+#else
+    return 1;
+#endif
+  }
+
   // Simulation loop functions
+  void runOneDay(int day, int rank);
   void simulateDay(int day_num);
   void simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
                         int day_type_idx, double delta_hours);
+
+  // Coordinated-encounter daily negotiation: generate proposals locally,
+  // exchange across ranks, process, exchange replies, finalize, log locally,
+  // and broadcast finalized encounters back so remote participants pick them
+  // up. Runs the full Phases 1–4 when coordinated_encounter_manager_ is set.
+  void negotiateAndLogDailyEncounters(int day, int rank);
+
+  // Log this rank's finalized encounters with a rank-tagged group_id. Called
+  // before the cross-rank merge so paired rows are never double-logged.
+  void logFinalizedEncountersLocally(
+      const std::vector<CoordinatedEncounter>& finalized, int rank);
+
+  // Two-pass coordinated-encounter injection for this slot: build per-slot
+  // lookups, dedup + sort daily_encounters, compute local eligibility,
+  // Allgatherv global eligibility, then stamp venue_id / encounter_type_id
+  // onto every eligible participant's PersonLocation.
+  void injectCoordinatedEncountersIntoSlot(int time_slot_index);
+
+  // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
+  // (symptom transitions / recoveries / deaths) and then decay the venue
+  // fomite buffer for this slot. Both wrapped in try/catch with a Fatal
+  // log + rethrow. Returns the EpiSlotStats from Step 5 so the per-slot
+  // summary can print it.
+  EpiSlotStats updateEpidemiologyAfterTransmission(double delta_hours);
+
+  // Step 3 of simulateTimeSlot: drive InteractionManager::processTransmissions
+  // on this rank's locations + (in MPI mode) incoming visitors. The three
+  // visitor-related pointers are nullable so non-MPI / no-domain calls can
+  // pass nullptr; pending_infections is filled by the call and consumed by
+  // Step 4. Returns the local new-infection count.
+  int runSlotTransmission(
+      std::vector<PersonLocation>& transmission_locations, double delta_hours,
+      int day_type_idx, std::unordered_set<PersonId>* visitor_ids,
+      std::vector<PendingInfection>* pending_infections,
+      std::unordered_map<PersonId, VisitorInfo>* visitor_data_map);
+
+#ifdef USE_MPI
+  // Step 2 of simulateTimeSlot in MPI builds: trigger the cross-rank
+  // visitor exchange, then fill `augmented_locations` with this rank's
+  // locals at locally-owned venues plus incoming visitors (sorted by
+  // person_id for deterministic processing order), and populate the
+  // visitor_ids set + visitor_data_map used by transmission processing.
+  void exchangeVisitorsAndBuildAugmented(
+      double delta_hours, std::vector<PersonLocation>& augmented_locations,
+      std::unordered_set<PersonId>& visitor_ids,
+      std::unordered_map<PersonId, VisitorInfo>& visitor_data_map);
+
+  // Step 4 of simulateTimeSlot in MPI builds: route this rank's
+  // pending_infections back to home ranks, then track + log every
+  // applied infection. Bypass when no DomainManager.
+  void receivePendingAndApply(
+      const std::vector<PendingInfection>& pending_infections);
+#endif
+
+  // End-of-run output: write final epidemic events + lookups (collective on
+  // all ranks; appends to the per-rank events file), then on rank 0 print
+  // the wall-clock summary, activity/interaction stats, and encounter stats.
+  void writeFinalEventsAndLookups(int rank);
+  void printRunSummary();
+
+  // End-of-day checkpoint trigger. Consults the configured cadence and, if
+  // the day fires, announces on rank 0 and writes a checkpoint.
+  void maybeWriteCheckpoint(int day, int rank);
+
+  // Per-rank piece of writeCheckpoint: write this rank's owned world_ subset
+  // (population + sparse infection / vaccine / fomite) plus the per-rank
+  // global-id-keyed manager state (epidemiology lpt + policy frozen_states)
+  // into delta_rank<r>.h5, embedding a partition_index so restore can
+  // selectively read by geo_unit.
+  void writeCheckpointRankShard(const std::filesystem::path& tmp, int rank,
+                                int comp);
+
+  // Read the global / scalar restore state from state.h5 into class members
+  // (current_simulation_time_, next_encounter_group_id_, day_type_counts_,
+  // and the infection_seeder's applied_seeds). Per-rank manager state
+  // (lpt, frozen_states) is overlaid from the shards, not from here.
+  void restoreCheckpointStateFile(const std::filesystem::path& cp);
+
+  // Throw if --days / end_date leaves nothing to simulate after a resume.
+  // --days is anchored to the ORIGINAL start_date, not the checkpoint, so a
+  // resume that lands at or past total_days_ would silently no-op. Fail
+  // loudly instead, pointing at the right --days value to use.
+  void validateResumeBounds(int completed_day) const;
+
+  // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
+  // (completed_day, current_simulation_time_, next_encounter_group_id_, …),
+  // the infection_seeder's applied_seeds, and the rank-0 event-log buffered
+  // record counts. Per-rank manager state (lpt, frozen_states) lives in
+  // each shard, not here, so the checkpoint stays rank-count-independent.
+  void writeCheckpointStateFile(const std::filesystem::path& tmp,
+                                int completed_day, int nranks);
 
   // Fomite initialization
   void initFomiteState();

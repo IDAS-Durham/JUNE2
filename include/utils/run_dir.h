@@ -18,7 +18,7 @@
 
 #include <unistd.h>
 
-#include "../core/config.h"
+#include "core/config.h"
 
 namespace june::run_dir {
 
@@ -103,7 +103,7 @@ inline std::string nestedDiseaseOutcomeCsv(const std::string& disease_yaml) {
 
 // Extract the bulk-seed CSV referenced inside infection_seeds.yaml. Unlike the
 // disease outcome CSV, the infection-seed loader passes bulk_csv verbatim to
-// the CSV reader (infection_seed.cpp:256), i.e. it is CWD-relative — so we
+// the CSV reader (infection_seed.cpp:256), i.e. it is CWD-relative, so we
 // must NOT prefix it with the YAML's directory.
 inline std::string nestedBulkSeedCsv(const std::string& seeds_yaml) {
   if (seeds_yaml.empty()) return "";
@@ -146,7 +146,7 @@ inline std::vector<std::string> collectConfigPaths(
 
   // Referenced data / CSV files. The regional-risk CSV is only consumed when
   // the feature is enabled (main.cpp gates loadRegionalRiskFactors on it), so
-  // snapshot it only then — otherwise a disabled-but-stale path bloats the run
+  // snapshot it only then. Otherwise a disabled-but-stale path bloats the run
   // dir and can even hard-fail snapshotRun's existence check.
   if (sim.regional_risk.enabled) {
     push(sim.regional_risk.regional_risk_file);

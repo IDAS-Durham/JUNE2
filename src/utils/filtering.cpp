@@ -97,7 +97,7 @@ std::vector<SelectionCriterion> parseConjunctiveExpression(
       for (auto& c : cs) c.operator_type = "!=";
       out.insert(out.end(), cs.begin(), cs.end());
     } else {
-      // >=, <=, >, < — parseCriterionFromKeyValue accepts these as a val
+      // >=, <=, >, <: parseCriterionFromKeyValue accepts these as a val
       // prefix.
       auto cs = parseCriterionFromKeyValue(key, op + val);
       out.insert(out.end(), cs.begin(), cs.end());
@@ -200,7 +200,7 @@ bool matchesCriteria(const Person& person, const WorldState* world,
     if (c.property_path == "infector_symptom") {
       // If no infector context is available, only empty-cell rows match
       // (those produce no criterion). A criterion here means a specific
-      // symptom was required — fail if we have no infector.
+      // symptom was required, so fail if we have no infector.
       if (ctx.infector_symptom.empty()) return false;
 
       // Compare infector_symptom string against criterion value

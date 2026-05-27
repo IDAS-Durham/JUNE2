@@ -24,7 +24,7 @@ std::vector<SelectionCriterion> InfectionSeedConfigLoader::parseCriterion(
   // Map age_groups to age for internal property evaluation
   if (property == "age_groups") {
     property = "age";
-    // Silent mapping — internal config normalization
+    // Silent mapping: internal config normalization
   }
 
   std::vector<SelectionCriterion> results;
@@ -234,7 +234,7 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
     }
     config.seeds.push_back(draft.event);
   }
-  // CSV parse summary removed — not actionable
+  // CSV parse summary removed (not actionable)
 }
 
 InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
@@ -371,7 +371,7 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
       applied_seeds_.insert(seed_key);
       all_infected.insert(all_infected.end(), infected.begin(), infected.end());
 
-      // Per-seed message removed — global count reported by Simulator
+      // Per-seed message removed; global count reported by Simulator
     }
   }
 
@@ -399,7 +399,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
   double cases_per_capita =
       seed.uniform_config.cases_per_capita * seed.seed_strength;
 
-  // Target rate message removed — not actionable
+  // Target rate message removed (not actionable)
 
   // MPI-reproducible seeding: each person gets a per-person deterministic
   // decision based on their ID. This ensures the same person is always
@@ -427,7 +427,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
     }
   }
 
-  // Seeded count removed — global count reported by Simulator
+  // Seeded count removed; global count reported by Simulator
 
   return infected_ids;
 }
@@ -484,7 +484,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
           infected_ids.push_back(candidates[i]->id);
         }
       }
-      // Per-unit success message removed — global count reported by Simulator
+      // Per-unit success message removed; global count reported by Simulator
     }
   }
   return infected_ids;
@@ -555,7 +555,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     std::sort(pool.begin(), pool.end(),
               [](const auto& a, const auto& b) { return a.second > b.second; });
 
-    // Per-unit clustered seed message removed — global count reported by
+    // Per-unit clustered seed message removed; global count reported by
     // Simulator
 
     int unit_infected = 0;

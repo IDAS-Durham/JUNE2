@@ -24,7 +24,7 @@ constexpr const char* VENUE_ID_DATA = "/nodes/venue_id_data";
 }  // namespace CompartmentalGraphSchema
 
 // =============================================================================
-// loadCouplingMatrix — free function
+// loadCouplingMatrix: free function
 // =============================================================================
 
 CouplingMatrixConfig loadCouplingMatrix(const std::string& yaml_path) {
@@ -93,7 +93,7 @@ CompartmentalModelManager::CompartmentalModelManager(
 }
 
 // =============================================================================
-// init() — shared construction body; each step dispatches to the injected
+// init(): shared construction body; each step dispatches to the injected
 // function if set, otherwise falls back to the real implementation.
 // =============================================================================
 
@@ -387,7 +387,7 @@ void CompartmentalModelManager::realInitialise(ICompartmentalModel* plugin,
 }
 
 // =============================================================================
-// Public methods (hot-path — unchanged)
+// Public methods (hot-path, unchanged)
 // =============================================================================
 
 int CompartmentalModelManager::ownedNodeCount() const {
@@ -460,7 +460,7 @@ void CompartmentalModelManager::computeDepositionWriteback(
 
   int n_nodes = ownedNodeCount();
   if (!has_deposition_mode) {
-    // No deposition modes — write zeros so plugin gets a consistent call.
+    // No deposition modes; write zeros so plugin gets a consistent call.
     if (n_nodes > 0) {
       std::vector<float> zeros(static_cast<size_t>(n_nodes), 0.0f);
       writeCouplingInputs(zeros.data(), n_nodes);

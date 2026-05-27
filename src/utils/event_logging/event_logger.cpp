@@ -1,4 +1,4 @@
-#include "utils/event_logger.h"
+#include "utils/event_logging/event_logger.h"
 
 #include <cstring>
 #include <iostream>
@@ -130,11 +130,6 @@ void EventLogger::printEncounterStats(
     std::cout << std::endl;
   }
   std::cout << "============================" << std::endl;
-}
-
-void EventLogger::saveToHDF5(const std::string& filename,
-                             const Config& config) {
-  EventWriter::saveToHDF5(*this, filename, config);
 }
 
 void EventLogger::saveToHDF5WithLookups(

@@ -55,9 +55,6 @@ else()
   message(STATUS "yaml-cpp found via find_package")
 endif()
 
-# Optional: Enable MPI debug output
-option(JUNE_MPI_DEBUG "Enable MPI debug output for cross-rank infection tracing" ON)
-
 # Optional: Find MPI for parallel execution
 option(USE_MPI "Enable MPI parallel execution" ON)
 if(USE_MPI)
@@ -128,32 +125,52 @@ endif()
 # Core Simulation Library
 # ==============================================================================
 set(JUNE_CORE_SOURCES
-    src/infection_seed.cpp
-    src/disease.cpp
-    src/disease_loader.cpp
-    src/interaction_manager.cpp
+    src/epidemiology/infection_seed.cpp
+    src/epidemiology/disease.cpp
+    src/loaders/disease_loader.cpp
+    src/interaction/interaction_manager.cpp
+    src/interaction/interaction_manager_venue.cpp
+    src/interaction/interaction_manager_venue_bins.cpp
+    src/interaction/interaction_manager_partial_presence.cpp
     src/activity/activity_manager.cpp
-    src/config.cpp
-    src/config_checks.cpp
+    src/activity/activity_manager_selection.cpp
+    src/core/config.cpp
+    src/core/config_checks.cpp
+    src/core/world_state.cpp
     src/activity/coordinated_encounter_manager.cpp
+    src/activity/coordinated_encounter_manager_stats.cpp
     src/activity/runtime_bin_allocator.cpp
     src/activity/presence_window.cpp
-    src/utils/event_logger.cpp
+    src/utils/event_logging/event_logger.cpp
     src/utils/filtering.cpp
     src/utils/filtered_csv.cpp
     src/utils/event_logging/event_writer.cpp
+    src/utils/event_logging/event_writer_lookups.cpp
     src/utils/event_logging/event_merger.cpp
+    src/utils/event_logging/event_merger_lookups.cpp
     src/epidemiology/epidemiology.cpp
+    src/epidemiology/policy.cpp
     src/simulation/simulator.cpp
     src/simulation/simulator_checkpoint.cpp
-    src/simulation/compartmental_model_manager.cpp)
+    src/simulation/simulator_encounters.cpp
+    src/simulation/simulator_reporting.cpp
+    src/simulation/simulator_restore.cpp
+    src/simulation/simulator_timeslot.cpp
+    src/simulation/compartmental_model_manager.cpp
+    src/loaders/hdf5_loader.cpp
+    src/loaders/domain_loader.cpp
+    src/loaders/domain_loader_internals.cpp
+    src/loaders/config_loader.cpp
+    src/loaders/config_loader_encounters.cpp
+    src/loaders/config_loader_vaccination.cpp)
 
 if(MPI_FOUND)
   list(APPEND JUNE_CORE_SOURCES
        src/parallel/domain.cpp
        src/parallel/domain_manager.cpp
        src/parallel/geography_partitioner.cpp
-       src/parallel/domain_communicator.cpp)
+       src/parallel/domain_communicator.cpp
+       src/parallel/domain_communicator_encounters.cpp)
 endif()
 
 # Create the library
@@ -177,11 +194,6 @@ endif()
 if(MPI_FOUND)
   target_include_directories(june_core PUBLIC ${MPI_CXX_INCLUDE_DIRS})
   target_compile_definitions(june_core PUBLIC USE_MPI)
-endif()
-
-if(JUNE_MPI_DEBUG)
-    target_compile_definitions(june_core PUBLIC JUNE_MPI_DEBUG)
-    message(STATUS "JUNE_MPI_DEBUG enabled: cross-rank infection tracing active")
 endif()
 
 if(METIS_FOUND)
@@ -273,11 +285,11 @@ if(BUILD_TESTING)
 
   add_june_test(test_run_dir "tests/test_run_dir.cpp")
   add_june_test(test_world_state "tests/test_world_state.cpp")
-  add_june_test(test_infection "tests/test_infection.cpp;src/disease_loader.cpp")
+  add_june_test(test_infection "tests/test_infection.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_transmission_lookups "tests/test_transmission_lookups.cpp")
   add_june_test(test_coordinated_encounters "tests/test_coordinated_encounters.cpp")
-  add_june_test(test_fomite_transmission "tests/test_fomite_transmission.cpp;src/disease_loader.cpp")
-  add_june_test(test_compartmental_disease_mode "tests/test_compartmental_disease_mode.cpp;src/disease_loader.cpp")
+  add_june_test(test_fomite_transmission "tests/test_fomite_transmission.cpp;src/loaders/disease_loader.cpp")
+  add_june_test(test_compartmental_disease_mode "tests/test_compartmental_disease_mode.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_compartmental_coupling_matrix "tests/test_compartmental_coupling_matrix.cpp")
   add_june_test(test_compartmental_transmission "tests/test_compartmental_transmission.cpp")
   add_june_test(test_compartmental_writeback "tests/test_compartmental_writeback.cpp")
@@ -290,9 +302,9 @@ if(BUILD_TESTING)
   add_june_test(test_day_types "tests/test_day_types.cpp")
   add_june_test(test_schedule_hopper "tests/test_schedule_hopper.cpp")
   add_june_test(test_cross_domain_venues "tests/test_cross_domain_venues.cpp")
-  add_june_test(test_integration "tests/test_integration.cpp;src/disease_loader.cpp")
-  add_june_test(test_epidemiology "tests/test_epidemiology.cpp;src/disease_loader.cpp")
-  add_june_test(test_simulator "tests/test_simulator.cpp;src/disease_loader.cpp")
+  add_june_test(test_integration "tests/test_integration.cpp;src/loaders/disease_loader.cpp")
+  add_june_test(test_epidemiology "tests/test_epidemiology.cpp;src/loaders/disease_loader.cpp")
+  add_june_test(test_simulator "tests/test_simulator.cpp;src/loaders/disease_loader.cpp")
   # Mock compartmental model plugin .so used by compartmental model manager tests.
   add_library(mock_compartmental_model SHARED tests/mock_compartmental_model.cpp)
   target_include_directories(mock_compartmental_model PRIVATE ${CMAKE_SOURCE_DIR}/include)
@@ -306,12 +318,12 @@ if(BUILD_TESTING)
   if(HDF5_CXX_LIBRARY_hdf5)
     target_link_libraries(test_compartmental_model_manager PRIVATE ${HDF5_CXX_LIBRARY_hdf5})
   endif()
-  add_june_test(test_transmission_modes "tests/test_transmission_modes.cpp;src/disease_loader.cpp")
+  add_june_test(test_transmission_modes "tests/test_transmission_modes.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_deterministic_rng "tests/test_deterministic_rng.cpp")
-  add_june_test(test_transmission_determinism "tests/test_transmission_determinism.cpp;src/disease_loader.cpp")
-  add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/disease_loader.cpp")
+  add_june_test(test_transmission_determinism "tests/test_transmission_determinism.cpp;src/loaders/disease_loader.cpp")
+  add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_presence_window "tests/test_presence_window.cpp")
-  add_june_test(test_partial_presence_foi "tests/test_partial_presence_foi.cpp;src/disease_loader.cpp")
+  add_june_test(test_partial_presence_foi "tests/test_partial_presence_foi.cpp;src/loaders/disease_loader.cpp")
 
   if(MPI_FOUND)
     add_june_mpi_test(test_mpi_communication "tests/test_mpi_communication.cpp")

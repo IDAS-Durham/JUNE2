@@ -4,12 +4,13 @@
 #include <random>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../utils/deterministic_rng.h"
 #include "coordinated_encounter_types.h"
+#include "core/config.h"
+#include "core/world_state.h"
+#include "utils/deterministic_rng.h"
 
 namespace june {
 
@@ -47,6 +48,35 @@ class CoordinatedEncounterManager {
     daily_encounters_.push_back(enc);
   }
 
+  // Key for mutual-proposal lookup. A proposal (host=A, invitee=B, slot=S,
+  // type=T) is "mutual" iff the reverse (B→A, S, T) is also in the set.
+  // Public so file-local helpers in coordinated_encounter_manager.cpp can
+  // name the type.
+  struct ProposalKey {
+    PersonId host;
+    PersonId invitee;
+    int slot;
+    uint8_t encounter_type_id;
+
+    bool operator==(const ProposalKey& o) const {
+      return host == o.host && invitee == o.invitee && slot == o.slot &&
+             encounter_type_id == o.encounter_type_id;
+    }
+  };
+  struct ProposalKeyHash {
+    size_t operator()(const ProposalKey& k) const;
+  };
+  using ProposalSet = std::unordered_set<ProposalKey, ProposalKeyHash>;
+
+  // Daily aggregate frequency-group budget stats for debug reporting.
+  // Public so file-local helpers can name the type.
+  struct FreqGroupStats {
+    int persons_evaluated = 0;
+    int budget_hits = 0;
+    int encounters_emitted = 0;
+    double sum_daily_p = 0.0;
+  };
+
  private:
   const WorldState& world_;
   const Config& config_;
@@ -66,17 +96,10 @@ class CoordinatedEncounterManager {
 
   // Per-person, per-frequency-group commitment (cleared daily). Once an
   // encounter of a given group fires for a person, no further encounter in
-  // the same group can fire — the budget is spent.
+  // the same group can fire, the budget is spent.
   std::unordered_map<PersonId, std::unordered_map<std::string, bool>>
       freq_group_committed_;
 
-  // Daily aggregate frequency-group budget stats for debug reporting.
-  struct FreqGroupStats {
-    int persons_evaluated = 0;
-    int budget_hits = 0;
-    int encounters_emitted = 0;
-    double sum_daily_p = 0.0;
-  };
   std::unordered_map<std::string, FreqGroupStats> freq_group_stats_;
 
   // Helper to get virtual venue type ID from the string name
@@ -86,6 +109,21 @@ class CoordinatedEncounterManager {
 
   // Logs encounter definition config on Day 0, Rank 0 only
   void logEncounterConfig(const CoordinatedEncounterDef& enc_def) const;
+
+  // First-call-wins populate of the per-person remaining-slot vector for the
+  // given day_type. No-op on subsequent calls within the same day.
+  void populateInitialRemainingSlotsIfAbsent(
+      const Person& person, size_t person_idx, int day_type_idx,
+      std::unordered_map<size_t, std::vector<int>>& remaining_slots) const;
+
+  // Resolves today's per-(person, frequency_group) budget hit on first call
+  // (using a group-specific RNG so the draw is independent of encounter
+  // ordering) and caches the result for the rest of the day. Returns false if
+  // the person has no budget today or has already spent it on a
+  // higher-priority encounter type in the same group.
+  bool isFrequencyGroupBudgetAvailable(const Person& person,
+                                       const std::string& fg_name,
+                                       int current_day);
 
   // Returns the slot indices valid for this encounter type from the person's
   // remaining pool
@@ -122,11 +160,41 @@ class CoordinatedEncounterManager {
                      std::vector<PersonId>& eligible_partners, SplitMix64& gen,
                      std::vector<EncounterProposal>& out_proposals);
 
+  // Per-slot body of generateProposals. Runs the rate gate (frequency-group
+  // bypass or proposal_probability roll), venue selection, partner gather, and
+  // emitProposals. On success, marks the slot committed for the host and
+  // (when fg_name_ptr is set) records the per-(person, group) commitment.
+  // Returns true iff a proposal block was emitted.
+  bool tryEmitForOneSlot(
+      const Person& person, size_t person_idx,
+      const CoordinatedEncounterDef& enc_def, int slot_idx, int virtual_v_type,
+      const std::string* fg_name_ptr, SplitMix64& gen,
+      std::uniform_real_distribution<double>& dist,
+      std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+      std::vector<EncounterProposal>& out_proposals);
+
+  // Per-(person, enc_def) body of generateProposals. Builds the per-person
+  // RNG, runs the frequency-group gate, populates remaining slots, computes
+  // the per-type budget, and iterates the per-slot emit loop.
+  void proposeForOnePersonOneEncounter(
+      const Person& person, size_t person_idx,
+      const CoordinatedEncounterDef& enc_def, int current_day, int day_type_idx,
+      int enc_type_counter, int virtual_v_type,
+      std::unordered_map<size_t, std::vector<int>>& remaining_slots,
+      std::vector<EncounterProposal>& out_proposals);
+
   // --- processProposals helpers ---
 
   // Finds the encounter definition matching a proposal's venue type
   const CoordinatedEncounterDef* findMatchingEncounterDef(
       const EncounterProposal& prop) const;
+
+  // Per-proposal decision: produces the reply (status filled in), and
+  // side-effects committed_slots_ on accept. Caller appends the result to
+  // out_replies.
+  EncounterReply replyForOneProposal(const EncounterProposal& prop,
+                                     int day_type_idx,
+                                     const ProposalSet& proposal_set);
 
   // Checks if the invitee's schedule is compatible with the encounter at the
   // given slot

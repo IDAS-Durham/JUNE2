@@ -7,8 +7,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../../core/config.h"
-#include "../../core/world_state.h"
+#include "core/config.h"
+#include "core/world_state.h"
 #include "event_types.h"
 
 namespace june {
@@ -17,8 +17,6 @@ class EventLogger;
 
 class EventWriter {
  public:
-  static void saveToHDF5(const EventLogger& logger, const std::string& filename,
-                         const Config& config);
   static void saveToHDF5WithLookups(
       const EventLogger& logger, const std::string& filename,
       const WorldState& world, const Config& config,
@@ -67,7 +65,7 @@ class EventWriter {
                                      const Config& config);
   // Full-population person-network dump (e.g. friendships).
   // One group per network type under /lookups/population_networks/<name>/,
-  // containing parallel ``person_id`` and ``partner_id`` 1-D int32 datasets —
+  // containing parallel ``person_id`` and ``partner_id`` 1-D int32 datasets,
   // a row per (person, partner) pair. Not gated by save_full_person_details
   // so it stays available even when /lookups/people is infected_only.
   static void writePopulationNetworks(H5::H5File& file, const WorldState& world,

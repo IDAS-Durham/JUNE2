@@ -6,9 +6,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "../core/config.h"
-#include "../epidemiology/policy.h"
-#include "../utils/time_utils.h"
+#include "core/config.h"
+#include "epidemiology/policy.h"
+#include "utils/time_utils.h"
 
 namespace june {
 
