@@ -268,6 +268,16 @@ class InteractionManager {
                                                     int parent_num_bins,
                                                     int num_modes);
 
+  // Fill inf_by_mode with the per-mode integrated infectiousness (24*∫I dt)
+  // contributed by this member over [current_time, current_time+delta_hours].
+  // Visitor branch reads pre-computed values from the sending rank; local
+  // branch calls Infection::getIntegratedInfectiousness. Returns true iff
+  // the member contributes any positive infectiousness.
+  bool gatherMemberInfectiousnessByMode(
+      const Person* person, const VisitorInfo* visitor, double current_time,
+      double delta_hours, int num_modes,
+      std::vector<double>& inf_by_mode) const;
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.

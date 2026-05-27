@@ -123,6 +123,34 @@ void InteractionManager::buildParentAggregates(
   dumpParentAggregatesDebug(current_time, delta_hours);
 }
 
+bool InteractionManager::gatherMemberInfectiousnessByMode(
+    const Person* person, const VisitorInfo* visitor, double current_time,
+    double delta_hours, int num_modes,
+    std::vector<double>& inf_by_mode) const {
+  inf_by_mode.assign(num_modes, 0.0);
+  double total = 0.0;
+  if (visitor) {
+    if (!visitor->is_infectious) return false;
+    for (int m = 0; m < num_modes; ++m) {
+      inf_by_mode[m] = (m < VisitorInfo::MAX_MODES)
+                           ? visitor->integrated_infectiousness[m]
+                           : 0.0;
+      total += inf_by_mode[m];
+    }
+  } else if (person && person->infection &&
+             person->infection->isInfectious(current_time)) {
+    const double t1 = current_time + delta_hours / 24.0;
+    for (int m = 0; m < num_modes; ++m) {
+      inf_by_mode[m] =
+          person->infection->getIntegratedInfectiousness(m, current_time, t1);
+      total += inf_by_mode[m];
+    }
+  } else {
+    return false;
+  }
+  return total > 0.0;
+}
+
 ParentAggregate& InteractionManager::ensureParentAggregateInitialised(
     VenueId parent_id, VenueId child_venue_id, uint8_t parent_type_id,
     int parent_num_bins, int num_modes) {
@@ -186,6 +214,7 @@ void InteractionManager::aggregateOneVenueGroupForParent(
               return a.person_id < b.person_id;
             });
 
+  std::vector<double> inf_by_mode;
   for (const auto& loc : mem_sorted) {
     PersonId pid = loc.person_id;
     Person* person = nullptr;
@@ -212,33 +241,8 @@ void InteractionManager::aggregateOneVenueGroupForParent(
     agg.size_by_bin[parent_bin]++;
     csize[parent_bin]++;
 
-    // Infectiousness contribution
-    bool is_infectious = false;
-    std::vector<double> inf_by_mode(num_modes, 0.0);
-    if (visitor) {
-      if (visitor->is_infectious) {
-        double total = 0.0;
-        for (int m = 0; m < num_modes; ++m) {
-          inf_by_mode[m] = (m < VisitorInfo::MAX_MODES)
-                               ? visitor->integrated_infectiousness[m]
-                               : 0.0;
-          total += inf_by_mode[m];
-        }
-        is_infectious = total > 0.0;
-      }
-    } else if (person && person->infection &&
-               person->infection->isInfectious(current_time)) {
-      const double t1 = current_time + delta_hours / 24.0;
-      double total = 0.0;
-      for (int m = 0; m < num_modes; ++m) {
-        inf_by_mode[m] = person->infection->getIntegratedInfectiousness(
-            m, current_time, t1);
-        total += inf_by_mode[m];
-      }
-      is_infectious = total > 0.0;
-    }
-
-    if (is_infectious) {
+    if (gatherMemberInfectiousnessByMode(person, visitor, current_time,
+                                         delta_hours, num_modes, inf_by_mode)) {
       for (int m = 0; m < num_modes; ++m) {
         agg.total_inf_by_bin_mode[parent_bin][m] += inf_by_mode[m];
         cinf[parent_bin][m] += inf_by_mode[m];
