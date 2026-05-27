@@ -146,8 +146,6 @@ class InteractionManager {
   struct PerformanceStats {
     size_t matrix_lookups = 0;
     size_t bin_lookups = 0;
-    size_t weight_allocations = 0;
-    size_t distribution_constructions = 0;
     size_t grouping_ops = 0;
 
     void print() const {
@@ -155,9 +153,6 @@ class InteractionManager {
                 << std::endl;
       std::cout << "  Matrix lookups:      " << matrix_lookups << std::endl;
       std::cout << "  Bin lookups:         " << bin_lookups << std::endl;
-      std::cout << "  Weight allocations:  " << weight_allocations << std::endl;
-      std::cout << "  Dist constructions:  " << distribution_constructions
-                << std::endl;
       std::cout << "  Grouping operations: " << grouping_ops << std::endl;
     }
   };
