@@ -346,6 +346,13 @@ class InteractionManager {
       int num_bins_needed, uint16_t num_bins,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
+  // Collect [0, eff_board, eff_alight, slot_duration_min] event times for one
+  // carriage, sort and de-duplicate within 1e-5 tolerance. The accumulator
+  // walks sub-intervals delimited by consecutive entries. Returns the deduped
+  // event times.
+  std::vector<float> collectSubIntervalEventTimes(
+      const std::vector<CarriageMember>& car, float slot_duration_min) const;
+
   // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
   // compute parent_bin under parent_matrix, bump headcount in agg/csize,
   // gather per-mode infectiousness, and (if positive) accumulate into

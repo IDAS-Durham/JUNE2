@@ -1446,6 +1446,26 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
+std::vector<float> InteractionManager::collectSubIntervalEventTimes(
+    const std::vector<CarriageMember>& car, float slot_duration_min) const {
+  std::vector<float> events;
+  events.reserve(2 * car.size() + 2);
+  events.push_back(0.0f);
+  events.push_back(slot_duration_min);
+  for (const auto& m : car) {
+    if (m.eff_board > 0.0f && m.eff_board < slot_duration_min)
+      events.push_back(m.eff_board);
+    if (m.eff_alight > 0.0f && m.eff_alight < slot_duration_min)
+      events.push_back(m.eff_alight);
+  }
+  std::sort(events.begin(), events.end());
+  events.erase(
+      std::unique(events.begin(), events.end(),
+                  [](float a, float b) { return std::abs(a - b) < 1e-5f; }),
+      events.end());
+  return events;
+}
+
 std::vector<std::vector<CarriageMember>>
 InteractionManager::buildPartialPresenceCarriages(
     const std::vector<InteractionMember>& members, Venue* venue,
@@ -1571,22 +1591,8 @@ InteractionManager::computePartialPresenceLambda(
     const auto& car = carriages[c];
     if (car.empty()) continue;
 
-    // Collect unique event times in this carriage.
-    std::vector<float> events;
-    events.reserve(2 * car.size() + 2);
-    events.push_back(0.0f);
-    events.push_back(slot_duration_min);
-    for (const auto& m : car) {
-      if (m.eff_board > 0.0f && m.eff_board < slot_duration_min)
-        events.push_back(m.eff_board);
-      if (m.eff_alight > 0.0f && m.eff_alight < slot_duration_min)
-        events.push_back(m.eff_alight);
-    }
-    std::sort(events.begin(), events.end());
-    events.erase(
-        std::unique(events.begin(), events.end(),
-                    [](float a, float b) { return std::abs(a - b) < 1e-5f; }),
-        events.end());
+    std::vector<float> events =
+        collectSubIntervalEventTimes(car, slot_duration_min);
     if (events.size() < 2) continue;
 
     for (size_t si = 0; si + 1 < events.size(); ++si) {
