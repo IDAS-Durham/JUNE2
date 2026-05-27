@@ -18,6 +18,92 @@
 
 namespace june {
 
+// =============================================================================
+// processVenueTransmissions — entry point for the standard FOI path.
+//
+// Called from InteractionManager::processOneVenueGroup. Routes
+// partial-presence venues out to processPartialPresenceVenue; otherwise
+// runs the standard pre-Bernoulli setup (in venue_bins.cpp) followed by
+// the per-susceptible Bernoulli draws below.
+// =============================================================================
+
+int InteractionManager::processVenueTransmissions(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id, const CompartmentalModelManager* comp_model) {
+  if (auto pp = dispatchPartialPresenceIfApplicable(
+          members, venue, actual_venue_id, current_time, delta_hours,
+          active_infections, visitor_ids, pending_infections, visitor_data,
+          encounter_type_id, comp_model)) {
+    return *pp;
+  }
+
+  std::string venue_type;
+  uint8_t venue_type_id = 255;
+  const ContactMatrix* matrix = nullptr;
+  resolveVenueTypeAndMatrix(venue, actual_venue_id, encounter_type_id,
+                            venue_type, venue_type_id, matrix);
+  const bool is_virtual_encounter = actual_venue_id < 0;
+
+  int num_bins_needed = matrix ? static_cast<int>(matrix->bins.size()) : 1;
+  if (num_bins_needed == 0) num_bins_needed = 1;
+  int num_modes = std::max(1, disease_->numModes());
+  const auto& trans_params = disease_->getTransmissionParams();
+
+  std::vector<FomiteModeRef> fomite_modes;
+  std::vector<int> comp_uptake_modes;
+  std::vector<int> n_sub_per_mode;
+  collectFomiteAndCompUptakeModes(delta_hours, fomite_modes, comp_uptake_modes,
+                                  n_sub_per_mode);
+  int num_fomite_modes = static_cast<int>(fomite_modes.size());
+
+  prepareBinsBuffer(num_bins_needed, num_modes, num_fomite_modes,
+                    n_sub_per_mode);
+
+  std::vector<double> lambda_fomite_by_mode = binMembersAndPrepareBuffers(
+      members, venue, matrix, num_bins_needed, num_modes, num_fomite_modes,
+      fomite_modes, n_sub_per_mode, current_time, delta_hours,
+      encounter_type_id, venue_type, venue_type_id, visitor_data);
+
+  if (venueHasNoTransmissionPossible(num_bins_needed, comp_uptake_modes,
+                                     lambda_fomite_by_mode, actual_venue_id,
+                                     comp_model)) {
+    clearUsedBins(num_modes);
+    return 0;
+  }
+
+  // Sibling-mixing setup: per-mode "sibling" source representing infectious
+  // people in OTHER children of the same parent.
+  const ParentAggregate* parent_agg = nullptr;
+  const ContactMatrix* parent_flat_matrix = nullptr;
+  std::tie(parent_agg, parent_flat_matrix) =
+      getParentAggregateForVenue(venue, is_virtual_encounter);
+
+  // Per-susceptible Bernoulli draws (mixing-model FOI infection), mode-aware.
+  int new_infections = 0;
+  for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
+    new_infections += processOneSuscBin(
+        susc_bin, num_bins_needed, num_modes, num_fomite_modes,
+        is_virtual_encounter, encounter_type_id, venue_type_id, matrix, venue,
+        actual_venue_id, fomite_modes, comp_uptake_modes, lambda_fomite_by_mode,
+        trans_params, parent_agg, parent_flat_matrix, comp_model, current_time,
+        delta_hours, visitor_data, active_infections, pending_infections);
+  }
+
+  // Clear person-proportional fields while bins are still cache-hot.
+  clearUsedBins(num_modes);
+  return new_infections;
+}
+
+// =============================================================================
+// Helpers below: per-susc-bin orchestrator, per-susceptible Bernoulli draw,
+// infector sampling, FOI-source builders, infection apply.
+// =============================================================================
+
 int InteractionManager::processOneSuscBin(
     int susc_bin, int num_bins_needed, int num_modes, int num_fomite_modes,
     bool is_virtual_encounter, uint8_t encounter_type_id, uint8_t venue_type_id,
@@ -440,78 +526,6 @@ void InteractionManager::appendCompUptakeSources(
     sources_buffer_.push_back(SourceEntry{mode_idx, -2});
     source_weights_buffer_.push_back(weighted);
   }
-}
-
-int InteractionManager::processVenueTransmissions(
-    const std::vector<InteractionMember>& members, Venue* venue,
-    VenueId actual_venue_id, double current_time, double delta_hours,
-    std::unordered_set<PersonId>* active_infections,
-    const std::unordered_set<PersonId>* visitor_ids,
-    std::vector<PendingInfection>* pending_infections,
-    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
-    uint8_t encounter_type_id, const CompartmentalModelManager* comp_model) {
-  if (auto pp = dispatchPartialPresenceIfApplicable(
-          members, venue, actual_venue_id, current_time, delta_hours,
-          active_infections, visitor_ids, pending_infections, visitor_data,
-          encounter_type_id, comp_model)) {
-    return *pp;
-  }
-
-  std::string venue_type;
-  uint8_t venue_type_id = 255;
-  const ContactMatrix* matrix = nullptr;
-  resolveVenueTypeAndMatrix(venue, actual_venue_id, encounter_type_id,
-                            venue_type, venue_type_id, matrix);
-  const bool is_virtual_encounter = actual_venue_id < 0;
-
-  int num_bins_needed = matrix ? static_cast<int>(matrix->bins.size()) : 1;
-  if (num_bins_needed == 0) num_bins_needed = 1;
-  int num_modes = std::max(1, disease_->numModes());
-  const auto& trans_params = disease_->getTransmissionParams();
-
-  std::vector<FomiteModeRef> fomite_modes;
-  std::vector<int> comp_uptake_modes;
-  std::vector<int> n_sub_per_mode;
-  collectFomiteAndCompUptakeModes(delta_hours, fomite_modes, comp_uptake_modes,
-                                  n_sub_per_mode);
-  int num_fomite_modes = static_cast<int>(fomite_modes.size());
-
-  prepareBinsBuffer(num_bins_needed, num_modes, num_fomite_modes,
-                    n_sub_per_mode);
-
-  std::vector<double> lambda_fomite_by_mode = binMembersAndPrepareBuffers(
-      members, venue, matrix, num_bins_needed, num_modes, num_fomite_modes,
-      fomite_modes, n_sub_per_mode, current_time, delta_hours,
-      encounter_type_id, venue_type, venue_type_id, visitor_data);
-
-  if (venueHasNoTransmissionPossible(num_bins_needed, comp_uptake_modes,
-                                     lambda_fomite_by_mode, actual_venue_id,
-                                     comp_model)) {
-    clearUsedBins(num_modes);
-    return 0;
-  }
-
-  // Sibling-mixing setup: per-mode "sibling" source representing infectious
-  // people in OTHER children of the same parent.
-  const ParentAggregate* parent_agg = nullptr;
-  const ContactMatrix* parent_flat_matrix = nullptr;
-  std::tie(parent_agg, parent_flat_matrix) =
-      getParentAggregateForVenue(venue, is_virtual_encounter);
-
-  // Per-susceptible Bernoulli draws (mixing-model FOI infection), mode-aware.
-  int new_infections = 0;
-  for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
-    new_infections += processOneSuscBin(
-        susc_bin, num_bins_needed, num_modes, num_fomite_modes,
-        is_virtual_encounter, encounter_type_id, venue_type_id, matrix, venue,
-        actual_venue_id, fomite_modes, comp_uptake_modes, lambda_fomite_by_mode,
-        trans_params, parent_agg, parent_flat_matrix, comp_model, current_time,
-        delta_hours, visitor_data, active_infections, pending_infections);
-  }
-
-  // Clear person-proportional fields while bins are still cache-hot.
-  clearUsedBins(num_modes);
-  return new_infections;
 }
 
 }  // namespace june
