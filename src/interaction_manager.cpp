@@ -1,5 +1,54 @@
 // #define DEBUG_INTERACTION_MANAGER
 // #define DEBUG_TRANSMISSION
+//
+// =============================================================================
+// InteractionManager — file roadmap
+// =============================================================================
+// The class is split across four translation units. All methods are members
+// of InteractionManager; the split is by *intent*, not by call order, so the
+// per-tick narrative bounces between files. Use this map to navigate.
+//
+//   interaction_manager.cpp                — this file
+//       Constructor, per-day driver, parent-aggregate machinery, low-level
+//       cross-file primitives (binning math, person/visitor lookup,
+//       infectiousness gather, symptom-id resolve).
+//       Entry: processTransmissions
+//                ├─ filterAndSortActiveLocations
+//                ├─ buildParentAggregates              (parent-mixing only)
+//                └─ per venue group: processOneVenueGroup
+//                                      └─ processVenueTransmissions  [→ venue]
+//
+//   interaction_manager_venue.cpp          — standard FOI path
+//       processVenueTransmissions orchestrator + the per-susceptible
+//       Bernoulli-draw / infector-sample / infection-apply pipeline.
+//       Calls into venue_bins.cpp for setup, then runs the susc-bin loop here.
+//
+//   interaction_manager_venue_bins.cpp     — pre-Bernoulli setup
+//       Everything processVenueTransmissions needs *before* the susc-bin
+//       loop: matrix/venue-type resolve, fomite/comp-uptake mode collection,
+//       bins-buffer prep, member binning, deterministic sorting, per-mode
+//       cumulative weights, fomite-deposition lambda.
+//
+//   interaction_manager_partial_presence.cpp — partial-presence FOI path
+//       The alternate FOI pipeline for venues with partial presence
+//       (commute lines etc.). dispatchPartialPresenceIfApplicable
+//       (called from processVenueTransmissions) routes here when the
+//       venue type is in SimulationConfig::partial_presence; otherwise
+//       the standard path above is used.
+//
+// Per-tick call flow (standard path):
+//   processTransmissions  → processOneVenueGroup
+//     → processVenueTransmissions          [venue.cpp]
+//         → dispatchPartialPresenceIfApplicable  [partial_presence.cpp]
+//             └─ if matched: processPartialPresenceVenue → return
+//         → resolveVenueTypeAndMatrix       [venue_bins.cpp]
+//         → collectFomiteAndCompUptakeModes [venue_bins.cpp]
+//         → prepareBinsBuffer               [venue_bins.cpp]
+//         → binMembersAndPrepareBuffers     [venue_bins.cpp]
+//         → venueHasNoTransmissionPossible  [venue_bins.cpp]
+//         → susc-bin loop: processOneSuscBin → applyVenueInfection
+//                                             [both venue.cpp]
+// =============================================================================
 #include "epidemiology/interaction_manager.h"
 
 #include <algorithm>
