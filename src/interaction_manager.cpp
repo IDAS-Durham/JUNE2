@@ -278,10 +278,10 @@ void InteractionManager::aggregateOneVenueGroupForParent(
   auto& csize = agg.child_size_by_bin[first.venue_id];
   auto& cinf = agg.child_inf_by_bin_mode[first.venue_id];
 
-  // Walk members of this venue group in person_id order — same ordering the
-  // main loop's STEP 1 uses, so the sibling FP sum order is identical across
-  // rank counts. (The active_locations_buffer_ is sorted by venue_id but not
-  // by person_id within a venue.)
+  // Walk members of this venue group in person_id order — same ordering
+  // binMembersAndPrepareBuffers uses, so the sibling FP sum order is
+  // identical across rank counts. (The active_locations_buffer_ is sorted
+  // by venue_id but not by person_id within a venue.)
   std::vector<PersonLocation> mem_sorted =
       buildPersonIdSortedMembers(group_start, group_end);
 

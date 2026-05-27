@@ -1,7 +1,10 @@
-// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16.
-// Contains STEP 1/1b/1c/STEP 2/STEP 2b helpers — binning members into
-// bins_buffer_, sorting for deterministic order, building per-mode
-// cumulative weights, recording fomite deposition.
+// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16,
+// and the file-roadmap comment at the top of interaction_manager.cpp.
+// Standard FOI path — everything processVenueTransmissions needs *before*
+// the per-susceptible Bernoulli loop: matrix/venue-type resolution,
+// fomite/comp-uptake mode collection, bins-buffer prep, member binning,
+// deterministic sorting, per-mode cumulative weights, fomite-deposition
+// lambda accumulation.
 #include "epidemiology/interaction_manager.h"
 
 #include <algorithm>
@@ -51,7 +54,7 @@ std::vector<double> InteractionManager::binMembersAndPrepareBuffers(
     double delta_hours, uint8_t encounter_type_id,
     const std::string& venue_type, uint8_t venue_type_id,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
-  // STEP 1: Group people by bin (single pass)
+  // Pass 1: bin each member by contact-matrix row.
   for (const auto& member : members) {
     binOneMember(member, venue, matrix, num_bins_needed, num_modes,
                  num_fomite_modes, fomite_modes, n_sub_per_mode, current_time,
@@ -59,18 +62,19 @@ std::vector<double> InteractionManager::binMembersAndPrepareBuffers(
                  visitor_data);
   }
 
-  // STEP 1b: Sort infectious lists by person_id for MPI reproducibility.
+  // Sort infectious lists by person_id (MPI determinism: identical iteration
+  // order regardless of how members were partitioned across ranks).
   sortInfectiousByPersonId(num_bins_needed, num_modes);
 
-  // STEP 1c: Sort susceptibles by person_id for deterministic order.
+  // Sort susceptibles by person_id (deterministic per-susc-bin loop order).
   sortSusceptiblesByPersonId(num_bins_needed);
 
-  // STEP 2: Pre-calculate per-mode cumulative weight arrays for infectious
-  // bins. cumulative_by_mode[m] is sampled with sampleFromCumulative in
-  // STEP 3b. Replaces std::discrete_distribution construction.
+  // Per-mode cumulative weight arrays for infectious bins (later sampled via
+  // sampleFromCumulative in the Bernoulli loop — replaces per-call
+  // std::discrete_distribution construction).
   buildCumulativeWeightsPerBin(num_bins_needed, num_modes);
 
-  // STEP 2b: Handle fomite deposition and compute per-mode lambda.
+  // Fomite deposition + per-mode lambda accumulation.
   return recordFomiteDepositionAndLambda(venue, num_bins_needed,
                                          num_fomite_modes, fomite_modes,
                                          n_sub_per_mode, current_time,

@@ -1,7 +1,8 @@
-// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16.
-// Contains processVenueTransmissions + the STEP 3 FOI math helpers:
-// per-source builders, per-susc-bin orchestrator, per-susceptible
-// Bernoulli draw, infector sampling, infection apply.
+// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16,
+// and the file-roadmap comment at the top of interaction_manager.cpp.
+// Standard FOI path: processVenueTransmissions orchestrator + the
+// per-susceptible Bernoulli pipeline (per-source builders, susc-bin
+// orchestrator, infector sampling, infection apply).
 #include "epidemiology/interaction_manager.h"
 
 #include <algorithm>
@@ -497,7 +498,7 @@ int InteractionManager::processVenueTransmissions(
   std::tie(parent_agg, parent_flat_matrix) =
       getParentAggregateForVenue(venue, is_virtual_encounter);
 
-  // STEP 3: Process transmissions (Mixing Model) — mode-aware.
+  // Per-susceptible Bernoulli draws (mixing-model FOI infection), mode-aware.
   int new_infections = 0;
   for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
     new_infections += processOneSuscBin(
