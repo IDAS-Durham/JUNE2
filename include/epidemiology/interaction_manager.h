@@ -278,6 +278,13 @@ class InteractionManager {
       double delta_hours, int num_modes,
       std::vector<double>& inf_by_mode) const;
 
+  // Copy active_locations_buffer_[group_start..group_end) into a fresh vector
+  // and sort it by person_id. Used by the parent-aggregate pre-pass to walk
+  // venue members in the same person_id order as the main loop's STEP 1,
+  // keeping the sibling FP sum order bit-identical across rank counts.
+  std::vector<PersonLocation> buildPersonIdSortedMembers(
+      size_t group_start, size_t group_end) const;
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.

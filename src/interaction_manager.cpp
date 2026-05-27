@@ -123,6 +123,20 @@ void InteractionManager::buildParentAggregates(
   dumpParentAggregatesDebug(current_time, delta_hours);
 }
 
+std::vector<PersonLocation> InteractionManager::buildPersonIdSortedMembers(
+    size_t group_start, size_t group_end) const {
+  std::vector<PersonLocation> mem_sorted;
+  mem_sorted.reserve(group_end - group_start);
+  for (size_t k = group_start; k < group_end; ++k) {
+    mem_sorted.push_back(active_locations_buffer_[k]);
+  }
+  std::sort(mem_sorted.begin(), mem_sorted.end(),
+            [](const PersonLocation& a, const PersonLocation& b) {
+              return a.person_id < b.person_id;
+            });
+  return mem_sorted;
+}
+
 bool InteractionManager::gatherMemberInfectiousnessByMode(
     const Person* person, const VisitorInfo* visitor, double current_time,
     double delta_hours, int num_modes,
@@ -200,19 +214,12 @@ void InteractionManager::aggregateOneVenueGroupForParent(
   auto& csize = agg.child_size_by_bin[first.venue_id];
   auto& cinf = agg.child_inf_by_bin_mode[first.venue_id];
 
-  // Walk members of this venue group. The locations buffer is already
-  // sorted by venue_id but NOT by person_id within a venue — match the
-  // main loop's STEP 1 ordering by sorting member ids here too, so the
-  // sibling FP sum order is identical across np configurations.
-  std::vector<PersonLocation> mem_sorted;
-  mem_sorted.reserve(group_end - group_start);
-  for (size_t k = group_start; k < group_end; ++k) {
-    mem_sorted.push_back(active_locations_buffer_[k]);
-  }
-  std::sort(mem_sorted.begin(), mem_sorted.end(),
-            [](const PersonLocation& a, const PersonLocation& b) {
-              return a.person_id < b.person_id;
-            });
+  // Walk members of this venue group in person_id order — same ordering the
+  // main loop's STEP 1 uses, so the sibling FP sum order is identical across
+  // rank counts. (The active_locations_buffer_ is sorted by venue_id but not
+  // by person_id within a venue.)
+  std::vector<PersonLocation> mem_sorted =
+      buildPersonIdSortedMembers(group_start, group_end);
 
   std::vector<double> inf_by_mode;
   for (const auto& loc : mem_sorted) {
