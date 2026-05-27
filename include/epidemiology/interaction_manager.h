@@ -272,6 +272,11 @@ class InteractionManager {
   // Returns the index one past the end of the group.
   size_t collectAndSortGroupMembers(size_t group_start);
 
+  // Emit the per-tick parent-mixing summary line when JUNE_DEBUG_PARENT_MIXING
+  // is enabled and any infections occurred this tick.
+  void printTickParentMixingSummary(int total_new_infections,
+                                    double current_time) const;
+
   // Compute the bin index for a person under a given contact matrix.
   // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
   // can bin people under the PARENT matrix (which may have a different bin

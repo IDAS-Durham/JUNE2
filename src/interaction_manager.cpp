@@ -378,6 +378,19 @@ size_t InteractionManager::collectAndSortGroupMembers(size_t group_start) {
   return i;
 }
 
+void InteractionManager::printTickParentMixingSummary(
+    int total_new_infections, double current_time) const {
+  if (!debug_parent_mixing_ || total_new_infections <= 0) return;
+  int non_sibling = total_new_infections - dbg_sibling_infections_;
+  std::cerr << "[PMIX] t=" << current_time
+            << " tick_summary: total=" << total_new_infections
+            << " non_sibling=" << non_sibling
+            << " sibling=" << dbg_sibling_infections_
+            << " (sibling counts person-sourced cross-child only;"
+            << " non_sibling includes own-venue, fomite, and"
+            << " compartmental sources)" << std::endl;
+}
+
 int InteractionManager::processTransmissions(
     const std::vector<PersonLocation>& locations, double current_time,
     double delta_hours, std::unordered_set<PersonId>* active_infections,
@@ -438,16 +451,7 @@ int InteractionManager::processTransmissions(
 
   // Per-slot transmission count removed — captured in DAY_SUMMARY
 
-  if (debug_parent_mixing_ && total_new_infections > 0) {
-    int non_sibling = total_new_infections - dbg_sibling_infections_;
-    std::cerr << "[PMIX] t=" << current_time
-              << " tick_summary: total=" << total_new_infections
-              << " non_sibling=" << non_sibling
-              << " sibling=" << dbg_sibling_infections_
-              << " (sibling counts person-sourced cross-child only;"
-              << " non_sibling includes own-venue, fomite, and"
-              << " compartmental sources)" << std::endl;
-  }
+  printTickParentMixingSummary(total_new_infections, current_time);
 
   return total_new_infections;
 }
