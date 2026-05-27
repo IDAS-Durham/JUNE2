@@ -524,6 +524,53 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+bool InteractionManager::venueHasNoTransmissionPossible(
+    int num_bins_needed, const std::vector<int>& comp_uptake_modes,
+    const std::vector<double>& lambda_fomite_by_mode, VenueId actual_venue_id,
+    const CompartmentalModelManager* comp_model) const {
+  bool has_infectious = false;
+  bool has_susceptible = false;
+  for (int b = 0; b < num_bins_needed; ++b) {
+    if (!bins_buffer_[b].infectious_ids.empty()) has_infectious = true;
+    if (!bins_buffer_[b].susceptible.empty()) has_susceptible = true;
+  }
+  double total_lambda_fomite = 0.0;
+  for (double lf : lambda_fomite_by_mode) total_lambda_fomite += lf;
+
+  bool has_comp_uptake_potential =
+      !comp_uptake_modes.empty() && comp_model != nullptr &&
+      comp_model->venueToLocalNodeIndex(static_cast<int>(actual_venue_id)) >= 0;
+
+  return !has_susceptible ||
+         (!has_infectious && total_lambda_fomite <= 0.0 &&
+          !has_comp_uptake_potential);
+}
+
+std::pair<const ParentAggregate*, const ContactMatrix*>
+InteractionManager::getParentAggregateForVenue(
+    const Venue* venue, bool is_virtual_encounter) const {
+  if (!venue || venue->parent_id < 0 || is_virtual_encounter) return {nullptr,
+                                                                      nullptr};
+  auto pit = parent_aggregates_.find(venue->parent_id);
+  if (pit == parent_aggregates_.end()) return {nullptr, nullptr};
+  const ContactMatrix* parent_flat_matrix =
+      contact_matrices_.getMatrix(pit->second.parent_venue_type_id);
+  if (!parent_flat_matrix) return {nullptr, nullptr};
+  // V1 supports single-bin parent matrices only. The currently shipped
+  // YAML (school/company/university) all use `bins: [all]`. A multi-
+  // bin parent matrix would require per-susceptible parent_bin lookup
+  // in the hot path — defer to V2. Refuse loudly per the no-silent-
+  // fallbacks rule rather than silently mis-applying contacts[0][0].
+  if (parent_flat_matrix->bins.size() > 1) {
+    throw std::runtime_error(
+        "parent_mixing: multi-bin parent contact matrices are not "
+        "supported yet; parent venue type id=" +
+        std::to_string(pit->second.parent_venue_type_id) + " has " +
+        std::to_string(parent_flat_matrix->bins.size()) + " bins");
+  }
+  return {&pit->second, parent_flat_matrix};
+}
+
 std::vector<double> InteractionManager::recordFomiteDepositionAndLambda(
     Venue* venue, int num_bins_needed, int num_fomite_modes,
     const std::vector<FomiteModeRef>& fomite_modes,
@@ -969,22 +1016,9 @@ int InteractionManager::processVenueTransmissions(
       current_time, delta_hours);
 
   // Early exit if no transmission possible
-  bool has_infectious = false;
-  bool has_susceptible = false;
-  for (int b = 0; b < num_bins_needed; ++b) {
-    if (!bins_buffer_[b].infectious_ids.empty()) has_infectious = true;
-    if (!bins_buffer_[b].susceptible.empty()) has_susceptible = true;
-  }
-  double total_lambda_fomite = 0.0;
-  for (double lf : lambda_fomite_by_mode) total_lambda_fomite += lf;
-
-  // Check whether any compartmental uptake FOI could exist for this venue.
-  bool has_comp_uptake_potential =
-      !comp_uptake_modes.empty() && comp_model != nullptr &&
-      comp_model->venueToLocalNodeIndex(static_cast<int>(actual_venue_id)) >= 0;
-
-  if (!has_susceptible || (!has_infectious && total_lambda_fomite <= 0.0 &&
-                           !has_comp_uptake_potential)) {
+  if (venueHasNoTransmissionPossible(num_bins_needed, comp_uptake_modes,
+                                     lambda_fomite_by_mode, actual_venue_id,
+                                     comp_model)) {
     for (int b : used_bins_) bins_buffer_[b].clearAfterUse(num_modes);
     used_bins_.clear();
     return 0;
@@ -998,28 +1032,8 @@ int InteractionManager::processVenueTransmissions(
   // contacts/beta for this term.
   const ParentAggregate* parent_agg = nullptr;
   const ContactMatrix* parent_flat_matrix = nullptr;
-  if (venue && venue->parent_id >= 0 && !is_virtual_encounter) {
-    auto pit = parent_aggregates_.find(venue->parent_id);
-    if (pit != parent_aggregates_.end()) {
-      parent_flat_matrix =
-          contact_matrices_.getMatrix(pit->second.parent_venue_type_id);
-      if (parent_flat_matrix) {
-        // V1 supports single-bin parent matrices only. The currently shipped
-        // YAML (school/company/university) all use `bins: [all]`. A multi-
-        // bin parent matrix would require per-susceptible parent_bin lookup
-        // in the hot path — defer to V2. Refuse loudly per the no-silent-
-        // fallbacks rule rather than silently mis-applying contacts[0][0].
-        if (parent_flat_matrix->bins.size() > 1) {
-          throw std::runtime_error(
-              "parent_mixing: multi-bin parent contact matrices are not "
-              "supported yet; parent venue type id=" +
-              std::to_string(pit->second.parent_venue_type_id) + " has " +
-              std::to_string(parent_flat_matrix->bins.size()) + " bins");
-        }
-        parent_agg = &pit->second;
-      }
-    }
-  }
+  std::tie(parent_agg, parent_flat_matrix) =
+      getParentAggregateForVenue(venue, is_virtual_encounter);
 
   // === STEP 3: Process transmissions (Mixing Model) — mode-aware ===
   for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {

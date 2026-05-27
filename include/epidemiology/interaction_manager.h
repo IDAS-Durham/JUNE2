@@ -478,6 +478,24 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // STEP 2c: pre-STEP-3 early exit check. Returns true iff every
+  // transmission source is empty (no infectious bin, no positive fomite
+  // lambda, no compartmental uptake potential) OR every bin has no
+  // susceptibles. On true return the caller must still call clearAfterUse
+  // on used_bins_ — this helper only inspects state.
+  bool venueHasNoTransmissionPossible(
+      int num_bins_needed, const std::vector<int>& comp_uptake_modes,
+      const std::vector<double>& lambda_fomite_by_mode, VenueId actual_venue_id,
+      const CompartmentalModelManager* comp_model) const;
+
+  // STEP 2d: look up the ParentAggregate (and its flat-bin contact matrix)
+  // that this venue's susceptibles should read sibling-mixing FOI from. Returns
+  // {nullptr, nullptr} if not applicable. Throws if the parent contact matrix
+  // has more than one bin (V1 limitation).
+  std::pair<const ParentAggregate*, const ContactMatrix*>
+  getParentAggregateForVenue(const Venue* venue,
+                             bool is_virtual_encounter) const;
+
   // STEP 2b: append per-sub-bin deposition entries to venue->fomite_history
   // for each fomite mode and compute the per-mode integrated lambda_fomite
   // contribution. Returns the lambda_fomite_by_mode vector
