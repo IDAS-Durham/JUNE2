@@ -1867,6 +1867,72 @@ std::vector<PersonId> InteractionManager::orderSusceptibles(
   return ordered;
 }
 
+bool InteractionManager::processOnePartialSusceptible(
+    PersonId susc_id,
+    const std::unordered_map<PersonId, double>& susc_lambda,
+    std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>&
+        susc_sources,
+    double current_time, Venue* venue, uint8_t venue_type_id,
+    VenueId actual_venue_id,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    std::unordered_set<PersonId>* active_infections,
+    std::vector<PendingInfection>* pending_infections, uint64_t time_bits,
+    uint64_t venue_key) {
+  auto lambda_it = susc_lambda.find(susc_id);
+  if (lambda_it == susc_lambda.end()) return false;
+  double lambda = lambda_it->second;
+  if (!(lambda > 0.0)) return false;
+
+  Person* susc_person = world_.getPerson(susc_id);
+  const VisitorInfo* visitor = nullptr;
+  if (!susc_person && visitor_data) {
+    auto it = visitor_data->find(susc_id);
+    if (it != visitor_data->end()) visitor = &it->second;
+  }
+
+  double susceptibility = 0.0;
+  if (susc_person) {
+    susceptibility =
+        susc_person->getSusceptibility(current_time, disease_->getName());
+  } else if (visitor) {
+    susceptibility = 1.0 - visitor->immunity_level;
+  } else {
+    return false;
+  }
+  if (!(susceptibility > 0.0)) return false;
+
+  double total_risk = lambda;
+  if (simulation_config_.regional_risk.enabled && venue) {
+    total_risk *= venue->transmission_factor;
+  }
+  double prob = 1.0 - std::exp(-total_risk * susceptibility);
+  if (!(prob > 1e-12)) return false;
+
+  SplitMix64 susc_rng(mix_seed(base_seed_, susc_id, venue_key, time_bits));
+  double rng_roll = uniform_dist_(susc_rng);
+  if (!(rng_roll < prob)) return false;
+
+  // Source attribution: weight-sample from accumulated AccumSource entries.
+  auto src_it = susc_sources.find(susc_id);
+  int sampled_mode = 0;
+  PersonId infector_id = -1;
+  if (src_it != susc_sources.end()) {
+    std::tie(sampled_mode, infector_id) =
+        sampleInfectorFromAccumSources(src_it->second, susc_rng);
+  }
+
+  uint16_t infector_symptom_id =
+      resolveInfectorSymptomId(infector_id, current_time, visitor_data);
+
+  const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
+  applyPartialPresenceInfection(susc_id, susc_person, visitor, infector_id,
+                                transmission_mode_index, infector_symptom_id,
+                                current_time, venue, venue_type_id,
+                                actual_venue_id, active_infections,
+                                pending_infections);
+  return true;
+}
+
 int InteractionManager::processPartialPresenceVenue(
     const std::vector<InteractionMember>& members, Venue* venue,
     VenueId actual_venue_id, double current_time, double delta_hours,
@@ -1895,56 +1961,13 @@ int InteractionManager::processPartialPresenceVenue(
   const uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
 
   for (PersonId susc_id : ordered_susc) {
-    double lambda = susc_lambda[susc_id];
-    if (!(lambda > 0.0)) continue;
-
-    Person* susc_person = world_.getPerson(susc_id);
-    const VisitorInfo* visitor = nullptr;
-    if (!susc_person && visitor_data) {
-      auto it = visitor_data->find(susc_id);
-      if (it != visitor_data->end()) visitor = &it->second;
+    if (processOnePartialSusceptible(susc_id, susc_lambda, susc_sources,
+                                     current_time, venue, venue_type_id,
+                                     actual_venue_id, visitor_data,
+                                     active_infections, pending_infections,
+                                     time_bits, venue_key)) {
+      new_infections++;
     }
-
-    double susceptibility = 0.0;
-    if (susc_person) {
-      susceptibility =
-          susc_person->getSusceptibility(current_time, disease_->getName());
-    } else if (visitor) {
-      susceptibility = 1.0 - visitor->immunity_level;
-    } else {
-      continue;
-    }
-    if (!(susceptibility > 0.0)) continue;
-
-    double total_risk = lambda;
-    if (simulation_config_.regional_risk.enabled && venue) {
-      total_risk *= venue->transmission_factor;
-    }
-    double prob = 1.0 - std::exp(-total_risk * susceptibility);
-    if (!(prob > 1e-12)) continue;
-
-    SplitMix64 susc_rng(mix_seed(base_seed_, susc_id, venue_key, time_bits));
-    double rng_roll = uniform_dist_(susc_rng);
-    if (!(rng_roll < prob)) continue;
-
-    // Source attribution: weight-sample from accumulated AccumSource entries.
-    auto src_it = susc_sources.find(susc_id);
-    int sampled_mode = 0;
-    PersonId infector_id = -1;
-    if (src_it != susc_sources.end()) {
-      std::tie(sampled_mode, infector_id) =
-          sampleInfectorFromAccumSources(src_it->second, susc_rng);
-    }
-
-    uint16_t infector_symptom_id =
-        resolveInfectorSymptomId(infector_id, current_time, visitor_data);
-
-    const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
-    applyPartialPresenceInfection(
-        susc_id, susc_person, visitor, infector_id, transmission_mode_index,
-        infector_symptom_id, current_time, venue, venue_type_id,
-        actual_venue_id, active_infections, pending_infections);
-    new_infections++;
   }
 
   return new_infections;

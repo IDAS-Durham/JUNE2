@@ -499,6 +499,23 @@ class InteractionManager {
       PersonId infector_id, double current_time,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
+  // Run the per-susceptible Bernoulli draw + (if infected) infector sampling
+  // + apply step for one susceptible id in the partial-presence post-pass.
+  // Returns true iff a new infection was created (counted toward
+  // new_infections). All other susceptible filtering (zero λ, zero
+  // susceptibility, missed roll) returns false.
+  bool processOnePartialSusceptible(
+      PersonId susc_id,
+      const std::unordered_map<PersonId, double>& susc_lambda,
+      std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>&
+          susc_sources,
+      double current_time, Venue* venue, uint8_t venue_type_id,
+      VenueId actual_venue_id,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      std::unordered_set<PersonId>* active_infections,
+      std::vector<PendingInfection>* pending_infections, uint64_t time_bits,
+      uint64_t venue_key);
+
   // Apply a single partial-presence infection: either queue a
   // PendingInfection for the susceptible's home rank (if visitor susceptible)
   // or create the Infection in place and log it via event_logger_.
