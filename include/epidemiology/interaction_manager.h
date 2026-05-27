@@ -293,6 +293,18 @@ class InteractionManager {
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
       Person*& person_out, const VisitorInfo*& visitor_out) const;
 
+  // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
+  // compute parent_bin under parent_matrix, bump headcount in agg/csize,
+  // gather per-mode infectiousness, and (if positive) accumulate into
+  // agg.total_inf_by_bin_mode + cinf + agg.infectors_by_bin.
+  void accumulateOneMemberIntoParent(
+      const PersonLocation& loc, Venue* venue, const ContactMatrix* parent_matrix,
+      int parent_num_bins, ParentAggregate& agg, std::vector<int>& csize,
+      std::vector<std::vector<double>>& cinf, VenueId child_venue_id,
+      double current_time, double delta_hours, int num_modes,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      std::vector<double>& inf_by_mode_scratch) const;
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.

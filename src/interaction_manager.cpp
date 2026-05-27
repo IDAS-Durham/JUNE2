@@ -242,35 +242,50 @@ void InteractionManager::aggregateOneVenueGroupForParent(
 
   std::vector<double> inf_by_mode;
   for (const auto& loc : mem_sorted) {
-    PersonId pid = loc.person_id;
-    Person* person = nullptr;
-    const VisitorInfo* visitor = nullptr;
-    if (!resolvePersonAndVisitor(pid, loc.person_array_index, visitor_data,
-                                 person, visitor)) {
-      continue;
+    accumulateOneMemberIntoParent(loc, venue, parent_matrix, parent_num_bins,
+                                  agg, csize, cinf, first.venue_id,
+                                  current_time, delta_hours, num_modes,
+                                  visitor_data, inf_by_mode);
+  }
+}
+
+void InteractionManager::accumulateOneMemberIntoParent(
+    const PersonLocation& loc, Venue* venue,
+    const ContactMatrix* parent_matrix, int parent_num_bins,
+    ParentAggregate& agg, std::vector<int>& csize,
+    std::vector<std::vector<double>>& cinf, VenueId child_venue_id,
+    double current_time, double delta_hours, int num_modes,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    std::vector<double>& inf_by_mode_scratch) const {
+  PersonId pid = loc.person_id;
+  Person* person = nullptr;
+  const VisitorInfo* visitor = nullptr;
+  if (!resolvePersonAndVisitor(pid, loc.person_array_index, visitor_data,
+                               person, visitor)) {
+    return;
+  }
+  if (person && person->is_dead) return;
+
+  int parent_bin = computeBinIndexForMatrix(person, venue, loc.subset_index,
+                                            loc.encounter_type_id,
+                                            parent_matrix, parent_num_bins);
+
+  // Headcount (matches BinGroup::total_size convention)
+  agg.size_by_bin[parent_bin]++;
+  csize[parent_bin]++;
+
+  if (gatherMemberInfectiousnessByMode(person, visitor, current_time,
+                                       delta_hours, num_modes,
+                                       inf_by_mode_scratch)) {
+    for (int m = 0; m < num_modes; ++m) {
+      agg.total_inf_by_bin_mode[parent_bin][m] += inf_by_mode_scratch[m];
+      cinf[parent_bin][m] += inf_by_mode_scratch[m];
     }
-    if (person && person->is_dead) continue;
-
-    int parent_bin = computeBinIndexForMatrix(person, venue, loc.subset_index,
-                                              loc.encounter_type_id,
-                                              parent_matrix, parent_num_bins);
-
-    // Headcount (matches BinGroup::total_size convention)
-    agg.size_by_bin[parent_bin]++;
-    csize[parent_bin]++;
-
-    if (gatherMemberInfectiousnessByMode(person, visitor, current_time,
-                                         delta_hours, num_modes, inf_by_mode)) {
-      for (int m = 0; m < num_modes; ++m) {
-        agg.total_inf_by_bin_mode[parent_bin][m] += inf_by_mode[m];
-        cinf[parent_bin][m] += inf_by_mode[m];
-      }
-      ParentInfectorEntry entry;
-      entry.person_id = pid;
-      entry.child_venue_id = first.venue_id;
-      entry.inf_by_mode = std::move(inf_by_mode);
-      agg.infectors_by_bin[parent_bin].push_back(std::move(entry));
-    }
+    ParentInfectorEntry entry;
+    entry.person_id = pid;
+    entry.child_venue_id = child_venue_id;
+    entry.inf_by_mode = std::move(inf_by_mode_scratch);
+    agg.infectors_by_bin[parent_bin].push_back(std::move(entry));
   }
 }
 
