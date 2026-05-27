@@ -6,9 +6,9 @@
 #include <utility>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/types.h"
-#include "../core/world_state.h"
+#include "core/config.h"
+#include "core/types.h"
+#include "core/world_state.h"
 
 #ifdef USE_MPI
 #include <mpi.h>
@@ -111,7 +111,7 @@ class ActivityManager {
   void ensureIndicesCached();
 
   // Marks a PersonLocation as belonging to a dead person. Does not touch
-  // person_id / person_array_index — caller sets those if needed.
+  // person_id / person_array_index, caller sets those if needed.
   void setDeadLocation(PersonLocation& loc) const;
 
   // Sets a PersonLocation to the person's residence if any, otherwise to
@@ -203,9 +203,8 @@ class ActivityManager {
   // per-schedule force_hybrid_mask and the linked-activities-mask
   // re-roll override), picks the venue for the first two cases, and
   // appends a ScheduleEntry to dt_schedules.
-  void precomputeOneSlot(Person& person, const TimeSlot& slot,
-                         size_t slot_idx, int dt_idx,
-                         const ScheduleType* schedule_type,
+  void precomputeOneSlot(Person& person, const TimeSlot& slot, size_t slot_idx,
+                         int dt_idx, const ScheduleType* schedule_type,
                          uint64_t precomp_key,
                          std::vector<ScheduleEntry>& dt_schedules);
 
@@ -232,10 +231,11 @@ class ActivityManager {
   // writes the final activity/venue/subset/encounter_type fields. Returns
   // early when a policy override fired (caller still writes
   // person_id / person_array_index in its tail).
-  void resolveAndWriteValidScheduleSlot(
-      size_t person_array_idx, Person& person, const ScheduleEntry& entry,
-      int time_slot_index, int day_type_idx, uint64_t time_key,
-      std::vector<PersonLocation>& locations);
+  void resolveAndWriteValidScheduleSlot(size_t person_array_idx, Person& person,
+                                        const ScheduleEntry& entry,
+                                        int time_slot_index, int day_type_idx,
+                                        uint64_t time_key,
+                                        std::vector<PersonLocation>& locations);
 
   // Handles a person with a precomputed schedule: looks up the
   // ScheduleEntry at time_slot_index, re-evaluates stochastic/hybrid
@@ -251,7 +251,7 @@ class ActivityManager {
   // (first via the static hop_schedule_by_activity_idx table, then via the
   // YAML property-dispatched fallback). If a hop target is found, mutates
   // person.hopped_schedule_id / return_schedule_id / cached_schedule_type_
-  // / temp_slot_progress as required, and — for temporary hops — rolls RNG
+  // / temp_slot_progress as required, and for temporary hops rolls RNG
   // for slot 0 of the target and updates scheduled_* outputs.
   void maybeTriggerScheduleHop(Person& person, const TimeSlot* current_slot,
                                int day_type_idx, uint64_t time_key,
@@ -278,14 +278,11 @@ class ActivityManager {
   // picks both activity and venue freshly. Lazily backfills sched_type and
   // current_slot if either was null. Mutates the scheduled_* outputs in
   // place. Caller must have verified !entry.is_deterministic.
-  void resolveStochasticEntry(Person& person, const ScheduleEntry& entry,
-                              int time_slot_index, int day_type_idx,
-                              uint64_t time_key,
-                              const ScheduleType*& sched_type,
-                              const TimeSlot*& current_slot,
-                              int16_t& scheduled_activity_index,
-                              VenueId& scheduled_venue_id,
-                              SubsetIndex& scheduled_subset_idx);
+  void resolveStochasticEntry(
+      Person& person, const ScheduleEntry& entry, int time_slot_index,
+      int day_type_idx, uint64_t time_key, const ScheduleType*& sched_type,
+      const TimeSlot*& current_slot, int16_t& scheduled_activity_index,
+      VenueId& scheduled_venue_id, SubsetIndex& scheduled_subset_idx);
 
   // Handles the non-hopped, non-dead branch of assignActivities (single
   // slot form): resolves the person's schedule type (lazily caching),

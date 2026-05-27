@@ -11,8 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/world_state.h"
+#include "core/config.h"
+#include "core/world_state.h"
 #include "domain.h"
 #include "domain_communicator.h"
 #include "geography_partitioner.h"

@@ -1,11 +1,11 @@
 #ifdef USE_MPI
 
-#include "../../include/parallel/domain.h"
+#include "parallel/domain.h"
 
 #include <iostream>
 
-#include "../../include/utils/deterministic_rng.h"
-#include "../../include/utils/random.h"
+#include "utils/deterministic_rng.h"
+#include "utils/random.h"
 
 namespace june {
 

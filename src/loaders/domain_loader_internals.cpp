@@ -18,7 +18,7 @@ namespace {
 
 // Intern a PropertyValue against a per-property string registry and cache.
 // Returns the interned code, or -1 for null/empty values and for strings
-// that are network-encoded (starting with '[' or '{') — those are handled
+// that are network-encoded (starting with '[' or '{'); those are handled
 // separately by parseNetworkPartnersFromString. Lazily seeds index_cache
 // from registry on first use after a registry was populated elsewhere.
 int32_t internPropertyValue(
@@ -27,8 +27,7 @@ int32_t internPropertyValue(
   if (std::holds_alternative<int32_t>(val)) return std::get<int32_t>(val);
   if (std::holds_alternative<double>(val))
     return static_cast<int32_t>(std::get<double>(val));
-  if (std::holds_alternative<bool>(val))
-    return std::get<bool>(val) ? 1 : 0;
+  if (std::holds_alternative<bool>(val)) return std::get<bool>(val) ? 1 : 0;
   if (!std::holds_alternative<std::string>(val)) return -1;
 
   const std::string& s = std::get<std::string>(val);
@@ -57,8 +56,7 @@ std::optional<Person::NetworkMeta> parseNetworkPartnersFromString(
     WorldState& world, const std::string& s, uint16_t network_type_id) {
   if (s.empty() || (s[0] != '[' && s[0] != '{')) return std::nullopt;
 
-  uint32_t partner_start =
-      static_cast<uint32_t>(world.network_partners.size());
+  uint32_t partner_start = static_cast<uint32_t>(world.network_partners.size());
   int32_t current_id = 0;
   bool has_id = false;
   for (char c : s) {
@@ -90,13 +88,11 @@ std::optional<Person::NetworkMeta> parseNetworkPartnersFromString(
 // at the slots reserved by the caller during the venue emplacement loop.
 void loadVenuePropertiesForSpan(
     HDF5Loader& loader, const std::vector<Venue>& span_venues,
-    const std::unordered_map<uint8_t,
-                             std::vector<std::pair<size_t, int32_t>>>&
+    const std::unordered_map<uint8_t, std::vector<std::pair<size_t, int32_t>>>&
         venues_by_type_in_span,
     const std::unordered_map<std::string, std::vector<std::string>>&
         venue_type_prop_names,
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, int32_t>>&
+    std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
         venue_property_indices_cache) {
   for (auto const& [type_id, venue_infos] : venues_by_type_in_span) {
     const std::string& type_name = loader.world_.venue_type_names[type_id];
@@ -106,9 +102,7 @@ void loadVenuePropertiesForSpan(
 
     auto sorted_infos = venue_infos;
     std::sort(sorted_infos.begin(), sorted_infos.end(),
-              [](const auto& a, const auto& b) {
-                return a.second < b.second;
-              });
+              [](const auto& a, const auto& b) { return a.second < b.second; });
 
     struct PropSpan {
       int32_t start_r;
@@ -132,15 +126,14 @@ void loadVenuePropertiesForSpan(
       std::string p_path = "/venues/properties/" + type_name + "/" + p_name;
 
       for (const auto& span_p : prop_spans) {
-        auto p_vals = loader.readPropertyDatasetRange(
-            p_path, span_p.start_r, span_p.count, p_name);
+        auto p_vals = loader.readPropertyDatasetRange(p_path, span_p.start_r,
+                                                      span_p.count, p_name);
         for (size_t k = 0; k < span_p.count; ++k) {
           if (k >= p_vals.size()) continue;
           if (std::holds_alternative<std::monostate>(p_vals[k])) continue;
 
           int32_t interned_val = internPropertyValue(
-              p_vals[k],
-              loader.world_.venue_property_value_registries[p_name],
+              p_vals[k], loader.world_.venue_property_value_registries[p_name],
               venue_property_indices_cache[p_name]);
 
           size_t global_v_idx = span_p.internal_indices[k];
@@ -161,8 +154,7 @@ GeoPartitionMap buildPartitionMap(HDF5Loader& loader,
       loader.readNumericDataset<int32_t>(path_prefix + "/geo_unit_ids");
   auto starts =
       loader.readNumericDataset<int32_t>(path_prefix + "/start_indices");
-  auto counts =
-      loader.readNumericDataset<int32_t>(path_prefix + "/counts");
+  auto counts = loader.readNumericDataset<int32_t>(path_prefix + "/counts");
 
   GeoPartitionMap map;
   for (size_t i = 0; i < gu_ids.size(); ++i) {
@@ -183,8 +175,7 @@ std::vector<ChunkSpan> detectChunkSpans(
     if (it == partition_map.end()) continue;
     auto [start, count] = it->second;
     if (count == 0) continue;
-    if (!spans.empty() &&
-        start == spans.back().start + spans.back().count) {
+    if (!spans.empty() && start == spans.back().start + spans.back().count) {
       spans.back().count += count;
       spans.back().gu_indices.push_back(i);
     } else {
@@ -210,8 +201,7 @@ void registerSystemAndConfigActivities(WorldState& world,
   for (const auto& sched_type : config.schedule.schedule_types) {
     for (const auto& [dt_name, dt_slots] : sched_type.slots_by_day_type) {
       for (const auto& slot : dt_slots) {
-        for (const auto& act : slot.allowed_activities)
-          register_activity(act);
+        for (const auto& act : slot.allowed_activities) register_activity(act);
         for (const auto& act : slot.coordinated_only_activities)
           register_activity(act);
       }
@@ -245,8 +235,7 @@ void loadPersonsInSpan(
     const GeoPartitionMap& pop_partition_map,
     const std::vector<GeoUnitId>& geo_units_vec,
     const std::vector<std::string>& population_property_names,
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, int32_t>>&
+    std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
         property_indices_cache) {
   auto chunk_ids = loader.readNumericDatasetRange<int32_t>(
       "/population/ids", span.start, span.count);
@@ -257,9 +246,9 @@ void loadPersonsInSpan(
 
   std::vector<std::vector<PropertyValue>> chunk_property_columns;
   for (const auto& prop_name : population_property_names) {
-    chunk_property_columns.push_back(loader.readPropertyDatasetRange(
-        "/population/properties/" + prop_name, span.start, span.count,
-        prop_name));
+    chunk_property_columns.push_back(
+        loader.readPropertyDatasetRange("/population/properties/" + prop_name,
+                                        span.start, span.count, prop_name));
   }
 
   size_t local_read_offset = 0;
@@ -278,14 +267,12 @@ void loadPersonsInSpan(
       // Dynamic properties (Phase 3: Flat Storage & Interning)
       p.properties_start =
           static_cast<uint32_t>(loader.world_.person_properties.size());
-      p.properties_count =
-          static_cast<uint8_t>(chunk_property_columns.size());
+      p.properties_count = static_cast<uint8_t>(chunk_property_columns.size());
       for (size_t k = 0; k < chunk_property_columns.size(); ++k) {
         const auto& prop_name = population_property_names[k];
         const auto& prop_val = chunk_property_columns[k][j_off];
         loader.world_.person_properties.push_back(internPropertyValue(
-            prop_val,
-            loader.world_.person_property_value_registries[prop_name],
+            prop_val, loader.world_.person_property_value_registries[prop_name],
             property_indices_cache[prop_name]));
       }
 
@@ -315,8 +302,7 @@ void loadVenuesInSpan(
     const std::vector<GeoUnitId>& geo_units_vec,
     const std::unordered_map<std::string, std::vector<std::string>>&
         venue_type_prop_names,
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, int32_t>>&
+    std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
         venue_property_indices_cache) {
   auto chunk_ids = loader.readNumericDatasetRange<int32_t>(
       "/venues/ids", span.start, span.count);
@@ -360,14 +346,12 @@ void loadVenuesInSpan(
       v.geo_unit_id = geo_unit;
       v.parent_id = chunk_parent_ids[j_off];
       v.latitude = chunk_latitudes.empty() ? 0.0f : chunk_latitudes[j_off];
-      v.longitude =
-          chunk_longitudes.empty() ? 0.0f : chunk_longitudes[j_off];
+      v.longitude = chunk_longitudes.empty() ? 0.0f : chunk_longitudes[j_off];
       v.is_residence = chunk_is_residence_raw.empty()
                            ? false
                            : (chunk_is_residence_raw[j_off] != 0);
 
-      const std::string& type_name =
-          loader.world_.venue_type_names[v.type_id];
+      const std::string& type_name = loader.world_.venue_type_names[v.type_id];
       auto pn_it = venue_type_prop_names.find(type_name);
       size_t prop_count =
           (pn_it == venue_type_prop_names.end()) ? 0 : pn_it->second.size();
@@ -473,8 +457,7 @@ void loadMembershipMetadata(
   }
 
   for (size_t f = 0; f < field_names.size(); ++f) {
-    auto vals =
-        loader.readNumericDataset<float>(base + "/" + field_names[f]);
+    auto vals = loader.readNumericDataset<float>(base + "/" + field_names[f]);
     if (vals.size() != pids.size()) continue;
     auto& sink = loader.world_.membership_field_values[f];
     sink.reserve(vals.size() / 4);
@@ -486,9 +469,8 @@ void loadMembershipMetadata(
   }
 }
 
-void loadVenueSubsets(
-    HDF5Loader& loader,
-    const std::unordered_set<GeoUnitId>& owned_geo_units) {
+void loadVenueSubsets(HDF5Loader& loader,
+                      const std::unordered_set<GeoUnitId>& owned_geo_units) {
   if (!loader.groupExists("/venues/subsets") ||
       !loader.groupExists("/venues/subsets/partition_index") ||
       !loader.groupExists("/venues/subsets/members_partition_index")) {
@@ -530,11 +512,9 @@ void loadVenueSubsets(
     auto v_ids = loader.readNumericDatasetRange<int32_t>(
         "/venues/subsets/venue_ids", subset_start_hdf5, subset_count_hdf5);
     auto s_indices = loader.readNumericDatasetRange<int32_t>(
-        "/venues/subsets/subset_indices", subset_start_hdf5,
-        subset_count_hdf5);
+        "/venues/subsets/subset_indices", subset_start_hdf5, subset_count_hdf5);
     auto m_counts = loader.readNumericDatasetRange<int32_t>(
-        "/venues/subsets/member_counts", subset_start_hdf5,
-        subset_count_hdf5);
+        "/venues/subsets/member_counts", subset_start_hdf5, subset_count_hdf5);
     auto m_offsets = loader.readNumericDatasetRange<int64_t>(
         "/venues/subsets/members_offsets", subset_start_hdf5,
         subset_count_hdf5);
@@ -581,8 +561,7 @@ void loadVenueSubsets(
         s.member_start = loader.world_.subset_members.size();
         int64_t local_off = m_offsets[i] - m_base_offset;
         loader.world_.subset_members.insert(
-            loader.world_.subset_members.end(),
-            all_members.begin() + local_off,
+            loader.world_.subset_members.end(), all_members.begin() + local_off,
             all_members.begin() + local_off + s.member_count);
       }
 
@@ -608,10 +587,9 @@ void loadVenueSubsets(
         loader.world_.subsets.push_back(temp_subsets[s_i]);
         s_i++;
       }
-      venue->subset_count =
-          loader.world_.subsets.size() - venue->subset_start;
+      venue->subset_count = loader.world_.subsets.size() - venue->subset_start;
     } else {
-      // Venue not owned but subsets exist (unlikely given partitioning) —
+      // Venue not owned but subsets exist (unlikely given partitioning);
       // skip the entire run.
       while (s_i < temp_subsets.size() && temp_subsets[s_i].venue_id == vid)
         s_i++;
@@ -625,8 +603,7 @@ void buildGlobalVenueTypeMap(HDF5Loader& loader) {
   size_t n = std::min(all_venue_ids.size(), all_venue_types.size());
   loader.world_.global_venue_type_map.reserve(n);
   for (size_t i = 0; i < n; ++i) {
-    loader.world_.global_venue_type_map[all_venue_ids[i]] =
-        all_venue_types[i];
+    loader.world_.global_venue_type_map[all_venue_ids[i]] = all_venue_types[i];
   }
 }
 

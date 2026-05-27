@@ -1,7 +1,5 @@
 #ifdef USE_MPI
 
-#include "../../include/parallel/domain_communicator.h"
-
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
@@ -10,11 +8,12 @@
 #include <string>
 #include <vector>
 
-#include "../../include/parallel/domain_communicator_detail.h"
-#include "../../include/parallel/domain_manager.h"
-#include "../../include/parallel/mpi_utils.h"
-#include "../../include/utils/deterministic_rng.h"
-#include "../../include/utils/random.h"
+#include "parallel/domain_communicator.h"
+#include "parallel/domain_communicator_detail.h"
+#include "parallel/domain_manager.h"
+#include "parallel/mpi_utils.h"
+#include "utils/deterministic_rng.h"
+#include "utils/random.h"
 
 namespace {
 
@@ -80,7 +79,7 @@ const char* unpackReply(const char* ptr, june::EncounterReply& r) {
 
 // =============================================================================
 // Diagnostic helpers for hunting MPI proposal/reply corruption.
-// These check structural sanity only — no masking or clamping of values.
+// These check structural sanity only; no masking or clamping of values.
 // On first failure the process MPI_Aborts with rich context so SLURM captures
 // the diagnostic before any downstream collective can deadlock.
 // =============================================================================
@@ -88,7 +87,7 @@ const char* unpackReply(const char* ptr, june::EncounterReply& r) {
 // Returns empty string if the proposal looks structurally sane. Otherwise
 // returns a short description of the first field that failed. We use loose
 // upper bounds (256 for venue_type_id/slot, encounter_type_names.size() for
-// encounter_type_id) — tight enough to catch the garbage values we've seen
+// encounter_type_id), tight enough to catch the garbage values we've seen
 // (0x3FF00000 etc.), loose enough not to accuse legitimate values.
 std::string validateProposal(const june::EncounterProposal& p, int num_ranks,
                              size_t num_encounter_types) {
@@ -222,7 +221,7 @@ void dumpCountsAndDispls(std::ostream& os, const std::vector<int>& send_counts,
 // caller's responsibility (delegated to pack_fn / unpack_fn).
 //
 // Template parameters are deduced; pack_fn / unpack_fn / etc. are passed as
-// free functions or lambdas — no std::function, no heap, no vtable dispatch.
+// free functions or lambdas: no std::function, no heap, no vtable dispatch.
 // =============================================================================
 template <typename T, typename Pack, typename Unpack, typename Validate,
           typename Dump, typename Route>
@@ -231,8 +230,8 @@ void exchangeRoutedRecords(const std::vector<T>& local_records,
                            int num_ranks, int wire_size, const char* kind,
                            int before_abort, int total_neg_abort,
                            int pack_abort, int unpack_abort, Pack pack_fn,
-                           Unpack unpack_fn, Validate validate_fn,
-                           Dump dump_fn, Route route_fn) {
+                           Unpack unpack_fn, Validate validate_fn, Dump dump_fn,
+                           Route route_fn) {
   // [DIAG] Validate every local record before anything else. If we see
   // corruption here, the bug is in the generator, not in MPI.
   for (size_t i = 0; i < local_records.size(); ++i) {
@@ -619,7 +618,7 @@ void DomainCommunicator::exchangeFinalizedEncounters(
     std::vector<CoordinatedEncounter>& finalized_for_this_rank) {
   // Allgatherv: each rank broadcasts its finalized encounters and the
   // others filter for encounters containing their local people. The wire
-  // format is variable-length — see packFinalizedLocal for the layout.
+  // format is variable-length; see packFinalizedLocal for the layout.
   std::vector<char> local_buf = packFinalizedLocal(local_finalized);
 
   int local_size = static_cast<int>(local_buf.size());

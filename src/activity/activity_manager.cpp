@@ -1,10 +1,10 @@
-#include "../../include/activity/activity_manager.h"
+#include "activity/activity_manager.h"
 
 #include <iomanip>
 
-#include "../../include/epidemiology/policy.h"
-#include "../../include/utils/deterministic_rng.h"
-#include "../../include/utils/random.h"
+#include "epidemiology/policy.h"
+#include "utils/deterministic_rng.h"
+#include "utils/random.h"
 
 namespace june {
 
@@ -95,9 +95,9 @@ bool ActivityManager::applyPolicyOverride(PersonLocation& loc, Person& person,
                                           SubsetIndex subset,
                                           int time_slot_index) {
   if (policy_manager_ == nullptr) return false;
-  auto override = policy_manager_->getOverride(
-      person, activity, venue, subset, current_simulation_time_,
-      time_slot_index);
+  auto override =
+      policy_manager_->getOverride(person, activity, venue, subset,
+                                   current_simulation_time_, time_slot_index);
   if (!override.has_value()) return false;
   loc = override.value();
   return true;
@@ -425,9 +425,9 @@ void ActivityManager::resolveHybridEntry(
     const TimeSlot& current_slot, int16_t& scheduled_activity_index,
     VenueId& scheduled_venue_id, SubsetIndex& scheduled_subset_idx) {
   // HYBRID: Re-evaluate participation, use precomputed venue if passed
-  int16_t runtime_activity_idx = selectActivity(
-      person, current_slot, time_slot_index, sched_type, day_type_idx,
-      time_key);
+  int16_t runtime_activity_idx =
+      selectActivity(person, current_slot, time_slot_index, sched_type,
+                     day_type_idx, time_key);
 
   if (runtime_activity_idx == scheduled_activity_index) {
     // Passed participation! Use precomputed venue
@@ -446,10 +446,9 @@ void ActivityManager::resolveHybridEntry(
 
 void ActivityManager::resolveStochasticEntry(
     Person& person, const ScheduleEntry& entry, int time_slot_index,
-    int day_type_idx, uint64_t time_key,
-    const ScheduleType*& sched_type, const TimeSlot*& current_slot,
-    int16_t& scheduled_activity_index, VenueId& scheduled_venue_id,
-    SubsetIndex& scheduled_subset_idx) {
+    int day_type_idx, uint64_t time_key, const ScheduleType*& sched_type,
+    const TimeSlot*& current_slot, int16_t& scheduled_activity_index,
+    VenueId& scheduled_venue_id, SubsetIndex& scheduled_subset_idx) {
   // Check if this is a hybrid activity using bitmask (no string
   // comparison). Also honour the per-schedule force_hybrid_mask so the
   // cached venue is reused on participation pass.
@@ -466,8 +465,7 @@ void ActivityManager::resolveStochasticEntry(
     person.cached_schedule_type_ = sched_type;
   }
   if (!current_slot) {
-    current_slot =
-        lookupCurrentSlot(sched_type, day_type_idx, time_slot_index);
+    current_slot = lookupCurrentSlot(sched_type, day_type_idx, time_slot_index);
   }
 
   if (is_hybrid_entry) {
@@ -637,8 +635,8 @@ void ActivityManager::assignHoppedSingleSlot(
             static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
         hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
       // assignActivities is called with a single slot; use it directly
-      int16_t act = selectActivity(person, slot, 0, &hopped_sched,
-                                   day_type_idx, time_key_hop);
+      int16_t act = selectActivity(person, slot, 0, &hopped_sched, day_type_idx,
+                                   time_key_hop);
       auto [v, s] = selectVenue(person, act, slot, time_key_hop);
       locations[i].venue_id = v;
       locations[i].subset_index = s;
@@ -732,7 +730,7 @@ std::pair<VenueId, SubsetIndex> ActivityManager::findLastNonNullVenueOnHop(
     auto [v, sub] = selectVenue(person, prev_act, prev_slot, hop_key);
     if (v >= 0) return {v, sub};
   }
-  // No prior overnight venue — fall back to home residence
+  // No prior overnight venue; fall back to home residence
   auto home = world_.getActivityVenues(person, residence_act_idx_);
   if (!home.empty()) return home[0];
   return {-1, -1};

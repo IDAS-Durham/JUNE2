@@ -49,7 +49,7 @@ struct SelectionCriterion {
     CUSTOM_PROPERTY,
     NETWORK_SIZE,
     PARTNER_IN_NETWORK,
-    // is_alive — convenience for `!person.is_dead`. Path: "is_alive".
+    // is_alive: convenience for `!person.is_dead`. Path: "is_alive".
     IS_ALIVE,
   };
   mutable PropertyType cached_type = PropertyType::UNKNOWN;
@@ -179,20 +179,20 @@ struct ScheduleType {
   std::vector<const std::vector<TimeSlot>*> slots_by_day_type_idx;
 
   // Per-schedule override: activities listed here are demoted from
-  // DETERMINISTIC to HYBRID at precompute time — venue is still pre-cached
+  // DETERMINISTIC to HYBRID at precompute time. Venue is still pre-cached
   // (no perf loss on venue lookup) but participation is re-rolled each tick
   // via the existing hybrid-entry runtime path.
   std::vector<std::string> force_hybrid_activities;
   ActivityMask force_hybrid_mask = 0;  // resolved in resolveSlots()
 
   // Linked activities: activities listed here share ONE dice roll per
-  // (person, sim_day). All listed activities pass or fail together — the
+  // (person, sim_day). All listed activities pass or fail together. The
   // engine caches the first roll on Person.linked_activities_pass and reuses
   // it for the rest of the day. Implies force_hybrid (these activities must
   // be re-rolled at runtime, not frozen at precompute), so listing an
   // activity here automatically adds it to force_hybrid_mask too.
   // The participation rate used is the rate of the first listed activity in
-  // the schedule's `participation` table — for the coupling to make semantic
+  // the schedule's `participation` table. For the coupling to make semantic
   // sense all listed activities should have the same rate.
   std::vector<std::string> linked_activities;
   ActivityMask linked_activities_mask = 0;  // resolved in resolveSlots()
@@ -250,7 +250,7 @@ struct ScheduleConfig {
   const ScheduleType* getScheduleTypeForPerson(
       const Person& person, const WorldState* world = nullptr) const {
     // Check each schedule type in priority order; skip temporary schedules
-    // (day_trip, long_trip, etc.) — they are only used for schedule hopping,
+    // (day_trip, long_trip, etc.), they are only used for schedule hopping,
     // never as a person's base schedule.
     for (const auto& sched_type : schedule_types) {
       if (sched_type.is_temporary) continue;
@@ -540,7 +540,7 @@ struct ContactMatrixConfig {
                                                   [mode_index];
     }
     // Fall back to the flat virtual matrix (note: for multi-mode virtual
-    // matrices this only holds the first listed mode — useful for bin
+    // matrices this only holds the first listed mode. Useful for bin
     // layout but not for transmission rates).
     return getVirtualMatrix(encounter_type_id);
   }
@@ -652,7 +652,7 @@ struct SimulationConfig {
   // of a train_line) and the FOI loop drives sub-interval transmission from
   // each rider's per-membership (t_board_min, t_alight_min).
   //
-  // Number of bins is emergent — derived at slot time from the global rider
+  // Number of bins is emergent, derived at slot time from the global rider
   // count and the per-venue-type `target_group_size`. There is no hard
   // capacity; bins differ in size by at most 1 (round-robin deal). Empty
   // map (default) = feature inactive, zero hot-path overhead.
@@ -720,7 +720,7 @@ struct CoordinatedEncounterDef {
 
   // Optional: name of the frequency group that supplies this encounter's
   // per-person daily proposal rate from an external CSV. When set, the
-  // scalar proposal_probability is ignored — the host's daily roll uses
+  // scalar proposal_probability is ignored, the host's daily roll uses
   // the rate looked up from the frequency group's table. Encounters sharing
   // a group share ONE roll per person per day (so their total realized rate
   // sums to the CSV value, regardless of partner-mix).

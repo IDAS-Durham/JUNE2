@@ -4,7 +4,7 @@
 #include <optional>
 #include <string>
 
-#include "../epidemiology/disease.h"
+#include "epidemiology/disease.h"
 
 // Forward declaration for YAML
 namespace YAML {
@@ -43,8 +43,8 @@ class DiseaseLoader {
       const std::string& mode_type_prefix, const std::string& mode_name,
       const std::vector<SymptomTag>& symptom_tags, bool verbose);
 
-  static void loadTransmissionTrajectoryDriven(const YAML::Node& trans_node,
-                                               TransmissionParams& transmission);
+  static void loadTransmissionTrajectoryDriven(
+      const YAML::Node& trans_node, TransmissionParams& transmission);
   static void loadModeFomite(const YAML::Node& mode_node,
                              TransmissionMode& tmode, int mode_idx,
                              const std::vector<SymptomTag>& symptom_tags,
@@ -54,9 +54,10 @@ class DiseaseLoader {
       const std::vector<SymptomTag>& symptom_tags, bool verbose);
   static void loadModeCompartmentalUptake(TransmissionMode& tmode,
                                           int mode_idx);
-  static void parseStageDrivenModes(
-      const YAML::Node& modes_node, TransmissionParams& transmission,
-      const std::vector<SymptomTag>& symptom_tags, bool verbose);
+  static void parseStageDrivenModes(const YAML::Node& modes_node,
+                                    TransmissionParams& transmission,
+                                    const std::vector<SymptomTag>& symptom_tags,
+                                    bool verbose);
   static void attachStageCurvesToModes(
       const YAML::Node& stage_curves_node, TransmissionParams& transmission,
       const std::vector<SymptomTag>& symptom_tags, bool verbose);

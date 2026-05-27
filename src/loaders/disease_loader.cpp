@@ -88,8 +88,7 @@ std::shared_ptr<BetaCurve> makeBetaCurve(const YAML::Node& node,
   double duration = node["duration"] ? node["duration"].as<double>() : 1.0;
   auto curve = std::make_shared<BetaCurve>(max_inf, alpha, beta, duration);
   if (verbose) {
-    logCurveRescale(context_label, "beta", max_inf,
-                    curve->peakScalingFactor());
+    logCurveRescale(context_label, "beta", max_inf, curve->peakScalingFactor());
   }
   return curve;
 }
@@ -164,9 +163,10 @@ std::optional<TrajectoryDefinition> DiseaseLoader::parseOneTrajectory(
   traj.severity =
       traj_node["severity"] ? traj_node["severity"].as<double>() : 0.0;
 
-  traj.infectiousness_factor = traj_node["infectiousness_factor"]
-                                   ? traj_node["infectiousness_factor"].as<double>()
-                                   : 1.0;
+  traj.infectiousness_factor =
+      traj_node["infectiousness_factor"]
+          ? traj_node["infectiousness_factor"].as<double>()
+          : 1.0;
 
   if (traj_node["start_stage"]) {
     traj.start_stage = traj_node["start_stage"].as<std::string>();
@@ -250,9 +250,8 @@ void DiseaseLoader::loadModeFomite(const YAML::Node& mode_node,
   fcfg.mode_index = mode_idx;
   fcfg.max_age =
       mode_node["max_age"] ? mode_node["max_age"].as<double>() : 14.0;
-  fcfg.sub_bin_time = mode_node["sub_bin_time"]
-                          ? mode_node["sub_bin_time"].as<double>()
-                          : 0.0;
+  fcfg.sub_bin_time =
+      mode_node["sub_bin_time"] ? mode_node["sub_bin_time"].as<double>() : 0.0;
   if (mode_node["fomite_curve"]) {
     fcfg.infectiousness_curve =
         parseCurve(mode_node["fomite_curve"],
@@ -310,13 +309,13 @@ void DiseaseLoader::loadTransmissionStageDriven(
 void DiseaseLoader::loadTransmissionStageDrivenFlat(
     const YAML::Node& trans_node, TransmissionParams& transmission,
     const std::vector<SymptomTag>& symptom_tags, bool verbose) {
-  // Flat stage_curves at top level — single Standard mode.
+  // Flat stage_curves at top level: single Standard mode.
   if (trans_node["stage_curves"]) {
     for (auto it = trans_node["stage_curves"].begin();
          it != trans_node["stage_curves"].end(); ++it) {
       std::string stage_name = it->first.as<std::string>();
-      transmission.stage_curves[stage_name] = parseCurve(
-          it->second, "stage_curves / " + stage_name, verbose);
+      transmission.stage_curves[stage_name] =
+          parseCurve(it->second, "stage_curves / " + stage_name, verbose);
     }
   }
 
@@ -368,8 +367,7 @@ void DiseaseLoader::attachStageCurvesToModes(
         symptom_tags.size(), nullptr);
     for (auto it = mode_kv.second.begin(); it != mode_kv.second.end(); ++it) {
       std::string stage_name = it->first.as<std::string>();
-      auto curve =
-          parseCurve(it->second, mname + " / " + stage_name, verbose);
+      auto curve = parseCurve(it->second, mname + " / " + stage_name, verbose);
       transmission.stage_curves[stage_name] = curve;
       for (const auto& tag : symptom_tags) {
         if (tag.name == stage_name) {
@@ -480,7 +478,7 @@ void DiseaseLoader::loadTransmissionTrajectoryDriven(
 
   // Multi-mode support for TRAJECTORY_DRIVEN: parse optional modes list
   // for mode names and susceptibility multipliers. No per-mode curves
-  // are loaded — getInfectiousness(m, t) returns the same scalar for all
+  // are loaded; getInfectiousness(m, t) returns the same scalar for all
   // modes; the multipliers scale susceptibility per-mode at the FOI step.
   if (trans_node["modes"]) {
     for (const auto& mode_node : trans_node["modes"]) {
@@ -510,10 +508,9 @@ void DiseaseLoader::parseDepositionStages(
   for (auto it = mode_node["deposition_stages"].begin();
        it != mode_node["deposition_stages"].end(); ++it) {
     std::string stage_name = it->first.as<std::string>();
-    auto curve =
-        parseCurve(it->second,
-                   mode_type_prefix + " / " + mode_name + " / " + stage_name,
-                   verbose);
+    auto curve = parseCurve(
+        it->second, mode_type_prefix + " / " + mode_name + " / " + stage_name,
+        verbose);
     for (const auto& tag : symptom_tags) {
       if (tag.name == stage_name) {
         deposition_by_symptom[tag.id] = curve;
@@ -530,9 +527,8 @@ void DiseaseLoader::loadNaturalImmunity(const YAML::Node& config,
   transmission.natural_immunity.level =
       immunity_node["level"] ? immunity_node["level"].as<double>() : 0.95;
   transmission.natural_immunity.waning_rate =
-      immunity_node["waning_rate"]
-          ? immunity_node["waning_rate"].as<double>()
-          : 0.001;
+      immunity_node["waning_rate"] ? immunity_node["waning_rate"].as<double>()
+                                   : 0.001;
 }
 
 void DiseaseLoader::validateOutcomeRowSums(const OutcomeRates& outcome_rates) {
@@ -568,8 +564,7 @@ OutcomeRates DiseaseLoader::loadOutcomeRatesFromConfig(
         "key");
   }
 
-  std::string yaml_dir =
-      yaml_path.substr(0, yaml_path.find_last_of("/\\") + 1);
+  std::string yaml_dir = yaml_path.substr(0, yaml_path.find_last_of("/\\") + 1);
   return loadOutcomeRatesFromCSV(yaml_dir + csv_rel_path);
 }
 
@@ -583,9 +578,8 @@ void DiseaseLoader::validateTrajectoryStageRefs(
   for (size_t ti = 0; ti < trajectories.size(); ++ti) {
     const auto& traj = trajectories[ti];
     const std::string traj_label =
-        traj.description.empty()
-            ? ("trajectory[" + std::to_string(ti) + "]")
-            : ("trajectory \"" + traj.description + "\"");
+        traj.description.empty() ? ("trajectory[" + std::to_string(ti) + "]")
+                                 : ("trajectory \"" + traj.description + "\"");
     // BUG-S10: start_stage must name a defined symptom tag
     if (traj.start_stage.has_value() &&
         valid_tags.find(*traj.start_stage) == valid_tags.end()) {

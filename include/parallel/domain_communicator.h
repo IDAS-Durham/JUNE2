@@ -11,11 +11,11 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../activity/coordinated_encounter_types.h"
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../epidemiology/disease.h"
+#include "activity/coordinated_encounter_types.h"
+#include "core/config.h"
+#include "core/world_state.h"
 #include "domain.h"
+#include "epidemiology/disease.h"
 
 namespace june {
 class DomainManager;

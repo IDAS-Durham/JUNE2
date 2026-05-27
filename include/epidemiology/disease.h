@@ -8,11 +8,11 @@
 #include <variant>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/types.h"
-#include "../utils/deterministic_rng.h"
-#include "../utils/filtering.h"
+#include "core/config.h"
+#include "core/types.h"
 #include "infectiousness_curves.h"
+#include "utils/deterministic_rng.h"
+#include "utils/filtering.h"
 
 namespace june {
 
@@ -150,7 +150,7 @@ struct CompartmentalUptakeConfig {
 };
 
 // Configuration for a compartmental-deposition transmission mode.
-// Per-symptom deposition rate curves — same layout as
+// Per-symptom deposition rate curves, same layout as
 // FomiteConfig::deposition_by_symptom.
 struct CompartmentalDepositionConfig {
   int mode_index = -1;
@@ -159,7 +159,7 @@ struct CompartmentalDepositionConfig {
 };
 
 // =============================================================================
-// Unified transmission mode — replaces parallel is_fomite_mode /
+// Unified transmission mode. Replaces parallel is_fomite_mode /
 // is_compartmental_uptake_mode / is_compartmental_deposition_mode vectors.
 // =============================================================================
 
@@ -371,7 +371,7 @@ class Infection {
   }
 
   // Reconstruct an Infection from checkpoint state WITHOUT re-sampling any
-  // RNG — every behaviour-defining field is restored verbatim so a resumed
+  // RNG. Every behaviour-defining field is restored verbatim so a resumed
   // run is bit-identical.
   static std::unique_ptr<Infection> fromCheckpoint(
       const Disease* disease, double infection_time,

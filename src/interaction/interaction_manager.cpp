@@ -2,13 +2,13 @@
 // #define DEBUG_TRANSMISSION
 //
 // =============================================================================
-// InteractionManager — file roadmap
+// InteractionManager: file roadmap
 // =============================================================================
 // The class is split across four translation units. All methods are members
 // of InteractionManager; the split is by *intent*, not by call order, so the
 // per-tick narrative bounces between files. Use this map to navigate.
 //
-//   interaction_manager.cpp                — this file
+//   interaction_manager.cpp                : this file
 //       Constructor, per-day driver, parent-aggregate machinery, low-level
 //       cross-file primitives (binning math, person/visitor lookup,
 //       infectiousness gather, symptom-id resolve).
@@ -18,18 +18,18 @@
 //                └─ per venue group: processOneVenueGroup
 //                                      └─ processVenueTransmissions  [→ venue]
 //
-//   interaction_manager_venue.cpp          — standard FOI path
+//   interaction_manager_venue.cpp          : standard FOI path
 //       processVenueTransmissions orchestrator + the per-susceptible
 //       Bernoulli-draw / infector-sample / infection-apply pipeline.
 //       Calls into venue_bins.cpp for setup, then runs the susc-bin loop here.
 //
-//   interaction_manager_venue_bins.cpp     — pre-Bernoulli setup
+//   interaction_manager_venue_bins.cpp     : pre-Bernoulli setup
 //       Everything processVenueTransmissions needs *before* the susc-bin
 //       loop: matrix/venue-type resolve, fomite/comp-uptake mode collection,
 //       bins-buffer prep, member binning, deterministic sorting, per-mode
 //       cumulative weights, fomite-deposition lambda.
 //
-//   interaction_manager_partial_presence.cpp — partial-presence FOI path
+//   interaction_manager_partial_presence.cpp : partial-presence FOI path
 //       The alternate FOI pipeline for venues with partial presence
 //       (commute lines etc.). dispatchPartialPresenceIfApplicable
 //       (called from processVenueTransmissions) routes here when the
@@ -79,10 +79,6 @@ InteractionManager::InteractionManager(
       disease_(disease),
       event_logger_(event_logger),
       base_seed_(simulation_config.random_seed) {
-  // NOTE: encounter_subset_overrides_ is left empty — the port's
-  // CoordinatedEncounterDef no longer carries a `subset` field.
-  // Binning falls through to stage 2/3 when the map is empty.
-
   if (const char* dbg = std::getenv("JUNE_DEBUG_PARENT_MIXING")) {
     debug_parent_mixing_ = (dbg[0] != '\0' && dbg[0] != '0');
   }
@@ -91,20 +87,11 @@ InteractionManager::InteractionManager(
 int InteractionManager::computeBinIndexForMatrix(const Person* person,
                                                  const Venue* venue,
                                                  SubsetIndex subset_index,
-                                                 uint8_t encounter_type_id,
                                                  const ContactMatrix* matrix,
                                                  int num_bins) const {
   if (!matrix || num_bins <= 1) return 0;
 
   int bin_index = -1;
-
-  // Stage 1a: encounter-subset override (currently unused, kept for parity).
-  if (encounter_type_id != 255) {
-    auto it = encounter_subset_overrides_.find(encounter_type_id);
-    if (it != encounter_subset_overrides_.end()) {
-      bin_index = matrix->findBinIndex(it->second);
-    }
-  }
 
   // Stage 2: subset-based binning. The parent matrix may have NO entries
   // for the child's subset_type_names (e.g. school matrix has bins=[all]
@@ -203,8 +190,7 @@ std::vector<PersonLocation> InteractionManager::buildPersonIdSortedMembers(
 
 bool InteractionManager::gatherMemberInfectiousnessByMode(
     const Person* person, const VisitorInfo* visitor, double current_time,
-    double delta_hours, int num_modes,
-    std::vector<double>& inf_by_mode) const {
+    double delta_hours, int num_modes, std::vector<double>& inf_by_mode) const {
   inf_by_mode.assign(num_modes, 0.0);
   double total = 0.0;
   if (visitor) {
@@ -278,7 +264,7 @@ void InteractionManager::aggregateOneVenueGroupForParent(
   auto& csize = agg.child_size_by_bin[first.venue_id];
   auto& cinf = agg.child_inf_by_bin_mode[first.venue_id];
 
-  // Walk members of this venue group in person_id order — same ordering
+  // Walk members of this venue group in person_id order, the same ordering
   // binMembersAndPrepareBuffers uses, so the sibling FP sum order is
   // identical across rank counts. (The active_locations_buffer_ is sorted
   // by venue_id but not by person_id within a venue.)
@@ -295,9 +281,8 @@ void InteractionManager::aggregateOneVenueGroupForParent(
 }
 
 void InteractionManager::accumulateOneMemberIntoParent(
-    const PersonLocation& loc, Venue* venue,
-    const ContactMatrix* parent_matrix, int parent_num_bins,
-    ParentAggregate& agg, std::vector<int>& csize,
+    const PersonLocation& loc, Venue* venue, const ContactMatrix* parent_matrix,
+    int parent_num_bins, ParentAggregate& agg, std::vector<int>& csize,
     std::vector<std::vector<double>>& cinf, VenueId child_venue_id,
     double current_time, double delta_hours, int num_modes,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
@@ -312,7 +297,6 @@ void InteractionManager::accumulateOneMemberIntoParent(
   if (person && person->is_dead) return;
 
   int parent_bin = computeBinIndexForMatrix(person, venue, loc.subset_index,
-                                            loc.encounter_type_id,
                                             parent_matrix, parent_num_bins);
 
   // Headcount (matches BinGroup::total_size convention)
@@ -429,10 +413,10 @@ bool InteractionManager::venueGroupHasTransmissionSource(
     const Venue* venue, VenueId venue_id,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
     const CompartmentalModelManager* comp_model) const {
-  bool has_fomite = venue && !venue->fomite_history.empty() &&
-                    std::any_of(venue->fomite_history.begin(),
-                                venue->fomite_history.end(),
-                                [](const auto& v) { return !v.empty(); });
+  bool has_fomite =
+      venue && !venue->fomite_history.empty() &&
+      std::any_of(venue->fomite_history.begin(), venue->fomite_history.end(),
+                  [](const auto& v) { return !v.empty(); });
   bool venue_has_comp_uptake =
       comp_model != nullptr &&
       comp_model->venueToLocalNodeIndex(static_cast<int>(venue_id)) >= 0;
@@ -458,11 +442,11 @@ size_t InteractionManager::collectAndSortGroupMembers(size_t group_start) {
   const auto& first = active_locations_buffer_[group_start];
   group_members_buffer_.clear();
   size_t i = group_start;
-  while (i < active_locations_buffer_.size() &&
-         active_locations_buffer_[i].venue_id == first.venue_id &&
-         (first.venue_id >= 0 ||
-          active_locations_buffer_[i].encounter_type_id ==
-              first.encounter_type_id)) {
+  while (
+      i < active_locations_buffer_.size() &&
+      active_locations_buffer_[i].venue_id == first.venue_id &&
+      (first.venue_id >= 0 || active_locations_buffer_[i].encounter_type_id ==
+                                  first.encounter_type_id)) {
     group_members_buffer_.push_back(
         {active_locations_buffer_[i].person_id,
          active_locations_buffer_[i].person_array_index,
@@ -474,7 +458,7 @@ size_t InteractionManager::collectAndSortGroupMembers(size_t group_start) {
   // Sort members by person_id BEFORE binning to ensure deterministic
   // floating-point accumulation order for total_infectiousness_by_mode.
   // In MPI mode, locals and visitors arrive in different order than
-  // single-rank mode — without this sort, the sum of infectiousness
+  // single-rank mode. Without this sort, the sum of infectiousness
   // values can differ in the last bits due to FP non-associativity.
   std::sort(group_members_buffer_.begin(), group_members_buffer_.end(),
             [](const InteractionMember& a, const InteractionMember& b) {
@@ -545,7 +529,7 @@ int InteractionManager::processTransmissions(
 
   // 2b. Build parent-venue aggregates (sibling-mixing). Walks the same
   // venue groups but under each PARENT's contact matrix. All child venues
-  // of a parent share its MGU, so this is rank-local — see
+  // of a parent share its MGU, so this is rank-local. See
   // project_venue_hierarchy_mgu memory.
   dbg_sibling_infections_ = 0;
   dbg_sample_susc_prints_ = 0;
@@ -562,7 +546,7 @@ int InteractionManager::processTransmissions(
         visitor_ids, pending_infections, visitor_data, comp_model);
   }
 
-  // Per-slot transmission count removed — captured in DAY_SUMMARY
+  // Per-slot transmission count removed; captured in DAY_SUMMARY
 
   printTickParentMixingSummary(total_new_infections, current_time);
 
@@ -574,14 +558,12 @@ double InteractionManager::lookupContactsForBinPair(
     int susc_bin, int inf_bin) const {
   if (mode_matrix &&
       susc_bin < static_cast<int>(mode_matrix->contacts.size()) &&
-      inf_bin <
-          static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
+      inf_bin < static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
     return mode_matrix->contacts[susc_bin][inf_bin];
   }
   if (fallback_matrix &&
       susc_bin < static_cast<int>(fallback_matrix->contacts.size()) &&
-      inf_bin <
-          static_cast<int>(fallback_matrix->contacts[susc_bin].size())) {
+      inf_bin < static_cast<int>(fallback_matrix->contacts[susc_bin].size())) {
     return fallback_matrix->getContacts(susc_bin, inf_bin);
   }
   return contact_matrices_.default_contacts;

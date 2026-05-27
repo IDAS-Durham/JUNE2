@@ -1,18 +1,15 @@
-// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16,
-// and the file-roadmap comment at the top of interaction_manager.cpp.
-// Standard FOI path — everything processVenueTransmissions needs *before*
-// the per-susceptible Bernoulli loop: matrix/venue-type resolution,
+// Standard FOI path. Contains everything processVenueTransmissions needs
+// *before* the per-susceptible Bernoulli loop: matrix/venue-type resolution,
 // fomite/comp-uptake mode collection, bins-buffer prep, member binning,
 // deterministic sorting, per-mode cumulative weights, fomite-deposition
 // lambda accumulation.
-#include "epidemiology/interaction_manager.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
 
+#include "epidemiology/interaction_manager.h"
 #include "simulation/compartmental_model_manager.h"
 #include "utils/random.h"
 
@@ -47,15 +44,14 @@ std::vector<double> InteractionManager::binMembersAndPrepareBuffers(
   sortSusceptiblesByPersonId(num_bins_needed);
 
   // Per-mode cumulative weight arrays for infectious bins (later sampled via
-  // sampleFromCumulative in the Bernoulli loop — replaces per-call
+  // sampleFromCumulative in the Bernoulli loop, replacing per-call
   // std::discrete_distribution construction).
   buildCumulativeWeightsPerBin(num_bins_needed, num_modes);
 
   // Fomite deposition + per-mode lambda accumulation.
-  return recordFomiteDepositionAndLambda(venue, num_bins_needed,
-                                         num_fomite_modes, fomite_modes,
-                                         n_sub_per_mode, current_time,
-                                         delta_hours);
+  return recordFomiteDepositionAndLambda(
+      venue, num_bins_needed, num_fomite_modes, fomite_modes, n_sub_per_mode,
+      current_time, delta_hours);
 }
 
 bool InteractionManager::venueHasNoTransmissionPossible(
@@ -75,16 +71,15 @@ bool InteractionManager::venueHasNoTransmissionPossible(
       !comp_uptake_modes.empty() && comp_model != nullptr &&
       comp_model->venueToLocalNodeIndex(static_cast<int>(actual_venue_id)) >= 0;
 
-  return !has_susceptible ||
-         (!has_infectious && total_lambda_fomite <= 0.0 &&
-          !has_comp_uptake_potential);
+  return !has_susceptible || (!has_infectious && total_lambda_fomite <= 0.0 &&
+                              !has_comp_uptake_potential);
 }
 
 std::pair<const ParentAggregate*, const ContactMatrix*>
 InteractionManager::getParentAggregateForVenue(
     const Venue* venue, bool is_virtual_encounter) const {
-  if (!venue || venue->parent_id < 0 || is_virtual_encounter) return {nullptr,
-                                                                      nullptr};
+  if (!venue || venue->parent_id < 0 || is_virtual_encounter)
+    return {nullptr, nullptr};
   auto pit = parent_aggregates_.find(venue->parent_id);
   if (pit == parent_aggregates_.end()) return {nullptr, nullptr};
   const ContactMatrix* parent_flat_matrix =
@@ -93,7 +88,7 @@ InteractionManager::getParentAggregateForVenue(
   // V1 supports single-bin parent matrices only. The currently shipped
   // YAML (school/company/university) all use `bins: [all]`. A multi-
   // bin parent matrix would require per-susceptible parent_bin lookup
-  // in the hot path — defer to V2. Refuse loudly per the no-silent-
+  // in the hot path; defer to V2. Refuse loudly per the no-silent-
   // fallbacks rule rather than silently mis-applying contacts[0][0].
   if (parent_flat_matrix->bins.size() > 1) {
     throw std::runtime_error(
@@ -138,8 +133,7 @@ std::vector<double> InteractionManager::recordFomiteDepositionAndLambda(
         double age = current_time - event.time;
         lambda_fomite_by_mode[local_fm] +=
             event.amount *
-            fcfg.infectiousness_curve->integrate(age, age + delta_days) /
-            24.0;
+            fcfg.infectiousness_curve->integrate(age, age + delta_days) / 24.0;
       }
     }
   }
@@ -198,7 +192,7 @@ void InteractionManager::buildCumulativeWeightsPerBin(int num_bins_needed,
       const auto& w = group.infectiousness_by_mode[m];
       double total = buildCumulative(w, group.cumulative_by_mode[m]);
       if (!(total > 0.0)) {
-        // No positive weight — clear so callers know to skip sampling.
+        // No positive weight; clear so callers know to skip sampling.
         group.cumulative_by_mode[m].clear();
       }
     }
@@ -206,18 +200,17 @@ void InteractionManager::buildCumulativeWeightsPerBin(int num_bins_needed,
 }
 
 void InteractionManager::binMemberClassification(
-    const InteractionMember& member, Person* person,
-    const VisitorInfo* visitor, int bin_index, int num_modes,
-    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const InteractionMember& member, Person* person, const VisitorInfo* visitor,
+    int bin_index, int num_modes, int num_fomite_modes,
+    const std::vector<FomiteModeRef>& fomite_modes,
     const std::vector<int>& n_sub_per_mode, double current_time,
     double delta_hours) {
   PersonId pid = member.id;
   if (visitor) {
     if (visitor->is_infectious) {
-      accumulateVisitorInfectiousnessAndFomite(visitor, pid, bin_index,
-                                               num_modes, num_fomite_modes,
-                                               fomite_modes, n_sub_per_mode,
-                                               delta_hours);
+      accumulateVisitorInfectiousnessAndFomite(
+          visitor, pid, bin_index, num_modes, num_fomite_modes, fomite_modes,
+          n_sub_per_mode, delta_hours);
     } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
       double susceptibility = 1.0 - visitor->immunity_level;
       bins_buffer_[bin_index].susceptible.push_back(
@@ -247,14 +240,12 @@ void InteractionManager::binMemberClassification(
 
 int InteractionManager::resolveMemberBinIndex(
     const InteractionMember& member, const Person* person, Venue* venue,
-    const ContactMatrix* matrix, int num_bins_needed,
-    uint8_t encounter_type_id,
+    const ContactMatrix* matrix, int num_bins_needed, uint8_t encounter_type_id,
     [[maybe_unused]] const std::string& venue_type,
     [[maybe_unused]] uint8_t venue_type_id) {
   if (matrix) stats_.bin_lookups++;
   int bin_index = computeBinIndexForMatrix(person, venue, member.subset_index,
-                                           encounter_type_id, matrix,
-                                           num_bins_needed);
+                                           matrix, num_bins_needed);
   if (bin_index >= 0 && bin_index < num_bins_needed) return bin_index;
 
 #ifdef DEBUG_TRANSMISSION
@@ -280,9 +271,9 @@ int InteractionManager::resolveMemberBinIndex(
 }
 
 void InteractionManager::binOneMember(
-    const InteractionMember& member, Venue* venue,
-    const ContactMatrix* matrix, int num_bins_needed, int num_modes,
-    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const InteractionMember& member, Venue* venue, const ContactMatrix* matrix,
+    int num_bins_needed, int num_modes, int num_fomite_modes,
+    const std::vector<FomiteModeRef>& fomite_modes,
     const std::vector<int>& n_sub_per_mode, double current_time,
     double delta_hours, uint8_t encounter_type_id,
     const std::string& venue_type, uint8_t venue_type_id,
@@ -369,8 +360,8 @@ void InteractionManager::accumulateLocalInfectiousness(
   im_scratch_buffer_.resize(num_modes);
   double infectiousness_total = 0.0;
   for (int m = 0; m < num_modes; ++m) {
-    im_scratch_buffer_[m] = person->infection->getIntegratedInfectiousness(
-        m, current_time, t1);
+    im_scratch_buffer_[m] =
+        person->infection->getIntegratedInfectiousness(m, current_time, t1);
     infectiousness_total += im_scratch_buffer_[m];
   }
   if (infectiousness_total > 0.0) {
@@ -454,7 +445,7 @@ void InteractionManager::resolveVenueTypeAndMatrix(
   matrix_out = nullptr;
 
   // For VIRTUAL encounters (venue_id < 0), use the encounter type's contact
-  // matrix — these are purpose-built venues with no physical type.
+  // matrix; these are purpose-built venues with no physical type.
   // Virtual-encounter matrices are keyed by encounter_type_id via
   // virtual_matrices_by_encounter_id, NOT by venue_type_id; aliasing the
   // latter produced a silent bug where every sexual-channel transmission

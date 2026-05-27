@@ -1,4 +1,4 @@
-#include "../../include/activity/presence_window.h"
+#include "activity/presence_window.h"
 
 #include <algorithm>
 #include <cmath>

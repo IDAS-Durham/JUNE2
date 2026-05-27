@@ -6,9 +6,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../../core/config.h"
-#include "../../core/types.h"
-#include "../../core/world_state.h"
+#include "core/config.h"
+#include "core/types.h"
+#include "core/world_state.h"
 #include "event_types.h"
 
 namespace june {

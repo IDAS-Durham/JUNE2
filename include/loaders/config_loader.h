@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "../core/config.h"
+#include "core/config.h"
 
 namespace june {
 

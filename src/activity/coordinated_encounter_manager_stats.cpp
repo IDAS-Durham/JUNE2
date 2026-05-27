@@ -1,11 +1,11 @@
-#include "../../include/activity/coordinated_encounter_manager.h"
-
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "activity/coordinated_encounter_manager.h"
 
 #ifdef USE_MPI
 #include <mpi.h>
@@ -26,8 +26,7 @@ std::string resolveEncTypeName(uint8_t type_id, const WorldState& world) {
 // under MPI with more than one rank. Otherwise leaves `global` equal to its
 // caller-supplied copy of the local vector. Two overloads: one for int and
 // one for long long (the only types the encounter summary reduces).
-void allReduceIfMulti(const std::vector<int>& local,
-                      std::vector<int>& global) {
+void allReduceIfMulti(const std::vector<int>& local, std::vector<int>& global) {
 #ifdef USE_MPI
   if (local.empty()) return;
   int world_size = 1;
@@ -175,8 +174,8 @@ void printFreqGroupSummary(const std::vector<std::string>& fg_names,
 
 std::vector<long long> serializeFreqGroupStats(
     const std::vector<std::string>& fg_names,
-    const std::unordered_map<
-        std::string, CoordinatedEncounterManager::FreqGroupStats>&
+    const std::unordered_map<std::string,
+                             CoordinatedEncounterManager::FreqGroupStats>&
         freq_group_stats) {
   std::vector<long long> arr(fg_names.size() * kFgFields, 0);
   for (size_t gi = 0; gi < fg_names.size(); ++gi) {
@@ -254,7 +253,7 @@ void CoordinatedEncounterManager::printDailyEncounterSummary(int day) const {
   std::vector<int> global_arr(local_arr);
   allReduceIfMulti(local_arr, global_arr);
 
-  // Per-frequency-group counters — serialize and MPI-reduce on all ranks
+  // Per-frequency-group counters: serialize and MPI-reduce on all ranks
   // BEFORE the rank-0 early return (MPI_Allreduce is a collective op).
   const auto& fg_map = config_.coordinated_encounters.frequency_groups;
   std::vector<std::string> fg_names;

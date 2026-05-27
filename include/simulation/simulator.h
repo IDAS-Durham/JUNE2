@@ -9,28 +9,28 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../activity/coordinated_encounter_manager.h"
-#include "../activity/runtime_bin_allocator.h"
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../epidemiology/disease.h"
-#include "../epidemiology/epidemiology.h"
-#include "../epidemiology/infection_seed.h"
-#include "../epidemiology/interaction_manager.h"
-#include "../epidemiology/policy.h"
-#include "../epidemiology/vaccination_manager.h"
-#include "../loaders/disease_loader.h"
-#include "../loaders/policy_loader.h"
-#include "../utils/event_logging/event_logger.h"
-#include "../utils/memory_utils.h"
-#include "../utils/profiler.h"
-#include "../utils/random.h"
-#include "../utils/time_utils.h"
+#include "activity/coordinated_encounter_manager.h"
+#include "activity/runtime_bin_allocator.h"
+#include "core/config.h"
+#include "core/world_state.h"
+#include "epidemiology/disease.h"
+#include "epidemiology/epidemiology.h"
+#include "epidemiology/infection_seed.h"
+#include "epidemiology/interaction_manager.h"
+#include "epidemiology/policy.h"
+#include "epidemiology/vaccination_manager.h"
+#include "loaders/disease_loader.h"
+#include "loaders/policy_loader.h"
 #include "simulation/compartmental_model_manager.h"
+#include "utils/event_logging/event_logger.h"
+#include "utils/memory_utils.h"
+#include "utils/profiler.h"
+#include "utils/random.h"
+#include "utils/time_utils.h"
 
 #ifdef USE_MPI
-#include "../parallel/domain.h"
-#include "../parallel/domain_manager.h"
+#include "parallel/domain.h"
+#include "parallel/domain_manager.h"
 #endif
 
 namespace june {
@@ -178,9 +178,8 @@ class Simulator {
   // pass nullptr; pending_infections is filled by the call and consumed by
   // Step 4. Returns the local new-infection count.
   int runSlotTransmission(
-      std::vector<PersonLocation>& transmission_locations,
-      double delta_hours, int day_type_idx,
-      std::unordered_set<PersonId>* visitor_ids,
+      std::vector<PersonLocation>& transmission_locations, double delta_hours,
+      int day_type_idx, std::unordered_set<PersonId>* visitor_ids,
       std::vector<PendingInfection>* pending_infections,
       std::unordered_map<PersonId, VisitorInfo>* visitor_data_map);
 
@@ -191,8 +190,7 @@ class Simulator {
   // person_id for deterministic processing order), and populate the
   // visitor_ids set + visitor_data_map used by transmission processing.
   void exchangeVisitorsAndBuildAugmented(
-      double delta_hours,
-      std::vector<PersonLocation>& augmented_locations,
+      double delta_hours, std::vector<PersonLocation>& augmented_locations,
       std::unordered_set<PersonId>& visitor_ids,
       std::unordered_map<PersonId, VisitorInfo>& visitor_data_map);
 
@@ -229,7 +227,7 @@ class Simulator {
 
   // Throw if --days / end_date leaves nothing to simulate after a resume.
   // --days is anchored to the ORIGINAL start_date, not the checkpoint, so a
-  // resume that lands at or past total_days_ would silently no-op — fail
+  // resume that lands at or past total_days_ would silently no-op. Fail
   // loudly instead, pointing at the right --days value to use.
   void validateResumeBounds(int completed_day) const;
 

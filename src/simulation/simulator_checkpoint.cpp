@@ -259,7 +259,7 @@ void writeShardVaccine(H5::H5File& f, const std::vector<uint32_t>& ord,
 }
 
 // Gather + write last_processed_transition_time_ as two parallel arrays under
-// /epidemiology/. Per-rank, global-id-keyed manager state — lives in the
+// /epidemiology/. Per-rank, global-id-keyed manager state: lives in the
 // shard, not state.h5, so resume at a different rank count keeps every
 // rank's entries.
 void writeShardEpidemiology(H5::H5File& f, Epidemiology* epi, int comp) {
@@ -278,8 +278,9 @@ void writeShardEpidemiology(H5::H5File& f, Epidemiology* epi, int comp) {
            comp);
 }
 
-// Gather + write the policy manager's frozen_states_ under /policy_frozen_states.
-// Per-rank, global-id-keyed manager state — lives in the shard, not state.h5.
+// Gather + write the policy manager's frozen_states_ under
+// /policy_frozen_states. Per-rank, global-id-keyed manager state: lives in the
+// shard, not state.h5.
 void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
   std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
   std::vector<uint8_t> fz_pol;
@@ -411,7 +412,7 @@ void writeShardIndex(const fs::path& tmp, int nranks) {
   std::ofstream(tmp / "shard_index.yaml") << e.c_str() << "\n";
 }
 
-// manifest.yaml is written LAST in the checkpoint dir — its presence is the
+// manifest.yaml is written LAST in the checkpoint dir; its presence is the
 // atomic commit marker for a complete checkpoint (see restoreFromCheckpoint).
 // world_path / world_sha256 are populated in P4 (restore validation);
 // intentionally empty here rather than a misleading placeholder.
@@ -473,8 +474,8 @@ void Simulator::writeCheckpoint(int completed_day,
 
   writeShardIndex(tmp, nranks);
 
-  writeManifest(tmp, completed_day, date_iso, nranks,
-                current_simulation_time_, config_.simulation.random_seed);
+  writeManifest(tmp, completed_day, date_iso, nranks, current_simulation_time_,
+                config_.simulation.random_seed);
 
   if (!commitAndRotate(tmp, cp_root, cp_parent, cp_name, ck.keep_last)) return;
 

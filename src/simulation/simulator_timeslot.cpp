@@ -1,8 +1,11 @@
-#include "simulation/simulator.h"
-
+// Simulator per-timeslot pipeline: visitor exchange, transmission, applying
+// inbound results, post-transmission epidemiology update. Split from
+// simulator.cpp (declared in simulation/simulator.h).
 #include <algorithm>
 #include <iostream>
 #include <vector>
+
+#include "simulation/simulator.h"
 
 namespace june {
 
@@ -29,8 +32,7 @@ void printSlotEpiSummary(int local_new_infections,
   }
 #else
   (void)domain_mgr;
-  std::copy(std::begin(local_epi), std::end(local_epi),
-            std::begin(global_epi));
+  std::copy(std::begin(local_epi), std::end(local_epi), std::begin(global_epi));
 #endif
   if (rank != 0) return;
   if (global_new_infections > 0) {
@@ -49,7 +51,7 @@ void printSlotEpiSummary(int local_new_infections,
 // Per-slot venue distribution print: bin locations by activity index and
 // MPI_Reduce onto rank 0 for printing. Indexed by activity_index over
 // world.activity_names so the Reduce buffer size is identical on every
-// rank — collapsing by name via std::map would break with
+// rank. Collapsing by name via std::map would break with
 // MPI_ERR_TRUNCATE as soon as ranks diverge in which activities they hold.
 void printSlotVenueDistribution(const WorldState& world,
                                 const std::vector<PersonLocation>& locations,
@@ -65,7 +67,7 @@ void printSlotVenueDistribution(const WorldState& world,
   std::vector<int> global_counts(num_activities, 0);
 #ifdef USE_MPI
   if (domain_mgr) {
-    // Rank-0 print only — Reduce instead of Allreduce; non-root ranks
+    // Rank-0 print only: Reduce instead of Allreduce; non-root ranks
     // don't need the aggregated result.
     MPI_Reduce(local_counts.data(), global_counts.data(),
                static_cast<int>(num_activities), MPI_INT, MPI_SUM, 0,
@@ -91,7 +93,8 @@ void printSlotVenueDistribution(const WorldState& world,
 
 }  // namespace
 
-EpiSlotStats Simulator::updateEpidemiologyAfterTransmission(double delta_hours) {
+EpiSlotStats Simulator::updateEpidemiologyAfterTransmission(
+    double delta_hours) {
   EpiSlotStats epi_stats;
   try {
     ScopedTimer timer("04_InfectionStateUpdates");
@@ -237,13 +240,13 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 
   printSimulationState(slot.name, delta_hours);
 
-  // Compartmental coupling sequence — ORDER IS LOAD-BEARING:
-  // 1. advance()                    — plugin integrates ODE with previous
-  // slot's inputs
-  // 2. processTransmissions()       — humans exposed to FOI from plugin (reads
-  // buffer lazily)
-  // 3. computeDepositionWriteback() — aggregate infections → plugin inputs
-  // 4. maybeSnapshot()              — record plugin state after full slot
+  // Compartmental coupling sequence (ORDER IS LOAD-BEARING):
+  // 1. advance():                    plugin integrates ODE with previous
+  //                                  slot's inputs
+  // 2. processTransmissions():       humans exposed to FOI from plugin (reads
+  //                                  buffer lazily)
+  // 3. computeDepositionWriteback(): aggregate infections into plugin inputs
+  // 4. maybeSnapshot():              record plugin state after full slot
   compartmental_model_manager_->advance(
       static_cast<float>(delta_hours / 24.0),
       static_cast<float>(current_simulation_time_));
@@ -304,15 +307,15 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   int local_new_infections;
 #ifdef USE_MPI
   const bool have_mpi = (domain_mgr_ != nullptr);
-  local_new_infections = runSlotTransmission(
-      transmission_locations, delta_hours, day_type_idx,
-      have_mpi ? &visitor_ids : nullptr,
-      have_mpi ? &pending_infections : nullptr,
-      have_mpi ? &visitor_data_map : nullptr);
+  local_new_infections =
+      runSlotTransmission(transmission_locations, delta_hours, day_type_idx,
+                          have_mpi ? &visitor_ids : nullptr,
+                          have_mpi ? &pending_infections : nullptr,
+                          have_mpi ? &visitor_data_map : nullptr);
 #else
-  local_new_infections = runSlotTransmission(
-      transmission_locations, delta_hours, day_type_idx, nullptr, nullptr,
-      nullptr);
+  local_new_infections =
+      runSlotTransmission(transmission_locations, delta_hours, day_type_idx,
+                          nullptr, nullptr, nullptr);
 #endif
 
 #ifdef USE_MPI
@@ -327,8 +330,8 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 
   // Per-slot transmission + epidemiology summary (rank-0 prints after
   // Reduce).
-  printSlotEpiSummary(local_new_infections, epi_stats, delta_hours,
-                      domain_mgr_, rank);
+  printSlotEpiSummary(local_new_infections, epi_stats, delta_hours, domain_mgr_,
+                      rank);
 
   // Deposition write-back: aggregate per-node contributions from infected
   // people at owned venues and forward to the plugin for the next advance()

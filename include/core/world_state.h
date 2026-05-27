@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../epidemiology/disease.h"
+#include "epidemiology/disease.h"
 #include "types.h"
 
 namespace june {
@@ -136,7 +136,7 @@ class WorldState {
   // Optional per-(person, venue) membership metadata (Design B side-table,
   // /activity_mappings/membership_metadata in HDF5). Carries per-leg fields
   // such as boarding/alighting times for route activities. Keyed by flat
-  // index into activity_venues. Sparse — most assignments carry no metadata.
+  // index into activity_venues. Sparse: most assignments carry no metadata.
   std::vector<std::string> membership_field_names;
   std::vector<std::unordered_map<uint32_t, float>> membership_field_values;
 
@@ -423,193 +423,5 @@ class WorldState {
 
   void printSummary() const;
 };
-
-// =============================================================================
-// Implementation
-// =============================================================================
-
-inline void WorldState::buildIndices() {
-  person_index.clear();
-  venue_index.clear();
-  geo_unit_index.clear();
-  venues_by_type.clear();
-
-  for (size_t i = 0; i < people.size(); ++i) {
-    person_index[people[i].id] = i;
-  }
-
-  for (size_t i = 0; i < venues.size(); ++i) {
-    venue_index[venues[i].id] = i;
-    if (venues[i].type_id < venue_type_names.size()) {
-      venues_by_type[venue_type_names[venues[i].type_id]].push_back(i);
-    } else {
-      venues_by_type["unknown"].push_back(i);
-    }
-    // Populate global_venue_type_map for local venues (in MPI mode, the
-    // HDF5 loader pre-populates this from ALL venues; here we ensure
-    // local venues are always present, including in tests/serial mode).
-    if (global_venue_type_map.find(venues[i].id) ==
-        global_venue_type_map.end()) {
-      global_venue_type_map[venues[i].id] = venues[i].type_id;
-    }
-  }
-
-  for (size_t i = 0; i < geo_units.size(); ++i) {
-    geo_unit_index[geo_units[i].id] = i;
-  }
-
-  // Build geographic index of people
-  people_by_geo_unit.clear();
-  for (size_t i = 0; i < people.size(); ++i) {
-    GeoUnitId current_id = people[i].geo_unit_id;
-    while (current_id != -1) {
-      people_by_geo_unit[current_id].push_back(i);
-
-      // Traverse up the hierarchy
-      auto it = geo_unit_index.find(current_id);
-      if (it == geo_unit_index.end()) break;
-      current_id = geo_units[it->second].parent_id;
-    }
-  }
-}
-
-inline Person* WorldState::getPerson(PersonId id) {
-  auto it = person_index.find(id);
-  return (it != person_index.end()) ? &people[it->second] : nullptr;
-}
-
-inline const Person* WorldState::getPerson(PersonId id) const {
-  auto it = person_index.find(id);
-  return (it != person_index.end()) ? &people[it->second] : nullptr;
-}
-
-inline Venue* WorldState::getVenue(VenueId id) {
-  auto it = venue_index.find(id);
-  return (it != venue_index.end()) ? &venues[it->second] : nullptr;
-}
-
-inline const Venue* WorldState::getVenue(VenueId id) const {
-  auto it = venue_index.find(id);
-  return (it != venue_index.end()) ? &venues[it->second] : nullptr;
-}
-
-inline GeographicalUnit* WorldState::getGeoUnit(GeoUnitId id) {
-  auto it = geo_unit_index.find(id);
-  return (it != geo_unit_index.end()) ? &geo_units[it->second] : nullptr;
-}
-
-inline const GeographicalUnit* WorldState::getGeoUnit(GeoUnitId id) const {
-  auto it = geo_unit_index.find(id);
-  return (it != geo_unit_index.end()) ? &geo_units[it->second] : nullptr;
-}
-
-inline std::vector<Venue*> WorldState::getVenuesByType(
-    const std::string& type) {
-  std::vector<Venue*> result;
-  auto it = venues_by_type.find(type);
-  if (it != venues_by_type.end()) {
-    result.reserve(it->second.size());
-    for (uint32_t idx : it->second) {
-      result.push_back(&venues[idx]);
-    }
-  }
-  return result;
-}
-
-inline std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {
-  std::vector<Person*> result;
-  auto it = people_by_geo_unit.find(id);
-  if (it != people_by_geo_unit.end()) {
-    result.reserve(it->second.size());
-    for (uint32_t idx : it->second) {
-      result.push_back(&people[idx]);
-    }
-  }
-  return result;
-}
-
-inline std::vector<Person*> WorldState::getPeopleInUnit(
-    const std::string& level, const std::string& name) {
-  for (const auto& unit : geo_units) {
-    std::string unit_level = (unit.level_id < geo_level_names.size())
-                                 ? geo_level_names[unit.level_id]
-                                 : "unknown";
-    if (unit_level == level && unit.name == name) {
-      return getPeopleInUnit(unit.id);
-    }
-  }
-  return {};
-}
-
-inline void WorldState::printSummary() const {
-  std::cout << "WorldState Summary:" << std::endl;
-  std::cout << "  People: " << people.size() << std::endl;
-  std::cout << "  Venues: " << venues.size() << std::endl;
-  std::cout << "  Geo Units: " << geo_units.size() << std::endl;
-  std::cout << "  Activities: " << activity_names.size() << std::endl;
-
-  std::cout << "  Venues by type:" << std::endl;
-  for (const auto& [type, indices] : venues_by_type) {
-    std::cout << "    " << type << ": " << indices.size() << std::endl;
-  }
-}
-
-inline void WorldState::loadRegionalRiskFactors(const std::string& csv_path) {
-  std::ifstream file(csv_path);
-  if (!file.is_open()) {
-    std::cerr << "Error: Could not open regional risk factors file: "
-              << csv_path << std::endl;
-    return;
-  }
-
-  std::string line;
-  std::getline(file, line);  // Skip header
-
-  // Temporary map for quick lookup: Name -> (Susc/Trans, Factor/Severity)
-  std::unordered_map<std::string, std::pair<float, float>> factors;
-  while (std::getline(file, line)) {
-    if (line.empty()) continue;
-    std::stringstream ss(line);
-    std::string name, trans_str, sever_str;
-    if (std::getline(ss, name, ',') && std::getline(ss, trans_str, ',') &&
-        std::getline(ss, sever_str, ',')) {
-      try {
-        factors[name] = {std::stof(trans_str), std::stof(sever_str)};
-      } catch (...) {
-        continue;
-      }
-    }
-  }
-
-  // 1. Update GeoUnits
-  int updated_units = 0;
-  for (auto& gu : geo_units) {
-    auto it = factors.find(gu.name);
-    if (it != factors.end()) {
-      gu.transmission_factor = it->second.first;
-      gu.severity_factor = it->second.second;
-      updated_units++;
-    }
-  }
-
-  // 2. Propagate to Venues
-  int updated_venues = 0;
-  for (auto& v : venues) {
-    if (v.geo_unit_id != -1) {
-      auto it_idx = geo_unit_index.find(v.geo_unit_id);
-      if (it_idx != geo_unit_index.end()) {
-        float susc = geo_units[it_idx->second].transmission_factor;
-        if (susc != 1.0f) {
-          v.transmission_factor = susc;
-          updated_venues++;
-        }
-      }
-    }
-  }
-
-  std::cout << "[Regional Risk] Loaded factors for " << updated_units
-            << " geographical units. Updated " << updated_venues
-            << " venues for performance caching." << std::endl;
-}
 
 }  // namespace june

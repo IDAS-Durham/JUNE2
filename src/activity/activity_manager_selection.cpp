@@ -1,9 +1,8 @@
-#include "../../include/activity/activity_manager.h"
-
 #include <random>
 
-#include "../../include/utils/deterministic_rng.h"
-#include "../../include/utils/random.h"
+#include "activity/activity_manager.h"
+#include "utils/deterministic_rng.h"
+#include "utils/random.h"
 
 namespace june {
 
@@ -64,7 +63,7 @@ void ActivityManager::filterAvailableActivities(
 // activity. Couples e.g. an outbound route, a primary activity at the
 // destination, and a return route into a single per-day attendance
 // decision. Slots that don't touch linked activities (e.g. weekend slots
-// or non-routing slots) are unaffected. Fully generic — driven by YAML,
+// or non-routing slots) are unaffected. Fully generic: driven by YAML,
 // no hardcoded activity names.
 void ActivityManager::maybeRollLinkedActivitiesDay(
     const Person& person, const TimeSlot& slot,
@@ -77,7 +76,7 @@ void ActivityManager::maybeRollLinkedActivitiesDay(
   int day_now = static_cast<int>(current_simulation_time_);
   if (person.linked_activities_day == day_now) return;
   // Use the rate of any linked activity from the participation table.
-  // We deliberately do NOT filter by available_indices — the rate is a
+  // We deliberately do NOT filter by available_indices; the rate is a
   // schedule-level configuration that shouldn't depend on whether THIS
   // person happens to have the venue (e.g. a person without a route
   // leg should still re-roll the same attendance decision used by the
@@ -110,9 +109,9 @@ int16_t ActivityManager::pickActivityByRate(
         (schedule_type.linked_activities_mask & (ActivityMask(1) << act_idx)) !=
             0) {
       if (person.linked_activities_pass) {
-        return act_idx;  // attending today — pick this activity if available
+        return act_idx;  // attending today; pick this activity if available
       }
-      continue;  // skipping today — fall through without consuming rng
+      continue;  // skipping today; fall through without consuming rng
     }
 
     if (act_idx < static_cast<int16_t>(participation_by_id.size())) {
@@ -214,7 +213,7 @@ void ActivityManager::groupVenuesByType(
     // the same hierarchical selection regardless of MPI partitioning.
     uint8_t v_type_id = world_.getVenueTypeId(v_entry.first);
     if (v_type_id == 255) {
-      // Unknown venue type — collect for fallback
+      // Unknown venue type; collect for fallback
       cross_rank_venues_buffer_.push_back(v_entry);
       continue;
     }
@@ -239,7 +238,7 @@ uint8_t ActivityManager::pickWeightedVenueType(const Person& person,
   }
 
   // Build cumulative weights and sample (replaces std::discrete_distribution
-  // — same complexity, no per-call allocation).
+  // with same complexity, no per-call allocation).
   double total_w = buildCumulative(weights_buffer_, cumulative_buffer_);
   size_t chosen_idx = 0;
   if (total_w > 0.0) {

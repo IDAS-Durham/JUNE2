@@ -1,11 +1,14 @@
-#include "simulation/simulator.h"
-
+// Simulator coordinated-encounter helpers: daily negotiation + slot injection
+// + local-rank logging. Split from simulator.cpp (declared in
+// simulation/simulator.h).
 #include <algorithm>
 #include <map>
 #include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "simulation/simulator.h"
 
 namespace june {
 
@@ -155,7 +158,7 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
 #ifdef USE_MPI
   if (!domain_mgr) return global_eligible_map;
   // Collect (encounter_id, local_eligible) for encounters with any remote
-  // participants — these are the only ones that need exchange.
+  // participants; these are the only ones that need exchange.
   std::vector<int> local_pairs;  // flat array: [eid, count, eid, count, ...]
   for (const auto& ee : slot_encounters) {
     const auto& enc = daily_encounters[ee.encounter_idx];

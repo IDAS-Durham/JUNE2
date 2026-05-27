@@ -23,7 +23,7 @@ inline double buildCumulative(const std::vector<double>& weights,
 // Sample an index in [0, cumulative.size()) using the given RNG.
 // Returns -1 if cumulative is empty or has zero total weight.
 // This is a drop-in replacement for std::discrete_distribution's
-// operator() that avoids reconstructing the distribution per call —
+// operator() that avoids reconstructing the distribution per call:
 // cumulative is built once via buildCumulative() and sampled many times.
 template <typename RNG>
 inline int sampleFromCumulative(const std::vector<double>& cumulative,
@@ -40,7 +40,7 @@ inline int sampleFromCumulative(const std::vector<double>& cumulative,
   return idx;
 }
 
-// Global random number generator — DEPRECATED for simulation hot paths.
+// Global random number generator. DEPRECATED for simulation hot paths.
 // Use SplitMix64 from deterministic_rng.h with mix_seed() for MPI-reproducible
 // per-entity random draws. GlobalRNG remains only for backward-compatible
 // initialization and components not yet migrated.

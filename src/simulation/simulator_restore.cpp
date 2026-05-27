@@ -51,7 +51,7 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
 
 // Overlay one shard's per-rank manager state (last_processed_transition_time_
 // and policy frozen_states) onto the accumulator maps, keeping only entries
-// for people THIS rank owns — the maps are keyed on global PersonId so a
+// for people THIS rank owns. The maps are keyed on global PersonId so a
 // resume at a different rank count still routes every entry correctly.
 void overlayShardManagerState(
     H5::H5File& f, const WorldState& world,
@@ -98,22 +98,21 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
   const auto F64 = H5::PredType::NATIVE_DOUBLE;
   auto ids = readVec<int32_t>(f, "/population/ids", I32);
   auto imm_l = readVec<double>(f, "/population/immunity_natural_level", F64);
-  auto imm_a = readVec<double>(
-      f, "/population/immunity_natural_acquisition_time", F64);
+  auto imm_a =
+      readVec<double>(f, "/population/immunity_natural_acquisition_time", F64);
   auto imm_w =
       readVec<double>(f, "/population/immunity_natural_waning_rate", F64);
   auto dead = readVec<uint8_t>(f, "/population/is_dead", U8);
   auto dt = readVec<double>(f, "/population/death_time", F64);
   auto m_as =
       readVec<uint32_t>(f, "/population/applicable_symptom_policy_mask", U32);
-  auto m_at = readVec<uint32_t>(
-      f, "/population/applicable_temporal_policy_mask", U32);
+  auto m_at =
+      readVec<uint32_t>(f, "/population/applicable_temporal_policy_mask", U32);
   auto m_ps = readVec<uint32_t>(
       f, "/population/active_symptom_policy_participation", U32);
   auto m_pt = readVec<uint32_t>(
       f, "/population/active_temporal_policy_participation", U32);
-  auto m_ds =
-      readVec<uint32_t>(f, "/population/symptom_policy_decisions", U32);
+  auto m_ds = readVec<uint32_t>(f, "/population/symptom_policy_decisions", U32);
   auto m_dt =
       readVec<uint32_t>(f, "/population/temporal_policy_decisions", U32);
   auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
@@ -192,7 +191,7 @@ size_t overlayShardInfection(H5::H5File& f, WorldState& world,
 }
 
 // Overlay one shard's /vaccine/ records onto world_.people owned by this
-// rank. Efficacy is NOT persisted in the shard — it is re-derived from the
+// rank. Efficacy is NOT persisted in the shard; it is re-derived from the
 // active VaccinationConfig by dose position so a resume can apply updated
 // efficacy maps. Returns the number of records this rank consumed.
 size_t overlayShardVaccine(H5::H5File& f, WorldState& world,
@@ -284,8 +283,7 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed) {
   if (cp_seed != config_seed) {
     throw std::runtime_error(
         "restoreFromCheckpoint: effective_random_seed mismatch (checkpoint=" +
-        std::to_string(cp_seed) +
-        ", config=" + std::to_string(config_seed) +
+        std::to_string(cp_seed) + ", config=" + std::to_string(config_seed) +
         "). Resume with the checkpoint's seed (no silent override).");
   }
   return completed_day;
@@ -300,8 +298,7 @@ void Simulator::validateResumeBounds(int completed_day) const {
       "simulate. Checkpoint completed day " +
       std::to_string(completed_day) + " so the run resumes at day " +
       std::to_string(resume_from_day_) +
-      ", but the configured end is total_days=" +
-      std::to_string(total_days_) +
+      ", but the configured end is total_days=" + std::to_string(total_days_) +
       " (end_date=" + config_.simulation.end_date +
       "). --days/end_date counts from the original start_date, not from "
       "the checkpoint. To run M more day(s) after this checkpoint, pass "

@@ -1,7 +1,4 @@
-// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16.
 // Contains the processPartialPresenceVenue family (commute-line FOI path).
-#include "epidemiology/interaction_manager.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -10,6 +7,7 @@
 
 #include "activity/presence_window.h"
 #include "activity/runtime_bin_allocator.h"
+#include "epidemiology/interaction_manager.h"
 #include "simulation/compartmental_model_manager.h"
 #include "utils/deterministic_rng.h"
 #include "utils/event_logging/event_types.h"
@@ -46,8 +44,8 @@ std::optional<int> InteractionManager::dispatchPartialPresenceIfApplicable(
 
 void InteractionManager::accumulateOneCarriage(
     const std::vector<CarriageMember>& car, float slot_duration_min,
-    double current_time, double delta_hours, int num_modes,
-    int num_bins_needed, uint8_t venue_type_id, const ContactMatrix* matrix,
+    double current_time, double delta_hours, int num_modes, int num_bins_needed,
+    uint8_t venue_type_id, const ContactMatrix* matrix,
     const TransmissionParams& trans_params,
     std::vector<PartialPresenceSubBin>& sub_bins,
     PartialPresenceLambdaResult& result) const {
@@ -236,14 +234,13 @@ InteractionManager::buildPartialPresenceCarriages(
       continue;
     }
 
-    // Window from the allocator's global broadcast — identical on every
+    // Window from the allocator's global broadcast: identical on every
     // rank for the same (venue, person) pair.
     const EffectiveWindow win =
         runtime_bin_allocator_->getPresenceWindow(actual_venue_id, m.id);
 
-    int matrix_bin =
-        computeBinIndexForMatrix(person, venue, m.subset_index,
-                                 m.encounter_type_id, matrix, num_bins_needed);
+    int matrix_bin = computeBinIndexForMatrix(person, venue, m.subset_index,
+                                              matrix, num_bins_needed);
     if (matrix_bin < 0 || matrix_bin >= num_bins_needed) matrix_bin = 0;
 
     carriages[carriage].push_back(CarriageMember{
@@ -370,8 +367,8 @@ void InteractionManager::applyPartialPresenceInfection(
     venue_type_name = world_.venue_type_names[venue_type_id];
 
   uint64_t infection_seed =
-      mix_seed(base_seed_, susc_id,
-               static_cast<uint64_t>(current_time * 1000), venue_key);
+      mix_seed(base_seed_, susc_id, static_cast<uint64_t>(current_time * 1000),
+               venue_key);
   susc_person->infection = std::make_unique<Infection>(
       disease_, current_time, susc_person,
       static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
@@ -381,8 +378,8 @@ void InteractionManager::applyPartialPresenceInfection(
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(
         susc_id, infector_id, actual_venue_id, current_time,
-        /*encounter_type_id*/ 255, infector_symptom_id,
-        transmission_mode_index, InfectionSource::Person);
+        /*encounter_type_id*/ 255, infector_symptom_id, transmission_mode_index,
+        InfectionSource::Person);
   }
 
   if (active_infections != nullptr) active_infections->insert(susc_id);
@@ -435,8 +432,7 @@ double InteractionManager::computeMemberSusceptibility(
 }
 
 bool InteractionManager::processOnePartialSusceptible(
-    PersonId susc_id,
-    const std::unordered_map<PersonId, double>& susc_lambda,
+    PersonId susc_id, const std::unordered_map<PersonId, double>& susc_lambda,
     std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>&
         susc_sources,
     double current_time, Venue* venue, uint8_t venue_type_id,
@@ -486,11 +482,10 @@ bool InteractionManager::processOnePartialSusceptible(
       resolveInfectorSymptomId(infector_id, current_time, visitor_data);
 
   const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
-  applyPartialPresenceInfection(susc_id, susc_person, visitor, infector_id,
-                                transmission_mode_index, infector_symptom_id,
-                                current_time, venue, venue_type_id,
-                                actual_venue_id, active_infections,
-                                pending_infections);
+  applyPartialPresenceInfection(
+      susc_id, susc_person, visitor, infector_id, transmission_mode_index,
+      infector_symptom_id, current_time, venue, venue_type_id, actual_venue_id,
+      active_infections, pending_infections);
   return true;
 }
 
@@ -520,11 +515,10 @@ int InteractionManager::processPartialPresenceVenue(
   const uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
 
   for (PersonId susc_id : ordered_susc) {
-    if (processOnePartialSusceptible(susc_id, susc_lambda, susc_sources,
-                                     current_time, venue, venue_type_id,
-                                     actual_venue_id, visitor_data,
-                                     active_infections, pending_infections,
-                                     time_bits, venue_key)) {
+    if (processOnePartialSusceptible(
+            susc_id, susc_lambda, susc_sources, current_time, venue,
+            venue_type_id, actual_venue_id, visitor_data, active_infections,
+            pending_infections, time_bits, venue_key)) {
       new_infections++;
     }
   }

@@ -5,7 +5,7 @@
 #include "core/config.h"
 
 // Forward-declare YAML::Node to keep yaml-cpp out of the public include
-// surface — only TUs that actually parse YAML need the full header.
+// surface. Only TUs that actually parse YAML need the full header.
 namespace YAML {
 class Node;
 }  // namespace YAML

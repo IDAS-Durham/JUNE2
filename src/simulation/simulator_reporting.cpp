@@ -1,9 +1,12 @@
-#include "simulation/simulator.h"
-
+// Simulator output/reporting helpers: outputStatistics + infection-stats
+// console/file emitters. Split from simulator.cpp (declared in
+// simulation/simulator.h).
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <vector>
+
+#include "simulation/simulator.h"
 
 namespace june {
 
@@ -31,9 +34,8 @@ InfectionStatsLocal tallyLocalInfectionStats(const WorldState& world,
       continue;
     }
     if (person.infection != nullptr) {
-      uint16_t s_id =
-          person.infection->getTrajectory().getCurrentSymptomId(
-              current_simulation_time);
+      uint16_t s_id = person.infection->getTrajectory().getCurrentSymptomId(
+          current_simulation_time);
       if (s_id < s_tags.size()) {
         const auto& tag = s_tags[s_id];
         if (disease.isFatalStage(tag.name)) {
@@ -98,7 +100,7 @@ void Simulator::outputStatistics() {
     }
   }
 
-  // Output infection statistics (collective call — all ranks participate)
+  // Output infection statistics (collective call: all ranks participate)
   outputInfectionStatistics();
 }
 

@@ -1,15 +1,15 @@
 #ifdef USE_MPI
 
-#include "../../include/parallel/domain_communicator.h"
+#include "parallel/domain_communicator.h"
 
 #include <cstring>
 #include <iostream>
 #include <vector>
 
-#include "../../include/parallel/domain_communicator_detail.h"
-#include "../../include/parallel/domain_manager.h"
-#include "../../include/parallel/mpi_utils.h"
-#include "../../include/utils/profiler.h"
+#include "parallel/domain_communicator_detail.h"
+#include "parallel/domain_manager.h"
+#include "parallel/mpi_utils.h"
+#include "utils/profiler.h"
 
 namespace {
 
@@ -75,18 +75,19 @@ const char* unpackVisitor(const char* ptr, june::Domain::VisitorData& v,
   return ptr;
 }
 
-
 // Builds a fully-populated VisitorData for a person attending a remote
 // venue. Pre-computes integrated_infectiousness per mode using the SAME
 // code path as local people (getIntegratedInfectiousness) so FP results
 // are bit-identical regardless of where a person is processed. The
 // integrated_infectiousness vector is always sized to num_modes
-// (zero-filled for non-infectious people) — the wire format expects
+// (zero-filled for non-infectious people); the wire format expects
 // exactly that many doubles.
-june::Domain::VisitorData buildVisitorPayload(
-    const june::PersonLocation& loc, const june::Person& person, int home_rank,
-    double current_time, double delta_hours, int num_modes,
-    const june::Disease* disease) {
+june::Domain::VisitorData buildVisitorPayload(const june::PersonLocation& loc,
+                                              const june::Person& person,
+                                              int home_rank,
+                                              double current_time,
+                                              double delta_hours, int num_modes,
+                                              const june::Disease* disease) {
   june::Domain::VisitorData visitor;
   visitor.person_id = loc.person_id;
   visitor.home_rank = home_rank;
@@ -137,7 +138,6 @@ june::Domain::VisitorData buildVisitorPayload(
   return visitor;
 }
 
-
 }  // anonymous namespace
 
 namespace june {
@@ -171,7 +171,7 @@ void DomainCommunicator::exchangeVisitors(
     int target_rank = dm.getVenueRank(loc.venue_id);
     if (target_rank == -1) continue;
     if (target_rank == rank_) {
-      // Venue is on this rank (e.g., virtual venue hosted locally) — no
+      // Venue is on this rank (e.g., virtual venue hosted locally), so no
       // need to send as visitor; interaction will be computed locally.
       continue;
     }

@@ -17,7 +17,7 @@ namespace {
 using ::june::config_detail::logRank0;
 using ::june::config_detail::parseSelectionCriteria;
 
-// Parse a vaccine efficacy node — either a flat `disease -> scalar` map
+// Parse a vaccine efficacy node: either a flat `disease -> scalar` map
 // (taken as 0-100 age-uniform efficacy) or a nested `disease -> {age-range
 // -> value}` map (each age-range encoded as "min-max"). Used for both
 // infection_efficacy and symptom_efficacy on a DoseConfig.

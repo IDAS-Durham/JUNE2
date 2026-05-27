@@ -1,6 +1,6 @@
 #ifdef USE_MPI
 
-#include "../../include/parallel/domain_manager.h"
+#include "parallel/domain_manager.h"
 
 #include <algorithm>
 #include <cstring>
@@ -8,8 +8,8 @@
 #include <iostream>
 #include <limits>
 
-#include "../../include/loaders/hdf5_loader.h"
-#include "../../include/parallel/mpi_utils.h"
+#include "loaders/hdf5_loader.h"
+#include "parallel/mpi_utils.h"
 
 namespace june {
 

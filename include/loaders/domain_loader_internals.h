@@ -1,7 +1,7 @@
 #pragma once
 
 // Internal helpers shared between domain_loader.cpp and
-// domain_loader_internals.cpp. Not part of the public HDF5Loader API —
+// domain_loader_internals.cpp. Not part of the public HDF5Loader API:
 // kept in namespace `june::detail` and intended only for these two TUs.
 
 #include <cstdint>
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-#include "../core/types.h"
+#include "core/types.h"
 
 namespace june {
 
@@ -49,8 +49,7 @@ std::vector<ChunkSpan> detectChunkSpans(
 
 // Ensure world.activity_names contains internal system activities plus every
 // activity referenced by any time slot in the schedule config. Idempotent.
-void registerSystemAndConfigActivities(WorldState& world,
-                                       const Config& config);
+void registerSystemAndConfigActivities(WorldState& world, const Config& config);
 
 // Append schedule type names from config that are not already in
 // world.schedule_type_names, preserving config order.
@@ -71,8 +70,7 @@ void loadPersonsInSpan(
     const GeoPartitionMap& pop_partition_map,
     const std::vector<GeoUnitId>& geo_units_vec,
     const std::vector<std::string>& population_property_names,
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, int32_t>>&
+    std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
         property_indices_cache);
 
 // Read one venue span (single hyperslab) and emplace its venues into
@@ -84,8 +82,7 @@ void loadVenuesInSpan(
     const std::vector<GeoUnitId>& geo_units_vec,
     const std::unordered_map<std::string, std::vector<std::string>>&
         venue_type_prop_names,
-    std::unordered_map<std::string,
-                       std::unordered_map<std::string, int32_t>>&
+    std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
         venue_property_indices_cache);
 
 // Read one activity-mapping span (single hyperslab) and stitch rows into
@@ -97,7 +94,7 @@ void loadActivityMappingsInSpan(
 
 // Optional per-(person, venue) membership metadata (Design B side-table).
 // Carries per-leg fields (e.g. boarding/alighting times for route activities)
-// when present. Backward-compatible — old worlds without this dataset simply
+// when present. Backward-compatible: old worlds without this dataset simply
 // have no per-membership metadata, and partial_presence venues degrade to
 // full-slot presence in the FOI loop.
 void loadMembershipMetadata(
@@ -108,12 +105,11 @@ void loadMembershipMetadata(
 // then sort by (venue_id, subset_index) and link each contiguous run back
 // onto its Venue's subset_start/subset_count. Requires world_.venue_index
 // to be built so getVenue() resolves.
-void loadVenueSubsets(
-    HDF5Loader& loader,
-    const std::unordered_set<GeoUnitId>& owned_geo_units);
+void loadVenueSubsets(HDF5Loader& loader,
+                      const std::unordered_set<GeoUnitId>& owned_geo_units);
 
 // Read ALL venue IDs and type_ids from HDF5 into world.global_venue_type_map.
-// Needed for cross-domain venue lookups in selectVenue() under MPI — venues
+// Needed for cross-domain venue lookups in selectVenue() under MPI: venues
 // owned by other ranks are not in world.venues, but activity mappings may
 // reference them.
 void buildGlobalVenueTypeMap(HDF5Loader& loader);

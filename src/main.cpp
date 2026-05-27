@@ -324,7 +324,7 @@ int main(int argc, char* argv[]) {
 
     // Checkpoint resume: the checkpoint's recorded effective seed is
     // authoritative. Adopt it (unless an explicit --seed was given, in which
-    // case a mismatch is rejected later in restoreFromCheckpoint — no silent
+    // case a mismatch is rejected later in restoreFromCheckpoint; no silent
     // override). Path is normalised here ('latest' symlink resolved).
     if (!restart_from.empty()) {
       std::filesystem::path cpdir = std::filesystem::canonical(restart_from);

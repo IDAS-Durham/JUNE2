@@ -276,7 +276,7 @@ contact_matrices:
         beta: 0.00255
         bins: *id031
         contacts: *id032
-  # Commute venues (task 11 — COMMUTE_HANDOVER.md). One venue per transport
+  # Commute venues. One venue per transport
   # line; carriages are runtime subsets allocated by the carriage allocator
   # (task 14). contacts values are per-hour starting guesses — calibrate
   # against transit attack-rate data. physical_contact

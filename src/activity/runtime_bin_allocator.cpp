@@ -1,4 +1,4 @@
-#include "../../include/activity/runtime_bin_allocator.h"
+#include "activity/runtime_bin_allocator.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,14 +6,14 @@
 #include <iostream>
 #include <unordered_map>
 
-#include "../../include/core/config.h"
-#include "../../include/core/world_state.h"
-#include "../../include/utils/deterministic_rng.h"
+#include "core/config.h"
+#include "core/world_state.h"
+#include "utils/deterministic_rng.h"
 
 #ifdef USE_MPI
 #include <mpi.h>
 
-#include "../../include/parallel/mpi_utils.h"
+#include "parallel/mpi_utils.h"
 #endif
 
 namespace june {
@@ -35,7 +35,7 @@ void RuntimeBinAllocator::allocateForSlot(
   num_bins_by_venue_.clear();
   windows_by_vid_pid_.clear();
 
-  if (venue_type_mask_ == 0) return;  // feature off — zero overhead
+  if (venue_type_mask_ == 0) return;  // feature off; zero overhead
 
   // Slot key for canonical RNG seeding across ranks. Sim time is in days;
   // round to integer minutes to avoid FP-summation drift between ranks.
@@ -43,7 +43,7 @@ void RuntimeBinAllocator::allocateForSlot(
       static_cast<uint64_t>(current_simulation_time * 1440.0 + 0.5);
   const uint64_t base_seed = config_.simulation.random_seed;
 
-  // Slot duration in minutes — input to presence_window helper.
+  // Slot duration in minutes; input to presence_window helper.
   const float slot_duration_min = static_cast<float>(delta_hours * 60.0);
 
   // Membership-metadata field indices for per-leg boarding/alighting.
@@ -53,12 +53,12 @@ void RuntimeBinAllocator::allocateForSlot(
   const bool have_timing = (tb_field >= 0 && ta_field >= 0);
 
   // -------------------------------------------------------------------------
-  // Phase 1 — collect LOCAL (rider, leg) entries.
+  // Phase 1: collect LOCAL (rider, leg) entries.
   //
   // For each person assigned a non-trivial activity this slot, walk every
   // activity_meta with that activity_index and add EACH leg whose venue is
   // partial-presence. A multi-leg journey (e.g. a 3-leg train commute)
-  // produces 3 entries — one per leg — keyed independently by their flat
+  // produces 3 entries, one per leg, keyed independently by their flat
   // activity_venue index.
   //
   // We deliberately include legs whose raw (t_board_min, t_alight_min)
@@ -123,7 +123,7 @@ void RuntimeBinAllocator::allocateForSlot(
           if (tb == WorldState::kMembershipFieldAbsent ||
               ta == WorldState::kMembershipFieldAbsent) {
             // Missing per-leg metadata: degrade to full-slot presence so
-            // the leg still participates in bucketing (D14 — never drop
+            // the leg still participates in bucketing (D14: never drop
             // a leg).
             tb = 0.0f;
             ta = slot_duration_min;
@@ -160,10 +160,10 @@ void RuntimeBinAllocator::allocateForSlot(
   }
 
   // -------------------------------------------------------------------------
-  // Phase 2 — exchange (venue_id, person_id) pairs across ranks so every
+  // Phase 2: exchange (venue_id, person_id) pairs across ranks so every
   // rank has the same global rider list per partial-presence venue.
   // Multi-leg riders contribute one pair per leg (same person_id may
-  // appear in multiple venues' lists — that's the point).
+  // appear in multiple venues' lists; that's the point).
   // -------------------------------------------------------------------------
   // 4 int32s per leg: (vid, pid, bitcast(eff_board_f32),
   // bitcast(eff_alight_f32)). Floats are bit-cast through int32 so the existing
@@ -205,10 +205,10 @@ void RuntimeBinAllocator::allocateForSlot(
 #endif
 
   // -------------------------------------------------------------------------
-  // Phase 3 — decode the global 4-int-per-leg stream, group by venue,
+  // Phase 3: decode the global 4-int-per-leg stream, group by venue,
   // canonical-sort, deal into bins. Also populates windows_by_vid_pid_ from
   // the broadcast float bytes (every rank sees identical windows for the
-  // same rider — required for MPI determinism on cross-LGU venues).
+  // same rider, required for MPI determinism on cross-LGU venues).
   // -------------------------------------------------------------------------
   std::unordered_map<VenueId, std::vector<PersonId>> riders_by_venue;
   windows_by_vid_pid_.reserve(global_packed.size() / 4);
@@ -265,7 +265,7 @@ void RuntimeBinAllocator::allocateForSlot(
   }
 
   // -------------------------------------------------------------------------
-  // Phase 4 — write per-leg bins into the sparse av_idx map.
+  // Phase 4: write per-leg bins into the sparse av_idx map.
   // -------------------------------------------------------------------------
   bin_by_av_idx_.reserve(local_legs.size());
   for (const auto& lg : local_legs) {

@@ -11,10 +11,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../utils/memory_utils.h"
-#include "../utils/time_utils.h"
+#include "core/config.h"
+#include "core/world_state.h"
+#include "utils/memory_utils.h"
+#include "utils/time_utils.h"
 
 namespace june {
 
@@ -90,7 +90,7 @@ class HDF5Loader {
   H5::DataSet& getDataSet(const std::string& path);
 
   // Helper: read property dataset range (detects type and returns PropertyValue
-  // vector). Peer of the other read* helpers — public so that file-local
+  // vector). Peer of the other read* helpers; public so that file-local
   // loaders in hdf5_loader.cpp can use it.
   std::vector<PropertyValue> readPropertyDatasetRange(
       const std::string& path, size_t start, size_t count,

@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../core/types.h"
+#include "core/types.h"
 #include "presence_window.h"
 
 namespace june {
@@ -31,7 +31,7 @@ struct TimeSlot;
 // (≈ vehicle occupancy). Bin assignment is a round-robin deal over a canonical
 // hash-sort of the GLOBAL rider list, so bins differ in size by at most 1
 // and bit-identical assignments are computed on every rank for the same
-// rider — without exchanging bin indices.
+// rider without exchanging bin indices.
 //
 // MPI: one Allgatherv per slot collects (venue_id, person_id) pairs across
 // ranks for partial-presence venues (with one pair per (person, leg) for
@@ -45,11 +45,11 @@ class RuntimeBinAllocator {
 
   // Called once per slot, after ActivityManager::assignActivitiesFromSchedule
   // returns. Cheap no-op when partial_presence is disabled.
-  //   slot                       — current TimeSlot.
-  //   current_simulation_time    — days since simulation start (float).
-  //   delta_hours                — slot duration in hours (for FOI clamp,
+  //   slot:                       current TimeSlot.
+  //   current_simulation_time:    days since simulation start (float).
+  //   delta_hours:                slot duration in hours (for FOI clamp,
   //                                consumed downstream).
-  //   locations                  — per-person slot assignments just populated.
+  //   locations:                  per-person slot assignments just populated.
   //
   // The allocator includes EVERY leg of every multi-leg rider on partial-
   // presence venues, even legs whose raw (t_board_min, t_alight_min) sit
@@ -64,7 +64,7 @@ class RuntimeBinAllocator {
                        double delta_hours,
                        const std::vector<PersonLocation>& locations);
 
-  // Runtime bin index assigned to a specific (person, leg) — keyed by the
+  // Runtime bin index assigned to a specific (person, leg), keyed by the
   // flat activity_venue index (same key as
   // WorldState::getMembershipField). Returns kNoBin if the leg isn't on a
   // partial-presence venue this slot.
@@ -97,7 +97,7 @@ class RuntimeBinAllocator {
   // policy for long-distance commuters sees the rider's full leg list) and
   // broadcast globally via the same Allgatherv that distributes bin
   // assignments, so cross-rank visitors get the SAME window the home rank
-  // computed — required for MPI-deterministic FOI on cross-LGU venues.
+  // computed  (required for MPI-deterministic FOI on cross-LGU venues).
   //
   // Returns {0, 0} if the (venue, person) wasn't bucketed this slot.
   EffectiveWindow getPresenceWindow(VenueId venue_id,
@@ -123,8 +123,7 @@ class RuntimeBinAllocator {
 
   // Sparse map: flat activity_venue index → bin index for the current
   // slot. Cleared at the top of each call; size is bounded by the number
-  // of (rider, leg) pairs on partial-presence venues this slot — small
-  // even at national scale (~150k at 60M).
+  // of (rider, leg) pairs on partial-presence venues this slot.
   std::unordered_map<uint32_t, uint16_t> bin_by_av_idx_;
 
   // Global (venue, person) → bin map, identical on every rank. Same data

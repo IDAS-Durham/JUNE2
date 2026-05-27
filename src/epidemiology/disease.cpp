@@ -292,7 +292,7 @@ std::unique_ptr<Infection> Infection::fromCheckpoint(
     double transmission_shape, double transmission_rate,
     double transmission_shift, double last_checked_time,
     uint16_t cached_symptom_id, double cached_symptom_start_time) {
-  // Bypass the sampling constructor entirely — restore every
+  // Bypass the sampling constructor entirely; restore every
   // behaviour-defining field verbatim so the resumed run is bit-identical.
   std::unique_ptr<Infection> inf(new Infection(disease, RestoreTag{}));
   inf->infection_time_ = infection_time;
@@ -399,9 +399,10 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
   return 0.0;
 }
 
-void Infection::buildTransitionsFromStages(
-    InfectionTrajectory& traj, const TrajectoryDefinition& traj_def,
-    const std::string& start_target, SplitMix64& rng) {
+void Infection::buildTransitionsFromStages(InfectionTrajectory& traj,
+                                           const TrajectoryDefinition& traj_def,
+                                           const std::string& start_target,
+                                           SplitMix64& rng) {
   int start_stage_idx = 0;
   if (!start_target.empty()) {
     for (int s = 0; s < (int)traj_def.stages.size(); ++s) {
@@ -552,10 +553,9 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
   traj.infectiousness_factor = final_def.infectiousness_factor;
   // start_symptom_override (from seeding) takes priority over the trajectory's
   // start_stage field.
-  const std::string start_target =
-      !start_symptom_override.empty()
-          ? start_symptom_override
-          : final_def.start_stage.value_or("");
+  const std::string start_target = !start_symptom_override.empty()
+                                       ? start_symptom_override
+                                       : final_def.start_stage.value_or("");
   buildTransitionsFromStages(traj, final_def, start_target, rng);
   return traj;
 }

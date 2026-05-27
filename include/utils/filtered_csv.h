@@ -4,7 +4,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "../core/config.h"  // SelectionCriterion
+#include "core/config.h"  // SelectionCriterion
 
 namespace june {
 namespace csv {

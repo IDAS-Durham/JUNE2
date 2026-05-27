@@ -1,16 +1,13 @@
-// Split from interaction_manager.cpp — see REFACTOR_PLAN.md Phase 16,
-// and the file-roadmap comment at the top of interaction_manager.cpp.
-// Standard FOI path: processVenueTransmissions orchestrator + the
+// Standard FOI path: processVenueTransmissions orchestrator plus the
 // per-susceptible Bernoulli pipeline (per-source builders, susc-bin
 // orchestrator, infector sampling, infection apply).
-#include "epidemiology/interaction_manager.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
 
+#include "epidemiology/interaction_manager.h"
 #include "simulation/compartmental_model_manager.h"
 #include "utils/deterministic_rng.h"
 #include "utils/event_logging/event_types.h"
@@ -19,7 +16,7 @@
 namespace june {
 
 // =============================================================================
-// processVenueTransmissions — entry point for the standard FOI path.
+// processVenueTransmissions: entry point for the standard FOI path.
 //
 // Called from InteractionManager::processOneVenueGroup. Routes
 // partial-presence venues out to processPartialPresenceVenue; otherwise
@@ -126,10 +123,9 @@ int InteractionManager::processOneSuscBin(
   source_weights_buffer_.clear();
   double total_lambda_eff = 0.0;
 
-  appendDirectContactSources(susc_bin, num_bins_needed, num_modes,
-                             is_virtual_encounter, encounter_type_id,
-                             venue_type_id, matrix, trans_params,
-                             total_lambda_eff);
+  appendDirectContactSources(
+      susc_bin, num_bins_needed, num_modes, is_virtual_encounter,
+      encounter_type_id, venue_type_id, matrix, trans_params, total_lambda_eff);
   appendSiblingMixingSources(susc_bin, num_modes, actual_venue_id, venue,
                              parent_agg, parent_flat_matrix, trans_params,
                              total_lambda_eff);
@@ -154,11 +150,10 @@ int InteractionManager::processOneSuscBin(
   uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);
   int new_infections = 0;
   for (const auto& susc_mem : susc_group.susceptible) {
-    if (processOneVenueSusceptible(susc_mem, total_risk, susc_bin,
-                                   have_source_dist, time_bits, current_time,
-                                   actual_venue_id, venue, venue_type_id,
-                                   parent_agg, visitor_data, active_infections,
-                                   pending_infections)) {
+    if (processOneVenueSusceptible(
+            susc_mem, total_risk, susc_bin, have_source_dist, time_bits,
+            current_time, actual_venue_id, venue, venue_type_id, parent_agg,
+            visitor_data, active_infections, pending_infections)) {
       new_infections++;
     }
   }
@@ -260,7 +255,7 @@ PersonId InteractionManager::sampleVenueInfector(
     // Sibling-venue source: still a Person infector, but in a DIFFERENT
     // child venue under the same parent. Two-stage sample: build cumulative
     // over the parent's infector pool for this mode (excluding the
-    // susceptible's own venue), then sample with susc_rng — the same RNG
+    // susceptible's own venue), then sample with susc_rng, the same RNG
     // already used for source-selection.
     infection_source_out = InfectionSource::Person;
     PersonId infector_id = -1;
@@ -289,8 +284,7 @@ PersonId InteractionManager::sampleVenueInfector(
   const auto& cum = inf_group.cumulative_by_mode[sampled_mode];
   if (!cum.empty() && !inf_group.infectious_ids.empty()) {
     int person_idx = sampleFromCumulative(cum, susc_rng);
-    if (person_idx >= 0 &&
-        person_idx < (int)inf_group.infectious_ids.size()) {
+    if (person_idx >= 0 && person_idx < (int)inf_group.infectious_ids.size()) {
       infector_id = inf_group.infectious_ids[person_idx];
     }
   } else if (!inf_group.infectious_ids.empty()) {
@@ -378,9 +372,10 @@ void InteractionManager::appendDirectContactSources(
         is_virtual_encounter
             ? contact_matrices_.getVirtualMatrix(encounter_type_id, m)
             : contact_matrices_.getMatrix(venue_type_id, m);
-    double mode_susc_mult = (m < (int)trans_params.modes.size())
-                                ? trans_params.modes[m].susceptibility_multiplier
-                                : 1.0;
+    double mode_susc_mult =
+        (m < (int)trans_params.modes.size())
+            ? trans_params.modes[m].susceptibility_multiplier
+            : 1.0;
 
     for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
       const auto& inf_group = bins_buffer_[inf_bin];
@@ -463,9 +458,10 @@ void InteractionManager::appendSiblingMixingSources(
     double sibling_inf = parent_inf - own_inf;
     if (sibling_inf <= 0.0) continue;
 
-    double mode_susc_mult = (m < (int)trans_params.modes.size())
-                                ? trans_params.modes[m].susceptibility_multiplier
-                                : 1.0;
+    double mode_susc_mult =
+        (m < (int)trans_params.modes.size())
+            ? trans_params.modes[m].susceptibility_multiplier
+            : 1.0;
     double omega = contacts / sibling_size;
     double weighted = omega * sibling_inf * mode_susc_mult;
     if (weighted <= 0.0) continue;

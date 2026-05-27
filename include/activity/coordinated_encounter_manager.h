@@ -7,10 +7,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../core/config.h"
-#include "../core/world_state.h"
-#include "../utils/deterministic_rng.h"
 #include "coordinated_encounter_types.h"
+#include "core/config.h"
+#include "core/world_state.h"
+#include "utils/deterministic_rng.h"
 
 namespace june {
 
@@ -96,7 +96,7 @@ class CoordinatedEncounterManager {
 
   // Per-person, per-frequency-group commitment (cleared daily). Once an
   // encounter of a given group fires for a person, no further encounter in
-  // the same group can fire — the budget is spent.
+  // the same group can fire, the budget is spent.
   std::unordered_map<PersonId, std::unordered_map<std::string, bool>>
       freq_group_committed_;
 

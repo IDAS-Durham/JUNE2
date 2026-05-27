@@ -1,4 +1,4 @@
-#include "../../include/activity/coordinated_encounter_manager.h"
+#include "activity/coordinated_encounter_manager.h"
 
 #include <algorithm>
 #include <iomanip>
@@ -7,8 +7,8 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "../../include/loaders/config_loader.h"
-#include "../../include/utils/filtering.h"
+#include "loaders/config_loader.h"
+#include "utils/filtering.h"
 
 #ifdef USE_MPI
 #include <mpi.h>
@@ -90,9 +90,8 @@ bool hasMutualProposal(const ProposalSet& s, const EncounterProposal& prop) {
 // slot as hosts and then reject each other as invitees.
 bool isInviteeSlotBlocked(
     const std::unordered_map<PersonId, std::set<int>>& committed_slots,
-    PersonId invitee_id, int slot,
-    const CoordinatedEncounterDef& matched_def, const EncounterProposal& prop,
-    const ProposalSet& proposal_set) {
+    PersonId invitee_id, int slot, const CoordinatedEncounterDef& matched_def,
+    const EncounterProposal& prop, const ProposalSet& proposal_set) {
   auto it = committed_slots.find(invitee_id);
   if (it == committed_slots.end() || it->second.count(slot) == 0) return false;
   return !(matched_def.is_virtual && hasMutualProposal(proposal_set, prop));
@@ -223,7 +222,7 @@ bool CoordinatedEncounterManager::isFrequencyGroupBudgetAvailable(
     per_person[fg_name] = hit;
 
     // Daily-summary accounting (per frequency group). Counted once
-    // per (person, group, day) — not per encounter type.
+    // per (person, group, day), not per encounter type.
     auto& fgs = freq_group_stats_[fg_name];
     fgs.persons_evaluated++;
     fgs.sum_daily_p += daily_p;
@@ -243,8 +242,7 @@ void CoordinatedEncounterManager::populateInitialRemainingSlotsIfAbsent(
   if (person.cached_schedule_type_ != nullptr) {
     const auto* sched = person.cached_schedule_type_;
     if (day_type_idx >= 0 &&
-        day_type_idx <
-            static_cast<int>(sched->slots_by_day_type_idx.size()) &&
+        day_type_idx < static_cast<int>(sched->slots_by_day_type_idx.size()) &&
         sched->slots_by_day_type_idx[day_type_idx] != nullptr) {
       const auto& slots = *sched->slots_by_day_type_idx[day_type_idx];
       for (size_t s = 0; s < slots.size(); ++s) {
@@ -485,10 +483,10 @@ void CoordinatedEncounterManager::generateProposals(
     int virtual_v_type = enc_def.cached_virtual_venue_type_id;
     for (size_t person_idx = 0; person_idx < world_.people.size();
          ++person_idx) {
-      proposeForOnePersonOneEncounter(
-          world_.people[person_idx], person_idx, enc_def, current_day,
-          day_type_idx, enc_type_counter, virtual_v_type, remaining_slots,
-          out_proposals);
+      proposeForOnePersonOneEncounter(world_.people[person_idx], person_idx,
+                                      enc_def, current_day, day_type_idx,
+                                      enc_type_counter, virtual_v_type,
+                                      remaining_slots, out_proposals);
     }
     enc_type_counter++;
   }
@@ -555,7 +553,8 @@ void CoordinatedEncounterManager::processProposals(
       buildProposalKeySet(sorted_proposals, host_proposals);
 
   for (const auto& prop : sorted_proposals) {
-    out_replies.push_back(replyForOneProposal(prop, day_type_idx, proposal_set));
+    out_replies.push_back(
+        replyForOneProposal(prop, day_type_idx, proposal_set));
   }
 }
 
@@ -575,7 +574,7 @@ EncounterReply CoordinatedEncounterManager::replyForOneProposal(
     return reply;
   }
 
-  // Match def first — needed for the mutual-proposal bypass decision below.
+  // Match def first; needed for the mutual-proposal bypass decision below.
   const CoordinatedEncounterDef* matched_def = findMatchingEncounterDef(prop);
   if (!matched_def) {
     reply.status = ReplyStatus::REJECTED_NO_MATCHING_DEF;
@@ -616,7 +615,7 @@ EncounterReply CoordinatedEncounterManager::replyForOneProposal(
 void CoordinatedEncounterManager::finalizeEncounters(
     const std::vector<EncounterReply>& replies,
     std::vector<CoordinatedEncounter>& out_finalized) {
-  // Progress message removed — sub-second operation
+  // Progress message removed (sub-second operation)
   std::map<std::pair<int, PersonId>, std::vector<EncounterReply>> grouper;
   for (const auto& r : replies) {
     grouper[{r.encounter_id, r.host_id}].push_back(r);

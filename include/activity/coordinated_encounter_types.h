@@ -3,7 +3,7 @@
 #include <iostream>
 #include <set>
 
-#include "../core/types.h"
+#include "core/types.h"
 
 namespace june {
 
@@ -23,7 +23,7 @@ enum class ReplyStatus : uint8_t {
   REJECTED_DECLINED
 };
 
-// For logging/debugging only — not used in hot paths
+// For logging/debugging only. Not used in hot paths
 inline const char* replyStatusToString(ReplyStatus s) {
   switch (s) {
     case ReplyStatus::ACCEPTED:

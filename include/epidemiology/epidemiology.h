@@ -5,10 +5,10 @@
 #include <unordered_set>
 #include <vector>
 
-#include "../core/types.h"
-#include "../core/world_state.h"
-#include "../utils/event_logging/event_logger.h"
+#include "core/types.h"
+#include "core/world_state.h"
 #include "disease.h"
+#include "utils/event_logging/event_logger.h"
 
 namespace june {
 

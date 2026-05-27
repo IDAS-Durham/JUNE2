@@ -15,7 +15,7 @@ class DomainManager;
 class WorldState;
 
 // ---------------------------------------------------------------------------
-// Coupling matrix — per-venue-type, per-person-bin scalar weights.
+// Coupling matrix: per-venue-type, per-person-bin scalar weights.
 // Mirrors ContactMatrix bin resolution (age_to_bin, bin_by_subset_type, etc.).
 // ---------------------------------------------------------------------------
 
@@ -82,7 +82,7 @@ struct PluginSidecarConfig {
   // YAML matrix. human_to_compartmental_model_input: map of venue_type_name →
   // rate at which one
   //   unit of human deposition drives the compartmental model input per venue
-  //   type. Simple case — one scalar per venue type, no per-bin breakdown.
+  //   type. Simple case: one scalar per venue type, no per-bin breakdown.
   // If neither is set, default_human_to_compartmental_model_input is used as a
   // global fallback.
   std::string coupling_matrix_file;
@@ -92,7 +92,8 @@ struct PluginSidecarConfig {
   // Per-venue-type FOI scaling applied at the interaction site (not to the
   // buffer). bins follow the same definition as ContactMatrices and Fomite
   // infections, as defined in the contact matrices .yaml file; currently
-  // bin_idx=0. Default (1.0) = no scaling — matches old global scalar default.
+  // bin_idx=0. Default (1.0) = no scaling, matching the old global scalar
+  // default.
   CouplingMatrixConfig output_foi_matrix = []() noexcept {
     CouplingMatrixConfig c;
     c.default_value = 1.0f;
@@ -128,7 +129,7 @@ struct CompartmentalModelSteps {
 // ---------------------------------------------------------------------------
 // Owns the plugin .so handle and the ICompartmentalModel instance.
 // When no plugin is configured (sidecar_path empty at construction), all
-// methods are no-ops — no virtual dispatch or heap activity on the hot path.
+// methods are no-ops: no virtual dispatch or heap activity on the hot path.
 // ---------------------------------------------------------------------------
 
 class CompartmentalModelManager {

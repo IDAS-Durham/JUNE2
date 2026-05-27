@@ -13,13 +13,12 @@ struct EffectiveWindow {
 };
 
 // Compute per-leg effective presence windows for a single rider in a single
-// slot. Pure function — same inputs → same outputs on every rank (required
-// for MPI determinism in the FOI loop).
+// slot.
 //
 // Inputs:
-//   t_board_min, t_alight_min — raw leg times in minutes (one entry per leg,
+//   t_board_min, t_alight_min: raw leg times in minutes (one entry per leg,
 //                               in natural journey order, t_alight > t_board).
-//   slot_duration_min          — full slot length, e.g. 60.0 for a 1h slot.
+//   slot_duration_min:          full slot length, e.g. 60.0 for a 1h slot.
 //
 // Output: one EffectiveWindow per input leg, same order.
 //

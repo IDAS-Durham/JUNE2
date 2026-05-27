@@ -1,3 +1,6 @@
+// Simulator core: run() loop, runOneDay() orchestration, infection seeding,
+// fomite init, checkpoint trigger, console summaries. Other Simulator methods
+// live in sibling simulator_*.cpp files (declared in simulation/simulator.h).
 #include "simulation/simulator.h"
 
 #include "activity/runtime_bin_allocator.h"
@@ -21,8 +24,7 @@ namespace june {
 namespace {
 
 void printSeedAudit(const InfectionSeedConfig& seed_config) {
-  std::cout << "\n=== [AUDIT] Infection-seed config (rank 0) ==="
-            << std::endl;
+  std::cout << "\n=== [AUDIT] Infection-seed config (rank 0) ===" << std::endl;
   std::cout << "  base_cases_per_capita="
             << seed_config.global_params.base_cases_per_capita
             << "  default_strength="
@@ -31,7 +33,7 @@ void printSeedAudit(const InfectionSeedConfig& seed_config) {
   // Helper: pretty-print one SelectionCriterion. Reused for both
   // global attribute_filters and per-target-group criteria, because
   // bulk-CSV exact/clustered seeds store their filters in
-  // structured_config.target_groups[*].criteria — not attribute_filters.
+  // structured_config.target_groups[*].criteria, not attribute_filters.
   auto printCriterion = [](const SelectionCriterion& f,
                            const std::string& prefix) {
     std::cout << prefix << f.property_path << " " << f.operator_type << " ";
@@ -79,8 +81,7 @@ void printSeedAudit(const InfectionSeedConfig& seed_config) {
     for (const auto& f : s.attribute_filters) {
       printCriterion(f, "      filter: ");
     }
-    for (size_t gi = 0; gi < s.structured_config.target_groups.size();
-         ++gi) {
+    for (size_t gi = 0; gi < s.structured_config.target_groups.size(); ++gi) {
       for (const auto& c : s.structured_config.target_groups[gi].criteria) {
         std::cout << "      target_group[" << gi << "]: ";
         printCriterion(c, "");
@@ -125,8 +126,7 @@ void printDiseaseAudit(const Disease& disease,
       std::cout << (si ? "→" : " ") << t.stages[si].symptom_tag;
     }
     if (!t.stages.empty()) {
-      std::cout << "  exposed_dist="
-                << fmtDist(t.stages[0].completion_time);
+      std::cout << "  exposed_dist=" << fmtDist(t.stages[0].completion_time);
     }
     std::cout << std::endl;
   }
@@ -159,14 +159,12 @@ void printDiseaseAudit(const Disease& disease,
   }
   std::cout << "    modes (" << tp.modes.size() << "):";
   for (const auto& tmode : tp.modes) {
-    std::cout << "  " << tmode.name << "="
-              << tmode.susceptibility_multiplier;
+    std::cout << "  " << tmode.name << "=" << tmode.susceptibility_multiplier;
   }
   std::cout << std::endl;
 
   std::cout << "  immunity: level=" << tp.natural_immunity.level
-            << "  waning_rate=" << tp.natural_immunity.waning_rate
-            << std::endl;
+            << "  waning_rate=" << tp.natural_immunity.waning_rate << std::endl;
 
   const auto& orates = disease.getOutcomeRates();
   std::cout << "  outcome_rates: " << orates.rows.size() << " rows loaded"
@@ -226,8 +224,7 @@ void dumpDayHashIfEnabled(int day, int rank, const WorldState& world,
 
   for (size_t i = 0; i < world.people.size(); ++i) {
     const auto& p = world.people[i];
-    uint64_t base =
-        mix64(static_cast<uint64_t>(p.id) + 0x9e3779b97f4a7c15ULL);
+    uint64_t base = mix64(static_cast<uint64_t>(p.id) + 0x9e3779b97f4a7c15ULL);
 
     if (p.is_dead) {
       n_dead++;
@@ -238,8 +235,8 @@ void dumpDayHashIfEnabled(int day, int rank, const WorldState& world,
 
     if (p.infection) {
       n_infected++;
-      h_inf ^= mix64(base ^ 0x11FEC7EDULL ^
-                     dbits(p.infection->getInfectionTime()));
+      h_inf ^=
+          mix64(base ^ 0x11FEC7EDULL ^ dbits(p.infection->getInfectionTime()));
     }
 
     if (p.immunity.natural_acquisition_time >= 0.0) {
@@ -255,8 +252,7 @@ void dumpDayHashIfEnabled(int day, int rank, const WorldState& world,
   int global_n[4] = {n_alive, n_dead, n_infected, n_immune};
 #ifdef USE_MPI
   if (domain_mgr) {
-    MPI_Allreduce(local_h, global_h, 3, MPI_UINT64_T, MPI_BXOR,
-                  MPI_COMM_WORLD);
+    MPI_Allreduce(local_h, global_h, 3, MPI_UINT64_T, MPI_BXOR, MPI_COMM_WORLD);
     MPI_Allreduce(local_n, global_n, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   }
 #else
@@ -284,8 +280,8 @@ void announceCheckpointMode(const SimulationConfig::CheckpointConfig& cp,
   if (cp.usesDates()) {
     if (cp.every_n_days.has_value()) {
       std::cout << "[checkpoint] on_dates is set; every_n_days ("
-                << *cp.every_n_days
-                << ") is IGNORED (dates take precedence)" << std::endl;
+                << *cp.every_n_days << ") is IGNORED (dates take precedence)"
+                << std::endl;
     }
     for (const auto& d : *cp.on_dates) {
       if (d < start_date || d > end_date) {
