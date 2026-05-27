@@ -391,6 +391,41 @@ void InteractionManager::printTickParentMixingSummary(
             << " compartmental sources)" << std::endl;
 }
 
+int InteractionManager::processOneVenueGroup(
+    size_t group_start, size_t group_end, double current_time,
+    double delta_hours, std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    const CompartmentalModelManager* comp_model) {
+  if (group_members_buffer_.empty()) return 0;
+
+  const auto& first = active_locations_buffer_[group_start];
+  Venue* venue = world_.getVenue(first.venue_id);
+
+  // Skip if person has no venue AND no encounter type
+  if (!venue && first.encounter_type_id == 255) return 0;
+
+  logCoordinatedEncounterParticipants(group_start, group_end, visitor_ids);
+
+  if (!venueGroupHasTransmissionSource(venue, first.venue_id, visitor_data,
+                                       comp_model)) {
+    return 0;
+  }
+
+  try {
+    return processVenueTransmissions(
+        group_members_buffer_, venue, first.venue_id, current_time, delta_hours,
+        active_infections, visitor_ids, pending_infections, visitor_data,
+        first.encounter_type_id, comp_model);
+  } catch (const std::exception& e) {
+    std::cerr << "[Rank 0] Fatal error in venue=" << first.venue_id
+              << " encounter_type=" << (int)first.encounter_type_id << ": "
+              << e.what() << std::endl;
+    throw;  // Rethrow to abort
+  }
+}
+
 int InteractionManager::processTransmissions(
     const std::vector<PersonLocation>& locations, double current_time,
     double delta_hours, std::unordered_set<PersonId>* active_infections,
@@ -416,37 +451,10 @@ int InteractionManager::processTransmissions(
   size_t i = 0;
   while (i < active_locations_buffer_.size()) {
     size_t group_start = i;
-    const auto& first = active_locations_buffer_[group_start];
-
     i = collectAndSortGroupMembers(group_start);
-
-    if (group_members_buffer_.size() > 0) {
-      Venue* venue = world_.getVenue(first.venue_id);
-
-      // Skip if person has no venue AND no encounter type
-      if (!venue && first.encounter_type_id == 255) {
-        continue;
-      }
-
-      logCoordinatedEncounterParticipants(group_start, i, visitor_ids);
-
-      if (!venueGroupHasTransmissionSource(venue, first.venue_id, visitor_data,
-                                           comp_model)) {
-        continue;
-      }
-
-      try {
-        total_new_infections += processVenueTransmissions(
-            group_members_buffer_, venue, first.venue_id, current_time,
-            delta_hours, active_infections, visitor_ids, pending_infections,
-            visitor_data, first.encounter_type_id, comp_model);
-      } catch (const std::exception& e) {
-        std::cerr << "[Rank 0] Fatal error in venue=" << first.venue_id
-                  << " encounter_type=" << (int)first.encounter_type_id << ": "
-                  << e.what() << std::endl;
-        throw;  // Rethrow to abort
-      }
-    }
+    total_new_infections += processOneVenueGroup(
+        group_start, i, current_time, delta_hours, active_infections,
+        visitor_ids, pending_infections, visitor_data, comp_model);
   }
 
   // Per-slot transmission count removed — captured in DAY_SUMMARY

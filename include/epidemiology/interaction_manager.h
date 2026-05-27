@@ -277,6 +277,19 @@ class InteractionManager {
   void printTickParentMixingSummary(int total_new_infections,
                                     double current_time) const;
 
+  // Process one contiguous venue group already loaded into
+  // group_members_buffer_ (between group_start and group_end in
+  // active_locations_buffer_). Resolves the venue, logs coordinated-encounter
+  // participants, runs the fast pre-check, and dispatches to
+  // processVenueTransmissions. Returns new infections (0 if group is skipped).
+  int processOneVenueGroup(
+      size_t group_start, size_t group_end, double current_time,
+      double delta_hours, std::unordered_set<PersonId>* active_infections,
+      const std::unordered_set<PersonId>* visitor_ids,
+      std::vector<PendingInfection>* pending_infections,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      const CompartmentalModelManager* comp_model);
+
   // Compute the bin index for a person under a given contact matrix.
   // Mirrors the STEP 1 logic in processVenueTransmissions so the pre-pass
   // can bin people under the PARENT matrix (which may have a different bin
