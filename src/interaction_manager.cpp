@@ -524,6 +524,21 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::prepareBinsBuffer(
+    int num_bins_needed, int num_modes, int num_fomite_modes,
+    const std::vector<int>& n_sub_per_mode) {
+  if (static_cast<int>(bins_buffer_.size()) < num_bins_needed) {
+    bins_buffer_.resize(num_bins_needed);
+  }
+  for (int b = 0; b < num_bins_needed; ++b) {
+    auto& bin = bins_buffer_[b];
+    if (static_cast<int>(bin.infectiousness_by_mode.size()) != num_modes) {
+      bin.clearAfterUse(num_modes);
+    }
+    bin.initFomiteSubBins(num_fomite_modes, n_sub_per_mode);
+  }
+}
+
 void InteractionManager::collectFomiteAndCompUptakeModes(
     double delta_hours, std::vector<FomiteModeRef>& fomite_modes_out,
     std::vector<int>& comp_uptake_modes_out,
@@ -642,21 +657,8 @@ int InteractionManager::processVenueTransmissions(
                                   n_sub_per_mode);
   int num_fomite_modes = static_cast<int>(fomite_modes.size());
 
-  // Grow buffer if needed; new BinGroup objects are default-initialised.
-  if (static_cast<int>(bins_buffer_.size()) < num_bins_needed) {
-    bins_buffer_.resize(num_bins_needed);
-  }
-  // Ensure all bins needed this call have correctly-sized person-data vectors.
-  // Bins reused from a prior call were cleared by clearAfterUse at the end of
-  // that call, but newly created bins (from the resize above) have empty
-  // vectors and must be initialised before the binning loop indexes into them.
-  for (int b = 0; b < num_bins_needed; ++b) {
-    auto& bin = bins_buffer_[b];
-    if (static_cast<int>(bin.infectiousness_by_mode.size()) != num_modes) {
-      bin.clearAfterUse(num_modes);
-    }
-    bin.initFomiteSubBins(num_fomite_modes, n_sub_per_mode);
-  }
+  prepareBinsBuffer(num_bins_needed, num_modes, num_fomite_modes,
+                    n_sub_per_mode);
 
   // === STEP 1: Group people by bin (single pass) ===
   for (const auto& member : members) {

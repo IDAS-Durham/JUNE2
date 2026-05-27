@@ -478,6 +478,15 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // Resize bins_buffer_ to at least num_bins_needed entries, then ensure
+  // every active bin has correctly-sized per-mode vectors and pre-sized
+  // fomite sub-bins for this slot's delta_hours / sub_bin_time. Re-initialises
+  // bins whose infectiousness_by_mode size mismatches num_modes (which happens
+  // for freshly-grown bins or when num_modes changed).
+  void prepareBinsBuffer(int num_bins_needed, int num_modes,
+                         int num_fomite_modes,
+                         const std::vector<int>& n_sub_per_mode);
+
   // Walk the disease's transmission modes and split them into a flat list of
   // FomiteModeRefs and a separate list of CompartmentalUptake mode indices.
   // Also compute n_sub_per_mode from each fomite mode's sub_bin_time and
