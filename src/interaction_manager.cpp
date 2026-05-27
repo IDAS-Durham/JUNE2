@@ -1481,15 +1481,9 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
-InteractionManager::PartialPresenceLambdaResult
-InteractionManager::computePartialPresenceLambda(
-    const std::vector<InteractionMember>& members, Venue* venue,
-    VenueId actual_venue_id, double current_time, double delta_hours,
-    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
-    uint8_t encounter_type_id) {
-  PartialPresenceLambdaResult result;
-
-  // v1 preconditions. Throw rather than silently fall through.
+void InteractionManager::validatePartialPresencePreconditions(
+    const Venue* venue, VenueId actual_venue_id,
+    uint8_t encounter_type_id) const {
   if (actual_venue_id < 0)
     throw std::runtime_error(
         "computePartialPresenceLambda: virtual encounter venues not supported");
@@ -1507,6 +1501,18 @@ InteractionManager::computePartialPresenceLambda(
     throw std::runtime_error(
         "computePartialPresenceLambda: runtime_bin_allocator_ is null (gate "
         "should have prevented this call)");
+}
+
+InteractionManager::PartialPresenceLambdaResult
+InteractionManager::computePartialPresenceLambda(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id) {
+  PartialPresenceLambdaResult result;
+
+  validatePartialPresencePreconditions(venue, actual_venue_id,
+                                       encounter_type_id);
 
   const uint8_t venue_type_id = venue->type_id;
   const ContactMatrix* matrix = contact_matrices_.getMatrix(venue_type_id);

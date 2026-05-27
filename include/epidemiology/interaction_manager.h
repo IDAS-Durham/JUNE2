@@ -293,6 +293,12 @@ class InteractionManager {
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
       Person*& person_out, const VisitorInfo*& visitor_out) const;
 
+  // Throws std::runtime_error if any v1 precondition of partial-presence FOI
+  // is violated for this venue/encounter. Pure check, no side effects.
+  void validatePartialPresencePreconditions(const Venue* venue,
+                                            VenueId actual_venue_id,
+                                            uint8_t encounter_type_id) const;
+
   // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
   // compute parent_bin under parent_matrix, bump headcount in agg/csize,
   // gather per-mode infectiousness, and (if positive) accumulate into
