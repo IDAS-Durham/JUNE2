@@ -565,6 +565,24 @@ class InteractionManager {
                                const TransmissionParams& trans_params,
                                double& total_lambda_eff);
 
+  // STEP 3b infector dispatch: given a SourceEntry index into sources_buffer_,
+  // resolve the InfectionSource enum + transmission mode index + infector
+  // PersonId for one chosen susceptible. Handles all four sentinel cases:
+  //   -2 → compartmental uptake (Person infector_id stays -1)
+  //   -1 → fomite (infector_id stays -1)
+  //   SIBLING_INF_BIN_SENTINEL → cross-child Person via parent_agg's per-bin
+  //     pool, excluding the susceptible's own venue
+  //   ≥0 → in-bin Person sampled from cumulative_by_mode[sampled_mode]
+  // Reads + advances susc_rng. Mutates dbg_sibling_infections_ /
+  // dbg_sample_infection_prints_ when applicable.
+  PersonId sampleVenueInfector(int src_idx, int susc_bin,
+                               VenueId actual_venue_id, const Venue* venue,
+                               PersonId susceptible_id,
+                               const ParentAggregate* parent_agg,
+                               SplitMix64& susc_rng,
+                               InfectionSource& infection_source_out,
+                               uint8_t& transmission_mode_index_out);
+
   // STEP 3b apply step for a single susceptible whose Bernoulli draw was
   // positive. Queues a PendingInfection for cross-rank visitors or creates
   // an Infection in place + logs it. Mirrors applyPartialPresenceInfection
