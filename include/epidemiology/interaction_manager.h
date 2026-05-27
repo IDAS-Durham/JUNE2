@@ -499,6 +499,14 @@ class InteractionManager {
       PersonId infector_id, double current_time,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
+  // Compute susceptibility for either a local Person or a cross-rank
+  // VisitorInfo. Returns 0.0 if both are null. Local persons go through
+  // Person::getSusceptibility(current_time, disease_name); visitors use
+  // (1.0 - immunity_level).
+  double computeMemberSusceptibility(const Person* person,
+                                     const VisitorInfo* visitor,
+                                     double current_time) const;
+
   // Run the per-susceptible Bernoulli draw + (if infected) infector sampling
   // + apply step for one susceptible id in the partial-presence post-pass.
   // Returns true iff a new infection was created (counted toward

@@ -1867,6 +1867,16 @@ std::vector<PersonId> InteractionManager::orderSusceptibles(
   return ordered;
 }
 
+double InteractionManager::computeMemberSusceptibility(
+    const Person* person, const VisitorInfo* visitor,
+    double current_time) const {
+  if (person) {
+    return person->getSusceptibility(current_time, disease_->getName());
+  }
+  if (visitor) return 1.0 - visitor->immunity_level;
+  return 0.0;
+}
+
 bool InteractionManager::processOnePartialSusceptible(
     PersonId susc_id,
     const std::unordered_map<PersonId, double>& susc_lambda,
@@ -1890,15 +1900,9 @@ bool InteractionManager::processOnePartialSusceptible(
     if (it != visitor_data->end()) visitor = &it->second;
   }
 
-  double susceptibility = 0.0;
-  if (susc_person) {
-    susceptibility =
-        susc_person->getSusceptibility(current_time, disease_->getName());
-  } else if (visitor) {
-    susceptibility = 1.0 - visitor->immunity_level;
-  } else {
-    return false;
-  }
+  if (!susc_person && !visitor) return false;
+  double susceptibility =
+      computeMemberSusceptibility(susc_person, visitor, current_time);
   if (!(susceptibility > 0.0)) return false;
 
   double total_risk = lambda;
