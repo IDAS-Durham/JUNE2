@@ -1763,6 +1763,30 @@ InteractionManager::computePartialPresenceLambda(
   return result;
 }
 
+std::pair<int, PersonId> InteractionManager::sampleInfectorFromAccumSources(
+    std::vector<PartialPresenceAccumSource>& srcs, SplitMix64& rng) const {
+  if (srcs.empty()) return {0, -1};
+
+  // Sort for determinism, then cumulative-sample.
+  std::sort(srcs.begin(), srcs.end(),
+            [](const PartialPresenceAccumSource& a,
+               const PartialPresenceAccumSource& b) {
+              if (a.mode != b.mode) return a.mode < b.mode;
+              return a.infector < b.infector;
+            });
+  std::vector<double> cum;
+  cum.reserve(srcs.size());
+  double acc = 0.0;
+  for (const auto& s : srcs) {
+    acc += s.weighted;
+    cum.push_back(acc);
+  }
+  int sampled = (acc > 0.0) ? sampleFromCumulative(cum, rng) : 0;
+  if (sampled < 0) sampled = 0;
+  if (sampled >= static_cast<int>(srcs.size())) return {0, -1};
+  return {srcs[sampled].mode, srcs[sampled].infector};
+}
+
 std::vector<PersonId> InteractionManager::orderSusceptibles(
     const std::unordered_map<PersonId, double>& susc_lambda) const {
   std::vector<PersonId> ordered;
@@ -1788,7 +1812,6 @@ int InteractionManager::processPartialPresenceVenue(
   auto& susc_sources = acc.susc_sources;
 
   const uint8_t venue_type_id = venue->type_id;
-  using AccumSource = PartialPresenceAccumSource;
 
   // ---------------------------------------------------------------------------
   // Step 3: per-susceptible Bernoulli draw + infector sampling.
@@ -1837,27 +1860,9 @@ int InteractionManager::processPartialPresenceVenue(
     auto src_it = susc_sources.find(susc_id);
     int sampled_mode = 0;
     PersonId infector_id = -1;
-    if (src_it != susc_sources.end() && !src_it->second.empty()) {
-      // Sort for determinism, then cumulative-sample.
-      auto& srcs = src_it->second;
-      std::sort(srcs.begin(), srcs.end(),
-                [](const AccumSource& a, const AccumSource& b) {
-                  if (a.mode != b.mode) return a.mode < b.mode;
-                  return a.infector < b.infector;
-                });
-      std::vector<double> cum;
-      cum.reserve(srcs.size());
-      double acc = 0.0;
-      for (const auto& s : srcs) {
-        acc += s.weighted;
-        cum.push_back(acc);
-      }
-      int sampled = (acc > 0.0) ? sampleFromCumulative(cum, susc_rng) : 0;
-      if (sampled < 0) sampled = 0;
-      if (sampled < static_cast<int>(srcs.size())) {
-        sampled_mode = srcs[sampled].mode;
-        infector_id = srcs[sampled].infector;
-      }
+    if (src_it != susc_sources.end()) {
+      std::tie(sampled_mode, infector_id) =
+          sampleInfectorFromAccumSources(src_it->second, susc_rng);
     }
 
     uint16_t infector_symptom_id = 0;
