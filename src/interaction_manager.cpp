@@ -640,12 +640,6 @@ int InteractionManager::processVenueTransmissions(
       used_bins_.push_back(bin_index);
     }
 
-    // Track which bins are used (for selective clearing next call)
-    // Only add if this bin's total_size is 0 (first person in this bin)
-    if (bins_buffer_[bin_index].total_size == 0) {
-      used_bins_.push_back(bin_index);
-    }
-
     // Track total bin size (for frequency-dependent transmission denominator)
     if (!person || !person->is_dead) {
       bins_buffer_[bin_index].total_size++;
