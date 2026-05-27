@@ -249,6 +249,16 @@ class InteractionManager {
   void dumpParentAggregatesDebug(double current_time,
                                  double delta_hours) const;
 
+  // Update parent_aggregates_ for the venue group [group_start, group_end)
+  // (already grouped by venue_id in active_locations_buffer_). Returns early
+  // if the venue is virtual, has no parent, or the parent's contact matrix
+  // is missing. Walks members in person_id order so sibling FP sums match
+  // the main loop's STEP 1 ordering across rank counts.
+  void aggregateOneVenueGroupForParent(
+      size_t group_start, size_t group_end, double current_time,
+      double delta_hours, int num_modes,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
+
   // Populate active_locations_buffer_ with non-unallocated entries from
   // `locations`, then sort by (venue_id, encounter_type_id-when-virtual).
   // Bumps stats_.grouping_ops.

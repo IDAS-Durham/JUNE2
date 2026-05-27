@@ -116,119 +116,129 @@ void InteractionManager::buildParentAggregates(
       i++;
     }
 
-    // Virtual encounters (venue_id < 0) have no parent.
-    if (first.venue_id < 0) continue;
+    aggregateOneVenueGroupForParent(group_start, i, current_time, delta_hours,
+                                    num_modes, visitor_data);
+  }
 
-    Venue* venue = world_.getVenue(first.venue_id);
-    if (!venue) continue;
-    if (venue->parent_id < 0) continue;
+  dumpParentAggregatesDebug(current_time, delta_hours);
+}
 
-    Venue* parent_venue = world_.getVenue(venue->parent_id);
-    if (!parent_venue) continue;
-    uint8_t parent_type_id = parent_venue->type_id;
-    const ContactMatrix* parent_matrix =
-        contact_matrices_.getMatrix(parent_type_id);
-    if (!parent_matrix) continue;
-    int parent_num_bins =
-        std::max(1, static_cast<int>(parent_matrix->bins.size()));
+void InteractionManager::aggregateOneVenueGroupForParent(
+    size_t group_start, size_t group_end, double current_time,
+    double delta_hours, int num_modes,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
+  const auto& first = active_locations_buffer_[group_start];
 
-    auto& agg = parent_aggregates_[venue->parent_id];
-    if (agg.total_inf_by_bin_mode.empty()) {
-      agg.total_inf_by_bin_mode.assign(parent_num_bins,
-                                       std::vector<double>(num_modes, 0.0));
-      agg.size_by_bin.assign(parent_num_bins, 0);
-      agg.infectors_by_bin.assign(parent_num_bins, {});
-      agg.parent_venue_type_id = parent_type_id;
+  // Virtual encounters (venue_id < 0) have no parent.
+  if (first.venue_id < 0) return;
+
+  Venue* venue = world_.getVenue(first.venue_id);
+  if (!venue) return;
+  if (venue->parent_id < 0) return;
+
+  Venue* parent_venue = world_.getVenue(venue->parent_id);
+  if (!parent_venue) return;
+  uint8_t parent_type_id = parent_venue->type_id;
+  const ContactMatrix* parent_matrix =
+      contact_matrices_.getMatrix(parent_type_id);
+  if (!parent_matrix) return;
+  int parent_num_bins =
+      std::max(1, static_cast<int>(parent_matrix->bins.size()));
+
+  auto& agg = parent_aggregates_[venue->parent_id];
+  if (agg.total_inf_by_bin_mode.empty()) {
+    agg.total_inf_by_bin_mode.assign(parent_num_bins,
+                                     std::vector<double>(num_modes, 0.0));
+    agg.size_by_bin.assign(parent_num_bins, 0);
+    agg.infectors_by_bin.assign(parent_num_bins, {});
+    agg.parent_venue_type_id = parent_type_id;
+  }
+
+  auto& csize = agg.child_size_by_bin[first.venue_id];
+  if (csize.empty()) csize.assign(parent_num_bins, 0);
+  auto& cinf = agg.child_inf_by_bin_mode[first.venue_id];
+  if (cinf.empty()) {
+    cinf.assign(parent_num_bins, std::vector<double>(num_modes, 0.0));
+  }
+
+  // Walk members of this venue group. The locations buffer is already
+  // sorted by venue_id but NOT by person_id within a venue — match the
+  // main loop's STEP 1 ordering by sorting member ids here too, so the
+  // sibling FP sum order is identical across np configurations.
+  std::vector<PersonLocation> mem_sorted;
+  mem_sorted.reserve(group_end - group_start);
+  for (size_t k = group_start; k < group_end; ++k) {
+    mem_sorted.push_back(active_locations_buffer_[k]);
+  }
+  std::sort(mem_sorted.begin(), mem_sorted.end(),
+            [](const PersonLocation& a, const PersonLocation& b) {
+              return a.person_id < b.person_id;
+            });
+
+  for (const auto& loc : mem_sorted) {
+    PersonId pid = loc.person_id;
+    Person* person = nullptr;
+    if (loc.person_array_index < world_.people.size()) {
+      person = &world_.people[loc.person_array_index];
+      if (person->id != pid) person = world_.getPerson(pid);
+    } else {
+      person = world_.getPerson(pid);
     }
 
-    auto& csize = agg.child_size_by_bin[first.venue_id];
-    if (csize.empty()) csize.assign(parent_num_bins, 0);
-    auto& cinf = agg.child_inf_by_bin_mode[first.venue_id];
-    if (cinf.empty()) {
-      cinf.assign(parent_num_bins, std::vector<double>(num_modes, 0.0));
+    const VisitorInfo* visitor = nullptr;
+    if (!person && visitor_data) {
+      auto vit = visitor_data->find(pid);
+      if (vit != visitor_data->end()) visitor = &vit->second;
     }
+    if (!person && !visitor) continue;
+    if (person && person->is_dead) continue;
 
-    // Walk members of this venue group. The locations buffer is already
-    // sorted by venue_id but NOT by person_id within a venue — match the
-    // main loop's STEP 1 ordering by sorting member ids here too, so the
-    // sibling FP sum order is identical across np configurations.
-    std::vector<PersonLocation> mem_sorted;
-    mem_sorted.reserve(i - group_start);
-    for (size_t k = group_start; k < i; ++k) {
-      mem_sorted.push_back(active_locations_buffer_[k]);
-    }
-    std::sort(mem_sorted.begin(), mem_sorted.end(),
-              [](const PersonLocation& a, const PersonLocation& b) {
-                return a.person_id < b.person_id;
-              });
+    int parent_bin = computeBinIndexForMatrix(person, venue, loc.subset_index,
+                                              loc.encounter_type_id,
+                                              parent_matrix, parent_num_bins);
 
-    for (const auto& loc : mem_sorted) {
-      PersonId pid = loc.person_id;
-      Person* person = nullptr;
-      if (loc.person_array_index < world_.people.size()) {
-        person = &world_.people[loc.person_array_index];
-        if (person->id != pid) person = world_.getPerson(pid);
-      } else {
-        person = world_.getPerson(pid);
-      }
+    // Headcount (matches BinGroup::total_size convention)
+    agg.size_by_bin[parent_bin]++;
+    csize[parent_bin]++;
 
-      const VisitorInfo* visitor = nullptr;
-      if (!person && visitor_data) {
-        auto vit = visitor_data->find(pid);
-        if (vit != visitor_data->end()) visitor = &vit->second;
-      }
-      if (!person && !visitor) continue;
-      if (person && person->is_dead) continue;
-
-      int parent_bin = computeBinIndexForMatrix(person, venue, loc.subset_index,
-                                                loc.encounter_type_id,
-                                                parent_matrix, parent_num_bins);
-
-      // Headcount (matches BinGroup::total_size convention)
-      agg.size_by_bin[parent_bin]++;
-      csize[parent_bin]++;
-
-      // Infectiousness contribution
-      bool is_infectious = false;
-      std::vector<double> inf_by_mode(num_modes, 0.0);
-      if (visitor) {
-        if (visitor->is_infectious) {
-          double total = 0.0;
-          for (int m = 0; m < num_modes; ++m) {
-            inf_by_mode[m] = (m < VisitorInfo::MAX_MODES)
-                                 ? visitor->integrated_infectiousness[m]
-                                 : 0.0;
-            total += inf_by_mode[m];
-          }
-          is_infectious = total > 0.0;
-        }
-      } else if (person && person->infection &&
-                 person->infection->isInfectious(current_time)) {
-        const double t1 = current_time + delta_hours / 24.0;
+    // Infectiousness contribution
+    bool is_infectious = false;
+    std::vector<double> inf_by_mode(num_modes, 0.0);
+    if (visitor) {
+      if (visitor->is_infectious) {
         double total = 0.0;
         for (int m = 0; m < num_modes; ++m) {
-          inf_by_mode[m] = person->infection->getIntegratedInfectiousness(
-              m, current_time, t1);
+          inf_by_mode[m] = (m < VisitorInfo::MAX_MODES)
+                               ? visitor->integrated_infectiousness[m]
+                               : 0.0;
           total += inf_by_mode[m];
         }
         is_infectious = total > 0.0;
       }
-
-      if (is_infectious) {
-        for (int m = 0; m < num_modes; ++m) {
-          agg.total_inf_by_bin_mode[parent_bin][m] += inf_by_mode[m];
-          cinf[parent_bin][m] += inf_by_mode[m];
-        }
-        ParentInfectorEntry entry;
-        entry.person_id = pid;
-        entry.child_venue_id = first.venue_id;
-        entry.inf_by_mode = std::move(inf_by_mode);
-        agg.infectors_by_bin[parent_bin].push_back(std::move(entry));
+    } else if (person && person->infection &&
+               person->infection->isInfectious(current_time)) {
+      const double t1 = current_time + delta_hours / 24.0;
+      double total = 0.0;
+      for (int m = 0; m < num_modes; ++m) {
+        inf_by_mode[m] = person->infection->getIntegratedInfectiousness(
+            m, current_time, t1);
+        total += inf_by_mode[m];
       }
+      is_infectious = total > 0.0;
+    }
+
+    if (is_infectious) {
+      for (int m = 0; m < num_modes; ++m) {
+        agg.total_inf_by_bin_mode[parent_bin][m] += inf_by_mode[m];
+        cinf[parent_bin][m] += inf_by_mode[m];
+      }
+      ParentInfectorEntry entry;
+      entry.person_id = pid;
+      entry.child_venue_id = first.venue_id;
+      entry.inf_by_mode = std::move(inf_by_mode);
+      agg.infectors_by_bin[parent_bin].push_back(std::move(entry));
     }
   }
-
-  dumpParentAggregatesDebug(current_time, delta_hours);
 }
 
 void InteractionManager::dumpParentAggregatesDebug(double current_time,
