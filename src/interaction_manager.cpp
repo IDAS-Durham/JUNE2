@@ -891,6 +891,24 @@ void InteractionManager::appendDirectContactSources(
   }
 }
 
+void InteractionManager::logSiblingFOIDump(
+    int m, int susc_bin, VenueId actual_venue_id, const Venue* venue,
+    const ParentAggregate& parent_agg, double contacts, double parent_inf,
+    double own_inf, double sibling_inf, int parent_size, int own_size,
+    int sibling_size, double omega, double weighted) {
+  if (!debug_parent_mixing_ || dbg_sample_susc_prints_ >= 20) return;
+  std::cerr << "[PMIX] sibling_FOI venue=" << actual_venue_id
+            << " parent=" << venue->parent_id
+            << " parent_type=" << (int)parent_agg.parent_venue_type_id
+            << " susc_bin=" << susc_bin << " mode=" << m
+            << " contacts=" << contacts << " parent_inf=" << parent_inf
+            << " own_inf=" << own_inf << " sibling_inf=" << sibling_inf
+            << " parent_size=" << parent_size << " own_size=" << own_size
+            << " sibling_size=" << sibling_size << " omega=" << omega
+            << " weighted=" << weighted << std::endl;
+  dbg_sample_susc_prints_++;
+}
+
 void InteractionManager::appendSiblingMixingSources(
     int susc_bin, int num_modes, VenueId actual_venue_id, const Venue* venue,
     const ParentAggregate* parent_agg, const ContactMatrix* parent_flat_matrix,
@@ -942,18 +960,9 @@ void InteractionManager::appendSiblingMixingSources(
     sources_buffer_.push_back(se);
     source_weights_buffer_.push_back(weighted);
 
-    if (debug_parent_mixing_ && dbg_sample_susc_prints_ < 20) {
-      std::cerr << "[PMIX] sibling_FOI venue=" << actual_venue_id
-                << " parent=" << venue->parent_id
-                << " parent_type=" << (int)parent_agg->parent_venue_type_id
-                << " susc_bin=" << susc_bin << " mode=" << m
-                << " contacts=" << contacts << " parent_inf=" << parent_inf
-                << " own_inf=" << own_inf << " sibling_inf=" << sibling_inf
-                << " parent_size=" << parent_size << " own_size=" << own_size
-                << " sibling_size=" << sibling_size << " omega=" << omega
-                << " weighted=" << weighted << std::endl;
-      dbg_sample_susc_prints_++;
-    }
+    logSiblingFOIDump(m, susc_bin, actual_venue_id, venue, *parent_agg,
+                      contacts, parent_inf, own_inf, sibling_inf, parent_size,
+                      own_size, sibling_size, omega, weighted);
   }
 }
 

@@ -547,6 +547,16 @@ class InteractionManager {
                                   const TransmissionParams& trans_params,
                                   double& total_lambda_eff);
 
+  // Verbose JUNE_DEBUG_PARENT_MIXING per-(susc_bin, mode) sibling-FOI dump.
+  // Inlined out of appendSiblingMixingSources to keep that orchestrator
+  // within the per-function LOC budget. dbg_sample_susc_prints_ is rate-
+  // limited at 20 lines per tick.
+  void logSiblingFOIDump(int m, int susc_bin, VenueId actual_venue_id,
+                         const Venue* venue, const ParentAggregate& parent_agg,
+                         double contacts, double parent_inf, double own_inf,
+                         double sibling_inf, int parent_size, int own_size,
+                         int sibling_size, double omega, double weighted);
+
   // STEP 3a: append per-fomite-mode sentinel sources (inf_bin = -1) to the
   // current susceptible bin. Multiplies lambda_fomite_by_mode[fm] by the
   // mode's susceptibility multiplier.
