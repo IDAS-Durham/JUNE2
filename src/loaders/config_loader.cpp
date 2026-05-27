@@ -53,8 +53,8 @@ std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
         slot["allowed_activities"].as<std::vector<std::string>>();
 
     if (slot["coordinated_only_activities"])
-      ts.coordinated_only_activities = slot["coordinated_only_activities"]
-                                           .as<std::vector<std::string>>();
+      ts.coordinated_only_activities =
+          slot["coordinated_only_activities"].as<std::vector<std::string>>();
 
     if (slot["specified_activity"]) {
       SpecifiedActivity spec_act;
@@ -76,8 +76,7 @@ std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
         } else if (hop_kv.second.IsMap()) {
           // Property-dispatched hop: schedule name resolved at runtime
           TimeSlot::PropertyDispatchHop dispatch;
-          dispatch.property_name =
-              hop_kv.second["property"].as<std::string>();
+          dispatch.property_name = hop_kv.second["property"].as<std::string>();
           dispatch.schedule_name_template =
               hop_kv.second["schedule_template"].as<std::string>();
           ts.property_hop_dispatch[act_name] = std::move(dispatch);
@@ -367,8 +366,7 @@ void parseSimulationCheckpoint(const YAML::Node& cp, SimulationConfig& config) {
     config.checkpoint.every_n_days = cp["every_n_days"].as<int>();
   }
   if (cp["on_dates"] && !cp["on_dates"].IsNull()) {
-    config.checkpoint.on_dates =
-        cp["on_dates"].as<std::vector<std::string>>();
+    config.checkpoint.on_dates = cp["on_dates"].as<std::vector<std::string>>();
   }
   if (cp["keep_last"]) {
     config.checkpoint.keep_last = cp["keep_last"].as<int>();
@@ -408,8 +406,7 @@ ScheduleType parseScheduleType(const std::string& name,
 
   for (const auto& dt_name : day_type_names) {
     if (type_node[dt_name]) {
-      sched_type.slots_by_day_type[dt_name] =
-          parseSlotList(type_node[dt_name]);
+      sched_type.slots_by_day_type[dt_name] = parseSlotList(type_node[dt_name]);
     }
   }
 
@@ -450,10 +447,8 @@ void parseSelectionCriteria(const YAML::Node& selection_node,
                             std::vector<SelectionCriterion>& out) {
   for (const auto& criterion_node : selection_node) {
     SelectionCriterion criterion;
-    criterion.property_path =
-        criterion_node["property"].as<std::string>();
-    criterion.operator_type =
-        criterion_node["operator"].as<std::string>();
+    criterion.property_path = criterion_node["property"].as<std::string>();
+    criterion.operator_type = criterion_node["operator"].as<std::string>();
 
     const auto& value_node = criterion_node["value"];
     if (value_node.IsSequence()) {
@@ -508,8 +503,8 @@ SimulationConfig ConfigLoader::loadSimulation(const std::string& filename) {
 
   // File links: support both nested `config_paths:` block and legacy
   // top-level keys.
-  parseSimulationConfigPaths(
-      root["config_paths"] ? root["config_paths"] : root, config);
+  parseSimulationConfigPaths(root["config_paths"] ? root["config_paths"] : root,
+                             config);
 
   if (root["random_seed"]) {
     config.random_seed = root["random_seed"].as<unsigned int>();

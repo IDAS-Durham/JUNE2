@@ -1,7 +1,7 @@
-#include "utils/event_logging/event_merger.h"
-
 #include <iostream>
 #include <unordered_set>
+
+#include "utils/event_logging/event_merger.h"
 
 namespace june {
 
@@ -148,17 +148,15 @@ void collectPeoplePropertyKeys(const std::vector<std::string>& input_files,
 
 // Read property `key` values from one input file and scatter them into
 // `merged_props` at positions given by id_to_merged_idx.
-void readPropertyValuesFromFile(
-    const std::string& f, const std::string& key,
-    const H5::CompType& id_only_type,
-    const std::vector<int32_t>& id_to_merged_idx,
-    std::vector<std::string>& merged_props) {
+void readPropertyValuesFromFile(const std::string& f, const std::string& key,
+                                const H5::CompType& id_only_type,
+                                const std::vector<int32_t>& id_to_merged_idx,
+                                std::vector<std::string>& merged_props) {
   const size_t CHUNK_SIZE = 100000;
   try {
     H5::H5File file(f, H5F_ACC_RDONLY);
     if (!H5Lexists(file.getId(), "/lookups/people", H5P_DEFAULT)) return;
-    if (!H5Lexists(file.getId(),
-                   ("/lookups/people_properties/" + key).c_str(),
+    if (!H5Lexists(file.getId(), ("/lookups/people_properties/" + key).c_str(),
                    H5P_DEFAULT))
       return;
 
@@ -168,8 +166,7 @@ void readPropertyValuesFromFile(
     id_space.getSimpleExtentDims(dims);
     hsize_t in_count = dims[0];
 
-    H5::DataSet prop_ds =
-        file.openDataSet("/lookups/people_properties/" + key);
+    H5::DataSet prop_ds = file.openDataSet("/lookups/people_properties/" + key);
     H5::DataSpace prop_space = prop_ds.getSpace();
     H5::StrType prop_type = prop_ds.getStrType();
 
@@ -382,8 +379,8 @@ std::vector<std::string> discoverChildGroupNames(
 // new dataset `field` under `out_facet`. No-op if no input file has the
 // dataset, or if `out_facet/field` already exists.
 void concatenateOneField(const std::vector<std::string>& input_files,
-                         const std::string& ds_path,
-                         const std::string& field, H5::Group& out_facet) {
+                         const std::string& ds_path, const std::string& field,
+                         H5::Group& out_facet) {
   hsize_t total = 0;
   H5::DataType dtype;
   bool dtype_set = false;
@@ -471,8 +468,8 @@ void mergeOneNetworkField(const std::vector<std::string>& input_files,
   if (chunk[0] == 0) chunk[0] = 1;
   plist.setChunk(1, chunk);
   plist.setDeflate(6);
-  H5::DataSet out_ds = out_net.createDataSet(
-      field, H5::PredType::NATIVE_INT32, out_space, plist);
+  H5::DataSet out_ds = out_net.createDataSet(field, H5::PredType::NATIVE_INT32,
+                                             out_space, plist);
 
   std::vector<int32_t> buffer;
   hsize_t current_out_offset = 0;

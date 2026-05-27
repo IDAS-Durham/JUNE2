@@ -47,8 +47,8 @@ void writeStringRegistry(H5::Group& registries_group,
   if (chunk_dims[0] == 0) chunk_dims[0] = 1;
   plist.setChunk(1, chunk_dims);
 
-  H5::DataSet ds = registries_group.createDataSet(dataset_name, type, space,
-                                                  plist);
+  H5::DataSet ds =
+      registries_group.createDataSet(dataset_name, type, space, plist);
   std::vector<const char*> c_strs;
   c_strs.reserve(names.size());
   for (const auto& s : names) c_strs.push_back(s.c_str());

@@ -20,7 +20,8 @@ using ::june::config_detail::logRank0;
 // Map a frequency-group `rate_unit` literal (e.g. "per_month") onto the
 // number of days it covers. Used to convert raw CSV rates into a daily
 // probability (raw / divisor). Throws if the unit is not recognised.
-double rateUnitDivisor(const std::string& rate_unit, const std::string& fg_name) {
+double rateUnitDivisor(const std::string& rate_unit,
+                       const std::string& fg_name) {
   if (rate_unit == "per_day") return 1.0;
   if (rate_unit == "per_week") return 7.0;
   if (rate_unit == "per_month") return 30.0;
@@ -41,12 +42,10 @@ FrequencyGroup parseFrequencyGroup(const std::string& name,
     throw std::runtime_error("frequency_group '" + fg.name +
                              "' missing required field: csv");
   fg.csv_path = gnode["csv"].as<std::string>();
-  fg.rate_column = gnode["rate_column"]
-                       ? gnode["rate_column"].as<std::string>()
-                       : "events_per_month";
-  fg.rate_unit = gnode["rate_unit"]
-                     ? gnode["rate_unit"].as<std::string>()
-                     : "per_month";
+  fg.rate_column = gnode["rate_column"] ? gnode["rate_column"].as<std::string>()
+                                        : "events_per_month";
+  fg.rate_unit =
+      gnode["rate_unit"] ? gnode["rate_unit"].as<std::string>() : "per_month";
 
   const double divisor = rateUnitDivisor(fg.rate_unit, fg.name);
 
@@ -78,10 +77,10 @@ FrequencyGroup parseFrequencyGroup(const std::string& name,
   }
 
   if (logRank0()) {
-    std::cout << "[CoordEnc] Loaded frequency_group '" << fg.name
-              << "' from '" << fg.csv_path << "' (" << fg.rows.size()
-              << " rows, rate_column='" << fg.rate_column
-              << "', rate_unit='" << fg.rate_unit << "')" << std::endl;
+    std::cout << "[CoordEnc] Loaded frequency_group '" << fg.name << "' from '"
+              << fg.csv_path << "' (" << fg.rows.size()
+              << " rows, rate_column='" << fg.rate_column << "', rate_unit='"
+              << fg.rate_unit << "')" << std::endl;
   }
 
   return fg;
@@ -168,10 +167,10 @@ void parseEncounterRateSource(
   if (enc_node["frequency_group"]) {
     std::string fg_name = enc_node["frequency_group"].as<std::string>();
     if (!frequency_groups.count(fg_name)) {
-      throw std::runtime_error(
-          "Coordinated encounter '" + enc_def.name +
-          "' references unknown frequency_group '" + fg_name +
-          "' (not declared in frequency_groups block)");
+      throw std::runtime_error("Coordinated encounter '" + enc_def.name +
+                               "' references unknown frequency_group '" +
+                               fg_name +
+                               "' (not declared in frequency_groups block)");
     }
     enc_def.frequency_group = fg_name;
   }
@@ -222,17 +221,15 @@ CoordinatedEncounterDef parseEncounter(
 
   // proposal_probability is optional when frequency_group is set.
   // Validated by parseEncounterRateSource below.
-  bool has_proposal_prob =
-      static_cast<bool>(enc_node["proposal_probability"]);
+  bool has_proposal_prob = static_cast<bool>(enc_node["proposal_probability"]);
   if (has_proposal_prob) {
     enc_def.proposal_probability =
         enc_node["proposal_probability"].as<double>();
   }
 
   if (!enc_node["invite_distribution"])
-    throw std::runtime_error(
-        "Coordinated encounter '" + enc_def.name +
-        "' missing required field: invite_distribution");
+    throw std::runtime_error("Coordinated encounter '" + enc_def.name +
+                             "' missing required field: invite_distribution");
   parseInviteDistributionStrict(enc_node["invite_distribution"],
                                 enc_def.invite_distribution, enc_def.name);
 
@@ -250,9 +247,9 @@ CoordinatedEncounterDef parseEncounter(
 
   if (enc_def.is_virtual) {
     if (!enc_node["virtual_contact_matrix"])
-      throw std::runtime_error("Virtual coordinated encounter '" +
-                               enc_def.name +
-                               "' missing required field: virtual_contact_matrix");
+      throw std::runtime_error(
+          "Virtual coordinated encounter '" + enc_def.name +
+          "' missing required field: virtual_contact_matrix");
     enc_def.virtual_contact_matrix =
         enc_node["virtual_contact_matrix"].as<std::string>();
   }
@@ -327,11 +324,11 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
 
   // Sort encounters by priority (lower number = higher precedence =
   // processed first)
-  std::sort(config.encounters.begin(), config.encounters.end(),
-            [](const CoordinatedEncounterDef& a,
-               const CoordinatedEncounterDef& b) {
-              return a.priority < b.priority;
-            });
+  std::sort(
+      config.encounters.begin(), config.encounters.end(),
+      [](const CoordinatedEncounterDef& a, const CoordinatedEncounterDef& b) {
+        return a.priority < b.priority;
+      });
 
   return config;
 }

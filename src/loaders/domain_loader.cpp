@@ -276,12 +276,11 @@ WorldState HDF5Loader::loadDomainChunked(
                                 property_indices_cache);
     }
 
-    auto venue_spans = detail::detectChunkSpans(venue_partition_map,
-                                                geo_units_vec, start_idx,
-                                                end_idx);
+    auto venue_spans = detail::detectChunkSpans(
+        venue_partition_map, geo_units_vec, start_idx, end_idx);
     for (const auto& span : venue_spans) {
-      detail::loadVenuesInSpan(loader, span, venue_partition_map,
-                               geo_units_vec, venue_type_prop_names,
+      detail::loadVenuesInSpan(loader, span, venue_partition_map, geo_units_vec,
+                               venue_type_prop_names,
                                venue_property_indices_cache);
     }
 
@@ -292,9 +291,8 @@ WorldState HDF5Loader::loadDomainChunked(
     }
 
     if (loader.groupExists("/activity_mappings/activity_map")) {
-      auto rel_spans = detail::detectChunkSpans(rel_partition_map,
-                                                geo_units_vec, start_idx,
-                                                end_idx);
+      auto rel_spans = detail::detectChunkSpans(
+          rel_partition_map, geo_units_vec, start_idx, end_idx);
       for (const auto& span : rel_spans) {
         detail::loadActivityMappingsInSpan(loader, span, local_person_idx_map);
       }

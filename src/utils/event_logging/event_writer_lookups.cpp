@@ -1,9 +1,8 @@
-#include "utils/event_logging/event_writer.h"
-
 #include <algorithm>
 #include <cstring>
 
 #include "utils/event_logging/event_logger.h"
+#include "utils/event_logging/event_writer.h"
 #include "utils/event_logging/event_writer_detail.h"
 
 namespace {
@@ -256,9 +255,10 @@ H5::CompType makePersonActivityCompType() {
   atype.insertMember("subset_index",
                      HOFFSET(june::detail::PersonActivityRecord, subset_index),
                      H5::PredType::NATIVE_INT);
-  atype.insertMember("activity_index",
-                     HOFFSET(june::detail::PersonActivityRecord, activity_index),
-                     H5::PredType::NATIVE_INT);
+  atype.insertMember(
+      "activity_index",
+      HOFFSET(june::detail::PersonActivityRecord, activity_index),
+      H5::PredType::NATIVE_INT);
   return atype;
 }
 
@@ -401,9 +401,9 @@ void EventWriter::writePersonLookupTable(
     H5::H5File& file, const WorldState& world, const Config& config,
     const EventLogger& logger, bool append,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  auto people_to_save = selectPeopleToSave(
-      world, config.simulation.save_full_person_details, logger, append,
-      person_ids_filter);
+  auto people_to_save =
+      selectPeopleToSave(world, config.simulation.save_full_person_details,
+                         logger, append, person_ids_filter);
   if (people_to_save.empty()) return;
 
   auto records = buildPersonRecords(world, people_to_save);
@@ -412,9 +412,8 @@ void EventWriter::writePersonLookupTable(
                        config.simulation.compression_level);
 
   if (!world.person_property_names.empty()) {
-    H5::Group prop_group =
-        event_writer_detail::openOrCreateGroup(file,
-                                               "/lookups/people_properties");
+    H5::Group prop_group = event_writer_detail::openOrCreateGroup(
+        file, "/lookups/people_properties");
     for (const auto& key : world.person_property_names) {
       auto values = collectPropertyValues(world, people_to_save, key);
       writeOrAppendStringDataset(prop_group, key, values);
@@ -482,9 +481,9 @@ void EventWriter::writePersonActivitiesTable(
     H5::H5File& file, const WorldState& world, const Config& config,
     const EventLogger& logger, bool append,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  auto people_to_save = selectPeopleToSave(
-      world, config.simulation.save_person_activities, logger, append,
-      person_ids_filter);
+  auto people_to_save =
+      selectPeopleToSave(world, config.simulation.save_person_activities,
+                         logger, append, person_ids_filter);
   if (people_to_save.empty()) return;
 
   auto records = buildPersonActivityRecords(world, people_to_save);
@@ -529,9 +528,8 @@ void EventWriter::writePopulationNetworks(H5::H5File& file,
 
   H5::Group lookups_group =
       event_writer_detail::openOrCreateGroup(file, "/lookups");
-  H5::Group networks_group =
-      event_writer_detail::openOrCreateGroup(lookups_group,
-                                             "population_networks");
+  H5::Group networks_group = event_writer_detail::openOrCreateGroup(
+      lookups_group, "population_networks");
 
   for (const auto& network_name : world.network_names) {
     const int type_id = world.getNetworkTypeIndex(network_name);
