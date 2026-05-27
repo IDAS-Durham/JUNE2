@@ -478,6 +478,17 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // STEP 2b: append per-sub-bin deposition entries to venue->fomite_history
+  // for each fomite mode and compute the per-mode integrated lambda_fomite
+  // contribution. Returns the lambda_fomite_by_mode vector
+  // (size = num_fomite_modes; element = 0 when no infectiousness curve or
+  // no deposition).
+  std::vector<double> recordFomiteDepositionAndLambda(
+      Venue* venue, int num_bins_needed, int num_fomite_modes,
+      const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& n_sub_per_mode, double current_time,
+      double delta_hours);
+
   // STEP 1b: sort each bin's infectious_ids by person_id and apply the same
   // permutation to infectiousness_by_mode[m] for every mode. Ensures the
   // discrete_distribution index → person mapping is the same regardless of

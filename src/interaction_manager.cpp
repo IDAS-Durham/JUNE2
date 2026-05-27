@@ -524,6 +524,47 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+std::vector<double> InteractionManager::recordFomiteDepositionAndLambda(
+    Venue* venue, int num_bins_needed, int num_fomite_modes,
+    const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& n_sub_per_mode, double current_time,
+    double delta_hours) {
+  std::vector<double> lambda_fomite_by_mode(num_fomite_modes, 0.0);
+  if (num_fomite_modes == 0 || !venue) return lambda_fomite_by_mode;
+
+  for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
+    const FomiteConfig& fcfg = *fomite_modes[local_fm].cfg;
+    auto& history = venue->fomite_history;
+    if (local_fm >= (int)history.size()) continue;
+
+    // Sum deposition per sub-bin and append one history entry per sub-bin
+    int n_sub = n_sub_per_mode[local_fm];
+    double dt_sub = delta_hours / n_sub / 24.0;
+    for (int k = 0; k < n_sub; ++k) {
+      double amount_k = 0.0;
+      for (int b = 0; b < num_bins_needed; ++b)
+        amount_k += bins_buffer_[b].total_fomite_deposition_sub[local_fm][k];
+      if (amount_k > 0.0) {
+        double tau_k = current_time + (k + 0.5) * dt_sub;
+        history[local_fm].push_back({tau_k, amount_k});
+      }
+    }
+
+    // lambda = sum_k amount_k * ∫_{age_k}^{age_k+Δ} Q(a) da
+    if (fcfg.infectiousness_curve) {
+      const double delta_days = delta_hours / 24.0;
+      for (const auto& event : history[local_fm]) {
+        double age = current_time - event.time;
+        lambda_fomite_by_mode[local_fm] +=
+            event.amount *
+            fcfg.infectiousness_curve->integrate(age, age + delta_days) /
+            24.0;
+      }
+    }
+  }
+  return lambda_fomite_by_mode;
+}
+
 void InteractionManager::sortInfectiousByPersonId(int num_bins_needed,
                                                   int num_modes) {
   for (int b = 0; b < num_bins_needed; ++b) {
@@ -923,39 +964,9 @@ int InteractionManager::processVenueTransmissions(
   buildCumulativeWeightsPerBin(num_bins_needed, num_modes);
 
   // === STEP 2b: Handle Fomite Deposition and Compute Lambda ===
-  std::vector<double> lambda_fomite_by_mode(num_fomite_modes, 0.0);
-  if (num_fomite_modes > 0 && venue) {
-    for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
-      const FomiteConfig& fcfg = *fomite_modes[local_fm].cfg;
-      auto& history = venue->fomite_history;
-      if (local_fm >= (int)history.size()) continue;
-
-      // Sum deposition per sub-bin and append one history entry per sub-bin
-      int n_sub = n_sub_per_mode[local_fm];
-      double dt_sub = delta_hours / n_sub / 24.0;
-      for (int k = 0; k < n_sub; ++k) {
-        double amount_k = 0.0;
-        for (int b = 0; b < num_bins_needed; ++b)
-          amount_k += bins_buffer_[b].total_fomite_deposition_sub[local_fm][k];
-        if (amount_k > 0.0) {
-          double tau_k = current_time + (k + 0.5) * dt_sub;
-          history[local_fm].push_back({tau_k, amount_k});
-        }
-      }
-
-      // lambda = sum_k amount_k * ∫_{age_k}^{age_k+Δ} Q(a) da
-      if (fcfg.infectiousness_curve) {
-        const double delta_days = delta_hours / 24.0;
-        for (const auto& event : history[local_fm]) {
-          double age = current_time - event.time;
-          lambda_fomite_by_mode[local_fm] +=
-              event.amount *
-              fcfg.infectiousness_curve->integrate(age, age + delta_days) /
-              24.0;
-        }
-      }
-    }
-  }
+  std::vector<double> lambda_fomite_by_mode = recordFomiteDepositionAndLambda(
+      venue, num_bins_needed, num_fomite_modes, fomite_modes, n_sub_per_mode,
+      current_time, delta_hours);
 
   // Early exit if no transmission possible
   bool has_infectious = false;
