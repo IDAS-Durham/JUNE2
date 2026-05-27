@@ -17,6 +17,33 @@
 
 namespace june {
 
+// Routing gate called from processVenueTransmissions (venue.cpp). Returns a
+// new-infection count (forwarded from processPartialPresenceVenue) when the
+// venue type is declared in SimulationConfig::partial_presence; otherwise
+// returns nullopt and the caller falls through to the standard FOI path.
+std::optional<int> InteractionManager::dispatchPartialPresenceIfApplicable(
+    const std::vector<InteractionMember>& members, Venue* venue,
+    VenueId actual_venue_id, double current_time, double delta_hours,
+    std::unordered_set<PersonId>* active_infections,
+    const std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    uint8_t encounter_type_id, const CompartmentalModelManager* comp_model) {
+  // Partial-presence venues (commute lines, etc.) take a different FOI path:
+  // sub-interval-aware, carriage-grouped, with per-rider effective presence
+  // windows. The gate is a single bit-mask test; venue types not declared in
+  // SimulationConfig::partial_presence pay no cost here.
+  if (!runtime_bin_allocator_ || actual_venue_id < 0 || !venue) return {};
+  const uint8_t vt = venue->type_id;
+  const uint64_t mask =
+      simulation_config_.partial_presence.enabled_venue_type_mask;
+  if (vt >= 64 || ((mask >> vt) & 1ULL) == 0) return {};
+  return processPartialPresenceVenue(
+      members, venue, actual_venue_id, current_time, delta_hours,
+      active_infections, visitor_ids, pending_infections, visitor_data,
+      encounter_type_id, comp_model);
+}
+
 void InteractionManager::accumulateOneCarriage(
     const std::vector<CarriageMember>& car, float slot_duration_min,
     double current_time, double delta_hours, int num_modes,
