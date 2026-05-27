@@ -565,6 +565,19 @@ class InteractionManager {
                                const TransmissionParams& trans_params,
                                double& total_lambda_eff);
 
+  // STEP 3b apply step for a single susceptible whose Bernoulli draw was
+  // positive. Queues a PendingInfection for cross-rank visitors or creates
+  // an Infection in place + logs it. Mirrors applyPartialPresenceInfection
+  // but takes the susc_mem encounter_type_id and the venue-FOI InfectionSource.
+  void applyVenueInfection(
+      const SusceptibleMember& susc_mem, PersonId infector_id,
+      InfectionSource infection_source, uint8_t transmission_mode_index,
+      uint16_t infector_symptom_id, double current_time, uint8_t venue_type_id,
+      VenueId actual_venue_id, uint64_t venue_key,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+      std::unordered_set<PersonId>* active_infections,
+      std::vector<PendingInfection>* pending_infections);
+
   // STEP 1 per-member body in processVenueTransmissions: resolve
   // person/visitor, compute bin_index (with DEBUG fallback log), update
   // used_bins_ + total_size, then dispatch infectiousness (visitor or local),

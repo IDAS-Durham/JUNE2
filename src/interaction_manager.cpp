@@ -524,6 +524,71 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::applyVenueInfection(
+    const SusceptibleMember& susc_mem, PersonId infector_id,
+    InfectionSource infection_source, uint8_t transmission_mode_index,
+    uint16_t infector_symptom_id, double current_time, uint8_t venue_type_id,
+    VenueId actual_venue_id, uint64_t venue_key,
+    const std::unordered_map<PersonId, VisitorInfo>* /*visitor_data*/,
+    std::unordered_set<PersonId>* active_infections,
+    std::vector<PendingInfection>* pending_infections) {
+  PersonId susceptible_id = susc_mem.id;
+  const VisitorInfo* visitor = susc_mem.visitor;
+  const bool is_visitor = (visitor != nullptr);
+
+  if (is_visitor && pending_infections != nullptr) {
+    // Visitor infection - queue for home rank. The home rank logs the
+    // InfectionEvent after applying the pending infection, so /lookups/people
+    // (built from world.people on the home rank, filtered by
+    // getInfectedPersonIds()) includes the infectee.
+    PendingInfection pending;
+    pending.person_id = susceptible_id;
+    pending.infector_id = infector_id;
+    pending.infection_time = current_time;
+    pending.venue_type_id = venue_type_id;
+    pending.encounter_type_id = susc_mem.encounter_type_id;
+    pending.venue_id = actual_venue_id;
+    pending.infector_symptom_id = infector_symptom_id;
+    pending.transmission_mode_index = transmission_mode_index;
+    if (visitor) pending.home_array_index = visitor->home_array_index;
+    pending_infections->push_back(pending);
+    return;
+  }
+
+  // Local person infection - create immediately
+  Person* susc_person = world_.getPerson(susceptible_id);
+  if (!susc_person || susc_person->infection || disease_ == nullptr) return;
+
+  float severity_factor = 1.0f;
+  auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
+  if (gu) severity_factor = gu->severity_factor;
+
+  std::string venue_type_name;
+  if (venue_type_id < world_.venue_type_names.size()) {
+    venue_type_name = world_.venue_type_names[venue_type_id];
+  }
+
+  uint64_t infection_seed =
+      mix_seed(base_seed_, susceptible_id,
+               static_cast<uint64_t>(current_time * 1000), venue_key);
+  susc_person->infection = std::make_unique<Infection>(
+      disease_, current_time, susc_person,
+      static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
+      actual_venue_id, severity_factor, infector_symptom_id, "", "",
+      transmission_mode_index);
+
+  if (event_logger_ != nullptr) {
+    event_logger_->logInfection(susceptible_id, infector_id, actual_venue_id,
+                                current_time, susc_mem.encounter_type_id,
+                                infector_symptom_id, transmission_mode_index,
+                                infection_source);
+  }
+
+  if (active_infections != nullptr) {
+    active_infections->insert(susceptible_id);
+  }
+}
+
 void InteractionManager::appendDirectContactSources(
     int susc_bin, int num_bins_needed, int num_modes, bool is_virtual_encounter,
     uint8_t encounter_type_id, uint8_t venue_type_id,
@@ -1400,69 +1465,11 @@ int InteractionManager::processVenueTransmissions(
           }
         }
 
-        // Record and log infection
-        const VisitorInfo* visitor = susc_mem.visitor;
-        bool is_visitor = (visitor != nullptr);
-
-        // Check if infector is a visitor (cross-rank infector)
-        bool infector_is_visitor = false;
-        if (visitor_data && infector_id >= 0) {
-          infector_is_visitor = (visitor_data->count(infector_id) > 0);
-        }
-
-        if (is_visitor && pending_infections != nullptr) {
-          // Visitor infection - queue for home rank.
-          // The home rank logs the InfectionEvent after applying the pending
-          // infection, so /lookups/people (built from world.people on the home
-          // rank, filtered by getInfectedPersonIds()) includes the infectee.
-          PendingInfection pending;
-          pending.person_id = susceptible_id;
-          pending.infector_id = infector_id;
-          pending.infection_time = current_time;
-          pending.venue_type_id = venue_type_id;
-          pending.encounter_type_id = susc_mem.encounter_type_id;
-          pending.venue_id = actual_venue_id;
-          pending.infector_symptom_id = infector_symptom_id;
-          pending.transmission_mode_index = transmission_mode_index;
-
-          // Get home_array_index if available
-          if (visitor) pending.home_array_index = visitor->home_array_index;
-
-          pending_infections->push_back(pending);
-        } else {
-          // Local person infection - create immediately
-          Person* susc_person = world_.getPerson(susceptible_id);
-          if (susc_person && !susc_person->infection && disease_ != nullptr) {
-            float severity_factor = 1.0f;
-            auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
-            if (gu) severity_factor = gu->severity_factor;
-
-            std::string venue_type_name = "";
-            if (venue_type_id < world_.venue_type_names.size()) {
-              venue_type_name = world_.venue_type_names[venue_type_id];
-            }
-
-            uint64_t infection_seed =
-                mix_seed(base_seed_, susceptible_id,
-                         static_cast<uint64_t>(current_time * 1000), venue_key);
-            susc_person->infection = std::make_unique<Infection>(
-                disease_, current_time, susc_person,
-                static_cast<unsigned int>(infection_seed), &world_,
-                venue_type_name, actual_venue_id, severity_factor,
-                infector_symptom_id, "", "", transmission_mode_index);
-
-            if (event_logger_ != nullptr) {
-              event_logger_->logInfection(
-                  susceptible_id, infector_id, actual_venue_id, current_time,
-                  susc_mem.encounter_type_id, infector_symptom_id,
-                  transmission_mode_index, infection_source);
-            }
-
-            if (active_infections != nullptr) {
-              active_infections->insert(susceptible_id);
-            }
-          }
-        }
+        applyVenueInfection(susc_mem, infector_id, infection_source,
+                            transmission_mode_index, infector_symptom_id,
+                            current_time, venue_type_id, actual_venue_id,
+                            venue_key, visitor_data, active_infections,
+                            pending_infections);
 
         new_infections++;
       }
