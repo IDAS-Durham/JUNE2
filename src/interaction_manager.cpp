@@ -1763,6 +1763,62 @@ InteractionManager::computePartialPresenceLambda(
   return result;
 }
 
+void InteractionManager::applyPartialPresenceInfection(
+    PersonId susc_id, Person* susc_person, const VisitorInfo* visitor,
+    PersonId infector_id, uint8_t transmission_mode_index,
+    uint16_t infector_symptom_id, double current_time, Venue* venue,
+    uint8_t venue_type_id, VenueId actual_venue_id,
+    std::unordered_set<PersonId>* active_infections,
+    std::vector<PendingInfection>* pending_infections) {
+  const bool is_visitor_susc = (visitor != nullptr);
+  const uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
+
+  if (is_visitor_susc && pending_infections != nullptr) {
+    PendingInfection pending;
+    pending.person_id = susc_id;
+    pending.infector_id = infector_id;
+    pending.infection_time = current_time;
+    pending.venue_type_id = venue_type_id;
+    pending.encounter_type_id = 255;
+    pending.venue_id = actual_venue_id;
+    pending.infector_symptom_id = infector_symptom_id;
+    pending.transmission_mode_index = transmission_mode_index;
+    if (visitor) pending.home_array_index = visitor->home_array_index;
+    pending_infections->push_back(pending);
+    return;
+  }
+  if (!(susc_person && !susc_person->infection && disease_ != nullptr)) return;
+
+  float severity_factor = 1.0f;
+  auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
+  if (gu) severity_factor = gu->severity_factor;
+
+  std::string venue_type_name;
+  if (venue_type_id < world_.venue_type_names.size())
+    venue_type_name = world_.venue_type_names[venue_type_id];
+
+  uint64_t infection_seed =
+      mix_seed(base_seed_, susc_id,
+               static_cast<uint64_t>(current_time * 1000), venue_key);
+  susc_person->infection = std::make_unique<Infection>(
+      disease_, current_time, susc_person,
+      static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
+      actual_venue_id, severity_factor, infector_symptom_id, "", "",
+      transmission_mode_index);
+
+  if (event_logger_ != nullptr) {
+    event_logger_->logInfection(
+        susc_id, infector_id, actual_venue_id, current_time,
+        /*encounter_type_id*/ 255, infector_symptom_id,
+        transmission_mode_index, InfectionSource::Person);
+  }
+
+  if (active_infections != nullptr) active_infections->insert(susc_id);
+  (void)venue;  // venue param kept for parity with processVenueTransmissions
+                // call shape; only used to feed transmission_factor in the
+                // caller's regional-risk multiply.
+}
+
 uint16_t InteractionManager::resolveInfectorSymptomId(
     PersonId infector_id, double current_time,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
@@ -1884,47 +1940,10 @@ int InteractionManager::processPartialPresenceVenue(
         resolveInfectorSymptomId(infector_id, current_time, visitor_data);
 
     const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
-    const bool is_visitor_susc = (visitor != nullptr);
-
-    if (is_visitor_susc && pending_infections != nullptr) {
-      PendingInfection pending;
-      pending.person_id = susc_id;
-      pending.infector_id = infector_id;
-      pending.infection_time = current_time;
-      pending.venue_type_id = venue_type_id;
-      pending.encounter_type_id = 255;
-      pending.venue_id = actual_venue_id;
-      pending.infector_symptom_id = infector_symptom_id;
-      pending.transmission_mode_index = transmission_mode_index;
-      if (visitor) pending.home_array_index = visitor->home_array_index;
-      pending_infections->push_back(pending);
-    } else if (susc_person && !susc_person->infection && disease_ != nullptr) {
-      float severity_factor = 1.0f;
-      auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
-      if (gu) severity_factor = gu->severity_factor;
-
-      std::string venue_type_name;
-      if (venue_type_id < world_.venue_type_names.size())
-        venue_type_name = world_.venue_type_names[venue_type_id];
-
-      uint64_t infection_seed =
-          mix_seed(base_seed_, susc_id,
-                   static_cast<uint64_t>(current_time * 1000), venue_key);
-      susc_person->infection = std::make_unique<Infection>(
-          disease_, current_time, susc_person,
-          static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
-          actual_venue_id, severity_factor, infector_symptom_id, "", "",
-          transmission_mode_index);
-
-      if (event_logger_ != nullptr) {
-        event_logger_->logInfection(
-            susc_id, infector_id, actual_venue_id, current_time,
-            /*encounter_type_id*/ 255, infector_symptom_id,
-            transmission_mode_index, InfectionSource::Person);
-      }
-
-      if (active_infections != nullptr) active_infections->insert(susc_id);
-    }
+    applyPartialPresenceInfection(
+        susc_id, susc_person, visitor, infector_id, transmission_mode_index,
+        infector_symptom_id, current_time, venue, venue_type_id,
+        actual_venue_id, active_infections, pending_infections);
     new_infections++;
   }
 
