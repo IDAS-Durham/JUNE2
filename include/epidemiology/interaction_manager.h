@@ -378,6 +378,17 @@ class InteractionManager {
       int num_modes, const TransmissionParams& trans_params,
       PartialPresenceLambdaResult& result) const;
 
+  // Walk the sub-intervals of one carriage, classifying members and
+  // accumulating per-susceptible λ + AccumSources into result. sub_bins is
+  // the caller-owned scratch buffer reused per sub-interval.
+  void accumulateOneCarriage(
+      const std::vector<CarriageMember>& car, float slot_duration_min,
+      double current_time, double delta_hours, int num_modes,
+      int num_bins_needed, uint8_t venue_type_id, const ContactMatrix* matrix,
+      const TransmissionParams& trans_params,
+      std::vector<PartialPresenceSubBin>& sub_bins,
+      PartialPresenceLambdaResult& result) const;
+
   // Per-member body of the parent-aggregate pre-pass: resolve person/visitor,
   // compute parent_bin under parent_matrix, bump headcount in agg/csize,
   // gather per-mode infectiousness, and (if positive) accumulate into

@@ -1446,6 +1446,39 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
+void InteractionManager::accumulateOneCarriage(
+    const std::vector<CarriageMember>& car, float slot_duration_min,
+    double current_time, double delta_hours, int num_modes,
+    int num_bins_needed, uint8_t venue_type_id, const ContactMatrix* matrix,
+    const TransmissionParams& trans_params,
+    std::vector<PartialPresenceSubBin>& sub_bins,
+    PartialPresenceLambdaResult& result) const {
+  std::vector<float> events =
+      collectSubIntervalEventTimes(car, slot_duration_min);
+  if (events.size() < 2) return;
+
+  for (size_t si = 0; si + 1 < events.size(); ++si) {
+    const float t0 = events[si];
+    const float t1 = events[si + 1];
+    const float sub_dur = t1 - t0;
+    if (!(sub_dur > 0.0f)) continue;
+    const double scale = static_cast<double>(sub_dur) / slot_duration_min;
+
+    for (auto& sb : sub_bins) sb.reset(num_modes);
+
+    // Track per-bin susceptibles in this sub-interval (rebuilt each pass).
+    std::vector<std::vector<const CarriageMember*>> susc_by_bin(
+        num_bins_needed);
+
+    classifyMembersInSubInterval(car, t0, t1, scale, current_time, delta_hours,
+                                 num_modes, sub_bins, susc_by_bin);
+
+    accumulatePartialLambdaContributions(sub_bins, susc_by_bin, venue_type_id,
+                                         matrix, num_bins_needed, num_modes,
+                                         trans_params, result);
+  }
+}
+
 void InteractionManager::accumulatePartialLambdaContributions(
     const std::vector<PartialPresenceSubBin>& sub_bins,
     const std::vector<std::vector<const CarriageMember*>>& susc_by_bin,
@@ -1713,32 +1746,9 @@ InteractionManager::computePartialPresenceLambda(
   for (uint16_t c = 0; c < num_bins; ++c) {
     const auto& car = carriages[c];
     if (car.empty()) continue;
-
-    std::vector<float> events =
-        collectSubIntervalEventTimes(car, slot_duration_min);
-    if (events.size() < 2) continue;
-
-    for (size_t si = 0; si + 1 < events.size(); ++si) {
-      const float t0 = events[si];
-      const float t1 = events[si + 1];
-      const float sub_dur = t1 - t0;
-      if (!(sub_dur > 0.0f)) continue;
-      const double scale = static_cast<double>(sub_dur) / slot_duration_min;
-
-      for (auto& sb : sub_bins) sb.reset(num_modes);
-
-      // Track per-bin susceptibles in this sub-interval (rebuilt each pass).
-      std::vector<std::vector<const CarriageMember*>> susc_by_bin(
-          num_bins_needed);
-
-      classifyMembersInSubInterval(car, t0, t1, scale, current_time,
-                                   delta_hours, num_modes, sub_bins,
-                                   susc_by_bin);
-
-      accumulatePartialLambdaContributions(sub_bins, susc_by_bin, venue_type_id,
-                                           matrix, num_bins_needed, num_modes,
-                                           trans_params, result);
-    }
+    accumulateOneCarriage(car, slot_duration_min, current_time, delta_hours,
+                          num_modes, num_bins_needed, venue_type_id, matrix,
+                          trans_params, sub_bins, result);
   }
 
   return result;
