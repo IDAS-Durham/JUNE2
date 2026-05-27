@@ -524,6 +524,100 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::binOneMember(
+    const InteractionMember& member, Venue* venue,
+    const ContactMatrix* matrix, int num_bins_needed, int num_modes,
+    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<int>& n_sub_per_mode, double current_time,
+    double delta_hours, uint8_t encounter_type_id,
+    [[maybe_unused]] const std::string& venue_type,
+    [[maybe_unused]] uint8_t venue_type_id,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
+  PersonId pid = member.id;
+  Person* person = nullptr;
+  if (member.array_index < world_.people.size()) {
+    person = &world_.people[member.array_index];
+    if (person->id != pid) person = world_.getPerson(pid);
+  } else {
+    person = world_.getPerson(pid);
+  }
+
+  if (matrix) stats_.bin_lookups++;
+  int bin_index = computeBinIndexForMatrix(person, venue, member.subset_index,
+                                           encounter_type_id, matrix,
+                                           num_bins_needed);
+
+  // Safety check for bin_index - if still not found, default to 0.
+  if (bin_index < 0 || bin_index >= num_bins_needed) {
+#ifdef DEBUG_TRANSMISSION
+    static int bin_fallback_count = 0;
+    if (bin_fallback_count < 20) {
+      std::cerr << "[DEBUG_TRANSMISSION] bin_index fallback to 0: "
+                << "person=" << pid
+                << " age=" << (person ? (int)person->age : -1)
+                << " sex=" << (person ? (int)person->sex : -1)
+                << " venue_type=" << venue_type
+                << " venue_type_id=" << (int)venue_type_id
+                << " num_bins=" << num_bins_needed
+                << " original_bin=" << bin_index
+                << " encounter_type=" << (int)encounter_type_id << std::endl;
+      bin_fallback_count++;
+      if (bin_fallback_count == 20)
+        std::cerr << "[DEBUG_TRANSMISSION] (suppressing further bin_index "
+                     "fallback warnings)"
+                  << std::endl;
+    }
+#endif
+    bin_index = 0;
+  }
+
+  // Track which bins are used (for selective clearing next call)
+  if (bins_buffer_[bin_index].total_size == 0) {
+    used_bins_.push_back(bin_index);
+  }
+  // Track total bin size (for frequency-dependent transmission denominator)
+  if (!person || !person->is_dead) {
+    bins_buffer_[bin_index].total_size++;
+  }
+
+  double susceptibility = 0.0;
+  const VisitorInfo* visitor = nullptr;
+
+  if (!person && visitor_data != nullptr) {
+    auto visitor_it = visitor_data->find(pid);
+    if (visitor_it != visitor_data->end()) {
+      visitor = &visitor_it->second;
+
+      if (visitor->is_infectious) {
+        accumulateVisitorInfectiousnessAndFomite(
+            visitor, pid, bin_index, num_modes, num_fomite_modes, fomite_modes,
+            n_sub_per_mode, delta_hours);
+      } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
+        susceptibility = 1.0 - visitor->immunity_level;
+        bins_buffer_[bin_index].susceptible.push_back(
+            {pid, susceptibility, visitor, member.encounter_type_id});
+      }
+    }
+  } else if (person && !person->is_dead) {
+    if (person->infection && person->infection->isInfectious(current_time)) {
+      accumulateLocalInfectiousness(person, pid, bin_index, num_modes,
+                                    current_time, delta_hours);
+    } else if (!person->infection) {
+      susceptibility =
+          person->getSusceptibility(current_time, disease_->getName());
+      if (susceptibility > 0.0) {
+        bins_buffer_[bin_index].susceptible.push_back(
+            {pid, susceptibility, visitor, member.encounter_type_id});
+      }
+    }
+    if (person->infection && num_fomite_modes > 0) {
+      accumulateLocalFomiteDeposition(person, bin_index, num_fomite_modes,
+                                      fomite_modes, n_sub_per_mode,
+                                      current_time, delta_hours);
+    }
+  }
+}
+
 void InteractionManager::accumulateVisitorInfectiousnessAndFomite(
     const VisitorInfo* visitor, PersonId pid, int bin_index, int num_modes,
     int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
@@ -748,96 +842,10 @@ int InteractionManager::processVenueTransmissions(
 
   // === STEP 1: Group people by bin (single pass) ===
   for (const auto& member : members) {
-    PersonId pid = member.id;
-    Person* person = nullptr;
-    if (member.array_index < world_.people.size()) {
-      person = &world_.people[member.array_index];
-      if (person->id != pid)
-        person = world_.getPerson(pid);  // Reliability fallback
-    } else {
-      person = world_.getPerson(pid);
-    }
-
-    if (matrix) stats_.bin_lookups++;
-    int bin_index = computeBinIndexForMatrix(person, venue, member.subset_index,
-                                             encounter_type_id, matrix,
-                                             num_bins_needed);
-
-    // Safety check for bin_index - if still not found, default to 0.
-    // computeBinIndexForMatrix already clamps internally; the DEBUG-only
-    // diagnostic below catches the rare case where bin_index came back outside
-    // [0, num_bins_needed) and we replace it with 0.
-    if (bin_index < 0 || bin_index >= num_bins_needed) {
-#ifdef DEBUG_TRANSMISSION
-      static int bin_fallback_count = 0;
-      if (bin_fallback_count < 20) {
-        std::cerr << "[DEBUG_TRANSMISSION] bin_index fallback to 0: "
-                  << "person=" << pid
-                  << " age=" << (person ? (int)person->age : -1)
-                  << " sex=" << (person ? (int)person->sex : -1)
-                  << " venue_type=" << venue_type
-                  << " venue_type_id=" << (int)venue_type_id
-                  << " num_bins=" << num_bins_needed
-                  << " original_bin=" << bin_index
-                  << " encounter_type=" << (int)encounter_type_id << std::endl;
-        bin_fallback_count++;
-        if (bin_fallback_count == 20)
-          std::cerr << "[DEBUG_TRANSMISSION] (suppressing further bin_index "
-                       "fallback warnings)"
-                    << std::endl;
-      }
-#endif
-      bin_index = 0;
-    }
-
-    // Track which bins are used (for selective clearing next call)
-    // Only add if this bin's total_size is 0 (first person in this bin)
-    if (bins_buffer_[bin_index].total_size == 0) {
-      used_bins_.push_back(bin_index);
-    }
-
-    // Track total bin size (for frequency-dependent transmission denominator)
-    if (!person || !person->is_dead) {
-      bins_buffer_[bin_index].total_size++;
-    }
-
-    double susceptibility = 0.0;
-    const VisitorInfo* visitor = nullptr;
-
-    if (!person && visitor_data != nullptr) {
-      auto visitor_it = visitor_data->find(pid);
-      if (visitor_it != visitor_data->end()) {
-        visitor = &visitor_it->second;
-
-        if (visitor->is_infectious) {
-          accumulateVisitorInfectiousnessAndFomite(
-              visitor, pid, bin_index, num_modes, num_fomite_modes,
-              fomite_modes, n_sub_per_mode, delta_hours);
-        } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
-          susceptibility = 1.0 - visitor->immunity_level;
-          bins_buffer_[bin_index].susceptible.push_back(
-              {pid, susceptibility, visitor, member.encounter_type_id});
-        }
-      }
-    } else if (person && !person->is_dead) {
-      // Classify as infectious or susceptible
-      if (person->infection && person->infection->isInfectious(current_time)) {
-        accumulateLocalInfectiousness(person, pid, bin_index, num_modes,
-                                      current_time, delta_hours);
-      } else if (!person->infection) {
-        susceptibility =
-            person->getSusceptibility(current_time, disease_->getName());
-        if (susceptibility > 0.0) {
-          bins_buffer_[bin_index].susceptible.push_back(
-              {pid, susceptibility, visitor, member.encounter_type_id});
-        }
-      }
-      if (person->infection && num_fomite_modes > 0) {
-        accumulateLocalFomiteDeposition(person, bin_index, num_fomite_modes,
-                                        fomite_modes, n_sub_per_mode,
-                                        current_time, delta_hours);
-      }
-    }
+    binOneMember(member, venue, matrix, num_bins_needed, num_modes,
+                 num_fomite_modes, fomite_modes, n_sub_per_mode, current_time,
+                 delta_hours, encounter_type_id, venue_type, venue_type_id,
+                 visitor_data);
   }
 
   // === STEP 1b: Sort infectious lists by person_id for MPI reproducibility ===

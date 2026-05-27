@@ -478,6 +478,19 @@ class InteractionManager {
                                uint8_t encounter_type_id,
                                const ContactMatrix* matrix, int num_bins) const;
 
+  // STEP 1 per-member body in processVenueTransmissions: resolve
+  // person/visitor, compute bin_index (with DEBUG fallback log), update
+  // used_bins_ + total_size, then dispatch infectiousness (visitor or local),
+  // fomite deposition, or susceptible.
+  void binOneMember(
+      const InteractionMember& member, Venue* venue,
+      const ContactMatrix* matrix, int num_bins_needed, int num_modes,
+      int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+      const std::vector<int>& n_sub_per_mode, double current_time,
+      double delta_hours, uint8_t encounter_type_id,
+      const std::string& venue_type, uint8_t venue_type_id,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
+
   // Append a cross-rank visitor's per-mode infectiousness (pre-computed on
   // the sending rank) into bins_buffer_[bin_index] and accumulate its
   // per-sub-bin fomite deposition. Caller has already confirmed
