@@ -365,6 +365,15 @@ class InteractionManager {
       std::vector<PartialPresenceSubBin>& sub_bins,
       std::vector<std::vector<const CarriageMember*>>& susc_by_bin) const;
 
+  // Return the contacts entry for (susc_bin, inf_bin), preferring
+  // mode_matrix->contacts[][] when in bounds, falling back to
+  // fallback_matrix->getContacts(...), else contact_matrices_.default_contacts.
+  // Encapsulates the per-(mode, bin-pair) lookup with the same three-step
+  // fallback chain used in both the main FOI loop and partial-presence.
+  double lookupContactsForBinPair(const ContactMatrix* mode_matrix,
+                                  const ContactMatrix* fallback_matrix,
+                                  int susc_bin, int inf_bin) const;
+
   // For one (carriage, sub-interval), iterate (susc_bin, mode, inf_bin) over
   // pre-classified sub_bins + susc_by_bin and accumulate per-susceptible λ
   // contributions into susc_lambda and per-(susc, source) attribution

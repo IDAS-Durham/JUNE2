@@ -1446,6 +1446,24 @@ int InteractionManager::processVenueTransmissions(
 //
 // Single Bernoulli draw per susceptible at slot end; sources are accumulated
 // across all (carriage × sub-interval) contributions and sampled once.
+double InteractionManager::lookupContactsForBinPair(
+    const ContactMatrix* mode_matrix, const ContactMatrix* fallback_matrix,
+    int susc_bin, int inf_bin) const {
+  if (mode_matrix &&
+      susc_bin < static_cast<int>(mode_matrix->contacts.size()) &&
+      inf_bin <
+          static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
+    return mode_matrix->contacts[susc_bin][inf_bin];
+  }
+  if (fallback_matrix &&
+      susc_bin < static_cast<int>(fallback_matrix->contacts.size()) &&
+      inf_bin <
+          static_cast<int>(fallback_matrix->contacts[susc_bin].size())) {
+    return fallback_matrix->getContacts(susc_bin, inf_bin);
+  }
+  return contact_matrices_.default_contacts;
+}
+
 void InteractionManager::accumulateOneCarriage(
     const std::vector<CarriageMember>& car, float slot_duration_min,
     double current_time, double delta_hours, int num_modes,
@@ -1504,17 +1522,8 @@ void InteractionManager::accumulatePartialLambdaContributions(
         double total_inf = sub_bins[inf_bin].total_inf_by_mode[mode];
         if (!(total_inf > 0.0)) continue;
 
-        double contacts = contact_matrices_.default_contacts;
-        if (mode_matrix &&
-            susc_bin < static_cast<int>(mode_matrix->contacts.size()) &&
-            inf_bin <
-                static_cast<int>(mode_matrix->contacts[susc_bin].size())) {
-          contacts = mode_matrix->contacts[susc_bin][inf_bin];
-        } else if (susc_bin < static_cast<int>(matrix->contacts.size()) &&
-                   inf_bin <
-                       static_cast<int>(matrix->contacts[susc_bin].size())) {
-          contacts = matrix->getContacts(susc_bin, inf_bin);
-        }
+        double contacts =
+            lookupContactsForBinPair(mode_matrix, matrix, susc_bin, inf_bin);
         if (!(contacts > 0.0)) continue;
 
         int bin_size = sub_bins[inf_bin].total_size;
