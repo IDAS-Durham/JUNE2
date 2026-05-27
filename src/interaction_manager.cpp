@@ -524,6 +524,161 @@ int InteractionManager::processTransmissions(
   return total_new_infections;
 }
 
+void InteractionManager::appendDirectContactSources(
+    int susc_bin, int num_bins_needed, int num_modes, bool is_virtual_encounter,
+    uint8_t encounter_type_id, uint8_t venue_type_id,
+    const ContactMatrix* matrix, const TransmissionParams& trans_params,
+    double& total_lambda_eff) {
+  for (int m = 0; m < num_modes; ++m) {
+    // Get mode-specific contact matrix. Virtual encounters are keyed by
+    // encounter_type_id; physical venues by venue_type_id. The split
+    // matters: these are disjoint integer spaces and aliasing them pulls
+    // the wrong matrix.
+    const ContactMatrix* mode_matrix =
+        is_virtual_encounter
+            ? contact_matrices_.getVirtualMatrix(encounter_type_id, m)
+            : contact_matrices_.getMatrix(venue_type_id, m);
+    double mode_susc_mult = (m < (int)trans_params.modes.size())
+                                ? trans_params.modes[m].susceptibility_multiplier
+                                : 1.0;
+
+    for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
+      const auto& inf_group = bins_buffer_[inf_bin];
+      if (inf_group.total_infectiousness_by_mode[m] <= 0.0) continue;
+
+      double contacts =
+          lookupContactsForBinPair(mode_matrix, matrix, susc_bin, inf_bin);
+      if (contacts <= 0.0) continue;
+
+      int bin_size = bins_buffer_[inf_bin].total_size;
+      if (susc_bin == inf_bin) bin_size = std::max(1, bin_size - 1);
+
+      // Force of infection: omega = C / N_bin
+      // (delta_hours is already absorbed into the integrated infectiousness
+      // values stored in total_infectiousness_by_mode)
+      double omega = contacts / bin_size;
+      double contrib = omega * inf_group.total_infectiousness_by_mode[m];
+      double weighted = contrib * mode_susc_mult;
+
+      if (weighted > 0.0) {
+        total_lambda_eff += weighted;
+        sources_buffer_.push_back({m, inf_bin});
+        source_weights_buffer_.push_back(weighted);
+      }
+    }
+  }
+}
+
+void InteractionManager::appendSiblingMixingSources(
+    int susc_bin, int num_modes, VenueId actual_venue_id, const Venue* venue,
+    const ParentAggregate* parent_agg, const ContactMatrix* parent_flat_matrix,
+    const TransmissionParams& trans_params, double& total_lambda_eff) {
+  if (!parent_agg) return;
+
+  const int pbin = 0;  // single-bin parent assumption (enforced earlier)
+  auto cs_it = parent_agg->child_size_by_bin.find(actual_venue_id);
+  auto ci_it = parent_agg->child_inf_by_bin_mode.find(actual_venue_id);
+  int parent_size = (pbin < (int)parent_agg->size_by_bin.size())
+                        ? parent_agg->size_by_bin[pbin]
+                        : 0;
+  int own_size = (cs_it != parent_agg->child_size_by_bin.end() &&
+                  pbin < (int)cs_it->second.size())
+                     ? cs_it->second[pbin]
+                     : 0;
+  int sibling_size = std::max(1, parent_size - own_size);
+
+  for (int m = 0; m < num_modes; ++m) {
+    const ContactMatrix* pmm =
+        contact_matrices_.getMatrix(parent_agg->parent_venue_type_id, m);
+    if (!pmm) pmm = parent_flat_matrix;
+    if (!pmm || pmm->contacts.empty() || pmm->contacts[0].empty()) continue;
+    double contacts = pmm->contacts[0][0];
+    if (contacts <= 0.0) continue;
+
+    double parent_inf = (pbin < (int)parent_agg->total_inf_by_bin_mode.size())
+                            ? parent_agg->total_inf_by_bin_mode[pbin][m]
+                            : 0.0;
+    double own_inf = (ci_it != parent_agg->child_inf_by_bin_mode.end() &&
+                      pbin < (int)ci_it->second.size())
+                         ? ci_it->second[pbin][m]
+                         : 0.0;
+    double sibling_inf = parent_inf - own_inf;
+    if (sibling_inf <= 0.0) continue;
+
+    double mode_susc_mult = (m < (int)trans_params.modes.size())
+                                ? trans_params.modes[m].susceptibility_multiplier
+                                : 1.0;
+    double omega = contacts / sibling_size;
+    double weighted = omega * sibling_inf * mode_susc_mult;
+    if (weighted <= 0.0) continue;
+
+    total_lambda_eff += weighted;
+    SourceEntry se;
+    se.mode = m;
+    se.inf_bin = SIBLING_INF_BIN_SENTINEL;
+    se.sibling_parent_inf_bin = pbin;
+    sources_buffer_.push_back(se);
+    source_weights_buffer_.push_back(weighted);
+
+    if (debug_parent_mixing_ && dbg_sample_susc_prints_ < 20) {
+      std::cerr << "[PMIX] sibling_FOI venue=" << actual_venue_id
+                << " parent=" << venue->parent_id
+                << " parent_type=" << (int)parent_agg->parent_venue_type_id
+                << " susc_bin=" << susc_bin << " mode=" << m
+                << " contacts=" << contacts << " parent_inf=" << parent_inf
+                << " own_inf=" << own_inf << " sibling_inf=" << sibling_inf
+                << " parent_size=" << parent_size << " own_size=" << own_size
+                << " sibling_size=" << sibling_size << " omega=" << omega
+                << " weighted=" << weighted << std::endl;
+      dbg_sample_susc_prints_++;
+    }
+  }
+}
+
+void InteractionManager::appendFomiteSources(
+    int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
+    const std::vector<double>& lambda_fomite_by_mode,
+    const TransmissionParams& trans_params, double& total_lambda_eff) {
+  for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
+    if (lambda_fomite_by_mode[local_fm] <= 0.0) continue;
+    int fomite_mode_idx = fomite_modes[local_fm].mode_index;
+    double mode_susc_mult =
+        (fomite_mode_idx < (int)trans_params.modes.size())
+            ? trans_params.modes[fomite_mode_idx].susceptibility_multiplier
+            : 1.0;
+    double weighted = lambda_fomite_by_mode[local_fm] * mode_susc_mult;
+    total_lambda_eff += weighted;
+    sources_buffer_.push_back(SourceEntry{fomite_mode_idx, -1});
+    source_weights_buffer_.push_back(weighted);
+  }
+}
+
+void InteractionManager::appendCompUptakeSources(
+    VenueId actual_venue_id, uint8_t venue_type_id,
+    const std::vector<int>& comp_uptake_modes,
+    const CompartmentalModelManager* comp_model,
+    const TransmissionParams& trans_params, double& total_lambda_eff) {
+  if (!comp_model || comp_uptake_modes.empty()) return;
+  const float* buf = comp_model->readCouplingOutputs();
+  int node_idx =
+      comp_model->venueToLocalNodeIndex(static_cast<int>(actual_venue_id));
+  if (!buf || node_idx < 0) return;
+  float foi_scale =
+      comp_model->getOutputFOIScale(static_cast<int>(venue_type_id), 0);
+  float node_output = buf[node_idx] * foi_scale;
+  for (int mode_idx : comp_uptake_modes) {
+    double mode_susc_mult =
+        (mode_idx < (int)trans_params.modes.size())
+            ? trans_params.modes[mode_idx].susceptibility_multiplier
+            : 1.0;
+    double weighted = node_output * mode_susc_mult;
+    if (weighted <= 0.0) continue;
+    total_lambda_eff += weighted;
+    sources_buffer_.push_back(SourceEntry{mode_idx, -2});
+    source_weights_buffer_.push_back(weighted);
+  }
+}
+
 bool InteractionManager::venueHasNoTransmissionPossible(
     int num_bins_needed, const std::vector<int>& comp_uptake_modes,
     const std::vector<double>& lambda_fomite_by_mode, VenueId actual_venue_id,
@@ -1040,179 +1195,22 @@ int InteractionManager::processVenueTransmissions(
     const auto& susc_group = bins_buffer_[susc_bin];
     if (susc_group.susceptible.empty()) continue;
 
-    // 3a. Pre-calculate total Force of Infection across all modes and bins
-    // Reuse member buffers
+    // 3a. Pre-calculate total Force of Infection across all modes and bins.
     sources_buffer_.clear();
     source_weights_buffer_.clear();
     double total_lambda_eff = 0.0;
 
-    for (int m = 0; m < num_modes; ++m) {
-      // Get mode-specific contact matrix. Virtual encounters are keyed by
-      // encounter_type_id; physical venues by venue_type_id. The split
-      // matters: these are disjoint integer spaces and aliasing them pulls
-      // the wrong matrix.
-      const ContactMatrix* mode_matrix =
-          is_virtual_encounter
-              ? contact_matrices_.getVirtualMatrix(encounter_type_id, m)
-              : contact_matrices_.getMatrix(venue_type_id, m);
-      double mode_susc_mult =
-          (m < (int)trans_params.modes.size())
-              ? trans_params.modes[m].susceptibility_multiplier
-              : 1.0;
-
-      for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
-        const auto& inf_group = bins_buffer_[inf_bin];
-        if (inf_group.total_infectiousness_by_mode[m] <= 0.0) continue;
-
-        // Get contacts for this (susc_bin, inf_bin) pair
-        double contacts = contact_matrices_.default_contacts;
-
-        if (mode_matrix && susc_bin < (int)mode_matrix->contacts.size() &&
-            inf_bin < (int)mode_matrix->contacts[susc_bin].size()) {
-          contacts = mode_matrix->contacts[susc_bin][inf_bin];
-        } else if (matrix && susc_bin < (int)matrix->contacts.size() &&
-                   inf_bin < (int)matrix->contacts[susc_bin].size()) {
-          contacts = matrix->getContacts(susc_bin, inf_bin);
-        }
-
-        if (contacts <= 0.0) continue;
-
-        int bin_size = bins_buffer_[inf_bin].total_size;
-        if (susc_bin == inf_bin) bin_size = std::max(1, bin_size - 1);
-
-        // Force of infection: omega = C / N_bin
-        // (delta_hours is already absorbed into the integrated infectiousness
-        // values stored in total_infectiousness_by_mode)
-        double omega = contacts / bin_size;
-        double contrib = omega * inf_group.total_infectiousness_by_mode[m];
-
-        double weighted = contrib * mode_susc_mult;
-
-        if (weighted > 0.0) {
-          total_lambda_eff += weighted;
-          sources_buffer_.push_back({m, inf_bin});
-          source_weights_buffer_.push_back(weighted);
-        }
-      }
-    }
-
-    // 3a.bis Sibling-mixing contributions (cross-child-venue interaction).
-    // Adds one source per mode summarising infectiousness from all OTHER
-    // children of the same parent. Mathematically:
-    //
-    //   lambda_sibling(m) = (contacts_parent[0][0] /
-    //                       max(1, N_parent_bin0 - N_child_own_bin0)) *
-    //                       (I_parent_bin0_m - I_child_own_bin0_m) *
-    //                       susc_mult(m)
-    //
-    // The parent matrix's contacts already absorb β at load time
-    // (parseContactMatrix multiplies them).
-    if (parent_agg) {
-      const int pbin = 0;  // single-bin parent assumption (enforced above)
-      auto cs_it = parent_agg->child_size_by_bin.find(actual_venue_id);
-      auto ci_it = parent_agg->child_inf_by_bin_mode.find(actual_venue_id);
-      int parent_size = (pbin < (int)parent_agg->size_by_bin.size())
-                            ? parent_agg->size_by_bin[pbin]
-                            : 0;
-      int own_size = (cs_it != parent_agg->child_size_by_bin.end() &&
-                      pbin < (int)cs_it->second.size())
-                         ? cs_it->second[pbin]
-                         : 0;
-      int sibling_size = std::max(1, parent_size - own_size);
-
-      for (int m = 0; m < num_modes; ++m) {
-        const ContactMatrix* pmm =
-            contact_matrices_.getMatrix(parent_agg->parent_venue_type_id, m);
-        if (!pmm) pmm = parent_flat_matrix;
-        if (!pmm || pmm->contacts.empty() || pmm->contacts[0].empty()) continue;
-        double contacts = pmm->contacts[0][0];
-        if (contacts <= 0.0) continue;
-
-        double parent_inf =
-            (pbin < (int)parent_agg->total_inf_by_bin_mode.size())
-                ? parent_agg->total_inf_by_bin_mode[pbin][m]
-                : 0.0;
-        double own_inf = (ci_it != parent_agg->child_inf_by_bin_mode.end() &&
-                          pbin < (int)ci_it->second.size())
-                             ? ci_it->second[pbin][m]
-                             : 0.0;
-        double sibling_inf = parent_inf - own_inf;
-        if (sibling_inf <= 0.0) continue;
-
-        double mode_susc_mult =
-            (m < (int)trans_params.modes.size())
-                ? trans_params.modes[m].susceptibility_multiplier
-                : 1.0;
-        double omega = contacts / sibling_size;
-        double weighted = omega * sibling_inf * mode_susc_mult;
-        if (weighted > 0.0) {
-          total_lambda_eff += weighted;
-          SourceEntry se;
-          se.mode = m;
-          se.inf_bin = SIBLING_INF_BIN_SENTINEL;
-          se.sibling_parent_inf_bin = pbin;
-          sources_buffer_.push_back(se);
-          source_weights_buffer_.push_back(weighted);
-
-          if (debug_parent_mixing_ && dbg_sample_susc_prints_ < 20) {
-            std::cerr << "[PMIX] sibling_FOI venue=" << actual_venue_id
-                      << " parent=" << venue->parent_id << " parent_type="
-                      << (int)parent_agg->parent_venue_type_id
-                      << " susc_bin=" << susc_bin << " mode=" << m
-                      << " contacts=" << contacts
-                      << " parent_inf=" << parent_inf << " own_inf=" << own_inf
-                      << " sibling_inf=" << sibling_inf
-                      << " parent_size=" << parent_size
-                      << " own_size=" << own_size
-                      << " sibling_size=" << sibling_size << " omega=" << omega
-                      << " weighted=" << weighted << std::endl;
-            dbg_sample_susc_prints_++;
-          }
-        }
-      }
-    }
-
-    // Add per-fomite-mode contributions as sentinel sources
-    // (FOMITE_INFECTOR_BIN)
-    for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
-      if (lambda_fomite_by_mode[local_fm] > 0.0) {
-        int fomite_mode_idx = fomite_modes[local_fm].mode_index;
-        double mode_susc_mult =
-            (fomite_mode_idx < (int)trans_params.modes.size())
-                ? trans_params.modes[fomite_mode_idx].susceptibility_multiplier
-                : 1.0;
-        double weighted = lambda_fomite_by_mode[local_fm] * mode_susc_mult;
-        total_lambda_eff += weighted;
-        sources_buffer_.push_back(SourceEntry{fomite_mode_idx, -1});
-        source_weights_buffer_.push_back(weighted);
-      }
-    }
-
-    // Add compartmental uptake FOI for this venue node.
-    // Raw plugin output scaled by per-venue-type foi_scale before applying
-    // susc_mult.
-    if (comp_model && !comp_uptake_modes.empty()) {
-      const float* buf = comp_model->readCouplingOutputs();
-      int node_idx =
-          comp_model->venueToLocalNodeIndex(static_cast<int>(actual_venue_id));
-      if (buf && node_idx >= 0) {
-        float foi_scale =
-            comp_model->getOutputFOIScale(static_cast<int>(venue_type_id), 0);
-        float node_output = buf[node_idx] * foi_scale;
-        for (int mode_idx : comp_uptake_modes) {
-          double mode_susc_mult =
-              (mode_idx < (int)trans_params.modes.size())
-                  ? trans_params.modes[mode_idx].susceptibility_multiplier
-                  : 1.0;
-          double weighted = node_output * mode_susc_mult;
-          if (weighted > 0.0) {
-            total_lambda_eff += weighted;
-            sources_buffer_.push_back(SourceEntry{mode_idx, -2});
-            source_weights_buffer_.push_back(weighted);
-          }
-        }
-      }
-    }
+    appendDirectContactSources(susc_bin, num_bins_needed, num_modes,
+                               is_virtual_encounter, encounter_type_id,
+                               venue_type_id, matrix, trans_params,
+                               total_lambda_eff);
+    appendSiblingMixingSources(susc_bin, num_modes, actual_venue_id, venue,
+                               parent_agg, parent_flat_matrix, trans_params,
+                               total_lambda_eff);
+    appendFomiteSources(num_fomite_modes, fomite_modes, lambda_fomite_by_mode,
+                        trans_params, total_lambda_eff);
+    appendCompUptakeSources(actual_venue_id, venue_type_id, comp_uptake_modes,
+                            comp_model, trans_params, total_lambda_eff);
 
     double total_risk = total_lambda_eff;
 

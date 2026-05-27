@@ -521,6 +521,50 @@ class InteractionManager {
   // all-zero weight per mode are left empty so callers can skip sampling.
   void buildCumulativeWeightsPerBin(int num_bins_needed, int num_modes);
 
+  // STEP 3a: per-(mode, inf_bin) direct-contact source builder for one
+  // susceptible bin. Walks every mode and every infectious bin, computes
+  // omega * inf_total * susc_mult, and appends a SourceEntry{m, inf_bin}
+  // for each positive weight. Mutates sources_buffer_, source_weights_buffer_,
+  // and accumulates into total_lambda_eff. Routes through
+  // lookupContactsForBinPair for the contacts lookup.
+  void appendDirectContactSources(int susc_bin, int num_bins_needed,
+                                  int num_modes, bool is_virtual_encounter,
+                                  uint8_t encounter_type_id,
+                                  uint8_t venue_type_id,
+                                  const ContactMatrix* matrix,
+                                  const TransmissionParams& trans_params,
+                                  double& total_lambda_eff);
+
+  // STEP 3a.bis: append a single SIBLING-mixing source per mode for the
+  // current susceptible bin. Reads from the parent ParentAggregate, subtracts
+  // own-child contributions, and pushes one SourceEntry with the
+  // SIBLING_INF_BIN_SENTINEL into sources_buffer_. Bumps dbg_sample_susc_prints_
+  // for verbose parent-mixing diagnostics. No-op if parent_agg == nullptr.
+  void appendSiblingMixingSources(int susc_bin, int num_modes,
+                                  VenueId actual_venue_id, const Venue* venue,
+                                  const ParentAggregate* parent_agg,
+                                  const ContactMatrix* parent_flat_matrix,
+                                  const TransmissionParams& trans_params,
+                                  double& total_lambda_eff);
+
+  // STEP 3a: append per-fomite-mode sentinel sources (inf_bin = -1) to the
+  // current susceptible bin. Multiplies lambda_fomite_by_mode[fm] by the
+  // mode's susceptibility multiplier.
+  void appendFomiteSources(int num_fomite_modes,
+                           const std::vector<FomiteModeRef>& fomite_modes,
+                           const std::vector<double>& lambda_fomite_by_mode,
+                           const TransmissionParams& trans_params,
+                           double& total_lambda_eff);
+
+  // STEP 3a: append compartmental-uptake sentinel sources (inf_bin = -2) to
+  // the current susceptible bin. Reads the plugin's coupling output buffer,
+  // scales by the venue-type foi_scale, and applies each mode's susc_mult.
+  void appendCompUptakeSources(VenueId actual_venue_id, uint8_t venue_type_id,
+                               const std::vector<int>& comp_uptake_modes,
+                               const CompartmentalModelManager* comp_model,
+                               const TransmissionParams& trans_params,
+                               double& total_lambda_eff);
+
   // STEP 1 per-member body in processVenueTransmissions: resolve
   // person/visitor, compute bin_index (with DEBUG fallback log), update
   // used_bins_ + total_size, then dispatch infectiousness (visitor or local),
