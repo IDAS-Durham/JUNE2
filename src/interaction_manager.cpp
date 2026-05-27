@@ -1763,6 +1763,21 @@ InteractionManager::computePartialPresenceLambda(
   return result;
 }
 
+uint16_t InteractionManager::resolveInfectorSymptomId(
+    PersonId infector_id, double current_time,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
+  if (infector_id < 0) return 0;
+  Person* infp = world_.getPerson(infector_id);
+  if (infp && infp->infection) {
+    return infp->infection->getTrajectory().getCurrentSymptomId(current_time);
+  }
+  if (!infp && visitor_data) {
+    auto vit = visitor_data->find(infector_id);
+    if (vit != visitor_data->end()) return vit->second.symptom_id;
+  }
+  return 0;
+}
+
 std::pair<int, PersonId> InteractionManager::sampleInfectorFromAccumSources(
     std::vector<PartialPresenceAccumSource>& srcs, SplitMix64& rng) const {
   if (srcs.empty()) return {0, -1};
@@ -1865,18 +1880,8 @@ int InteractionManager::processPartialPresenceVenue(
           sampleInfectorFromAccumSources(src_it->second, susc_rng);
     }
 
-    uint16_t infector_symptom_id = 0;
-    if (infector_id >= 0) {
-      Person* infp = world_.getPerson(infector_id);
-      if (infp && infp->infection) {
-        infector_symptom_id =
-            infp->infection->getTrajectory().getCurrentSymptomId(current_time);
-      } else if (!infp && visitor_data) {
-        auto vit = visitor_data->find(infector_id);
-        if (vit != visitor_data->end())
-          infector_symptom_id = vit->second.symptom_id;
-      }
-    }
+    uint16_t infector_symptom_id =
+        resolveInfectorSymptomId(infector_id, current_time, visitor_data);
 
     const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
     const bool is_visitor_susc = (visitor != nullptr);
