@@ -1,0 +1,15 @@
+name: june2
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - cxx-compiler
+  - cmake>=3.14
+  - hdf5
+  - yaml-cpp
+  - openmpi
+  - mpi4py
+  - metis       # optional: graph partitioning for MPI domain decomposition
+  - gperftools  # optional: CPU profiling
+  - h5py
+  - numpy
