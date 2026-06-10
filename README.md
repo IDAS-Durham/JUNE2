@@ -10,6 +10,17 @@ JUNE 2 is a high-performance, event-driven, agent-based disease simulation frame
 - **MPI-parallel**: domain-decomposed across geographic units, with output that is bit-identical across rank counts (given the same random seed).
 - **Scenarios shipped**: COVID-19 (2021 census), plague (medieval), and historical 1911 Durham.
 
+## Performance
+
+JUNE 2 is a from-the-ground-up remake of the original [JUNE](https://github.com/IDAS-Durham/JUNE) engine. On an identical scenario it runs roughly **19× faster**:
+
+| Engine | Runtime | Speedup |
+|---|---|---|
+| JUNE 1 | 243 s | 1× |
+| JUNE 2 | **13 s** | **~19× faster** |
+
+*Benchmark scenario:* ~0.5M people, 58 London MSOAs (MGUs), 30-day COVID-19 epidemic, 2 MPI ranks, on a 16 GB MacBook Pro (M3). Both engines run the same population, geography, and epidemic parameters.
+
 ## Repository layout
 
 ```
