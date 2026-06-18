@@ -5,6 +5,7 @@
 // kept in namespace `june::detail` and intended only for these two TUs.
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -100,6 +101,23 @@ void loadActivityMappingsInSpan(
 void loadMembershipMetadata(
     HDF5Loader& loader,
     const std::unordered_map<PersonId, size_t>& local_person_idx_map);
+
+// Sentinel returned by matchMembershipRowToFlatIndex when a side-table row
+// has no corresponding entry in the person's activity_venues.
+constexpr uint32_t kAbsentFlatIndex =
+    std::numeric_limits<uint32_t>::max();
+
+// Find the flat index into world.activity_venues for a single
+// membership-metadata side-table row belonging to `person`. Matches on
+// venue_id alone when subset_index is nullptr (old worlds, pre subset_index
+// column); matches on (venue_id, subset_index) when it is non-null, which
+// disambiguates multiple Subsets a person holds at the same Venue (e.g. two
+// Feast accommodation memberships sharing one guest house). Returns
+// kAbsentFlatIndex if no candidate venue matches.
+uint32_t matchMembershipRowToFlatIndex(const WorldState& world,
+                                       const Person& person,
+                                       VenueId venue_id,
+                                       const SubsetIndex* subset_index);
 
 // Load /venues/subsets for every owned geo_unit, intern subset type names,
 // then sort by (venue_id, subset_index) and link each contiguous run back
