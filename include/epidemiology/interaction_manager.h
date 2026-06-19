@@ -151,6 +151,10 @@ struct CarriageMember {
   const VisitorInfo* visitor;
   float eff_board;
   float eff_alight;
+  // Per-rider presence cap f_p = min(1, slot / T_p). Scales this rider's FOI
+  // contribution as BOTH source (f_I) and sink (f_S) so its total modeled
+  // commute presence stays ≤ one slot-hour. 1.0 for journeys that fit a slot.
+  float f_presence;
   int matrix_bin;
 };
 
@@ -356,10 +360,11 @@ class InteractionManager {
       uint16_t num_bins,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
-  // Collect [0, eff_board, eff_alight, slot_duration_min] event times for one
-  // carriage, sort and de-duplicate within 1e-5 tolerance. The accumulator
-  // walks sub-intervals delimited by consecutive entries. Returns the deduped
-  // event times.
+  // Collect the carriage's raw {eff_board, eff_alight} offsets as event times,
+  // sort and de-duplicate within 1e-5 tolerance. Sub-intervals span the
+  // venue's own [min board, max alight] range (the windows are raw line-local
+  // offsets, not [0, slot]). The accumulator walks the sub-intervals delimited
+  // by consecutive entries. Returns the deduped event times.
   std::vector<float> collectSubIntervalEventTimes(
       const std::vector<CarriageMember>& car, float slot_duration_min) const;
 
