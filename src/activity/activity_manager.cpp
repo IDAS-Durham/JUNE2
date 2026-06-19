@@ -11,9 +11,7 @@ namespace june {
 ActivityManager::ActivityManager(WorldState& world, const Config& config)
     : world_(world),
       config_(config),
-      base_seed_(config.simulation.random_seed) {
-  venues_by_id_buffer_.resize(world_.venue_type_names.size());
-}
+      base_seed_(config.simulation.random_seed) {}
 
 void ActivityManager::setPolicyManager(PolicyManager* policy_manager) {
   policy_manager_ = policy_manager;

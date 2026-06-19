@@ -81,7 +81,10 @@ class ActivityManager {
                          size_t slot_idx, const ScheduleType* schedule_type,
                          int day_type_idx, uint64_t time_key);
 
-  // Select specific venue/subset for an activity
+  // Select specific venue/subset for an activity.
+  // Not re-entrant: hierarchical sampling uses thread_local scratch buffers
+  // shared across calls on the same thread, so calls must be sequential per
+  // thread (safe across threads, not safe recursively/interleaved).
   std::pair<VenueId, SubsetIndex> selectVenue(
       const Person& person, int16_t activity_idx,
       const TimeSlot&
@@ -95,18 +98,6 @@ class ActivityManager {
   int16_t residence_act_idx_ = -1;
   int16_t none_act_idx_ = -1;
   int16_t no_venue_act_idx_ = -1;
-
-  // Optimization buffers (reused to avoid allocations)
-  std::vector<std::vector<std::pair<VenueId, SubsetIndex>>>
-      venues_by_id_buffer_;
-  std::vector<uint8_t> venue_type_ids_buffer_;
-  std::vector<double> weights_buffer_;
-  // Cumulative-weight scratch reused per selectVenue() call. Built from
-  // weights_buffer_ via buildCumulative; sampled with sampleFromCumulative.
-  // Replaces a per-call std::discrete_distribution construction.
-  std::vector<double> cumulative_buffer_;
-  // Cross-rank venues (not loaded locally) collected during selectVenue()
-  std::vector<std::pair<VenueId, SubsetIndex>> cross_rank_venues_buffer_;
 
   void ensureIndicesCached();
 
@@ -144,18 +135,18 @@ class ActivityManager {
                                           int16_t activity_idx) const;
 
   // Step 1 of selectVenue's hierarchical pick: groups `venues` by their
-  // venue type id into venues_by_id_buffer_, tracks the populated type ids
-  // in venue_type_ids_buffer_, and collects cross-rank / unknown-type
-  // venues into cross_rank_venues_buffer_. All three buffers are cleared
-  // first.
+  // venue type id into the thread_local venues_by_id_buffer, tracks the
+  // populated type ids in venue_type_ids_buffer, and collects cross-rank /
+  // unknown-type venues into cross_rank_venues_buffer. All three buffers
+  // are cleared first.
   void groupVenuesByType(
       std::span<const std::pair<VenueId, SubsetIndex>> venues);
 
   // Step 2 of selectVenue's hierarchical pick: picks a venue type id from
-  // venue_type_ids_buffer_ weighted by activity preferences (filling
-  // weights_buffer_ and cumulative_buffer_ as it goes). Caller must have
+  // venue_type_ids_buffer weighted by activity preferences (filling
+  // weights_buffer and cumulative_buffer as it goes). Caller must have
   // populated the buffers via groupVenuesByType and verified
-  // !venue_type_ids_buffer_.empty().
+  // !venue_type_ids_buffer.empty().
   uint8_t pickWeightedVenueType(const Person& person, int16_t activity_idx,
                                 SplitMix64& rng);
 

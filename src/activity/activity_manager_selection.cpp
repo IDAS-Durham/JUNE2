@@ -6,6 +6,20 @@
 
 namespace june {
 
+namespace {
+// Hierarchical venue-selection scratch buffers, shared by selectVenue,
+// groupVenuesByType and pickWeightedVenueType. thread_local so concurrent
+// calls from different threads don't corrupt each other's state; calls on
+// the same thread must still be sequential (not re-entrant).
+thread_local std::vector<std::vector<std::pair<VenueId, SubsetIndex>>>
+    venues_by_id_buffer;
+thread_local std::vector<uint8_t> venue_type_ids_buffer;
+thread_local std::vector<double> weights_buffer;
+thread_local std::vector<double> cumulative_buffer;
+thread_local std::vector<std::pair<VenueId, SubsetIndex>>
+    cross_rank_venues_buffer;
+}  // namespace
+
 int16_t ActivityManager::selectActivity(const Person& person,
                                         const TimeSlot& slot, size_t slot_idx,
                                         const ScheduleType* schedule_type,
@@ -129,6 +143,10 @@ int16_t ActivityManager::pickActivityByRate(
   return available_indices.back();
 }
 
+// Not re-entrant: hierarchical sampling below uses thread_local scratch
+// buffers shared across calls on the same thread, so calls must be
+// sequential per thread (safe across threads, not safe recursively or
+// interleaved on the same thread).
 std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
     const Person& person, int16_t activity_idx, const TimeSlot& slot,
     uint64_t time_key) {
@@ -152,12 +170,12 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
   // 1. Group available venues by their category (type ID)
   groupVenuesByType(venues);
 
-  if (venue_type_ids_buffer_.empty()) {
+  if (venue_type_ids_buffer.empty()) {
     // No local venues found – fall back to cross-rank venues if any
-    if (!cross_rank_venues_buffer_.empty()) {
+    if (!cross_rank_venues_buffer.empty()) {
       std::uniform_int_distribution<size_t> dist(
-          0, cross_rank_venues_buffer_.size() - 1);
-      return cross_rank_venues_buffer_[dist(rng)];
+          0, cross_rank_venues_buffer.size() - 1);
+      return cross_rank_venues_buffer[dist(rng)];
     }
     return {-1, -1};
   }
@@ -166,7 +184,7 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
   uint8_t chosen_type_id = pickWeightedVenueType(person, activity_idx, rng);
 
   // 3. Select a specific venue within that category
-  const auto& filtered_venues = venues_by_id_buffer_[chosen_type_id];
+  const auto& filtered_venues = venues_by_id_buffer[chosen_type_id];
   std::uniform_int_distribution<size_t> venue_dist(0,
                                                    filtered_venues.size() - 1);
   return filtered_venues[venue_dist(rng)];
@@ -203,9 +221,14 @@ ActivityManager::tryPickSpecifiedVenue(
 
 void ActivityManager::groupVenuesByType(
     std::span<const std::pair<VenueId, SubsetIndex>> venues) {
-  for (auto& buffer : venues_by_id_buffer_) buffer.clear();
-  venue_type_ids_buffer_.clear();
-  cross_rank_venues_buffer_.clear();
+  // Lazy first-use sizing: thread_local statics can't be sized from the
+  // constructor, so size on first call per thread instead.
+  if (venues_by_id_buffer.size() != world_.venue_type_names.size()) {
+    venues_by_id_buffer.resize(world_.venue_type_names.size());
+  }
+  for (auto& buffer : venues_by_id_buffer) buffer.clear();
+  venue_type_ids_buffer.clear();
+  cross_rank_venues_buffer.clear();
 
   for (const auto& v_entry : venues) {
     // Use getVenueTypeId which works for both local and cross-rank venues
@@ -214,15 +237,15 @@ void ActivityManager::groupVenuesByType(
     uint8_t v_type_id = world_.getVenueTypeId(v_entry.first);
     if (v_type_id == 255) {
       // Unknown venue type; collect for fallback
-      cross_rank_venues_buffer_.push_back(v_entry);
+      cross_rank_venues_buffer.push_back(v_entry);
       continue;
     }
 
-    if (v_type_id < venues_by_id_buffer_.size()) {
-      if (venues_by_id_buffer_[v_type_id].empty()) {
-        venue_type_ids_buffer_.push_back(v_type_id);
+    if (v_type_id < venues_by_id_buffer.size()) {
+      if (venues_by_id_buffer[v_type_id].empty()) {
+        venue_type_ids_buffer.push_back(v_type_id);
       }
-      venues_by_id_buffer_[v_type_id].push_back(v_entry);
+      venues_by_id_buffer[v_type_id].push_back(v_entry);
     }
   }
 }
@@ -230,22 +253,22 @@ void ActivityManager::groupVenuesByType(
 uint8_t ActivityManager::pickWeightedVenueType(const Person& person,
                                                int16_t activity_idx,
                                                SplitMix64& rng) {
-  weights_buffer_.clear();
-  for (uint8_t type_id : venue_type_ids_buffer_) {
-    weights_buffer_.push_back(config_.activity_preferences.getWeight(
+  weights_buffer.clear();
+  for (uint8_t type_id : venue_type_ids_buffer) {
+    weights_buffer.push_back(config_.activity_preferences.getWeight(
         person, activity_idx, type_id, &world_));
     stats_.weights_cached++;
   }
 
   // Build cumulative weights and sample (replaces std::discrete_distribution
   // with same complexity, no per-call allocation).
-  double total_w = buildCumulative(weights_buffer_, cumulative_buffer_);
+  double total_w = buildCumulative(weights_buffer, cumulative_buffer);
   size_t chosen_idx = 0;
   if (total_w > 0.0) {
-    int s = sampleFromCumulative(cumulative_buffer_, rng);
+    int s = sampleFromCumulative(cumulative_buffer, rng);
     if (s >= 0) chosen_idx = static_cast<size_t>(s);
   }
-  return venue_type_ids_buffer_[chosen_idx];
+  return venue_type_ids_buffer[chosen_idx];
 }
 
 }  // namespace june
