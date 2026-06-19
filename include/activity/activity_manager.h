@@ -17,6 +17,7 @@
 namespace june {
 
 class PolicyManager;
+class CalendarEventManager;
 
 class ActivityManager {
  public:
@@ -42,6 +43,10 @@ class ActivityManager {
 
   // Set policy manager (for runtime behavior overrides)
   void setPolicyManager(PolicyManager* policy_manager);
+
+  // Set calendar-event manager (optional; drives calendar-triggered venue
+  // resolution in selectVenue and active-event clearing on hop completion).
+  void setCalendarEventManager(CalendarEventManager* calendar_event_manager);
 
   // Set current simulation time (needed for policy checks)
   void setCurrentTime(double current_time) {
@@ -71,6 +76,9 @@ class ActivityManager {
 
   // Policy manager (optional - nullptr if no policies)
   PolicyManager* policy_manager_ = nullptr;
+
+  // Calendar-event manager (optional - nullptr if no calendar events)
+  CalendarEventManager* calendar_event_manager_ = nullptr;
 
   // Current simulation time (for policy checks)
   double current_simulation_time_ = 0.0;

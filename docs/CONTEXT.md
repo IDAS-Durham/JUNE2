@@ -25,23 +25,23 @@ occupants within a guest-house). Membership is pre-baked at world-build
 time and not modified during the simulation run. `subset_index` is local
 to its Venue, so the pair `(venue_id, subset_index)` identifies a Subset
 uniquely and globally — regardless of which Activity reaches it. This
-holds even when a Venue hosts multiple Subsets serving different Feasts
-(see **Feast**).
+holds even when a Venue hosts multiple Subsets serving different Fairs
+(see **Fair**).
 _Avoid_: group (too generic), cohort.
 
-**Feast**:
+**Fair**:
 A one-off scheduled event (not an Activity) that some people attend on a
 specific date, requiring temporary accommodation away from residence.
-Identified by a `feast_id`. A Feast has its own pool of candidate
+Identified by a `fair_id`. A Fair has its own pool of candidate
 accommodation Venues (Subsets), which is reused across many different
-Feasts over the course of a simulation — venue identity alone does not
-identify which Feast an accommodation assignment belongs to.
-_Avoid_: fair, event (use **Feast** specifically for this recurring
-scheduled-attendance concept).
+Fairs over the course of a simulation — venue identity alone does not
+identify which Fair an accommodation assignment belongs to.
+_Avoid_: feast, event (use **Fair** specifically for this recurring
+scheduled-attendance concept; matches the source dataset's own term).
 
 **Membership field**:
 A sparse, named per-(person, Venue-membership) metadata value (e.g.
-boarding/alighting time for a route leg, `feast_id` for a
+boarding/alighting time for a route leg, `fair_id` for a
 `Fair_accommodation` membership). Used when a person's candidate Venue
 list for an Activity needs disambiguating by something other than venue
 identity.
@@ -52,12 +52,12 @@ identity.
   (+ **Subset**) references — populated at world-load, never grown during
   the simulation.
 - A **Person** may have multiple candidate accommodation Venues under the
-  single `Fair_accommodation` **Activity** — one per **Feast** attended.
-  These are disambiguated via the `feast_id` **Membership field**, not by
+  single `Fair_accommodation` **Activity** — one per **Fair** attended.
+  These are disambiguated via the `fair_id` **Membership field**, not by
   Venue identity.
-- A **Feast** is not itself an **Activity** — it is calendar data that
+- A **Fair** is not itself an **Activity** — it is calendar data that
   triggers a schedule hop into the (constant) `Fair_accommodation`
-  **Activity**, with the specific **Venue** resolved via the `feast_id`
+  **Activity**, with the specific **Venue** resolved via the `fair_id`
   **Membership field** match.
 
 ## Flagged ambiguities
@@ -67,3 +67,6 @@ identity.
   disambiguating among several already-known candidate Venues at the
   moment an event fires. JUNE2 only supports (b) — see ADR
   `0002-fair-accommodation-venue-resolution.md`.
+- An earlier session used the term "Feast" for this concept before
+  settling on **Fair** (2026-06-19) — if "Feast" appears in older notes
+  or branches, read it as **Fair**.

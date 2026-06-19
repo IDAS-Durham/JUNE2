@@ -1,6 +1,7 @@
 #include <random>
 
 #include "activity/activity_manager.h"
+#include "epidemiology/calendar_event.h"
 #include "utils/deterministic_rng.h"
 #include "utils/random.h"
 
@@ -150,6 +151,17 @@ int16_t ActivityManager::pickActivityByRate(
 std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
     const Person& person, int16_t activity_idx, const TimeSlot& slot,
     uint64_t time_key) {
+  // Calendar-event guard: if the person has an active calendar event whose
+  // membership field tags one of their candidate venues for this activity,
+  // that venue wins (re-derived fresh, never cached — ADR 0002). Mirrors the
+  // tryPickSpecifiedVenue pattern: a thin top-of-function delegation that
+  // leaves every non-calendar-event person/activity untouched.
+  if (calendar_event_manager_) {
+    auto resolved = calendar_event_manager_->resolveCalendarEventVenue(
+        world_, person, activity_idx);
+    if (resolved.first != -1) return resolved;
+  }
+
   if (activity_idx == no_venue_act_idx_) {
     return {-1, -1};
   }

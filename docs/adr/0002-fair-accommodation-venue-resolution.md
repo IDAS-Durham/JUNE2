@@ -2,7 +2,12 @@
 status: accepted
 ---
 
-# Fair accommodation: static per-feast Subsets, disambiguated by a `feast_id` membership field, not dynamic runtime venue resolution
+> **Terminology note (2026-06-19):** this ADR was written using "feast"/
+> `feast_id`; the project has since settled on **Fair**/`fair_id` (see
+> `docs/CONTEXT.md`) to match the source dataset's own term. Read "feast"
+> below as "Fair" — the decision is unchanged, only the name.
+
+# Fair accommodation: static per-fair Subsets, disambiguated by a `fair_id` membership field, not dynamic runtime venue resolution
 
 ## Context
 Feast accommodation needed a representation buildable into JUNE's

@@ -2,6 +2,7 @@
 
 #include <iomanip>
 
+#include "epidemiology/calendar_event.h"
 #include "epidemiology/policy.h"
 #include "utils/deterministic_rng.h"
 #include "utils/random.h"
@@ -15,6 +16,11 @@ ActivityManager::ActivityManager(WorldState& world, const Config& config)
 
 void ActivityManager::setPolicyManager(PolicyManager* policy_manager) {
   policy_manager_ = policy_manager;
+}
+
+void ActivityManager::setCalendarEventManager(
+    CalendarEventManager* calendar_event_manager) {
+  calendar_event_manager_ = calendar_event_manager;
 }
 
 void ActivityManager::assignScheduleTypes() {
@@ -184,6 +190,10 @@ bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
     person.hopped_schedule_id = -1;
     person.return_schedule_id = -1;
     person.temp_slot_progress = 0;
+    // Hop complete: clear any calendar-event id so a stale venue is never
+    // resolved before the next event triggers (ADR 0002).
+    if (calendar_event_manager_)
+      calendar_event_manager_->onHopCompleted(person.id);
   }
   return true;
 }
