@@ -9,24 +9,28 @@
 namespace june {
 
 void checkConfigConsistency(const Config& config, const WorldState& world) {
-  // --- BUG-S02: bitmask width ---
-  // All activity and venue-type bitmask fields are uint32_t, so at most 32
-  // distinct names are supported. Abort early rather than silently dropping
-  // high-index activities or venue types.
-  constexpr size_t kMaskWidth = 32;
-  if (world.activity_names.size() > kMaskWidth) {
+  // Activity bitmasks (e.g. allowed_activity_mask) are ActivityMask
+  // (__uint128_t), so at most 128 distinct activity names are supported.
+  // Abort early rather than silently dropping high-index activities.
+  constexpr size_t kActivityMaskWidth = 128;
+  if (world.activity_names.size() > kActivityMaskWidth) {
     throw std::runtime_error(
         "Configuration error: " + std::to_string(world.activity_names.size()) +
         " activity types registered, but bitmask width is only " +
-        std::to_string(kMaskWidth) +
+        std::to_string(kActivityMaskWidth) +
         ". Reduce the number of activity types or widen the mask type.");
   }
-  if (world.venue_type_names.size() > kMaskWidth) {
+  // Venue-type masks also top out at 128 bits (ActivityMask, reused for
+  // allowed_venue_mask). Features with a narrower mask (e.g. the 64-bit
+  // enabled_venue_type_mask for partial presence) are checked separately
+  // where that mask is resolved.
+  constexpr size_t kVenueTypeMaskWidth = 128;
+  if (world.venue_type_names.size() > kVenueTypeMaskWidth) {
     throw std::runtime_error(
         "Configuration error: " +
         std::to_string(world.venue_type_names.size()) +
         " venue types registered, but bitmask width is only " +
-        std::to_string(kMaskWidth) +
+        std::to_string(kVenueTypeMaskWidth) +
         ". Reduce the number of venue types or widen the mask type.");
   }
 
