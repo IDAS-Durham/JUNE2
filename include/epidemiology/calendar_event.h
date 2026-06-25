@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/config.h"
 #include "core/types.h"
 
 namespace june {
@@ -27,6 +28,12 @@ struct CalendarEvent {
   int start_day = -1;              // sim day (0-based) the event triggers on
   int16_t schedule_type_idx = -1;  // index into ScheduleConfig::schedule_types
   float compliance_rate = 1.0f;    // P(an eligible attendee actually hops)
+  int16_t duration_days = 1;       // number of schedule-hop days (default 1)
+  // Catchment-rule fields (catchment_rule_id == -1 → membership-field scan path)
+  int32_t catchment_rule_id = -1;
+  GeoUnitId hosting_geo_unit_id = -1;
+  std::string venue_type_name;
+  std::vector<SelectionCriterion> attendee_filters;
   // Diagnostics only — never used to pick attendees or resolve venues:
   VenueId venue_id = -1;
   SubsetIndex subset_index = -1;
@@ -47,16 +54,22 @@ class CalendarEventManager {
   void mergeEvents(const std::vector<std::vector<CalendarEvent>>& events_by_day);
 
   // Fire all events scheduled for `day`: for each, find its attendees (via the
-  // membership reverse-scan), and for each compliant, non-colliding attendee
-  // set the hop fields and record the active calendar_event_id. `base_seed`
-  // drives the deterministic per-(person, event) compliance roll.
-  void triggerEventsForDay(int day, const WorldState& world,
-                           std::vector<Person>& people, uint64_t base_seed);
+  // membership reverse-scan or catchment-rule geo_unit lookup), and for each
+  // compliant, non-colliding attendee set the hop fields and record the active
+  // calendar_event_id. `base_seed` drives compliance rolls and venue hashing.
+  // `catchment_rules` maps catchment_rule_id -> geo_unit list; may be empty
+  // (falls back to membership-field scan for all events).
+  void triggerEventsForDay(
+      int day, const WorldState& world, std::vector<Person>& people,
+      uint64_t base_seed,
+      const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules =
+          {});
 
   // Resolve the Venue for `person`'s active calendar event under `activity_idx`.
-  // Returns {-1,-1} if the person has no active event, or if none of their
-  // candidate Venues for `activity_idx` carries a matching calendar_event_id
-  // membership value. Activity-agnostic: rows without the field never match.
+  // For catchment-rule events: hashes person+event id to pick among
+  // getVenuesInGeoUnit candidates. For membership-field events: scans candidate
+  // venues for a matching calendar_event_id membership value.
+  // Returns {-1,-1} if the person has no active event or no venue can be found.
   std::pair<VenueId, SubsetIndex> resolveCalendarEventVenue(
       const WorldState& world, const Person& person, int16_t activity_idx) const;
 
@@ -94,15 +107,24 @@ class CalendarEventManager {
   std::vector<std::vector<CalendarEvent>> events_by_day_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
+  // person -> pointer to the event that triggered their current hop.
+  mutable std::unordered_map<PersonId, const CalendarEvent*> active_event_data_;
   // Lazily-built attendee cache: calendar_event_id -> attendee PersonIds.
   mutable std::unordered_map<int32_t, std::vector<PersonId>> attendees_by_event_;
   Stats stats_;
+  uint64_t base_seed_ = 0;  // set by triggerEventsForDay, used by resolver
+
+  // Attendees for a catchment-rule event: gathered from people_by_geo_unit for
+  // each geo_unit in the catchment rule, filtered by event.attendee_filters.
+  std::vector<PersonId> attendeesForCatchmentEvent(
+      const CalendarEvent& event, const WorldState& world,
+      const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
+          catchment_rules) const;
 
   // Attendees of `calendar_event_id`, derived by scanning membership rows for a
   // matching value (cached). `cei_field` is the resolved membership-field index.
-  const std::vector<PersonId>& attendeesForEvent(int32_t calendar_event_id,
-                                                 const WorldState& world,
-                                                 int cei_field) const;
+  const std::vector<PersonId>& attendeesForMembershipEvent(
+      int32_t calendar_event_id, const WorldState& world, int cei_field) const;
 };
 
 }  // namespace june

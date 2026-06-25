@@ -1,5 +1,6 @@
 #pragma once
 
+#include <istream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -29,6 +30,10 @@ struct FilteredTable {
 /// columns are value columns. Comment lines starting with '#' and blank lines
 /// are skipped. Throws std::runtime_error on open failure or empty file.
 FilteredTable loadFilteredCSV(const std::string& path);
+
+/// Stream form: same as above but reads from an open stream. `source_name` is
+/// used in error messages. Throws std::runtime_error on empty/comment-only input.
+FilteredTable loadFilteredCSV(std::istream& input, const std::string& source_name);
 
 }  // namespace csv
 }  // namespace june

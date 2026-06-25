@@ -1,11 +1,13 @@
 #include "epidemiology/calendar_event.h"
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <stdexcept>
 
 #include "core/world_state.h"
 #include "utils/deterministic_rng.h"
+#include "utils/filtering.h"
 
 namespace june {
 
@@ -34,7 +36,7 @@ void CalendarEventManager::mergeEvents(
   }
 }
 
-const std::vector<PersonId>& CalendarEventManager::attendeesForEvent(
+const std::vector<PersonId>& CalendarEventManager::attendeesForMembershipEvent(
     int32_t calendar_event_id, const WorldState& world, int cei_field) const {
   auto cached = attendees_by_event_.find(calendar_event_id);
   if (cached != attendees_by_event_.end()) return cached->second;
@@ -59,25 +61,69 @@ const std::vector<PersonId>& CalendarEventManager::attendeesForEvent(
       .first->second;
 }
 
-void CalendarEventManager::triggerEventsForDay(int day, const WorldState& world,
-                                               std::vector<Person>& people,
-                                               uint64_t base_seed) {
+std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
+    const CalendarEvent& event, const WorldState& world,
+    const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
+        catchment_rules) const {
+  std::vector<PersonId> attendees;
+  auto rule_it = catchment_rules.find(event.catchment_rule_id);
+  if (rule_it == catchment_rules.end()) return attendees;
+
+  for (GeoUnitId geo_unit_id : rule_it->second) {
+    auto ppl_it = world.people_by_geo_unit.find(geo_unit_id);
+    if (ppl_it == world.people_by_geo_unit.end()) continue;
+    for (uint32_t person_idx : ppl_it->second) {
+      const Person& person = world.people[person_idx];
+      if (event.attendee_filters.empty() ||
+          filtering::matchesCriteria(person, &world, event.attendee_filters)) {
+        attendees.push_back(person.id);
+      }
+    }
+  }
+  return attendees;
+}
+
+void CalendarEventManager::triggerEventsForDay(
+    int day, const WorldState& world, std::vector<Person>& people,
+    uint64_t base_seed,
+    const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules) {
   if (day < 0 || day >= static_cast<int>(events_by_day_.size())) return;
   const auto& todays_events = events_by_day_[day];
   if (todays_events.empty()) return;
 
-  int cei_field = world.getMembershipFieldIndex(kCalendarEventIdField);
-  if (cei_field < 0) {
-    throw std::runtime_error(
-        std::string("CalendarEventManager: world has no '") +
-        kCalendarEventIdField +
-        "' membership field, but calendar events are configured");
+  base_seed_ = base_seed;
+
+  // Only check for membership field when there are non-catchment events.
+  int cei_field = -1;
+  auto needs_membership = [](const CalendarEvent& e) {
+    return e.catchment_rule_id < 0;
+  };
+  bool any_membership = std::any_of(todays_events.begin(), todays_events.end(),
+                                    needs_membership);
+  if (any_membership) {
+    cei_field = world.getMembershipFieldIndex(kCalendarEventIdField);
+    if (cei_field < 0) {
+      throw std::runtime_error(
+          std::string("CalendarEventManager: world has no '") +
+          kCalendarEventIdField +
+          "' membership field, but calendar events are configured");
+    }
   }
 
   for (const auto& event : todays_events) {
-    const std::vector<PersonId>& attendees =
-        attendeesForEvent(event.calendar_event_id, world, cei_field);
-    for (PersonId pid : attendees) {
+    // Resolve attendee list: geography path or membership-field scan.
+    std::vector<PersonId> catchment_attendees;
+    const std::vector<PersonId>* attendee_ptr = nullptr;
+    if (event.catchment_rule_id >= 0) {
+      catchment_attendees =
+          attendeesForCatchmentEvent(event, world, catchment_rules);
+      attendee_ptr = &catchment_attendees;
+    } else {
+      attendee_ptr = &attendeesForMembershipEvent(event.calendar_event_id,
+                                                  world, cei_field);
+    }
+
+    for (PersonId pid : *attendee_ptr) {
       auto idx_it = world.person_index.find(pid);
       if (idx_it == world.person_index.end()) continue;  // not on this rank
       Person& person = people[idx_it->second];
@@ -100,7 +146,9 @@ void CalendarEventManager::triggerEventsForDay(int day, const WorldState& world,
       person.hopped_schedule_id = event.schedule_type_idx;
       person.return_schedule_id = -1;  // return to original schedule
       person.temp_slot_progress = 0;
+      person.hop_repeats_remaining = event.duration_days;
       active_event_[person.id] = event.calendar_event_id;
+      active_event_data_[person.id] = &event;
       ++stats_.triggered;
     }
   }
@@ -112,6 +160,21 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
   if (active_it == active_event_.end()) return {-1, -1};
   int32_t active_id = active_it->second;
 
+  // Catchment-rule path: dynamic hashed venue selection.
+  auto data_it = active_event_data_.find(person.id);
+  if (data_it != active_event_data_.end() && data_it->second != nullptr) {
+    const CalendarEvent& event = *data_it->second;
+    if (event.catchment_rule_id >= 0) {
+      std::vector<VenueId> candidates =
+          world.getVenuesInGeoUnit(event.hosting_geo_unit_id, event.venue_type_name);
+      if (candidates.empty()) return {-1, -1};
+      uint64_t h = SplitMix64(mix_seed(base_seed_, static_cast<uint64_t>(person.id),
+                                       static_cast<uint64_t>(active_id)))();
+      return {candidates[h % candidates.size()], 0};
+    }
+  }
+
+  // Membership-field path (non-catchment events or stale data).
   int cei_field = world.getMembershipFieldIndex(kCalendarEventIdField);
   if (cei_field < 0) return {-1, -1};
 
@@ -130,6 +193,7 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
 
 void CalendarEventManager::onHopCompleted(PersonId person_id) {
   active_event_.erase(person_id);
+  active_event_data_.erase(person_id);
 }
 
 const std::vector<CalendarEvent>& CalendarEventManager::eventsForDay(

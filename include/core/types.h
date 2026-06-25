@@ -197,7 +197,8 @@ struct Person {
   int16_t hopped_schedule_id = -1;  // index into ScheduleConfig::schedule_types
   int16_t return_schedule_id =
       -1;  // schedule to restore after temp; -1 = original
-  int16_t temp_slot_progress = 0;  // next flat_slots index to execute
+  int16_t temp_slot_progress = 0;    // next flat_slots index to execute
+  int16_t hop_repeats_remaining = 0; // days left in a multi-day event (0 = single-day/no repeat)
 
   // Per-day cached decision for activities listed in this person's
   // ScheduleType.linked_activities. All listed activities share one outcome

@@ -2,35 +2,14 @@
 
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
 #include "core/world_state.h"
+#include "utils/filtered_csv.h"
 #include "utils/time_utils.h"
 
 namespace june {
-
-namespace {
-
-constexpr int kExpectedColumns = 7;
-
-std::string trim(const std::string& s) {
-  size_t begin = s.find_first_not_of(" \t\r\n");
-  if (begin == std::string::npos) return "";
-  size_t end = s.find_last_not_of(" \t\r\n");
-  return s.substr(begin, end - begin + 1);
-}
-
-std::vector<std::string> splitCsvLine(const std::string& line) {
-  std::vector<std::string> fields;
-  std::stringstream ss(line);
-  std::string field;
-  while (std::getline(ss, field, ',')) fields.push_back(trim(field));
-  return fields;
-}
-
-}  // namespace
 
 std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
     std::istream& input, const WorldState& world,
@@ -41,49 +20,74 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
 
   std::tm sim_start_tm = parseDate(start_date);
 
-  std::string line;
-  int line_number = 0;
-  while (std::getline(input, line)) {
-    ++line_number;
-    std::string trimmed = trim(line);
-    if (trimmed.empty()) continue;
-    // Skip an optional header row.
-    if (line_number == 1 && trimmed.rfind("calendar_event_id", 0) == 0) continue;
+  csv::FilteredTable table;
+  try {
+    table = csv::loadFilteredCSV(input, source_name);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string(source_name) + ": " + e.what());
+  }
 
-    std::vector<std::string> fields = splitCsvLine(line);
-    if (static_cast<int>(fields.size()) != kExpectedColumns) {
-      throw std::runtime_error(source_name + ":" + std::to_string(line_number) +
-                               ": expected " + std::to_string(kExpectedColumns) +
-                               " columns, got " +
-                               std::to_string(fields.size()));
-    }
+  // Require these columns in the value section.
+  auto require_col = [&](const std::string& col) -> const std::string& {
+    static const std::string kEmpty;
+    // Check column exists in value_columns (will be absent from row.values if
+    // not present in header). We just try to access it per-row below.
+    return kEmpty;
+  };
+  (void)require_col;
+
+  int row_number = 1;  // 1-indexed for error messages (header is row 1)
+  for (const auto& row : table.rows) {
+    ++row_number;
+
+    auto get = [&](const std::string& col) -> const std::string& {
+      auto it = row.values.find(col);
+      if (it == row.values.end()) {
+        throw std::runtime_error(source_name + ":" +
+                                 std::to_string(row_number) +
+                                 ": missing required column '" + col + "'");
+      }
+      return it->second;
+    };
 
     CalendarEvent event;
     try {
-      event.calendar_event_id = std::stoi(fields[0]);
-      std::tm event_tm = parseDate(fields[1]);
+      event.calendar_event_id = std::stoi(get("calendar_event_id"));
+      std::tm event_tm = parseDate(get("date"));
       event.start_day = daysBetween(sim_start_tm, event_tm);
-      const std::string& schedule_name = fields[2];
+      const std::string& schedule_name = get("schedule_name");
       int schedule_idx = world.getScheduleTypeIndex(schedule_name);
       if (schedule_idx < 0) {
-        throw std::runtime_error("unknown schedule_name '" + schedule_name +
-                                 "'");
+        throw std::runtime_error("unknown schedule_name '" + schedule_name + "'");
       }
       event.schedule_type_idx = static_cast<int16_t>(schedule_idx);
-      event.venue_id = static_cast<VenueId>(std::stoll(fields[3]));
-      event.subset_index = static_cast<SubsetIndex>(std::stoi(fields[4]));
-      event.compliance_rate = std::stof(fields[5]);
-      event.category = fields[6];
+      event.hosting_geo_unit_id =
+          static_cast<GeoUnitId>(std::stoi(get("hosting_geo_unit_id")));
+      event.venue_type_name = get("venue_type_name");
+      event.catchment_rule_id = std::stoi(get("catchment_rule_id"));
+      const std::string& dur_str = get("duration_days");
+      event.duration_days =
+          dur_str.empty() ? int16_t{1}
+                          : static_cast<int16_t>(std::stoi(dur_str));
+      if (event.duration_days < 1) {
+        std::cerr << "WARNING: " << source_name << ":" << row_number
+                  << ": duration_days=" << event.duration_days
+                  << " < 1, clamped to 1\n";
+        event.duration_days = 1;
+      }
+      event.compliance_rate = std::stof(get("compliance_rate"));
+      event.category = get("category");
+      event.attendee_filters = row.criteria;
     } catch (const std::exception& parse_error) {
-      throw std::runtime_error(source_name + ":" + std::to_string(line_number) +
+      throw std::runtime_error(source_name + ":" + std::to_string(row_number) +
                                ": " + parse_error.what());
     }
 
     if (event.start_day < 0 || event.start_day >= num_sim_days) {
-      std::cerr << "WARNING: " << source_name << ":" << line_number
-                << ": event date " << fields[1] << " (day " << event.start_day
+      std::cerr << "WARNING: " << source_name << ":" << row_number
+                << ": event date (day " << event.start_day
                 << ") is outside the simulation window [0, " << num_sim_days
-                << "); skipping" << std::endl;
+                << "); skipping\n";
       continue;
     }
 

@@ -144,8 +144,29 @@ TEST_CASE("trigger sets hop fields and records active event for attendees") {
   CHECK(world.people[0].hopped_schedule_id == 5);
   CHECK(world.people[0].return_schedule_id == -1);
   CHECK(world.people[0].temp_slot_progress == 0);
+  CHECK(world.people[0].hop_repeats_remaining == 1);
   CHECK(manager.hasActiveEvent(world.people[0].id));
   CHECK(manager.stats().triggered == 1);
+}
+
+TEST_CASE("trigger sets hop_repeats_remaining from event duration_days") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  world.activity_names = {"residence", "Fair_accommodation"};
+  world.buildIndices();
+  int cei = addCalendarEventField(world);
+  giveActivityWithEventVenues(world, world.people[0], 1, {{7, 3}}, {42}, cei);
+
+  CalendarEvent event;
+  event.calendar_event_id = 42;
+  event.start_day = 0;
+  event.schedule_type_idx = 5;
+  event.compliance_rate = 1.0f;
+  event.duration_days = 3;
+  CalendarEventManager manager({{event}});
+
+  manager.triggerEventsForDay(0, world, world.people, 123);
+
+  CHECK(world.people[0].hop_repeats_remaining == 3);
 }
 
 // =============================================================================
@@ -350,50 +371,95 @@ TEST_CASE("selectVenue is unaffected when no calendar-event manager is set") {
 }
 
 // =============================================================================
-// Cycle 8: loader happy path
+// Cycle 8: loader happy path (new FilteredTable schema)
 // =============================================================================
 
-TEST_CASE("loader parses a well-formed CSV into the day-indexed table") {
+TEST_CASE("loader parses new-schema CSV into the day-indexed table") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
-  world.schedule_type_names = {"regular", "fair_1day", "fair_3day"};
+  world.schedule_type_names = {"regular", "Fair_day_trip", "Fair_lodging"};
 
   std::string csv =
-      "calendar_event_id,date,schedule_name,venue_id,subset_index,compliance_rate,category\n"
-      "42,2021-01-05,fair_1day,7,0,1.0,fair\n";
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "42,2021-01-05,Fair_day_trip,5250,fair,7,3,0.9,fair\n";
   std::istringstream input(csv);
 
   auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
                                           "test.csv");
 
   REQUIRE(table.size() == 30);
-  REQUIRE(table[4].size() == 1);  // Jan 5 - Jan 1 = day 4
-  CHECK(table[4][0].calendar_event_id == 42);
-  CHECK(table[4][0].schedule_type_idx == world.getScheduleTypeIndex("fair_1day"));
-  CHECK(table[4][0].venue_id == 7);
-  CHECK(table[4][0].compliance_rate == doctest::Approx(1.0f));
-  CHECK(table[4][0].category == "fair");
+  REQUIRE(table[4].size() == 1);
+  const CalendarEvent& e = table[4][0];
+  CHECK(e.calendar_event_id == 42);
+  CHECK(e.schedule_type_idx == world.getScheduleTypeIndex("Fair_day_trip"));
+  CHECK(e.hosting_geo_unit_id == 5250);
+  CHECK(e.venue_type_name == "fair");
+  CHECK(e.catchment_rule_id == 7);
+  CHECK(e.duration_days == 3);
+  CHECK(e.compliance_rate == doctest::Approx(0.9f));
+  CHECK(e.category == "fair");
+}
+
+TEST_CASE("loader parses filter.* columns into attendee_filters") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+
+  std::string csv =
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category,filter.age\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,fair,>=18\n";
+  std::istringstream input(csv);
+
+  auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
+                                          "test.csv");
+
+  REQUIRE(table[4].size() == 1);
+  REQUIRE(table[4][0].attendee_filters.size() == 1);
+  CHECK(table[4][0].attendee_filters[0].property_path == "age");
+}
+
+TEST_CASE("loader treats blank duration_days as 1") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+
+  // duration_days column is blank
+  std::string csv =
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,,1.0,fair\n";
+  std::istringstream input(csv);
+
+  auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
+                                          "test.csv");
+
+  REQUIRE(table[4].size() == 1);
+  CHECK(table[4][0].duration_days == 1);
 }
 
 // =============================================================================
-// Cycle 9: loader errors / out-of-window rows
+// Cycle 9: loader errors / out-of-window rows (new schema)
 // =============================================================================
 
 TEST_CASE("loader throws on an unknown schedule_name") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
   world.schedule_type_names = {"regular"};
   std::string csv =
-      "calendar_event_id,date,schedule_name,venue_id,subset_index,compliance_rate,category\n"
-      "42,2021-01-05,no_such_schedule,7,0,1.0,fair\n";
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "42,2021-01-05,no_such_schedule,0,fair,0,1,1.0,fair\n";
   std::istringstream input(csv);
   CHECK_THROWS_AS(
       CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv"),
       std::runtime_error);
 }
 
-TEST_CASE("loader throws on a malformed row (wrong column count)") {
+TEST_CASE("loader throws on a malformed row (missing required columns)") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
-  world.schedule_type_names = {"fair_1day"};
-  std::string csv = "42,2021-01-05,fair_1day,7,0\n";  // 5 columns
+  world.schedule_type_names = {"Fair_day_trip"};
+  // header present but data row has only 3 columns
+  std::string csv =
+      "calendar_event_id,date,schedule_name\n"
+      "42,2021-01-05,Fair_day_trip\n";
   std::istringstream input(csv);
   CHECK_THROWS_AS(
       CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv"),
@@ -402,11 +468,12 @@ TEST_CASE("loader throws on a malformed row (wrong column count)") {
 
 TEST_CASE("loader skips out-of-window rows but keeps in-window ones") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
-  world.schedule_type_names = {"fair_1day"};
+  world.schedule_type_names = {"Fair_day_trip"};
   std::string csv =
-      "calendar_event_id,date,schedule_name,venue_id,subset_index,compliance_rate,category\n"
-      "1,2021-01-05,fair_1day,7,0,1.0,fair\n"
-      "2,2021-03-01,fair_1day,8,0,1.0,fair\n";  // ~day 59, outside 30-day window
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,fair\n"
+      "2,2021-03-01,Fair_day_trip,0,fair,0,1,1.0,fair\n";
   std::istringstream input(csv);
 
   auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
@@ -430,6 +497,263 @@ TEST_CASE("trigger throws when calendar_event_id membership field is missing") {
 
   CHECK_THROWS_AS(manager.triggerEventsForDay(0, world, world.people, 123),
                   std::runtime_error);
+}
+
+// =============================================================================
+// Cycle 12: getVenuesInGeoUnit — exact match and descendant traversal
+// =============================================================================
+
+// Build a 3-level geo_unit hierarchy: root(0) -> child(1) -> grandchild(2).
+// Venues: id=10 (type="fair", geo=1), id=11 (type="fair", geo=2),
+//         id=12 (type="household", geo=1).
+static WorldState buildGeoHierarchyWorld() {
+  WorldState world;
+  world.venue_type_names = {"fair", "household"};
+
+  // root
+  GeographicalUnit root;
+  root.id = 0; root.parent_id = -1; root.level_id = 0;
+  world.geo_units.push_back(root);
+  // child
+  GeographicalUnit child;
+  child.id = 1; child.parent_id = 0; child.level_id = 1;
+  world.geo_units.push_back(child);
+  // grandchild
+  GeographicalUnit grandchild;
+  grandchild.id = 2; grandchild.parent_id = 1; grandchild.level_id = 2;
+  world.geo_units.push_back(grandchild);
+
+  Venue va; va.id = 10; va.type_id = 0; va.geo_unit_id = 1;  // fair @ child
+  Venue vb; vb.id = 11; vb.type_id = 0; vb.geo_unit_id = 2;  // fair @ grandchild
+  Venue vc; vc.id = 12; vc.type_id = 1; vc.geo_unit_id = 1;  // household @ child
+  world.venues.push_back(va);
+  world.venues.push_back(vb);
+  world.venues.push_back(vc);
+
+  world.buildIndices();
+  return world;
+}
+
+TEST_CASE("getVenuesInGeoUnit returns venues in exact unit") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto venues = world.getVenuesInGeoUnit(2, "fair");
+  REQUIRE(venues.size() == 1);
+  CHECK(venues[0] == 11);
+}
+
+TEST_CASE("getVenuesInGeoUnit includes descendants") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto venues = world.getVenuesInGeoUnit(1, "fair");
+  REQUIRE(venues.size() == 2);
+  // sorted by venue_id
+  CHECK(venues[0] == 10);
+  CHECK(venues[1] == 11);
+}
+
+TEST_CASE("getVenuesInGeoUnit from root covers all descendants") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto fair_venues = world.getVenuesInGeoUnit(0, "fair");
+  REQUIRE(fair_venues.size() == 2);
+  auto hh_venues = world.getVenuesInGeoUnit(0, "household");
+  REQUIRE(hh_venues.size() == 1);
+  CHECK(hh_venues[0] == 12);
+}
+
+TEST_CASE("getVenuesInGeoUnit returns empty for unknown type") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto venues = world.getVenuesInGeoUnit(0, "nonexistent");
+  CHECK(venues.empty());
+}
+
+// =============================================================================
+// Cycle 13: geography-driven attendee resolution via catchment rules
+// =============================================================================
+
+TEST_CASE("catchment-rule event triggers people in specified geo_units") {
+  // 3 geo_units: 10, 11, 12. People: person 0 @ 10, person 1 @ 11, person 2 @ 12.
+  // Catchment rule 7: {10, 11} -> should trigger persons 0 and 1 only.
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  for (GeoUnitId gid : {10, 11, 12}) {
+    GeographicalUnit gu;
+    gu.id = gid; gu.parent_id = -1; gu.level_id = 0;
+    world.geo_units.push_back(gu);
+  }
+  world.venue_type_names = {"fair"};
+  Venue v; v.id = 0; v.type_id = 0; v.geo_unit_id = 10;
+  world.venues.push_back(v);
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+
+  for (int i = 0; i < 3; ++i) {
+    Person& p = world.people.emplace_back();
+    p.id = i;
+    p.geo_unit_id = 10 + i;
+    p.age = 30.0f;
+  }
+  world.buildIndices();
+
+  CalendarEvent event;
+  event.calendar_event_id = 7;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 7;
+  event.hosting_geo_unit_id = 10;
+  event.venue_type_name = "fair";
+
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
+  catchment_rules[7] = {10, 11};  // geo_units 10 and 11
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, 42, catchment_rules);
+
+  CHECK(manager.stats().triggered == 2);
+  // person 0 (geo 10) and person 1 (geo 11) triggered; person 2 (geo 12) not
+  CHECK(world.people[0].hopped_schedule_id == 1);
+  CHECK(world.people[1].hopped_schedule_id == 1);
+  CHECK(world.people[2].hopped_schedule_id == -1);
+}
+
+// =============================================================================
+// Cycle 14: attendee_filters trim the catchment pool
+// =============================================================================
+
+TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"fair"};
+  Venue v; v.id = 0; v.type_id = 0; v.geo_unit_id = 0;
+  world.venues.push_back(v);
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+  world.person_property_names = {"age", "sex"};
+
+  // 3 people: ages 10, 30, 50 (all in geo_unit 0)
+  for (int i = 0; i < 3; ++i) {
+    Person& p = world.people.emplace_back();
+    p.id = i;
+    p.geo_unit_id = 0;
+    p.age = 10.0f + 20.0f * i;  // 10, 30, 50
+  }
+  world.buildIndices();
+
+  // Filter: age >= 20 (excludes person 0 aged 10)
+  SelectionCriterion age_filter;
+  age_filter.property_path = "age";
+  age_filter.operator_type = ">=";
+  age_filter.value = 20;
+
+  CalendarEvent event;
+  event.calendar_event_id = 1;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 0;
+  event.hosting_geo_unit_id = 0;
+  event.venue_type_name = "fair";
+  event.attendee_filters = {age_filter};
+
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
+  catchment_rules[0] = {0};
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, 42, catchment_rules);
+
+  // persons 1 (age 30) and 2 (age 50) triggered; person 0 (age 10) excluded
+  CHECK(manager.stats().triggered == 2);
+  CHECK(world.people[0].hopped_schedule_id == -1);
+  CHECK(world.people[1].hopped_schedule_id == 1);
+  CHECK(world.people[2].hopped_schedule_id == 1);
+}
+
+// =============================================================================
+// Cycle 15: dynamic hashed venue resolution for catchment-rule events
+// =============================================================================
+
+TEST_CASE("catchment-rule event resolves venue via hash into candidate list") {
+  // 3 guest-house venues (ids 20,21,22) at geo_unit 0; 2 people in catchment.
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"guest_house"};
+  for (VenueId vid : {20, 21, 22}) {
+    Venue v; v.id = vid; v.type_id = 0; v.geo_unit_id = 0;
+    world.venues.push_back(v);
+  }
+  world.activity_names = {"Fair_lodging"};
+  world.schedule_type_names = {"regular", "Fair_lodging"};
+  for (PersonId pid : {0, 1}) {
+    Person& p = world.people.emplace_back();
+    p.id = pid; p.geo_unit_id = 0;
+  }
+  world.buildIndices();
+
+  CalendarEvent event;
+  event.calendar_event_id = 5;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 0;
+  event.hosting_geo_unit_id = 0;
+  event.venue_type_name = "guest_house";
+
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
+  catchment_rules[0] = {0};
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, /*base_seed=*/999,
+                              catchment_rules);
+  REQUIRE(manager.stats().triggered == 2);
+
+  // Each person resolves to one of the 3 candidates with subset_index 0.
+  auto v0 = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto v1 = manager.resolveCalendarEventVenue(world, world.people[1], 0);
+  CHECK((v0.first == 20 || v0.first == 21 || v0.first == 22));
+  CHECK(v0.second == 0);
+  CHECK((v1.first == 20 || v1.first == 21 || v1.first == 22));
+  CHECK(v1.second == 0);
+
+  // Deterministic: same person gets same venue on re-query.
+  auto v0_again = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  CHECK(v0_again.first == v0.first);
+}
+
+TEST_CASE("catchment-rule resolver returns no-venue when candidate list is empty") {
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"fair"};
+  // No venues added.
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+  Person& p = world.people.emplace_back();
+  p.id = 0; p.geo_unit_id = 0;
+  world.buildIndices();
+
+  CalendarEvent event;
+  event.calendar_event_id = 1;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 0;
+  event.hosting_geo_unit_id = 0;
+  event.venue_type_name = "fair";  // no fair venues
+
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
+  catchment_rules[0] = {0};
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, 42, catchment_rules);
+  REQUIRE(manager.stats().triggered == 1);
+
+  auto v = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  CHECK(v.first == -1);
+  CHECK(v.second == -1);
 }
 
 // =============================================================================

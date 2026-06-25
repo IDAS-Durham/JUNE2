@@ -229,6 +229,11 @@ class WorldState {
 
   std::vector<Venue*> getVenuesByType(const std::string& type);
 
+  // Return ids of all venues of `venue_type_name` located in `hosting_geo_unit_id`
+  // or any of its descendants. Sorted by venue_id for deterministic assignment.
+  std::vector<VenueId> getVenuesInGeoUnit(GeoUnitId hosting_geo_unit_id,
+                                           const std::string& venue_type_name) const;
+
   // Get all people in a geographic unit (including descendants)
   std::vector<Person*> getPeopleInUnit(GeoUnitId id);
   std::vector<Person*> getPeopleInUnit(const std::string& level,

@@ -92,6 +92,31 @@ std::vector<Venue*> WorldState::getVenuesByType(const std::string& type) {
   return result;
 }
 
+std::vector<VenueId> WorldState::getVenuesInGeoUnit(
+    GeoUnitId hosting_geo_unit_id, const std::string& venue_type_name) const {
+  std::vector<VenueId> result;
+  auto type_it = venues_by_type.find(venue_type_name);
+  if (type_it == venues_by_type.end()) return result;
+
+  for (uint32_t idx : type_it->second) {
+    // Walk up from this venue's geo_unit to check if hosting_geo_unit_id is
+    // an ancestor-or-self.
+    GeoUnitId current = venues[idx].geo_unit_id;
+    while (current != -1) {
+      if (current == hosting_geo_unit_id) {
+        result.push_back(venues[idx].id);
+        break;
+      }
+      auto gu_it = geo_unit_index.find(current);
+      if (gu_it == geo_unit_index.end()) break;
+      current = geo_units[gu_it->second].parent_id;
+    }
+  }
+
+  std::sort(result.begin(), result.end());
+  return result;
+}
+
 std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {
   std::vector<Person*> result;
   auto it = people_by_geo_unit.find(id);

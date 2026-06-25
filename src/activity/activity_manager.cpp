@@ -180,20 +180,26 @@ bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
   loc.person_array_index = person_array_idx;
   person.temp_slot_progress++;
 
-  // If all flat_slots exhausted, return to original (or specified) schedule
+  // If all flat_slots exhausted, either loop for multi-day events or return.
   if (person.temp_slot_progress >=
       static_cast<int16_t>(hopped.flat_slots.size())) {
-    int16_t return_to = (person.return_schedule_id != -1)
-                            ? person.return_schedule_id
-                            : static_cast<int16_t>(person.schedule_type_id);
-    person.cached_schedule_type_ = &config_.schedule.schedule_types[return_to];
-    person.hopped_schedule_id = -1;
-    person.return_schedule_id = -1;
-    person.temp_slot_progress = 0;
-    // Hop complete: clear any calendar-event id so a stale venue is never
-    // resolved before the next event triggers (ADR 0002).
-    if (calendar_event_manager_)
-      calendar_event_manager_->onHopCompleted(person.id);
+    if (person.hop_repeats_remaining > 0) {
+      --person.hop_repeats_remaining;
+      person.temp_slot_progress = 0;
+    } else {
+      int16_t return_to = (person.return_schedule_id != -1)
+                              ? person.return_schedule_id
+                              : static_cast<int16_t>(person.schedule_type_id);
+      person.cached_schedule_type_ = &config_.schedule.schedule_types[return_to];
+      person.hopped_schedule_id = -1;
+      person.return_schedule_id = -1;
+      person.temp_slot_progress = 0;
+      person.hop_repeats_remaining = 0;
+      // Hop complete: clear calendar-event id so stale venue is never resolved
+      // before next event triggers (ADR 0002).
+      if (calendar_event_manager_)
+        calendar_event_manager_->onHopCompleted(person.id);
+    }
   }
   return true;
 }

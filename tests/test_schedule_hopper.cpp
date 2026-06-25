@@ -438,3 +438,81 @@ TEST_CASE("temp schedule returns to specified return_schedule") {
   CHECK(world.people[0].hopped_schedule_id == -1);
   CHECK(world.people[0].cached_schedule_type_->name == "special_return");
 }
+
+// =============================================================================
+// Cycle 7: hop_repeats_remaining — multi-day event stays hopped across days
+// =============================================================================
+
+TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remaining > 0") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 2);
+  world.activity_names = {"residence", "task_a", "none", "dead"};
+  world.venue_type_names = {"home", "venue_a"};
+  world.venues[0].type_id = 0;
+  world.venues[1].type_id = 1;
+  world.buildIndices();
+
+  world.people[0].activity_meta_start =
+      static_cast<uint32_t>(world.activity_meta.size());
+  world.people[0].activity_meta_count = 2;
+  world.activity_meta.push_back(
+      {0, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({0, 0});
+  world.activity_meta.push_back(
+      {1, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({1, 0});
+
+  ScheduleType regular;
+  regular.name = "regular";
+  TimeSlot reg_slot;
+  reg_slot.name = "day";
+  reg_slot.allowed_activities = {"residence"};
+  resolveSlotIndices(reg_slot, world);
+  regular.slots_by_day_type["workday"].push_back(reg_slot);
+
+  ScheduleType temp_sched;
+  temp_sched.name = "temp_sched";
+  temp_sched.is_temporary = true;
+  TimeSlot temp_slot;
+  temp_slot.name = "step_a";
+  temp_slot.allowed_activities = {"task_a"};
+  resolveSlotIndices(temp_slot, world);
+  temp_sched.flat_slots.push_back(temp_slot);  // 1 slot per "day"
+
+  Config config;
+  config.schedule.day_type_cycle = {"workday"};
+  config.schedule.day_type_names = {"workday"};
+  config.schedule.schedule_types.push_back(regular);
+  config.schedule.schedule_types.push_back(temp_sched);
+  config.schedule.default_schedule_type = "regular";
+  config.resolve(world);
+
+  world.schedule_type_names = {"regular", "temp_sched"};
+  world.num_day_types = 1;
+
+  world.people[0].hopped_schedule_id = 1;   // temp_sched
+  world.people[0].return_schedule_id = -1;
+  world.people[0].temp_slot_progress = 0;
+  world.people[0].hop_repeats_remaining = 2; // 2 remaining loops after first
+
+  ActivityManager manager(world, config);
+  manager.assignScheduleTypes();
+
+  std::vector<PersonLocation> locations(1);
+
+  // Day 1: exhausts the 1-slot schedule, hop_repeats_remaining: 2 -> 1, stays hopped
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(world.people[0].hopped_schedule_id == 1);   // still hopped
+  CHECK(world.people[0].temp_slot_progress == 0);   // reset for next loop
+  CHECK(world.people[0].hop_repeats_remaining == 1);
+
+  // Day 2: decrement to 0, still loops (>0 check was pre-decrement)
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(world.people[0].hopped_schedule_id == 1);
+  CHECK(world.people[0].temp_slot_progress == 0);
+  CHECK(world.people[0].hop_repeats_remaining == 0);
+
+  // Day 3: hop_repeats_remaining is 0, so this exhaustion triggers return
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(world.people[0].hopped_schedule_id == -1);   // returned
+  CHECK(world.people[0].temp_slot_progress == 0);
+}
