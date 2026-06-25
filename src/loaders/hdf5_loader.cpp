@@ -227,7 +227,7 @@ std::vector<PropertyValue> HDF5Loader::readPropertyDatasetRange(
             registry = &world_.geo_unit_property_value_registries.at(prop_name);
         }
 
-        if (registry) {
+        if (registry && !registry->empty()) {
           auto [min_it, max_it] = std::minmax_element(ints.begin(), ints.end());
           if (*max_it >= (int32_t)registry->size() || *min_it < -1) {
             std::cerr << "WARNING: Property '" << prop_name << "' in " << path

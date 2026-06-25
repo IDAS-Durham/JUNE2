@@ -84,10 +84,12 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
     }
 
     if (event.start_day < 0 || event.start_day >= num_sim_days) {
-      std::cerr << "WARNING: " << source_name << ":" << row_number
+#ifndef NDEBUG
+      std::cerr << "DEBUG: " << source_name << ":" << row_number
                 << ": event date (day " << event.start_day
                 << ") is outside the simulation window [0, " << num_sim_days
                 << "); skipping\n";
+#endif
       continue;
     }
 
