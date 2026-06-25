@@ -18,6 +18,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "loaders/calendar_event_loader.h"
+#include "loaders/catchment_rule_loader.h"
 #include "utils/event_logging/event_writer.h"
 
 namespace june {
@@ -485,6 +487,19 @@ Simulator::Simulator(WorldState& world, const Config& config,
   // Pre-compute schedules
   activity_manager_.precomputeSchedules();
 
+  // Load calendar events (optional — no-op if paths are empty)
+  if (!config_.simulation.calendar_event_catchment_rules_file.empty()) {
+    catchment_rules_ = CatchmentRuleLoader::load(
+        config_.simulation.calendar_event_catchment_rules_file);
+  }
+  if (!config_.simulation.calendar_events_file.empty()) {
+    auto events = CalendarEventLoader::load(
+        config_.simulation.calendar_events_file, world_,
+        config_.simulation.start_date, total_days_);
+    calendar_event_manager_ = CalendarEventManager(std::move(events));
+  }
+  activity_manager_.setCalendarEventManager(&calendar_event_manager_);
+
   // Initialize events filename based on rank
 #ifdef USE_MPI
   if (domain_mgr_) {
@@ -568,6 +583,11 @@ void Simulator::runOneDay(int day, int rank) {
     domain_mgr_->exchangeDeathFlags();
   }
 #endif
+
+  // 2.5. Trigger calendar events (schedule hops for fairs, etc.)
+  calendar_event_manager_.triggerEventsForDay(
+      day, world_, world_.people, config_.simulation.random_seed,
+      catchment_rules_);
 
   // 3. Negotiate Coordinated Encounters
   negotiateAndLogDailyEncounters(day, rank);

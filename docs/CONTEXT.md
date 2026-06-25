@@ -32,10 +32,13 @@ _Avoid_: group (too generic), cohort.
 **Fair**:
 A one-off scheduled event (not an Activity) that some people attend on a
 specific date, requiring temporary accommodation away from residence.
-Identified by a `fair_id`. A Fair has its own pool of candidate
-accommodation Venues (Subsets), which is reused across many different
-Fairs over the course of a simulation — venue identity alone does not
-identify which Fair an accommodation assignment belongs to.
+Identified by a `fair_id`. Attendee selection uses one of two paths:
+(a) **membership-field scan** — person already has a `fair_id`
+membership field on their `Fair_accommodation` venue, pre-baked at
+world-build time; or (b) **catchment-rule** — eligible people are drawn
+at trigger time from `people_by_geo_unit` using a **Catchment rule**,
+requiring no pre-baked membership. Path (b) is the current production
+path for MAY-generated worlds.
 _Avoid_: feast, event (use **Fair** specifically for this recurring
 scheduled-attendance concept; matches the source dataset's own term).
 
@@ -46,27 +49,34 @@ boarding/alighting time for a route leg, `fair_id` for a
 list for an Activity needs disambiguating by something other than venue
 identity.
 
+**Catchment rule**:
+A geo-unit eligibility list (`catchment_rule_id → [geo_unit_id, …]`)
+resolved against `WorldState::people_by_geo_unit` at
+calendar-event-trigger time to select Fair attendees. Not a Subset:
+membership is never pre-baked; it is recomputed each time the Fair fires.
+_Avoid_: Subset (pre-baked, world-build-time — the opposite of this).
+
 ## Relationships
 
 - A **Person** has, per **Activity**, a list of candidate **Venue**
   (+ **Subset**) references — populated at world-load, never grown during
   the simulation.
-- A **Person** may have multiple candidate accommodation Venues under the
-  single `Fair_accommodation` **Activity** — one per **Fair** attended.
-  These are disambiguated via the `fair_id` **Membership field**, not by
-  Venue identity.
 - A **Fair** is not itself an **Activity** — it is calendar data that
   triggers a schedule hop into the (constant) `Fair_accommodation`
-  **Activity**, with the specific **Venue** resolved via the `fair_id`
-  **Membership field** match.
+  **Activity**. The specific **Venue** is resolved at trigger time via
+  one of two paths:
+  - **Catchment-rule path**: attendees drawn from `people_by_geo_unit`
+    using a **Catchment rule**; no pre-baked membership required. Used
+    for MAY-generated worlds.
+  - **Membership-field path**: person has a `fair_id` **Membership
+    field** on their `Fair_accommodation` venue, pre-baked at world-build
+    time. Used for legacy worlds.
+- A **Person** using the membership-field path may have multiple candidate
+  accommodation Venues under `Fair_accommodation` — one per **Fair**
+  attended, disambiguated via `fair_id`.
 
 ## Flagged ambiguities
 
-- "dynamic allocation" was used to mean both (a) resolving a Venue at
-  simulation runtime that wasn't known at world-build time, and (b)
-  disambiguating among several already-known candidate Venues at the
-  moment an event fires. JUNE2 only supports (b) — see ADR
-  `0002-fair-accommodation-venue-resolution.md`.
 - An earlier session used the term "Feast" for this concept before
   settling on **Fair** (2026-06-19) — if "Feast" appears in older notes
   or branches, read it as **Fair**.

@@ -13,6 +13,7 @@
 #include "activity/runtime_bin_allocator.h"
 #include "core/config.h"
 #include "core/world_state.h"
+#include "epidemiology/calendar_event.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/epidemiology.h"
 #include "epidemiology/infection_seed.h"
@@ -78,6 +79,10 @@ class Simulator {
   // Disease and infection management
   std::unique_ptr<Disease> disease_;
   std::unique_ptr<InfectionSeeder> infection_seeder_;
+
+  // Calendar event management (no-op when no CSV paths are configured)
+  CalendarEventManager calendar_event_manager_;
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules_;
 
   // Activity management
   ActivityManager activity_manager_;

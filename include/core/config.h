@@ -591,6 +591,10 @@ struct SimulationConfig {
   // Empty = no plugin; simulation runs with zero overhead.
   std::string compartmental_model_sidecar;
 
+  // Optional calendar event CSVs. Empty = no calendar events (no-op).
+  std::string calendar_events_file;
+  std::string calendar_event_catchment_rules_file;
+
   // Seed for global simulation (transmissions, participation)
   unsigned int random_seed = 0;
 

@@ -503,6 +503,24 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
 
   writeShardEpidemiology(f, epidemiology_.get(), comp);
   writeShardFrozenStates(f, policy_manager_.get(), comp);
+
+  // Calendar event active-hop state (sparse: only people mid-hop on an event)
+  const auto& active = calendar_event_manager_.getActiveEvents();
+  if (!active.empty()) {
+    std::vector<int32_t> ce_pids, ce_eids;
+    ce_pids.reserve(active.size());
+    ce_eids.reserve(active.size());
+    for (const auto& [pid, eid] : active) {
+      ce_pids.push_back(static_cast<int32_t>(pid));
+      ce_eids.push_back(eid);
+    }
+    f.createGroup("/calendar_events");
+    writeVec(f, "/calendar_events/person_ids", ce_pids,
+             H5::PredType::NATIVE_INT32, comp);
+    writeVec(f, "/calendar_events/event_ids", ce_eids,
+             H5::PredType::NATIVE_INT32, comp);
+  }
+
   f.close();
 }
 

@@ -1,6 +1,6 @@
 time:
   start_date: "1348-09-01"
-  end_date: "1352-09-01"
+  end_date: "1350-02-01"
   
 # Disease configuration path
 disease_file: "config/disease_plague.yaml"
@@ -19,6 +19,10 @@ config_paths:
   infection_seeds_file: "configs/config_plague/infection_seeds.yaml"
   # Uncomment when libplague_rats_june_plugin.so is built and paths are filled in rats_plugin_sidecar.yaml:
   compartmental_model_sidecar: "configs/config_plague/rats_plugin_sidecar.yaml"
+  # Optional: calendar event CSVs produced by the MAY world-builder.
+  # Leave absent or empty to run without calendar events.
+  # calendar_events_file: "data/calendar_events.csv"
+  # calendar_event_catchment_rules_file: "data/calendar_event_catchment_rules.csv"
 
 # Random seeds for reproducibility
 random_seed: 12345
@@ -26,11 +30,11 @@ random_seed: 12345
 verbose: true
 
 output:
-  stats_interval_days: 1          # Output statistics every N days
+  stats_interval_days: 10          # Output statistics every N days
   track_by_age_group: true
   track_by_venue_type: true
   track_by_geography: true
-  flush_interval_days: 7
+  flush_interval_days: 100
   max_event_buffer_size: 1000000
 
   age_groups:

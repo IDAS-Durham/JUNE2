@@ -342,6 +342,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   YAML::Node si = YAML::LoadFile((cp / "shard_index.yaml").string());
   int n_shards = si["num_ranks"].as<int>();
   size_t n_people = 0, n_inf = 0, n_vax = 0, n_fom = 0;
+  std::unordered_map<PersonId, int32_t> active_events_accum;
   for (int s = 0; s < n_shards; ++s) {
     fs::path sf = cp / ("delta_rank" + std::to_string(s) + ".h5");
     if (!fs::exists(sf)) continue;
@@ -351,7 +352,15 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
     n_fom += overlayShardFomite(f, world_);
     overlayShardManagerState(f, world_, lpt_map, frozen_accum);
+    if (f.exists("/calendar_events")) {
+      auto I32 = H5::PredType::NATIVE_INT32;
+      auto pids = readVec<int32_t>(f, "/calendar_events/person_ids", I32);
+      auto eids = readVec<int32_t>(f, "/calendar_events/event_ids", I32);
+      for (size_t i = 0; i < pids.size(); ++i)
+        active_events_accum[static_cast<PersonId>(pids[i])] = eids[i];
+    }
   }
+  calendar_event_manager_.setActiveEvents(std::move(active_events_accum));
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
 
