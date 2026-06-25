@@ -41,8 +41,11 @@ struct CalendarEvent {
 };
 
 // Owns calendar events, the thin per-person active-event-id state, and the
-// run-time venue resolver. Holds no resolved venues — venue identity is always
-// re-derived from membership_field_values (ADR 0002).
+// run-time venue resolver. For catchment-rule events the candidate venue list
+// per event is cached eagerly at trigger time (see venue_candidates_cache_);
+// the specific venue each person attends is still hash-selected per-person, so
+// ADR 0002 is respected. For membership-field events venue identity is always
+// re-derived from membership_field_values.
 class CalendarEventManager {
  public:
   CalendarEventManager() = default;
@@ -111,6 +114,9 @@ class CalendarEventManager {
   mutable std::unordered_map<PersonId, const CalendarEvent*> active_event_data_;
   // Lazily-built attendee cache: calendar_event_id -> attendee PersonIds.
   mutable std::unordered_map<int32_t, std::vector<PersonId>> attendees_by_event_;
+  // Candidate venues per catchment event, populated eagerly in
+  // triggerEventsForDay. Avoids O(N_venues) scan per hopped person per slot.
+  std::unordered_map<int32_t, std::vector<VenueId>> venue_candidates_cache_;
   Stats stats_;
   uint64_t base_seed_ = 0;  // set by triggerEventsForDay, used by resolver
 

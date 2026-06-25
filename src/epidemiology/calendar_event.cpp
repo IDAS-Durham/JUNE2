@@ -111,6 +111,16 @@ void CalendarEventManager::triggerEventsForDay(
   }
 
   for (const auto& event : todays_events) {
+    // Pre-populate venue candidates for catchment events so resolveCalendarEventVenue
+    // never calls getVenuesInGeoUnit per-person (O(N_venues) each time).
+    if (event.catchment_rule_id >= 0 &&
+        venue_candidates_cache_.find(event.calendar_event_id) ==
+            venue_candidates_cache_.end()) {
+      venue_candidates_cache_[event.calendar_event_id] =
+          world.getVenuesInGeoUnit(event.hosting_geo_unit_id,
+                                   event.venue_type_name);
+    }
+
     // Resolve attendee list: geography path or membership-field scan.
     std::vector<PersonId> catchment_attendees;
     const std::vector<PersonId>* attendee_ptr = nullptr;
@@ -160,14 +170,16 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
   if (active_it == active_event_.end()) return {-1, -1};
   int32_t active_id = active_it->second;
 
-  // Catchment-rule path: dynamic hashed venue selection.
+  // Catchment-rule path: hash-select from pre-cached candidate venues.
   auto data_it = active_event_data_.find(person.id);
   if (data_it != active_event_data_.end() && data_it->second != nullptr) {
     const CalendarEvent& event = *data_it->second;
     if (event.catchment_rule_id >= 0) {
-      std::vector<VenueId> candidates =
-          world.getVenuesInGeoUnit(event.hosting_geo_unit_id, event.venue_type_name);
-      if (candidates.empty()) return {-1, -1};
+      auto cache_it = venue_candidates_cache_.find(active_id);
+      if (cache_it == venue_candidates_cache_.end() ||
+          cache_it->second.empty())
+        return {-1, -1};
+      const auto& candidates = cache_it->second;
       uint64_t h = SplitMix64(mix_seed(base_seed_, static_cast<uint64_t>(person.id),
                                        static_cast<uint64_t>(active_id)))();
       return {candidates[h % candidates.size()], 0};
