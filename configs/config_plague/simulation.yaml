@@ -19,10 +19,9 @@ config_paths:
   infection_seeds_file: "configs/config_plague/infection_seeds.yaml"
   # Uncomment when libplague_rats_june_plugin.so is built and paths are filled in rats_plugin_sidecar.yaml:
   compartmental_model_sidecar: "configs/config_plague/rats_plugin_sidecar.yaml"
-  # Optional: calendar event CSVs produced by the MAY world-builder.
-  # Leave absent or empty to run without calendar events.
-  # calendar_events_file: "data/calendar_events.csv"
-  # calendar_event_catchment_rules_file: "data/calendar_event_catchment_rules.csv"
+  # Calendar event CSVs from the MAY medieval world-builder.
+  calendar_events_file: "/home/gavin/Documents/MAY2/MAY/output/Medieval/calendar_events.csv"
+  calendar_event_catchment_rules_file: "/home/gavin/Documents/MAY2/MAY/output/Medieval/calendar_event_catchment_rules.csv"
 
 # Random seeds for reproducibility
 random_seed: 12345

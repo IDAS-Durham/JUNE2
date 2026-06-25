@@ -59,9 +59,14 @@ void ActivityManager::filterAvailableActivities(
     const Person& person, const TimeSlot& slot,
     std::vector<int16_t>& available) const {
   available.clear();
+  // Calendar-event hops: the resolver supplies the venue from the event's
+  // geo_unit, so the person need not have a pre-existing venue mapping.
+  bool calendar_bypass = calendar_event_manager_ &&
+                         calendar_event_manager_->hasActiveEvent(person.id);
   for (int16_t act_idx : slot.allowed_activity_indices) {
     if (act_idx == no_venue_act_idx_ ||
-        slot.property_hop_dispatch_by_activity_idx.count(act_idx)) {
+        slot.property_hop_dispatch_by_activity_idx.count(act_idx) ||
+        calendar_bypass) {
       available.push_back(act_idx);
       continue;
     }
