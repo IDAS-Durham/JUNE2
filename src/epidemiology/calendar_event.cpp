@@ -1,9 +1,6 @@
 #include "epidemiology/calendar_event.h"
 
-#include <algorithm>
-#include <cmath>
 #include <random>
-#include <stdexcept>
 
 #include "core/world_state.h"
 #include "utils/deterministic_rng.h"
@@ -11,48 +8,12 @@
 
 namespace june {
 
-namespace {
-
-// Compare a float membership value to an int32 calendar_event_id, treating the
-// absent-field sentinel as "no match". Ids are small ints, exact in float.
-bool membershipMatches(float value, int32_t calendar_event_id) {
-  if (value == WorldState::kMembershipFieldAbsent) return false;
-  return static_cast<int32_t>(std::lround(value)) == calendar_event_id;
-}
-
-}  // namespace
-
 CalendarEventManager::CalendarEventManager(
     std::vector<std::vector<CalendarEvent>> events_by_day)
     : events_by_day_(std::move(events_by_day)) {
   for (const auto& day_events : events_by_day_)
     for (const auto& ev : day_events)
       events_by_id_[ev.calendar_event_id] = &ev;
-}
-
-const std::vector<PersonId>& CalendarEventManager::attendeesForMembershipEvent(
-    int32_t calendar_event_id, const WorldState& world, int cei_field) const {
-  auto cached = attendees_by_event_.find(calendar_event_id);
-  if (cached != attendees_by_event_.end()) return cached->second;
-
-  std::vector<PersonId> attendees;
-  for (const auto& person : world.people) {
-    bool is_attendee = false;
-    for (const auto& meta : world.getActivityMetas(person)) {
-      for (uint16_t offset = 0; offset < meta.venue_count; ++offset) {
-        uint32_t flat_idx = meta.venue_start + offset;
-        if (membershipMatches(world.getMembershipField(flat_idx, cei_field),
-                              calendar_event_id)) {
-          is_attendee = true;
-          break;
-        }
-      }
-      if (is_attendee) break;
-    }
-    if (is_attendee) attendees.push_back(person.id);
-  }
-  return attendees_by_event_.emplace(calendar_event_id, std::move(attendees))
-      .first->second;
 }
 
 std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
@@ -87,26 +48,7 @@ void CalendarEventManager::triggerEventsForDay(
 
   base_seed_ = base_seed;
 
-  // Only check for membership field when there are non-catchment events.
-  int cei_field = -1;
-  auto needs_membership = [](const CalendarEvent& e) {
-    return e.catchment_rule_id < 0;
-  };
-  bool any_membership = std::any_of(todays_events.begin(), todays_events.end(),
-                                    needs_membership);
-  if (any_membership) {
-    cei_field = world.getMembershipFieldIndex(kCalendarEventIdField);
-    if (cei_field < 0) {
-      throw std::runtime_error(
-          std::string("CalendarEventManager: world has no '") +
-          kCalendarEventIdField +
-          "' membership field, but calendar events are configured");
-    }
-  }
-
   for (const auto& event : todays_events) {
-    // Pre-populate venue candidates via the event's builder (if set), so
-    // resolveCalendarEventVenue never does an O(N_venues) scan per person.
     if (event.candidate_venue_builder &&
         venue_candidates_cache_.find(event.calendar_event_id) ==
             venue_candidates_cache_.end()) {
@@ -114,19 +56,10 @@ void CalendarEventManager::triggerEventsForDay(
           event.candidate_venue_builder(world);
     }
 
-    // Resolve attendee list: geography path or membership-field scan.
-    std::vector<PersonId> catchment_attendees;
-    const std::vector<PersonId>* attendee_ptr = nullptr;
-    if (event.catchment_rule_id >= 0) {
-      catchment_attendees =
-          attendeesForCatchmentEvent(event, world, catchment_rules);
-      attendee_ptr = &catchment_attendees;
-    } else {
-      attendee_ptr = &attendeesForMembershipEvent(event.calendar_event_id,
-                                                  world, cei_field);
-    }
+    const std::vector<PersonId> attendees =
+        attendeesForCatchmentEvent(event, world, catchment_rules);
 
-    for (PersonId pid : *attendee_ptr) {
+    for (PersonId pid : attendees) {
       auto idx_it = world.person_index.find(pid);
       if (idx_it == world.person_index.end()) continue;  // not on this rank
       Person& person = people[idx_it->second];
@@ -157,40 +90,24 @@ void CalendarEventManager::triggerEventsForDay(
 }
 
 std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
-    const WorldState& world, const Person& person, int16_t activity_idx) const {
+    const WorldState& /*world*/, const Person& person,
+    int16_t /*activity_idx*/) const {
   auto active_it = active_event_.find(person.id);
   if (active_it == active_event_.end()) return {-1, -1};
   int32_t active_id = active_it->second;
 
-  // Catchment-rule path: use pre-cached candidate venues.
   auto cache_it = venue_candidates_cache_.find(active_id);
-  if (cache_it != venue_candidates_cache_.end()) {
-    if (cache_it->second.empty()) return {-1, -1};
-    const auto& candidates = cache_it->second;
-    uint64_t seed = mix_seed(base_seed_, static_cast<uint64_t>(person.id),
-                             static_cast<uint64_t>(active_id));
-    auto ev_it = events_by_id_.find(active_id);
-    if (ev_it != events_by_id_.end() && ev_it->second->venue_selector)
-      return ev_it->second->venue_selector(candidates, person.id, seed);
-    uint64_t h = SplitMix64(seed)();
-    return {candidates[h % candidates.size()], 0};
-  }
+  if (cache_it == venue_candidates_cache_.end() || cache_it->second.empty())
+    return {-1, -1};
 
-  // Membership-field path (non-catchment events or stale data).
-  int cei_field = world.getMembershipFieldIndex(kCalendarEventIdField);
-  if (cei_field < 0) return {-1, -1};
-
-  for (const auto& meta : world.getActivityMetas(person)) {
-    if (meta.activity_index != activity_idx) continue;
-    for (uint16_t offset = 0; offset < meta.venue_count; ++offset) {
-      uint32_t flat_idx = meta.venue_start + offset;
-      if (membershipMatches(world.getMembershipField(flat_idx, cei_field),
-                            active_id)) {
-        return world.activity_venues[flat_idx];
-      }
-    }
-  }
-  return {-1, -1};
+  const auto& candidates = cache_it->second;
+  uint64_t seed = mix_seed(base_seed_, static_cast<uint64_t>(person.id),
+                           static_cast<uint64_t>(active_id));
+  auto ev_it = events_by_id_.find(active_id);
+  if (ev_it != events_by_id_.end() && ev_it->second->venue_selector)
+    return ev_it->second->venue_selector(candidates, person.id, seed);
+  uint64_t h = SplitMix64(seed)();
+  return {candidates[h % candidates.size()], 0};
 }
 
 void CalendarEventManager::rebuildVenueCachesAfterRestore(

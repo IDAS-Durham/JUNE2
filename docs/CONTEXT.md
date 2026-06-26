@@ -33,12 +33,12 @@ _Avoid_: group (too generic), cohort.
 A one-off scheduled event (not an Activity) that some people attend on a
 specific date, requiring temporary accommodation away from residence.
 Identified by a `fair_id`. Attendee selection uses one of two paths:
-(a) **membership-field scan** — person already has a `fair_id`
+(a) **catchment-rule** — eligible people are drawn at trigger time from
+`people_by_geo_unit` using a **Catchment rule**, requiring no pre-baked
+membership. Current production path for MAY-generated worlds; or
+(b) **membership-field scan** — person already has a `fair_id`
 membership field on their `Fair_accommodation` venue, pre-baked at
-world-build time; or (b) **catchment-rule** — eligible people are drawn
-at trigger time from `people_by_geo_unit` using a **Catchment rule**,
-requiring no pre-baked membership. Path (b) is the current production
-path for MAY-generated worlds.
+world-build time. Legacy path only.
 _Avoid_: feast, event (use **Fair** specifically for this recurring
 scheduled-attendance concept; matches the source dataset's own term).
 

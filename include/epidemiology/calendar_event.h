@@ -14,16 +14,11 @@ namespace june {
 
 class WorldState;
 
-// Membership-field key carrying the calendar-event id on a (person, Venue)
-// accommodation membership row. MAY writes this; the resolver reads it. The
-// only datum tying an attendee's candidate Venue to a specific event.
-inline constexpr const char* kCalendarEventIdField = "calendar_event_id";
-
-// A calendar-triggered event. On `start_day`, designated attendees hop onto
-// the temporary schedule `schedule_type_idx`. The Venue each attendee occupies
-// during the hop is re-derived at run-time from the `calendar_event_id`
-// membership field — never cached (see ADR 0002). Generic: "Fair" appears only
-// in the data (category / schedule name), never here.
+// A calendar-triggered event. On `start_day`, attendees drawn from the
+// catchment rule hop onto the temporary schedule `schedule_type_idx`. Each
+// attendee's Venue is selected at resolve time from the candidate pool built
+// by `candidate_venue_builder`. Generic: "Fair" appears only in the data
+// (category / schedule name), never here.
 struct CalendarEvent {
   int32_t calendar_event_id = -1;
   int start_day = -1;              // sim day (0-based) the event triggers on
@@ -52,34 +47,30 @@ struct CalendarEvent {
 };
 
 // Owns calendar events, the thin per-person active-event-id state, and the
-// run-time venue resolver. For catchment-rule events the candidate venue list
-// per event is cached eagerly at trigger time (see venue_candidates_cache_);
-// the specific venue each person attends is still hash-selected per-person, so
-// ADR 0002 is respected. For membership-field events venue identity is always
-// re-derived from membership_field_values.
+// run-time venue resolver. The candidate venue list per event is cached eagerly
+// at trigger time (see venue_candidates_cache_); the specific venue each person
+// attends is hash-selected per-person, so ADR 0002 is respected.
 class CalendarEventManager {
  public:
   CalendarEventManager() = default;
   explicit CalendarEventManager(
       std::vector<std::vector<CalendarEvent>> events_by_day);
 
-  // Fire all events scheduled for `day`: for each, find its attendees (via the
-  // membership reverse-scan or catchment-rule geo_unit lookup), and for each
-  // compliant, non-colliding attendee set the hop fields and record the active
-  // calendar_event_id. `base_seed` drives compliance rolls and venue hashing.
-  // `catchment_rules` maps catchment_rule_id -> geo_unit list; may be empty
-  // (falls back to membership-field scan for all events).
+  // Fire all events scheduled for `day`: for each, resolve attendees via the
+  // catchment rule, then for each compliant, non-colliding attendee set the
+  // hop fields and record the active calendar_event_id. `base_seed` drives
+  // compliance rolls and venue hashing. `catchment_rules` maps
+  // catchment_rule_id -> geo_unit list.
   void triggerEventsForDay(
       int day, const WorldState& world, std::vector<Person>& people,
       uint64_t base_seed,
       const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules =
           {});
 
-  // Resolve the Venue for `person`'s active calendar event under `activity_idx`.
-  // For catchment-rule events: hashes person+event id to pick among
-  // getVenuesInGeoUnit candidates. For membership-field events: scans candidate
-  // venues for a matching calendar_event_id membership value.
-  // Returns {-1,-1} if the person has no active event or no venue can be found.
+  // Resolve the Venue for `person`'s active calendar event. Hashes person+event
+  // id to pick from the cached candidate pool built at trigger time.
+  // Returns {-1,-1} if the person has no active event or the candidate pool is
+  // empty.
   std::pair<VenueId, SubsetIndex> resolveCalendarEventVenue(
       const WorldState& world, const Person& person, int16_t activity_idx) const;
 
@@ -125,10 +116,8 @@ class CalendarEventManager {
   std::unordered_map<int32_t, const CalendarEvent*> events_by_id_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
-  // Lazily-built attendee cache: calendar_event_id -> attendee PersonIds.
-  mutable std::unordered_map<int32_t, std::vector<PersonId>> attendees_by_event_;
-  // Candidate venues per catchment event, populated eagerly in
-  // triggerEventsForDay. Avoids O(N_venues) scan per hopped person per slot.
+  // Candidate venues per event, populated eagerly in triggerEventsForDay.
+  // Avoids O(N_venues) scan per hopped person per slot.
   std::unordered_map<int32_t, std::vector<VenueId>> venue_candidates_cache_;
   Stats stats_;
   uint64_t base_seed_ = 0;  // set by triggerEventsForDay, used by resolver
@@ -139,11 +128,6 @@ class CalendarEventManager {
       const CalendarEvent& event, const WorldState& world,
       const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
           catchment_rules) const;
-
-  // Attendees of `calendar_event_id`, derived by scanning membership rows for a
-  // matching value (cached). `cei_field` is the resolved membership-field index.
-  const std::vector<PersonId>& attendeesForMembershipEvent(
-      int32_t calendar_event_id, const WorldState& world, int cei_field) const;
 };
 
 }  // namespace june
