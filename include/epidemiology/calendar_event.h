@@ -4,7 +4,6 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -99,15 +98,6 @@ class CalendarEventManager {
 
   void setActiveEvents(std::unordered_map<PersonId, int32_t> active) {
     active_event_ = std::move(active);
-    active_catchment_persons_.clear();
-    std::unordered_map<int32_t, bool> is_catchment;
-    for (const auto& day_events : events_by_day_)
-      for (const auto& ev : day_events)
-        is_catchment[ev.calendar_event_id] = (ev.catchment_rule_id >= 0);
-    for (const auto& [pid, eid] : active_event_)
-      if (auto it = is_catchment.find(eid);
-          it != is_catchment.end() && it->second)
-        active_catchment_persons_.insert(pid);
   }
 
   // Trigger diagnostics.
@@ -135,9 +125,6 @@ class CalendarEventManager {
   std::unordered_map<int32_t, const CalendarEvent*> events_by_id_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
-  // People currently mid-hop on a catchment-rule event (as opposed to a
-  // membership-field event). Determines which resolver branch to take.
-  std::unordered_set<PersonId> active_catchment_persons_;
   // Lazily-built attendee cache: calendar_event_id -> attendee PersonIds.
   mutable std::unordered_map<int32_t, std::vector<PersonId>> attendees_by_event_;
   // Candidate venues per catchment event, populated eagerly in

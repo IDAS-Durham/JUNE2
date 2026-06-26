@@ -599,8 +599,9 @@ TEST_CASE("catchment-rule event triggers people in specified geo_units") {
   event.schedule_type_idx = 1;
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = 7;
-  event.hosting_geo_unit_id = 10;
-  event.venue_type_name = "fair";
+  event.candidate_venue_builder = [](const WorldState& w) {
+    return w.getVenuesInGeoUnit(10, "fair");
+  };
 
   std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
   catchment_rules[7] = {10, 11};  // geo_units 10 and 11
@@ -652,8 +653,9 @@ TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
   event.schedule_type_idx = 1;
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = 0;
-  event.hosting_geo_unit_id = 0;
-  event.venue_type_name = "fair";
+  event.candidate_venue_builder = [](const WorldState& w) {
+    return w.getVenuesInGeoUnit(0, "fair");
+  };
   event.attendee_filters = {age_filter};
 
   std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
@@ -698,8 +700,9 @@ TEST_CASE("catchment-rule event resolves venue via hash into candidate list") {
   event.schedule_type_idx = 1;
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = 0;
-  event.hosting_geo_unit_id = 0;
-  event.venue_type_name = "guest_house";
+  event.candidate_venue_builder = [](const WorldState& w) {
+    return w.getVenuesInGeoUnit(0, "guest_house");
+  };
 
   std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
   catchment_rules[0] = {0};
@@ -741,8 +744,10 @@ TEST_CASE("catchment-rule resolver returns no-venue when candidate list is empty
   event.schedule_type_idx = 1;
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = 0;
-  event.hosting_geo_unit_id = 0;
-  event.venue_type_name = "fair";  // no fair venues
+  // Builder returns empty list — no fair venues exist in the world.
+  event.candidate_venue_builder = [](const WorldState& w) {
+    return w.getVenuesInGeoUnit(0, "fair");
+  };
 
   std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
   catchment_rules[0] = {0};

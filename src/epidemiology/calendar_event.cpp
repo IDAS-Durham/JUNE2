@@ -112,12 +112,6 @@ void CalendarEventManager::triggerEventsForDay(
             venue_candidates_cache_.end()) {
       venue_candidates_cache_[event.calendar_event_id] =
           event.candidate_venue_builder(world);
-    } else if (!event.candidate_venue_builder && event.catchment_rule_id >= 0 &&
-               venue_candidates_cache_.find(event.calendar_event_id) ==
-                   venue_candidates_cache_.end()) {
-      venue_candidates_cache_[event.calendar_event_id] =
-          world.getVenuesInGeoUnit(event.hosting_geo_unit_id,
-                                   event.venue_type_name);
     }
 
     // Resolve attendee list: geography path or membership-field scan.
@@ -157,8 +151,6 @@ void CalendarEventManager::triggerEventsForDay(
       person.temp_slot_progress = 0;
       person.hop_repeats_remaining = event.duration_days;
       active_event_[person.id] = event.calendar_event_id;
-      if (event.catchment_rule_id >= 0)
-        active_catchment_persons_.insert(person.id);
       ++stats_.triggered;
     }
   }
@@ -171,10 +163,9 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
   int32_t active_id = active_it->second;
 
   // Catchment-rule path: use pre-cached candidate venues.
-  if (active_catchment_persons_.count(person.id)) {
-    auto cache_it = venue_candidates_cache_.find(active_id);
-    if (cache_it == venue_candidates_cache_.end() || cache_it->second.empty())
-      return {-1, -1};
+  auto cache_it = venue_candidates_cache_.find(active_id);
+  if (cache_it != venue_candidates_cache_.end()) {
+    if (cache_it->second.empty()) return {-1, -1};
     const auto& candidates = cache_it->second;
     uint64_t seed = mix_seed(base_seed_, static_cast<uint64_t>(person.id),
                              static_cast<uint64_t>(active_id));
@@ -216,7 +207,6 @@ void CalendarEventManager::rebuildVenueCachesAfterRestore(
 
 void CalendarEventManager::onHopCompleted(PersonId person_id) {
   active_event_.erase(person_id);
-  active_catchment_persons_.erase(person_id);
 }
 
 const std::vector<CalendarEvent>& CalendarEventManager::eventsForDay(
