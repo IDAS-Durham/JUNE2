@@ -64,7 +64,7 @@ struct VisitorInfo {
   double time_in_stage = 0.0;
 
   // Pre-computed integrated infectiousness per mode (from sending rank)
-  static constexpr int MAX_MODES = 2;
+  static constexpr int MAX_MODES = 8;
   double integrated_infectiousness[MAX_MODES] = {};
 };
 
