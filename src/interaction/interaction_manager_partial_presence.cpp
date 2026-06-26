@@ -111,7 +111,13 @@ void InteractionManager::accumulatePartialLambdaContributions(
         if (!(contrib > 0.0)) continue;
 
         for (const CarriageMember* sm : susc_by_bin[susc_bin]) {
-          susc_lambda[sm->pid] += contrib;
+          // f_S: this susceptible's own presence cap (1.0 unless over-long).
+          // Channel-symmetric with f_I (baked into total_inf via inf_sub): a
+          // contact carries f_I·f_S in both directions. The source weights `w`
+          // below intentionally omit f_S — it is a per-susceptible constant, so
+          // it cannot change the relative infector sampling for this
+          // susceptible.
+          susc_lambda[sm->pid] += contrib * sm->f_presence;
           // Pick an infector for this contribution by weight-sampling
           // proportional to per-person infectiousness in this sub-interval.
           // We record one AccumSource per (susc, mode, inf_bin, sub) with
@@ -151,7 +157,8 @@ void InteractionManager::classifyMembersInSubInterval(
         double inf_full = (mode < VisitorInfo::MAX_MODES)
                               ? m.visitor->integrated_infectiousness[mode]
                               : 0.0;
-        double inf_sub = inf_full * scale;
+        // f_I: this infectious rider's presence cap (1.0 unless over-long).
+        double inf_sub = inf_full * scale * m.f_presence;
         if (inf_sub > 0.0) {
           if (!added_inf) {
             sub_bins[bin].infectious_ids.push_back(m.pid);
@@ -170,7 +177,8 @@ void InteractionManager::classifyMembersInSubInterval(
       for (int mode = 0; mode < num_modes; ++mode) {
         double inf_full = m.person->infection->getIntegratedInfectiousness(
             mode, current_time, t_end_d);
-        double inf_sub = inf_full * scale;
+        // f_I: this infectious rider's presence cap (1.0 unless over-long).
+        double inf_sub = inf_full * scale * m.f_presence;
         if (inf_sub > 0.0) {
           if (!added_inf) {
             sub_bins[bin].infectious_ids.push_back(m.pid);
@@ -195,15 +203,18 @@ void InteractionManager::classifyMembersInSubInterval(
 
 std::vector<float> InteractionManager::collectSubIntervalEventTimes(
     const std::vector<CarriageMember>& car, float slot_duration_min) const {
+  // Slice sub-intervals over the venue's OWN [min board, max alight] range
+  // (NOT [0, slot]): the windows are raw line-local offsets in this venue's
+  // clock, so the boundaries are exactly the members' board/alight points.
+  // Forcing 0 and slot as bounds would (a) fabricate empty edge intervals and
+  // (b) wrongly truncate riders whose raw offsets exceed the slot. The
+  // per-rider presence cap f_p — not a slot clamp — conserves the day budget.
+  (void)slot_duration_min;
   std::vector<float> events;
-  events.reserve(2 * car.size() + 2);
-  events.push_back(0.0f);
-  events.push_back(slot_duration_min);
+  events.reserve(2 * car.size());
   for (const auto& m : car) {
-    if (m.eff_board > 0.0f && m.eff_board < slot_duration_min)
-      events.push_back(m.eff_board);
-    if (m.eff_alight > 0.0f && m.eff_alight < slot_duration_min)
-      events.push_back(m.eff_alight);
+    events.push_back(m.eff_board);
+    events.push_back(m.eff_alight);
   }
   std::sort(events.begin(), events.end());
   events.erase(
@@ -234,10 +245,12 @@ InteractionManager::buildPartialPresenceCarriages(
       continue;
     }
 
-    // Window from the allocator's global broadcast: identical on every
-    // rank for the same (venue, person) pair.
+    // Window + presence cap from the allocator's global broadcast: identical
+    // on every rank for the same (venue, person) pair.
     const EffectiveWindow win =
         runtime_bin_allocator_->getPresenceWindow(actual_venue_id, m.id);
+    const float f_presence =
+        runtime_bin_allocator_->getPresenceFactor(actual_venue_id, m.id);
 
     int matrix_bin = computeBinIndexForMatrix(person, venue, m.subset_index,
                                               matrix, num_bins_needed);
@@ -245,7 +258,7 @@ InteractionManager::buildPartialPresenceCarriages(
 
     carriages[carriage].push_back(CarriageMember{
         m.id, m.array_index, m.subset_index, m.encounter_type_id, person,
-        visitor, win.eff_board, win.eff_alight, matrix_bin});
+        visitor, win.eff_board, win.eff_alight, f_presence, matrix_bin});
   }
 
   // Deterministic per-carriage order (FP-stable accumulation across ranks).
@@ -307,10 +320,10 @@ InteractionManager::computePartialPresenceLambda(
   const float slot_duration_min = static_cast<float>(delta_hours * 60.0);
   if (!(slot_duration_min > 0.0f)) return result;
 
-  // Presence windows live on the allocator. It computes them on each
-  // rider's home rank (proportional vs clamped policy applied to the full
-  // leg list) and broadcasts globally, so a cross-rank visitor's window is
-  // identical to what the home rank would have computed locally.
+  // Presence windows + per-rider caps f_p live on the allocator. It computes
+  // them on each rider's home rank (raw line-local windows; f_p from the full
+  // leg list) and broadcasts globally, so a cross-rank visitor's window and
+  // f_p are identical to what the home rank would have computed locally.
   const uint16_t num_bins = runtime_bin_allocator_->getNumBins(actual_venue_id);
   if (num_bins == 0) return result;
 
