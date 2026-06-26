@@ -248,6 +248,9 @@ endif()
 add_executable(disease_sim src/main.cpp)
 target_link_libraries(disease_sim PRIVATE june_core)
 
+add_executable(merge_events src/merge_events.cpp)
+target_link_libraries(merge_events PRIVATE june_core)
+
 if(GPERFTOOLS_FOUND)
   message(STATUS "Profiling enabled: gperftools CPU profiler linked via june_core")
 endif()
