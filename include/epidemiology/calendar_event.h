@@ -74,8 +74,10 @@ class CalendarEventManager {
   std::pair<VenueId, SubsetIndex> resolveCalendarEventVenue(
       const WorldState& world, const Person& person, int16_t activity_idx) const;
 
-  // Clear a person's active calendar event (called when their hop completes).
-  void onHopCompleted(PersonId person_id);
+  // Erase active-event entries for persons whose hop has completed (i.e.
+  // hopped_schedule_id == -1). Called at the top of triggerEventsForDay so
+  // stale entries are cleaned up once per day without coupling to ActivityManager.
+  void sweepCompletedHops(const std::vector<Person>& people);
 
   // Checkpoint accessors for the active-event-id map.
   const std::unordered_map<PersonId, int32_t>& getActiveEvents() const {

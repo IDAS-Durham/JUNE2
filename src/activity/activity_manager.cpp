@@ -195,10 +195,6 @@ bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
       person.return_schedule_id = -1;
       person.temp_slot_progress = 0;
       person.hop_repeats_remaining = 0;
-      // Hop complete: clear calendar-event id so stale venue is never resolved
-      // before next event triggers (ADR 0002).
-      if (calendar_event_manager_)
-        calendar_event_manager_->onHopCompleted(person.id);
     }
   }
   return true;
