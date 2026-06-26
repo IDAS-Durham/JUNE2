@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -52,10 +53,6 @@ class CalendarEventManager {
   explicit CalendarEventManager(
       std::vector<std::vector<CalendarEvent>> events_by_day);
 
-  // Merge an additional day-indexed table (e.g. a second category's CSV) into
-  // the existing table. Grows the table if the new one is longer.
-  void mergeEvents(const std::vector<std::vector<CalendarEvent>>& events_by_day);
-
   // Fire all events scheduled for `day`: for each, find its attendees (via the
   // membership reverse-scan or catchment-rule geo_unit lookup), and for each
   // compliant, non-colliding attendee set the hop fields and record the active
@@ -85,6 +82,15 @@ class CalendarEventManager {
   }
   void setActiveEvents(std::unordered_map<PersonId, int32_t> active) {
     active_event_ = std::move(active);
+    active_catchment_persons_.clear();
+    std::unordered_map<int32_t, bool> is_catchment;
+    for (const auto& day_events : events_by_day_)
+      for (const auto& ev : day_events)
+        is_catchment[ev.calendar_event_id] = (ev.catchment_rule_id >= 0);
+    for (const auto& [pid, eid] : active_event_)
+      if (auto it = is_catchment.find(eid);
+          it != is_catchment.end() && it->second)
+        active_catchment_persons_.insert(pid);
   }
 
   // Trigger diagnostics.
@@ -110,8 +116,9 @@ class CalendarEventManager {
   std::vector<std::vector<CalendarEvent>> events_by_day_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
-  // person -> pointer to the event that triggered their current hop.
-  mutable std::unordered_map<PersonId, const CalendarEvent*> active_event_data_;
+  // People currently mid-hop on a catchment-rule event (as opposed to a
+  // membership-field event). Determines which resolver branch to take.
+  std::unordered_set<PersonId> active_catchment_persons_;
   // Lazily-built attendee cache: calendar_event_id -> attendee PersonIds.
   mutable std::unordered_map<int32_t, std::vector<PersonId>> attendees_by_event_;
   // Candidate venues per catchment event, populated eagerly in

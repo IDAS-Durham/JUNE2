@@ -757,33 +757,7 @@ TEST_CASE("catchment-rule resolver returns no-venue when candidate list is empty
 }
 
 // =============================================================================
-// Cycle 10: multi-category concurrent merge
-// =============================================================================
-
-TEST_CASE("mergeEvents combines two categories into one day-indexed table") {
-  CalendarEvent fair;
-  fair.calendar_event_id = 1;
-  fair.start_day = 0;
-  fair.category = "fair";
-  CalendarEvent festival;
-  festival.calendar_event_id = 2;
-  festival.start_day = 0;
-  festival.category = "festival";
-
-  std::vector<std::vector<CalendarEvent>> fairs = {{fair}};
-  std::vector<std::vector<CalendarEvent>> festivals = {{festival}};
-
-  CalendarEventManager manager(fairs);
-  manager.mergeEvents(festivals);
-
-  const auto& day0 = manager.eventsForDay(0);
-  REQUIRE(day0.size() == 2);
-  CHECK(day0[0].category == "fair");
-  CHECK(day0[1].category == "festival");
-}
-
-// =============================================================================
-// Cycle 11: checkpoint accessors round-trip
+// Cycle 10: checkpoint accessors round-trip
 // =============================================================================
 
 TEST_CASE("active-event map round-trips through get/setActiveEvents") {

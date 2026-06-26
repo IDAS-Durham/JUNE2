@@ -26,16 +26,6 @@ CalendarEventManager::CalendarEventManager(
     std::vector<std::vector<CalendarEvent>> events_by_day)
     : events_by_day_(std::move(events_by_day)) {}
 
-void CalendarEventManager::mergeEvents(
-    const std::vector<std::vector<CalendarEvent>>& events_by_day) {
-  if (events_by_day.size() > events_by_day_.size())
-    events_by_day_.resize(events_by_day.size());
-  for (size_t day = 0; day < events_by_day.size(); ++day) {
-    auto& dst = events_by_day_[day];
-    dst.insert(dst.end(), events_by_day[day].begin(), events_by_day[day].end());
-  }
-}
-
 const std::vector<PersonId>& CalendarEventManager::attendeesForMembershipEvent(
     int32_t calendar_event_id, const WorldState& world, int cei_field) const {
   auto cached = attendees_by_event_.find(calendar_event_id);
@@ -158,7 +148,8 @@ void CalendarEventManager::triggerEventsForDay(
       person.temp_slot_progress = 0;
       person.hop_repeats_remaining = event.duration_days;
       active_event_[person.id] = event.calendar_event_id;
-      active_event_data_[person.id] = &event;
+      if (event.catchment_rule_id >= 0)
+        active_catchment_persons_.insert(person.id);
       ++stats_.triggered;
     }
   }
@@ -171,19 +162,14 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
   int32_t active_id = active_it->second;
 
   // Catchment-rule path: hash-select from pre-cached candidate venues.
-  auto data_it = active_event_data_.find(person.id);
-  if (data_it != active_event_data_.end() && data_it->second != nullptr) {
-    const CalendarEvent& event = *data_it->second;
-    if (event.catchment_rule_id >= 0) {
-      auto cache_it = venue_candidates_cache_.find(active_id);
-      if (cache_it == venue_candidates_cache_.end() ||
-          cache_it->second.empty())
-        return {-1, -1};
-      const auto& candidates = cache_it->second;
-      uint64_t h = SplitMix64(mix_seed(base_seed_, static_cast<uint64_t>(person.id),
-                                       static_cast<uint64_t>(active_id)))();
-      return {candidates[h % candidates.size()], 0};
-    }
+  if (active_catchment_persons_.count(person.id)) {
+    auto cache_it = venue_candidates_cache_.find(active_id);
+    if (cache_it == venue_candidates_cache_.end() || cache_it->second.empty())
+      return {-1, -1};
+    const auto& candidates = cache_it->second;
+    uint64_t h = SplitMix64(mix_seed(base_seed_, static_cast<uint64_t>(person.id),
+                                     static_cast<uint64_t>(active_id)))();
+    return {candidates[h % candidates.size()], 0};
   }
 
   // Membership-field path (non-catchment events or stale data).
@@ -205,7 +191,7 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
 
 void CalendarEventManager::onHopCompleted(PersonId person_id) {
   active_event_.erase(person_id);
-  active_event_data_.erase(person_id);
+  active_catchment_persons_.erase(person_id);
 }
 
 const std::vector<CalendarEvent>& CalendarEventManager::eventsForDay(
