@@ -6,6 +6,7 @@
 #include <string>
 
 #include "core/world_state.h"
+#include "utils/deterministic_rng.h"
 #include "utils/filtered_csv.h"
 #include "utils/time_utils.h"
 
@@ -91,6 +92,19 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
                 << "); skipping\n";
 #endif
       continue;
+    }
+
+    if (event.catchment_rule_id >= 0) {
+      GeoUnitId geo_unit_id = event.hosting_geo_unit_id;
+      std::string venue_type = event.venue_type_name;
+      event.candidate_venue_builder = [geo_unit_id, venue_type](const WorldState& w) {
+        return w.getVenuesInGeoUnit(geo_unit_id, venue_type);
+      };
+      event.venue_selector = [](const std::vector<VenueId>& candidates,
+                                 PersonId /*pid*/, uint64_t seed) {
+        uint64_t h = SplitMix64(seed)();
+        return std::make_pair(candidates[h % candidates.size()], SubsetIndex{0});
+      };
     }
 
     events_by_day[event.start_day].push_back(std::move(event));

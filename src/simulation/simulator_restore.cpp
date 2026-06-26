@@ -361,6 +361,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     }
   }
   calendar_event_manager_.setActiveEvents(std::move(active_events_accum));
+  calendar_event_manager_.rebuildVenueCachesAfterRestore(world_);
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
 

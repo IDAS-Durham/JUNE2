@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -35,6 +36,16 @@ struct CalendarEvent {
   GeoUnitId hosting_geo_unit_id = -1;
   std::string venue_type_name;
   std::vector<SelectionCriterion> attendee_filters;
+  // If set, called once at trigger time to build the candidate venue pool for
+  // this event. The pool is cached and used by venue_selector at resolve time.
+  // Null for membership-field events (which re-derive venue from membership data).
+  std::function<std::vector<VenueId>(const WorldState&)> candidate_venue_builder;
+  // If set, called at resolve time to pick one venue from the cached pool.
+  // Receives (candidates, person_id, seed); seed is pre-mixed from base_seed +
+  // person_id + event_id, so the selector need not do any seeding itself.
+  // Null falls back to the default hash-select.
+  std::function<std::pair<VenueId, SubsetIndex>(
+      const std::vector<VenueId>&, PersonId, uint64_t)> venue_selector;
   // Diagnostics only — never used to pick attendees or resolve venues:
   VenueId venue_id = -1;
   SubsetIndex subset_index = -1;
@@ -80,6 +91,12 @@ class CalendarEventManager {
   const std::unordered_map<PersonId, int32_t>& getActiveEvents() const {
     return active_event_;
   }
+  // Rebuild venue_candidates_cache_ for all persons mid-hop after a checkpoint
+  // restore. Must be called after setActiveEvents so the cache is consistent
+  // with active_event_. Fixes the latent bug where catchment-path persons
+  // would get {-1,-1} from the resolver because the cache was never populated.
+  void rebuildVenueCachesAfterRestore(const WorldState& world);
+
   void setActiveEvents(std::unordered_map<PersonId, int32_t> active) {
     active_event_ = std::move(active);
     active_catchment_persons_.clear();
@@ -114,6 +131,8 @@ class CalendarEventManager {
  private:
   // events_by_day_[day] -> events starting that day.
   std::vector<std::vector<CalendarEvent>> events_by_day_;
+  // O(1) lookup from calendar_event_id to its definition (pointer into events_by_day_).
+  std::unordered_map<int32_t, const CalendarEvent*> events_by_id_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
   // People currently mid-hop on a catchment-rule event (as opposed to a

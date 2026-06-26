@@ -757,6 +757,209 @@ TEST_CASE("catchment-rule resolver returns no-venue when candidate list is empty
 }
 
 // =============================================================================
+// Cycle A: event with custom candidate_venue_builder uses it to resolve venues
+// =============================================================================
+
+TEST_CASE("event with custom builder uses it to populate venue candidates") {
+  // No fair venues exist in the world — proves builder is called, not
+  // getVenuesInGeoUnit (which would return empty and force {-1,-1}).
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu;
+  gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"fair"};
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "fair_sched"};
+  Person& p = world.people.emplace_back();
+  p.id = 0; p.geo_unit_id = 0;
+  world.buildIndices();
+
+  const std::vector<VenueId> custom_venues = {100, 101, 102};
+
+  CalendarEvent event;
+  event.calendar_event_id = 7;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 7;
+  event.candidate_venue_builder = [&custom_venues](const WorldState&) {
+    return custom_venues;
+  };
+
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
+  catchment_rules[7] = {0};
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, 42, catchment_rules);
+  REQUIRE(manager.stats().triggered == 1);
+
+  // Resolver must return one of the builder's venues, not -1 (empty world).
+  auto v = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  CHECK((v.first == 100 || v.first == 101 || v.first == 102));
+  CHECK(v.second == 0);
+}
+
+// =============================================================================
+// Cycle B: custom venue_selector is called at resolve time
+// =============================================================================
+
+TEST_CASE("event with custom venue_selector uses it instead of hash-select") {
+  // Builder returns {100, 101, 102}. Selector always picks the last entry.
+  // If hash-select were used, the result would be non-deterministic; the custom
+  // selector pins it to 102, making the test deterministic and falsifiable.
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu;
+  gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"fair"};
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "fair_sched"};
+  Person& p = world.people.emplace_back();
+  p.id = 0; p.geo_unit_id = 0;
+  world.buildIndices();
+
+  const std::vector<VenueId> custom_venues = {100, 101, 102};
+
+  CalendarEvent event;
+  event.calendar_event_id = 7;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 7;
+  event.candidate_venue_builder = [&custom_venues](const WorldState&) {
+    return custom_venues;
+  };
+  // Always picks the last candidate — deterministic, not hash-based.
+  event.venue_selector = [](const std::vector<VenueId>& candidates,
+                             PersonId, uint64_t) {
+    return std::make_pair(candidates.back(), SubsetIndex{0});
+  };
+
+  std::unordered_map<int32_t, std::vector<GeoUnitId>> catchment_rules;
+  catchment_rules[7] = {0};
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, 42, catchment_rules);
+  REQUIRE(manager.stats().triggered == 1);
+
+  auto v = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  CHECK(v.first == 102);  // last entry, as the custom selector dictates
+  CHECK(v.second == 0);
+}
+
+// =============================================================================
+// Cycle C: loader sets candidate_venue_builder and venue_selector for catchment events
+// =============================================================================
+
+TEST_CASE("loader sets candidate_venue_builder for catchment event") {
+  // buildGeoHierarchyWorld: hosting_geo_unit_id=1 has fair venues 10 and 11.
+  WorldState world = buildGeoHierarchyWorld();
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+
+  std::string csv =
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "42,2021-01-05,Fair_day_trip,1,fair,7,1,1.0,fair\n";
+  std::istringstream input(csv);
+  auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv");
+  REQUIRE(table[4].size() == 1);
+  const CalendarEvent& event = table[4][0];
+
+  REQUIRE(event.candidate_venue_builder != nullptr);
+  auto candidates = event.candidate_venue_builder(world);
+  REQUIRE(candidates.size() == 2);
+  CHECK(candidates[0] == 10);
+  CHECK(candidates[1] == 11);
+}
+
+TEST_CASE("loader sets venue_selector for catchment event") {
+  WorldState world = buildGeoHierarchyWorld();
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+
+  std::string csv =
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "42,2021-01-05,Fair_day_trip,1,fair,7,1,1.0,fair\n";
+  std::istringstream input(csv);
+  auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv");
+  REQUIRE(table[4].size() == 1);
+  const CalendarEvent& event = table[4][0];
+
+  REQUIRE(event.venue_selector != nullptr);
+  const std::vector<VenueId> candidates = {10, 11};
+  auto result = event.venue_selector(candidates, 0, 12345ULL);
+  CHECK((result.first == 10 || result.first == 11));
+  CHECK(result.second == 0);
+}
+
+TEST_CASE("loader leaves builder and selector null for membership-field event") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+
+  // catchment_rule_id == -1 → membership-field path; no builder/selector needed.
+  std::string csv =
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category\n"
+      "42,2021-01-05,Fair_day_trip,0,fair,-1,1,1.0,fair\n";
+  std::istringstream input(csv);
+  auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv");
+  REQUIRE(table[4].size() == 1);
+  const CalendarEvent& event = table[4][0];
+
+  CHECK(event.candidate_venue_builder == nullptr);
+  CHECK(event.venue_selector == nullptr);
+}
+
+// =============================================================================
+// Cycle D: rebuildVenueCachesAfterRestore fixes the restore-path bug
+// =============================================================================
+
+TEST_CASE("rebuildVenueCachesAfterRestore repopulates venue cache for catchment events") {
+  // Simulate checkpoint restore: construct manager with a catchment event but
+  // never call triggerEventsForDay. Call setActiveEvents directly (as the
+  // restore code does), then call rebuildVenueCachesAfterRestore and verify
+  // the resolver returns a valid venue instead of {-1,-1}.
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu;
+  gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"fair"};
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "fair_sched"};
+  Person& p = world.people.emplace_back();
+  p.id = 0; p.geo_unit_id = 0;
+  world.buildIndices();
+
+  const std::vector<VenueId> custom_venues = {100, 101, 102};
+
+  CalendarEvent event;
+  event.calendar_event_id = 7;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 7;
+  event.candidate_venue_builder = [&custom_venues](const WorldState&) {
+    return custom_venues;
+  };
+
+  CalendarEventManager manager({{event}});
+
+  // Restore path: setActiveEvents without prior trigger — cache is empty.
+  manager.setActiveEvents({{p.id, 7}});
+  auto before = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  CHECK(before.first == -1);
+
+  // After rebuilding caches the resolver must pick from the builder's pool.
+  manager.rebuildVenueCachesAfterRestore(world);
+  auto after = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  CHECK((after.first == 100 || after.first == 101 || after.first == 102));
+  CHECK(after.second == 0);
+}
+
+// =============================================================================
 // Cycle 10: checkpoint accessors round-trip
 // =============================================================================
 

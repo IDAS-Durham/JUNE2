@@ -24,7 +24,11 @@ bool membershipMatches(float value, int32_t calendar_event_id) {
 
 CalendarEventManager::CalendarEventManager(
     std::vector<std::vector<CalendarEvent>> events_by_day)
-    : events_by_day_(std::move(events_by_day)) {}
+    : events_by_day_(std::move(events_by_day)) {
+  for (const auto& day_events : events_by_day_)
+    for (const auto& ev : day_events)
+      events_by_id_[ev.calendar_event_id] = &ev;
+}
 
 const std::vector<PersonId>& CalendarEventManager::attendeesForMembershipEvent(
     int32_t calendar_event_id, const WorldState& world, int cei_field) const {
@@ -101,11 +105,16 @@ void CalendarEventManager::triggerEventsForDay(
   }
 
   for (const auto& event : todays_events) {
-    // Pre-populate venue candidates for catchment events so resolveCalendarEventVenue
-    // never calls getVenuesInGeoUnit per-person (O(N_venues) each time).
-    if (event.catchment_rule_id >= 0 &&
+    // Pre-populate venue candidates via the event's builder (if set), so
+    // resolveCalendarEventVenue never does an O(N_venues) scan per person.
+    if (event.candidate_venue_builder &&
         venue_candidates_cache_.find(event.calendar_event_id) ==
             venue_candidates_cache_.end()) {
+      venue_candidates_cache_[event.calendar_event_id] =
+          event.candidate_venue_builder(world);
+    } else if (!event.candidate_venue_builder && event.catchment_rule_id >= 0 &&
+               venue_candidates_cache_.find(event.calendar_event_id) ==
+                   venue_candidates_cache_.end()) {
       venue_candidates_cache_[event.calendar_event_id] =
           world.getVenuesInGeoUnit(event.hosting_geo_unit_id,
                                    event.venue_type_name);
@@ -161,14 +170,18 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
   if (active_it == active_event_.end()) return {-1, -1};
   int32_t active_id = active_it->second;
 
-  // Catchment-rule path: hash-select from pre-cached candidate venues.
+  // Catchment-rule path: use pre-cached candidate venues.
   if (active_catchment_persons_.count(person.id)) {
     auto cache_it = venue_candidates_cache_.find(active_id);
     if (cache_it == venue_candidates_cache_.end() || cache_it->second.empty())
       return {-1, -1};
     const auto& candidates = cache_it->second;
-    uint64_t h = SplitMix64(mix_seed(base_seed_, static_cast<uint64_t>(person.id),
-                                     static_cast<uint64_t>(active_id)))();
+    uint64_t seed = mix_seed(base_seed_, static_cast<uint64_t>(person.id),
+                             static_cast<uint64_t>(active_id));
+    auto ev_it = events_by_id_.find(active_id);
+    if (ev_it != events_by_id_.end() && ev_it->second->venue_selector)
+      return ev_it->second->venue_selector(candidates, person.id, seed);
+    uint64_t h = SplitMix64(seed)();
     return {candidates[h % candidates.size()], 0};
   }
 
@@ -187,6 +200,18 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
     }
   }
   return {-1, -1};
+}
+
+void CalendarEventManager::rebuildVenueCachesAfterRestore(
+    const WorldState& world) {
+  for (const auto& [pid, event_id] : active_event_) {
+    if (venue_candidates_cache_.count(event_id)) continue;
+    auto ev_it = events_by_id_.find(event_id);
+    if (ev_it == events_by_id_.end()) continue;
+    const CalendarEvent* ev = ev_it->second;
+    if (ev->candidate_venue_builder)
+      venue_candidates_cache_[event_id] = ev->candidate_venue_builder(world);
+  }
 }
 
 void CalendarEventManager::onHopCompleted(PersonId person_id) {
