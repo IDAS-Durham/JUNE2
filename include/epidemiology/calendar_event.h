@@ -25,18 +25,16 @@ struct CalendarEvent {
   int16_t schedule_type_idx = -1;  // index into ScheduleConfig::schedule_types
   float compliance_rate = 1.0f;    // P(an eligible attendee actually hops)
   int16_t duration_days = 1;       // number of schedule-hop days (default 1)
-  // Catchment-rule fields (catchment_rule_id == -1 → membership-field scan path)
   int32_t catchment_rule_id = -1;
   GeoUnitId hosting_geo_unit_id = -1;
   std::string venue_type_name;
   std::vector<SelectionCriterion> attendee_filters;
   // If set, called once at trigger time to build the candidate venue pool for
   // this event. The pool is cached and used by venue_selector at resolve time.
-  // Null for membership-field events (which re-derive venue from membership data).
   std::function<std::vector<VenueId>(const WorldState&)> candidate_venue_builder;
   // If set, called at resolve time to pick one venue from the cached pool.
-  // Receives (candidates, person_id, seed); seed is pre-mixed from base_seed +
-  // person_id + event_id, so the selector need not do any seeding itself.
+  // Receives (candidates, person_id, seed); seed is pre-mixed from the trigger
+  // seed + person_id + event_id, so the selector need not do any seeding itself.
   // Null falls back to the default hash-select.
   std::function<std::pair<VenueId, SubsetIndex>(
       const std::vector<VenueId>&, PersonId, uint64_t)> venue_selector;
@@ -83,6 +81,12 @@ class CalendarEventManager {
   const std::unordered_map<PersonId, int32_t>& getActiveEvents() const {
     return active_event_;
   }
+  const std::unordered_map<int32_t, uint64_t>& getEventTriggerSeeds() const {
+    return event_trigger_seed_;
+  }
+  void setEventTriggerSeeds(std::unordered_map<int32_t, uint64_t> seeds) {
+    event_trigger_seed_ = std::move(seeds);
+  }
   // Rebuild venue_candidates_cache_ for all persons mid-hop after a checkpoint
   // restore. Must be called after setActiveEvents so the cache is consistent
   // with active_event_. Fixes the latent bug where catchment-path persons
@@ -122,7 +126,9 @@ class CalendarEventManager {
   // Avoids O(N_venues) scan per hopped person per slot.
   std::unordered_map<int32_t, std::vector<VenueId>> venue_candidates_cache_;
   Stats stats_;
-  uint64_t base_seed_ = 0;  // set by triggerEventsForDay, used by resolver
+  // Seed recorded when each event first fires; stable across days so that a
+  // person's venue assignment is identical throughout a multi-day hop.
+  std::unordered_map<int32_t, uint64_t> event_trigger_seed_;
 
   // Attendees for a catchment-rule event: gathered from people_by_geo_unit for
   // each geo_unit in the catchment rule, filtered by event.attendee_filters.

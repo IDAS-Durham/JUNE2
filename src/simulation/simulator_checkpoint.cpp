@@ -506,7 +506,8 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
 
   // Calendar event active-hop state (sparse: only people mid-hop on an event)
   const auto& active = calendar_event_manager_.getActiveEvents();
-  if (!active.empty()) {
+  const auto& trigger_seeds = calendar_event_manager_.getEventTriggerSeeds();
+  if (!active.empty() || !trigger_seeds.empty()) {
     std::vector<int32_t> ce_pids, ce_eids;
     ce_pids.reserve(active.size());
     ce_eids.reserve(active.size());
@@ -519,6 +520,18 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
              H5::PredType::NATIVE_INT32, comp);
     writeVec(f, "/calendar_events/event_ids", ce_eids,
              H5::PredType::NATIVE_INT32, comp);
+    std::vector<int32_t> seed_eids;
+    std::vector<uint64_t> seed_vals;
+    seed_eids.reserve(trigger_seeds.size());
+    seed_vals.reserve(trigger_seeds.size());
+    for (const auto& [eid, seed] : trigger_seeds) {
+      seed_eids.push_back(eid);
+      seed_vals.push_back(seed);
+    }
+    writeVec(f, "/calendar_events/seed_event_ids", seed_eids,
+             H5::PredType::NATIVE_INT32, comp);
+    writeVec(f, "/calendar_events/seed_values", seed_vals,
+             H5::PredType::NATIVE_UINT64, comp);
   }
 
   f.close();

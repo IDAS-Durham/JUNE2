@@ -56,9 +56,10 @@ void CalendarEventManager::triggerEventsForDay(
   const auto& todays_events = events_by_day_[day];
   if (todays_events.empty()) return;
 
-  base_seed_ = base_seed;
-
   for (const auto& event : todays_events) {
+    // Record trigger seed once per event (first firing wins; stable for multi-day hops).
+    event_trigger_seed_.emplace(event.calendar_event_id, base_seed);
+
     if (event.candidate_venue_builder &&
         venue_candidates_cache_.find(event.calendar_event_id) ==
             venue_candidates_cache_.end()) {
@@ -111,7 +112,9 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
     return {-1, -1};
 
   const auto& candidates = cache_it->second;
-  uint64_t seed = mix_seed(base_seed_, static_cast<uint64_t>(person.id),
+  auto seed_it = event_trigger_seed_.find(active_id);
+  if (seed_it == event_trigger_seed_.end()) return {-1, -1};
+  uint64_t seed = mix_seed(seed_it->second, static_cast<uint64_t>(person.id),
                            static_cast<uint64_t>(active_id));
   auto ev_it = events_by_id_.find(active_id);
   if (ev_it != events_by_id_.end() && ev_it->second->venue_selector)

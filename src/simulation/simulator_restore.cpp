@@ -343,6 +343,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   int n_shards = si["num_ranks"].as<int>();
   size_t n_people = 0, n_inf = 0, n_vax = 0, n_fom = 0;
   std::unordered_map<PersonId, int32_t> active_events_accum;
+  std::unordered_map<int32_t, uint64_t> seed_accum;
   for (int s = 0; s < n_shards; ++s) {
     fs::path sf = cp / ("delta_rank" + std::to_string(s) + ".h5");
     if (!fs::exists(sf)) continue;
@@ -358,9 +359,17 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
       auto eids = readVec<int32_t>(f, "/calendar_events/event_ids", I32);
       for (size_t i = 0; i < pids.size(); ++i)
         active_events_accum[static_cast<PersonId>(pids[i])] = eids[i];
+      if (f.exists("/calendar_events/seed_event_ids")) {
+        auto seids = readVec<int32_t>(f, "/calendar_events/seed_event_ids", I32);
+        auto svals = readVec<uint64_t>(f, "/calendar_events/seed_values",
+                                       H5::PredType::NATIVE_UINT64);
+        for (size_t i = 0; i < seids.size(); ++i)
+          seed_accum[seids[i]] = svals[i];
+      }
     }
   }
   calendar_event_manager_.setActiveEvents(std::move(active_events_accum));
+  calendar_event_manager_.setEventTriggerSeeds(std::move(seed_accum));
   calendar_event_manager_.rebuildVenueCachesAfterRestore(world_);
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);

@@ -724,8 +724,10 @@ TEST_CASE("rebuildVenueCachesAfterRestore repopulates venue cache for catchment 
 
   // Restore path: setActiveEvents without prior trigger — cache is empty.
   manager.setActiveEvents({{p.id, 7}});
+  // Seed must also be restored (as simulator_restore.cpp does) for the resolver to work.
+  manager.setEventTriggerSeeds({{7, 42}});
   auto before = manager.resolveCalendarEventVenue(world, world.people[0], 0);
-  CHECK(before.first == -1);
+  CHECK(before.first == -1);  // cache still empty before rebuild
 
   manager.rebuildVenueCachesAfterRestore(world);
   auto after = manager.resolveCalendarEventVenue(world, world.people[0], 0);
@@ -760,15 +762,85 @@ TEST_CASE("active-event map round-trips through get/setActiveEvents") {
   };
 
   CalendarEventManager original({{event}});
-  original.setActiveEvents({{p.id, 42}});
-  auto snapshot = original.getActiveEvents();
+  // Trigger the event so both active_event_ and event_trigger_seed_ are recorded.
+  original.triggerEventsForDay(0, world, world.people, 1234, {{0, {0}}});
+  REQUIRE(original.stats().triggered == 1);
 
   CalendarEventManager restored({{event}});
-  restored.setActiveEvents(snapshot);
+  restored.setActiveEvents(original.getActiveEvents());
+  restored.setEventTriggerSeeds(original.getEventTriggerSeeds());
   restored.rebuildVenueCachesAfterRestore(world);
 
   CHECK(restored.getActiveEvents() == original.getActiveEvents());
   auto venue = restored.resolveCalendarEventVenue(world, world.people[0], 0);
   CHECK(venue.first == 7);
   CHECK(venue.second == 0);
+}
+
+TEST_CASE("multi-day Fair assigns the same venue on every day of the hop") {
+  // Regression for base_seed_ stomping: a different event fires on day 1 with a
+  // different base_seed. The person hopped by the Fair event must resolve to the
+  // same guest-house on days 1 and 2 as on day 0.
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"guest_house"};
+  for (VenueId vid : {10, 11, 12}) {
+    Venue v; v.id = vid; v.type_id = 0; v.geo_unit_id = 0;
+    world.venues.push_back(v);
+  }
+  world.activity_names = {"Fair_lodging"};
+  world.schedule_type_names = {"regular", "Fair_lodging"};
+  Person& person = world.people.emplace_back();
+  person.id = 0; person.geo_unit_id = 0;
+  world.buildIndices();
+
+  std::vector<uint64_t> seeds_at_resolve;
+
+  CalendarEvent fair_event;
+  fair_event.calendar_event_id = 1;
+  fair_event.start_day = 0;
+  fair_event.schedule_type_idx = 1;
+  fair_event.compliance_rate = 1.0f;
+  fair_event.duration_days = 3;
+  fair_event.catchment_rule_id = 0;
+  fair_event.candidate_venue_builder = [](const WorldState& w) {
+    return w.getVenuesInGeoUnit(0, "guest_house");
+  };
+  fair_event.venue_selector = [&seeds_at_resolve](
+      const std::vector<VenueId>& candidates, PersonId, uint64_t seed) {
+    seeds_at_resolve.push_back(seed);
+    return std::make_pair(candidates[0], SubsetIndex{0});
+  };
+
+  // Unrelated event on day 1: fires with a very different base_seed.
+  CalendarEvent day1_event;
+  day1_event.calendar_event_id = 2;
+  day1_event.start_day = 1;
+  day1_event.schedule_type_idx = 1;
+  day1_event.compliance_rate = 0.0f;  // never triggers anyone
+  day1_event.duration_days = 1;
+  day1_event.catchment_rule_id = 0;
+  day1_event.candidate_venue_builder = [](const WorldState& w) {
+    return w.getVenuesInGeoUnit(0, "guest_house");
+  };
+
+  CalendarEventManager manager({{fair_event}, {day1_event}, {}});
+
+  manager.triggerEventsForDay(0, world, world.people, /*seed=*/100, {{0, {0}}});
+  REQUIRE(manager.stats().triggered == 1);
+  manager.resolveCalendarEventVenue(world, world.people[0], 0);
+
+  // Day 1: day1_event fires with a completely different seed.
+  manager.triggerEventsForDay(1, world, world.people, /*seed=*/999999, {{0, {0}}});
+  manager.resolveCalendarEventVenue(world, world.people[0], 0);
+
+  // Day 2: empty day.
+  manager.triggerEventsForDay(2, world, world.people, /*seed=*/777, {{0, {0}}});
+  manager.resolveCalendarEventVenue(world, world.people[0], 0);
+
+  REQUIRE(seeds_at_resolve.size() == 3);
+  CHECK(seeds_at_resolve[1] == seeds_at_resolve[0]);
+  CHECK(seeds_at_resolve[2] == seeds_at_resolve[0]);
 }
