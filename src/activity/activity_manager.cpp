@@ -160,16 +160,19 @@ bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
                                             int day_type_idx) {
   const ScheduleType& hopped =
       config_.schedule.schedule_types[person.hopped_schedule_id];
-  if (!hopped.is_temporary ||
-      person.temp_slot_progress >=
-          static_cast<int16_t>(hopped.flat_slots.size())) {
+  if (!hopped.is_temporary) {
     return false;
   }
 
-  const TimeSlot& slot = hopped.flat_slots[person.temp_slot_progress];
+  // temp_slot_progress is kept monotonically increasing across day-boundary
+  // wraps so that findLastNonNullVenueOnHop can scan back through previous
+  // repeats via (k % n).  Use modular index for actual slot access and key.
+  const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
+  const int16_t slot_idx = person.temp_slot_progress % n;
+  const TimeSlot& slot = hopped.flat_slots[slot_idx];
   uint64_t hop_key = mix_seed(base_seed_, person.id,
-                              static_cast<uint64_t>(person.temp_slot_progress));
-  int16_t act = selectActivity(person, slot, person.temp_slot_progress, &hopped,
+                              static_cast<uint64_t>(slot_idx));
+  int16_t act = selectActivity(person, slot, slot_idx, &hopped,
                                day_type_idx, hop_key);
   auto [v, s] = selectVenue(person, act, slot, hop_key);
   loc.venue_id = v;
@@ -180,12 +183,11 @@ bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
   loc.person_array_index = person_array_idx;
   person.temp_slot_progress++;
 
-  // If all flat_slots exhausted, either loop for multi-day events or return.
-  if (person.temp_slot_progress >=
-      static_cast<int16_t>(hopped.flat_slots.size())) {
+  // Detect day-boundary (completed one full cycle of flat_slots).
+  if (person.temp_slot_progress % n == 0) {
     if (person.hop_repeats_remaining > 0) {
       --person.hop_repeats_remaining;
-      person.temp_slot_progress = 0;
+      // Do NOT reset temp_slot_progress — keep it monotonic.
     } else {
       int16_t return_to = (person.return_schedule_id != -1)
                               ? person.return_schedule_id
@@ -725,13 +727,17 @@ void ActivityManager::assignHoppedScheduleSlot(
 std::pair<VenueId, SubsetIndex> ActivityManager::findLastNonNullVenueOnHop(
     const Person& person) {
   ensureIndicesCached();
-  // temp_slot_progress was already incremented by advanceHoppedSchedule, so
-  // the last executed slot was (temp_slot_progress - 2) after the increment,
-  // since the current call incremented it to temp_slot_progress.
-  // Scan from (temp_slot_progress - 2) downward for the last real venue.
+  // temp_slot_progress is monotonically increasing (not reset on day-boundary
+  // wrap).  k iterates backward through the sequence of executed slots; s = k
+  // % n gives the actual flat_slots index and the deterministic key, so each
+  // logical slot always hashes identically regardless of which repeat it falls
+  // in.  When k crosses a day boundary (k < n), the modulo naturally reaches
+  // back into the previous repeat's slots.
   const ScheduleType& hopped =
       config_.schedule.schedule_types[person.hopped_schedule_id];
-  for (int16_t s = person.temp_slot_progress - 2; s >= 0; --s) {
+  const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
+  for (int16_t k = person.temp_slot_progress - 2; k >= 0; --k) {
+    const int16_t s = k % n;
     const TimeSlot& prev_slot = hopped.flat_slots[s];
     uint64_t hop_key =
         mix_seed(base_seed_, person.id, static_cast<uint64_t>(s));

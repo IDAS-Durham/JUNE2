@@ -442,6 +442,10 @@ TEST_CASE("temp schedule returns to specified return_schedule") {
 // =============================================================================
 // Cycle 7: hop_repeats_remaining — multi-day event stays hopped across days
 // =============================================================================
+// NOTE: with the monotonic-progress fix, temp_slot_progress is no longer reset
+// to 0 on day-boundary wrap — it keeps incrementing so findLastNonNullVenueOnHop
+// can scan across boundaries via k % n.  Mid-hop assertions reflect this.
+//
 
 TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remaining > 0") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 2);
@@ -502,17 +506,109 @@ TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remai
   // Day 1: exhausts the 1-slot schedule, hop_repeats_remaining: 2 -> 1, stays hopped
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(world.people[0].hopped_schedule_id == 1);   // still hopped
-  CHECK(world.people[0].temp_slot_progress == 0);   // reset for next loop
+  CHECK(world.people[0].temp_slot_progress == 1);   // monotonic: not reset
   CHECK(world.people[0].hop_repeats_remaining == 1);
 
   // Day 2: decrement to 0, still loops (>0 check was pre-decrement)
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(world.people[0].hopped_schedule_id == 1);
-  CHECK(world.people[0].temp_slot_progress == 0);
+  CHECK(world.people[0].temp_slot_progress == 2);   // monotonic: not reset
   CHECK(world.people[0].hop_repeats_remaining == 0);
 
   // Day 3: hop_repeats_remaining is 0, so this exhaustion triggers return
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(world.people[0].hopped_schedule_id == -1);   // returned
   CHECK(world.people[0].temp_slot_progress == 0);
+}
+
+// =============================================================================
+// Cycle 8: day-boundary wrap with transit slot — temp_slot_progress must stay
+// monotonically increasing so findLastNonNullVenueOnHop can scan back across
+// the wrap via (k % n).  A reset to 0 leaves k = -2 < 0 → empty scan →
+// wrong home fallback when a policy freeze fires on a transit slot.
+// =============================================================================
+
+TEST_CASE("multi-day hop keeps monotonic temp_slot_progress across day-boundary wrap") {
+  // activities: residence=0, lodging=1, no_venue=2, none=3, dead=4
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 2);
+  world.activity_names = {"residence", "lodging", "no_venue", "none", "dead"};
+  world.venue_type_names = {"home", "guest_house"};
+  world.venues[0].type_id = 0;
+  world.venues[1].type_id = 1;
+  world.buildIndices();
+
+  // Person: residence at venue 0, lodging at venue 1
+  world.people[0].activity_meta_start =
+      static_cast<uint32_t>(world.activity_meta.size());
+  world.people[0].activity_meta_count = 2;
+  world.activity_meta.push_back(
+      {0, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({0, 0});
+  world.activity_meta.push_back(
+      {1, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({1, 0});
+
+  // 2-slot daily cycle: [transit (no_venue), overnight (lodging)]
+  ScheduleType temp_sched;
+  temp_sched.name = "temp_sched";
+  temp_sched.is_temporary = true;
+  TimeSlot transit_slot, lodge_slot;
+  transit_slot.name = "transit";
+  transit_slot.allowed_activities = {"no_venue"};
+  resolveSlotIndices(transit_slot, world);
+  lodge_slot.name = "at_lodge";
+  lodge_slot.allowed_activities = {"lodging"};
+  resolveSlotIndices(lodge_slot, world);
+  temp_sched.flat_slots.push_back(transit_slot);
+  temp_sched.flat_slots.push_back(lodge_slot);
+
+  Config config;
+  config.schedule.day_type_cycle = {"workday"};
+  config.schedule.day_type_names = {"workday"};
+  config.schedule.schedule_types.push_back(temp_sched);
+  config.schedule.default_schedule_type = "temp_sched";
+  config.resolve(world);
+
+  world.schedule_type_names = {"temp_sched"};
+  world.num_day_types = 1;
+
+  world.people[0].hopped_schedule_id = 0;
+  world.people[0].return_schedule_id = -1;
+  world.people[0].temp_slot_progress = 0;
+  world.people[0].hop_repeats_remaining = 1;  // 2 full day-cycles
+  world.people[0].schedule_computed = true;
+  world.people[0].schedule_type_id = 0;
+
+  ActivityManager manager(world, config);
+  manager.assignScheduleTypes();
+  std::vector<PersonLocation> locations(1);
+
+  // Day 1 slot 0: transit → venue = -1
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(locations[0].venue_id == -1);
+  CHECK(world.people[0].temp_slot_progress == 1);
+
+  // Day 1 slot 1: lodging → venue = 1; day-boundary wrap occurs here
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(locations[0].venue_id == 1);
+  CHECK(world.people[0].hop_repeats_remaining == 0);
+  CHECK(world.people[0].hopped_schedule_id == 0);
+  // Monotonic: progress must be 2 so findLastNonNullVenueOnHop starts at
+  // k = 2-2 = 0 → s = 0 % 2 = 0 (transit, skipped) → k = -1 stop; but the
+  // key correctness is the Day 2 transit slot below.
+  CHECK(world.people[0].temp_slot_progress == 2);  // RED before fix (was 0)
+
+  // Day 2 slot 0: transit again after wrap; progress must be 3 so that a
+  // findLastNonNullVenueOnHop scan starts at k=1, s=1%2=1 (lodging) → returns
+  // lodge venue (1) rather than home (bug: scan started at k=-1, empty → home).
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(locations[0].venue_id == -1);
+  CHECK(world.people[0].temp_slot_progress == 3);  // RED before fix (was 1)
+  CHECK(world.people[0].hopped_schedule_id == 0);
+
+  // Day 2 slot 1: lodging, then hop ends (repeats exhausted)
+  manager.assignActivitiesFromSchedule(0, 0, locations);
+  CHECK(locations[0].venue_id == 1);
+  CHECK(world.people[0].hopped_schedule_id == -1);
+  CHECK(world.people[0].temp_slot_progress == 0);  // reset on hop end only
 }
