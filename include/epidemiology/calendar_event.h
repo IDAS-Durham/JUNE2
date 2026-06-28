@@ -54,6 +54,12 @@ class CalendarEventManager {
   explicit CalendarEventManager(
       std::vector<std::vector<CalendarEvent>> events_by_day);
 
+  // events_by_id_ points into events_by_day_; move only.
+  CalendarEventManager(const CalendarEventManager&) = delete;
+  CalendarEventManager& operator=(const CalendarEventManager&) = delete;
+  CalendarEventManager(CalendarEventManager&&) = default;
+  CalendarEventManager& operator=(CalendarEventManager&&) = default;
+
   // Fire all events scheduled for `day`: for each, resolve attendees via the
   // catchment rule, then for each compliant, non-colliding attendee set the
   // hop fields and record the active calendar_event_id. `base_seed` drives
@@ -137,5 +143,7 @@ class CalendarEventManager {
       const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
           catchment_rules) const;
 };
+
+static_assert(!std::is_copy_constructible_v<CalendarEventManager>);
 
 }  // namespace june
