@@ -177,3 +177,64 @@ TEST_CASE("WorldState sentinel ID lookups") {
     CHECK(found->age == doctest::Approx(30.0f));
   }
 }
+
+// =============================================================================
+// getVenuesInGeoUnit — exact match and descendant traversal
+// =============================================================================
+
+namespace {
+
+static WorldState buildGeoHierarchyWorld() {
+  WorldState world;
+  world.venue_type_names = {"fair", "household"};
+
+  GeographicalUnit root; root.id = 0; root.parent_id = -1; root.level_id = 0;
+  world.geo_units.push_back(root);
+  GeographicalUnit child; child.id = 1; child.parent_id = 0; child.level_id = 1;
+  world.geo_units.push_back(child);
+  GeographicalUnit grandchild;
+  grandchild.id = 2; grandchild.parent_id = 1; grandchild.level_id = 2;
+  world.geo_units.push_back(grandchild);
+
+  Venue va; va.id = 10; va.type_id = 0; va.geo_unit_id = 1;
+  Venue vb; vb.id = 11; vb.type_id = 0; vb.geo_unit_id = 2;
+  Venue vc; vc.id = 12; vc.type_id = 1; vc.geo_unit_id = 1;
+  world.venues.push_back(va);
+  world.venues.push_back(vb);
+  world.venues.push_back(vc);
+
+  world.buildIndices();
+  return world;
+}
+
+}  // namespace
+
+TEST_CASE("getVenuesInGeoUnit returns venues in exact unit") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto venues = world.getVenuesInGeoUnit(2, "fair");
+  REQUIRE(venues.size() == 1);
+  CHECK(venues[0] == 11);
+}
+
+TEST_CASE("getVenuesInGeoUnit includes descendants") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto venues = world.getVenuesInGeoUnit(1, "fair");
+  REQUIRE(venues.size() == 2);
+  CHECK(venues[0] == 10);
+  CHECK(venues[1] == 11);
+}
+
+TEST_CASE("getVenuesInGeoUnit from root covers all descendants") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto fair_venues = world.getVenuesInGeoUnit(0, "fair");
+  REQUIRE(fair_venues.size() == 2);
+  auto hh_venues = world.getVenuesInGeoUnit(0, "household");
+  REQUIRE(hh_venues.size() == 1);
+  CHECK(hh_venues[0] == 12);
+}
+
+TEST_CASE("getVenuesInGeoUnit returns empty for unknown type") {
+  WorldState world = buildGeoHierarchyWorld();
+  auto venues = world.getVenuesInGeoUnit(0, "nonexistent");
+  CHECK(venues.empty());
+}
