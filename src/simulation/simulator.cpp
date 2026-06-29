@@ -679,6 +679,7 @@ void Simulator::printRunSummary() {
 
 void Simulator::simulateDay(int day_num) {
   int day_type_idx = config_.schedule.getDayTypeIndex(day_num);
+  activity_manager_.setCurrentDay(day_num);
 
   // Track per-day-type occurrence counts
   if (day_type_idx >= static_cast<int>(day_type_counts_.size()))

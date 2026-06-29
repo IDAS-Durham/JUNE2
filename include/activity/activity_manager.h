@@ -53,6 +53,11 @@ class ActivityManager {
     current_simulation_time_ = current_time;
   }
 
+  // Set current simulation day as an integer. Used by the hop path to derive
+  // the day type of each hopped slot without floating-point drift from
+  // current_simulation_time_ at day boundaries.
+  void setCurrentDay(int sim_day) { current_sim_day_ = sim_day; }
+
   // Assign all people to activities for a given time slot
   void assignActivities(const TimeSlot& slot, int day_type_idx,
                         std::vector<PersonLocation>& locations);
@@ -82,6 +87,10 @@ class ActivityManager {
 
   // Current simulation time (for policy checks)
   double current_simulation_time_ = 0.0;
+
+  // Current simulation day as an integer (set by Simulator::simulateDay). Used
+  // to derive hopped-slot day types without fp drift.
+  int current_sim_day_ = 0;
 
   // Select activity for a person based on time slot and participation rates
   // Returns activity index (int16_t) instead of string for performance
@@ -317,12 +326,24 @@ class ActivityManager {
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 
+  // Single source of truth for resolving one hopped flat-slot into its
+  // (activity, venue, subset) triple via mix_seed -> selectActivity ->
+  // selectVenue.  k is the monotonic (non-modular) slot index; the modular
+  // index s = k % n drives both slot access and the deterministic key, so the
+  // same logical slot always hashes identically.  hop_start_day is the sim day
+  // the hop began; the slot's day type is derived from hop_start_day + k / n.
+  // Shared by advanceHoppedSchedule (forward) and findLastNonNullVenueOnHop
+  // (backward) so the two can never diverge.
+  std::tuple<int16_t, VenueId, SubsetIndex> resolveHopSlot(
+      const Person& person, const ScheduleType& hopped, int16_t k,
+      int hop_start_day);
+
   // Handles a person who is currently on a hopped (temporary) schedule.
   // Assigns from flat_slots[temp_slot_progress] and advances the counter.
   // Auto-returns the person when all flat_slots are exhausted.
   // Returns true if the person was handled (caller should continue the loop).
   bool advanceHoppedSchedule(Person& person, PersonLocation& loc,
-                             size_t person_array_idx, int day_type_idx);
+                             size_t person_array_idx);
 
   // Scans backwards through an already-hopped schedule's flat_slots to find
   // the last slot that produced a real venue (venue_id >= 0). Used to resolve

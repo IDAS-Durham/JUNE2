@@ -2,6 +2,8 @@
 #include "activity/activity_manager.h"
 #include "core/config.h"
 #include "doctest.h"
+#include "epidemiology/disease.h"
+#include "epidemiology/policy.h"
 #include "test_utils.h"
 
 using namespace june;
@@ -611,4 +613,141 @@ TEST_CASE("multi-day hop keeps monotonic temp_slot_progress across day-boundary 
   CHECK(locations[0].venue_id == 1);
   CHECK(world.people[0].hopped_schedule_id == -1);
   CHECK(world.people[0].temp_slot_progress == 0);  // reset on hop end only
+}
+
+// =============================================================================
+// Cycle 9: per-day-type participation — back-scan must replay the venue the
+// forward path assigned, not one resolved under the wrong day type.
+//
+// Regression for the latent day_type_idx divergence: findLastNonNullVenueOnHop
+// used to pass day_type_idx = -1, falling back to empty participation, so for a
+// temp schedule whose overnight slot picks between two activities by day-type
+// participation it back-scanned the WRONG activity → wrong venue → policy pin at
+// a place never visited.  With both paths sharing resolveHopSlot and a real
+// per-slot day type, the freeze pin must land on the day-0 overnight venue.
+// =============================================================================
+
+TEST_CASE("back-scan pins the venue forward path assigned under per-day-type "
+          "participation") {
+  // activities: residence=0, lodge_a=1, lodge_b=2, no_venue=3, none=4, dead=5
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 3);
+  world.activity_names = {"residence", "lodge_a", "lodge_b",
+                          "no_venue",  "none",    "dead"};
+  world.venue_type_names = {"home", "guest_a", "guest_b"};
+  world.venues[0].type_id = 0;  // home   -> venue 0
+  world.venues[1].type_id = 1;  // lodge_a -> venue 1
+  world.venues[2].type_id = 2;  // lodge_b -> venue 2
+  world.buildIndices();
+
+  // Person venue mappings: residence@0, lodge_a@1, lodge_b@2
+  world.people[0].activity_meta_start =
+      static_cast<uint32_t>(world.activity_meta.size());
+  world.people[0].activity_meta_count = 3;
+  world.activity_meta.push_back(
+      {0, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({0, 0});
+  world.activity_meta.push_back(
+      {1, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({1, 0});
+  world.activity_meta.push_back(
+      {2, static_cast<uint32_t>(world.activity_venues.size()), 1});
+  world.activity_venues.push_back({2, 0});
+
+  // 2-slot daily cycle: [transit (no_venue), overnight (lodge_a OR lodge_b)].
+  // Day type dtA picks lodge_a, dtB picks lodge_b via participation = 1.0.
+  ScheduleType temp_sched;
+  temp_sched.name = "temp_sched";
+  temp_sched.is_temporary = true;
+  temp_sched.participation_by_day_type["dtA"] = {{"lodge_a", 1.0}};
+  temp_sched.participation_by_day_type["dtB"] = {{"lodge_b", 1.0}};
+  TimeSlot transit_slot, overnight_slot;
+  transit_slot.name = "transit";
+  transit_slot.allowed_activities = {"no_venue"};
+  resolveSlotIndices(transit_slot, world);
+  overnight_slot.name = "overnight";
+  overnight_slot.allowed_activities = {"lodge_a", "lodge_b"};
+  resolveSlotIndices(overnight_slot, world);
+  temp_sched.flat_slots.push_back(transit_slot);
+  temp_sched.flat_slots.push_back(overnight_slot);
+
+  // A second schedule the freeze policy hops the person into when it fires.
+  ScheduleType freeze_sched;
+  freeze_sched.name = "freeze_sched";
+
+  Config config;
+  config.schedule.day_type_cycle = {"dtA", "dtB"};
+  config.schedule.day_type_names = {"dtA", "dtB"};
+  config.schedule.schedule_types.push_back(temp_sched);
+  config.schedule.schedule_types.push_back(freeze_sched);
+  config.schedule.default_schedule_type = "temp_sched";
+  config.resolve(world);
+
+  world.schedule_type_names = {"temp_sched", "freeze_sched"};
+  world.num_day_types = 2;
+
+  world.people[0].hopped_schedule_id = 0;
+  world.people[0].return_schedule_id = -1;
+  world.people[0].temp_slot_progress = 0;
+  world.people[0].hop_repeats_remaining = 1;  // stay hopped across day boundary
+  world.people[0].schedule_computed = true;
+  world.people[0].schedule_type_id = 0;
+
+  ActivityManager manager(world, config);
+  manager.assignScheduleTypes();
+  std::vector<PersonLocation> locations(1);
+
+  // --- Day 0 (dtA): run both slots with NO policy attached, building hop
+  //     history [transit -> none, overnight -> lodge_a (venue 1)].
+  manager.setCurrentDay(0);
+  manager.assignActivitiesFromSchedule(0, 0, locations);  // transit
+  CHECK(locations[0].venue_id == -1);
+  manager.assignActivitiesFromSchedule(1, 0, locations);  // overnight -> dtA
+  CHECK(locations[0].venue_id == 1);  // lodge_a venue, NOT lodge_b
+  CHECK(world.people[0].temp_slot_progress == 2);
+
+  // --- Build a symptom freeze policy that fires on the no_venue transit slot
+  //     and pins the person at their last real overnight venue.
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto curve = std::make_shared<ConstantCurve>(1.0);
+  trans.stage_curves["sick"] = curve;
+  trans.symptom_id_curves = {nullptr, curve};
+  std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"sick", 1, 1}};
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"healthy"};
+  std::vector<TrajectoryDefinition> trajectories;
+  TrajectoryDefinition td;
+  td.selection_key = "general";
+  td.severity = 1.0;
+  td.stages.push_back({"sick", {"constant", {{"value", 100.0}}}});
+  trajectories.push_back(td);
+  Disease disease("TestDisease", symptom_tags, stage_settings, trajectories, {},
+                  trans);
+
+  PolicyManager pm(world);
+  SymptomPolicy freeze;
+  freeze.name = "sick_traveller_freeze";
+  freeze.trigger_symptoms = {"sick"};
+  freeze.action.override_activities = {"no_venue"};
+  freeze.action.replacement_activity = "residence";
+  freeze.action.replacement_schedule = "freeze_sched";
+  freeze.action.compliance_rate = 1.0;
+  pm.addSymptomPolicy(freeze);
+  pm.resolveAll(disease);
+
+  world.people[0].infection = std::make_unique<Infection>(
+      &disease, 0.0, &world.people[0], 42, nullptr, "guest_a", 0);
+  world.people[0].applicable_symptom_policy_mask = 1;
+
+  // --- Day 1 (dtB): policy now active. Transit slot resolves no_venue, the
+  //     freeze fires and pins the person at the back-scanned overnight venue.
+  manager.setPolicyManager(&pm);
+  manager.setCurrentTime(1.0);  // within the sick window -> policy triggers
+  manager.setCurrentDay(1);
+  manager.assignActivitiesFromSchedule(0, 1, locations);  // transit, dtB
+
+  // The last real venue before this transit was day-0 overnight = lodge_a
+  // (venue 1).  The buggy -1 day_type back-scan instead resolved lodge_b
+  // (venue 2) via empty participation falling through to the last activity.
+  CHECK(locations[0].venue_id == 1);
 }
