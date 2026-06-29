@@ -6,7 +6,6 @@
 #include <string>
 
 #include "core/world_state.h"
-#include "utils/deterministic_rng.h"
 #include "utils/filtered_csv.h"
 #include "utils/time_utils.h"
 
@@ -91,11 +90,7 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       event.candidate_venue_builder = [geo_unit_id, venue_type](const WorldState& w) {
         return w.getVenuesInGeoUnit(geo_unit_id, venue_type);
       };
-      event.venue_selector = [](const std::vector<VenueId>& candidates,
-                                 PersonId /*pid*/, uint64_t seed) {
-        uint64_t h = SplitMix64(seed)();
-        return std::make_pair(candidates[h % candidates.size()], SubsetIndex{0});
-      };
+      // No venue_selector: the catchment path uses the manager's default hash-select.
     }
 
     events_by_day[event.start_day].push_back(std::move(event));

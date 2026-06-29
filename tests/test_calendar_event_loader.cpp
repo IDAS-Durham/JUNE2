@@ -150,7 +150,8 @@ TEST_CASE("loader skips out-of-window rows but keeps in-window ones") {
 }
 
 // =============================================================================
-// Loader sets venue assignment strategy callbacks for catchment events
+// Loader sets the candidate_venue_builder (but no venue_selector) for catchment
+// events
 // =============================================================================
 
 TEST_CASE("loader sets candidate_venue_builder for catchment event") {
@@ -173,7 +174,10 @@ TEST_CASE("loader sets candidate_venue_builder for catchment event") {
   CHECK(candidates[1] == 11);
 }
 
-TEST_CASE("loader sets venue_selector for catchment event") {
+TEST_CASE("loader leaves venue_selector null for catchment event") {
+  // The loader deliberately installs no venue_selector: the catchment path
+  // relies on the manager's default hash-select. Re-adding a loader selector
+  // would duplicate that default, so guard against it here.
   WorldState world = buildGeoHierarchyWorld();
   world.schedule_type_names = {"regular", "Fair_day_trip"};
 
@@ -186,9 +190,5 @@ TEST_CASE("loader sets venue_selector for catchment event") {
   REQUIRE(table[4].size() == 1);
   const CalendarEvent& event = table[4][0];
 
-  REQUIRE(event.venue_selector != nullptr);
-  const std::vector<VenueId> candidates = {10, 11};
-  auto result = event.venue_selector(candidates, 0, 12345ULL);
-  CHECK((result.first == 10 || result.first == 11));
-  CHECK(result.second == 0);
+  CHECK(event.venue_selector == nullptr);
 }

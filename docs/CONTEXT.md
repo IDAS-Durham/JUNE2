@@ -76,14 +76,13 @@ _Avoid_: Subset (pre-baked, world-build-time — the opposite of this).
   attended, disambiguated via `fair_id`.
 
 **Venue assignment strategy**:
-A per-event pair of callables that together determine which Venue an attendee
-occupies during a calendar-triggered schedule hop. The
-`candidate_venue_builder` is called once at trigger time to produce the
-eligible Venue pool for the event; the `venue_selector` is called at resolve
-time to pick one Venue from that pool for a specific Person. Null
-`venue_selector` falls back to deterministic hash-select. Only applicable to
-catchment-rule events; membership-field events re-derive Venue from membership
-data instead.
+What determines which Venue an attendee occupies during a calendar-triggered
+schedule hop. A `candidate_venue_builder` produces the eligible Venue pool for
+the event; one Venue is then chosen from that pool for a specific Person by
+deterministic hash-select. An optional `venue_selector` overrides the
+hash-select with custom choice logic; omitting it (the normal case) leaves
+hash-select as the default. Only applicable to catchment-rule events;
+membership-field events re-derive Venue from membership data instead.
 _Avoid_: venue resolution strategy (resolution is the act of calling the
 strategy, not the strategy itself).
 
