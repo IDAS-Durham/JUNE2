@@ -96,7 +96,7 @@ std::vector<uint32_t> buildOwnedPersonOrder(const std::vector<Person>& people) {
 // (sorted by geo_unit_id, person_id) so the run-based index aligns.
 void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
                           const std::vector<Person>& people, int comp) {
-  std::vector<int32_t> ids, geo, hop, ret, tslot;
+  std::vector<int32_t> ids, geo, hop, ret, tslot, hop_rep;
   std::vector<double> imm_l, imm_a, imm_w, death_t;
   std::vector<uint8_t> dead;
   std::vector<uint32_t> m_as, m_at, m_ps, m_pt, m_ds, m_dt;
@@ -119,6 +119,7 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
     hop.push_back(p.hopped_schedule_id);
     ret.push_back(p.return_schedule_id);
     tslot.push_back(p.temp_slot_progress);
+    hop_rep.push_back(p.hop_repeats_remaining);
   }
   std::vector<int32_t> pi_gu, pi_start, pi_count;
   for (size_t i = 0; i < geo.size();) {
@@ -155,6 +156,7 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
   writeVec(f, "/population/hopped_schedule_id", hop, I32, comp);
   writeVec(f, "/population/return_schedule_id", ret, I32, comp);
   writeVec(f, "/population/temp_slot_progress", tslot, I32, comp);
+  writeVec(f, "/population/hop_repeats_remaining", hop_rep, I32, comp);
 }
 
 // Gather + write the sparse infection shard section. One record per infected

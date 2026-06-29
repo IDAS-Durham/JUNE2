@@ -118,6 +118,7 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
   auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
   auto ret = readVec<int32_t>(f, "/population/return_schedule_id", I32);
   auto tsl = readVec<int32_t>(f, "/population/temp_slot_progress", I32);
+  auto hop_rep = readVec<int32_t>(f, "/population/hop_repeats_remaining", I32);
   size_t n = 0;
   for (size_t i = 0; i < ids.size(); ++i) {
     Person* p = world.getPerson(ids[i]);
@@ -137,6 +138,7 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
     p->hopped_schedule_id = static_cast<int16_t>(hop[i]);
     p->return_schedule_id = static_cast<int16_t>(ret[i]);
     p->temp_slot_progress = static_cast<int16_t>(tsl[i]);
+    p->hop_repeats_remaining = static_cast<int16_t>(hop_rep[i]);
     // Clear any default-constructed infection/vaccine; reinstated below.
     p->infection.reset();
     p->vaccine_trajectory.reset();
