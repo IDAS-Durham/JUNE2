@@ -138,6 +138,61 @@ struct ScheduleEntry {
 };
 
 // =============================================================================
+// Schedule Hop - Temporary or permanent departure from a Person's schedule
+// =============================================================================
+struct ScheduleHop {
+  int16_t hopped_schedule_id = -1;  // index into ScheduleConfig::schedule_types; -1 = no hop
+  int16_t return_schedule_id = -1;  // schedule to restore; -1 = person's original
+  int16_t temp_slot_progress = 0;   // monotonic absolute flat_slots index (not reset on day wrap)
+  int16_t repeats_remaining = 0;    // full-cycle repeats left (0 = final/only repeat)
+
+  bool isActive() const { return hopped_schedule_id != -1; }
+  // NB: no isTemporary() — temporariness is a ScheduleType property
+  // (hopped.is_temporary), not derivable from these fields.
+
+  // Begin a TEMPORARY auto-returning hop. Always starts at progress = 0.
+  static ScheduleHop begin(int16_t hop_idx, int16_t return_idx,
+                           int16_t repeats = 0) {
+    return {hop_idx, return_idx, /*temp_slot_progress=*/0, repeats};
+  }
+
+  // Hop-start day from an explicit flat-slot index k. n = flat_slots.size().
+  // advanceHoppedSchedule passes temp_slot_progress (before increment);
+  // findLastNonNullVenueOnHop passes temp_slot_progress - 1 (after increment).
+  static int hopStartDay(int current_sim_day, int16_t n, int16_t k) {
+    return current_sim_day - k / n;
+  }
+
+  // Effective return schedule: explicit return_schedule_id, else the person's
+  // permanent schedule.
+  int16_t effectiveReturnSchedule(int16_t permanent_schedule_id) const {
+    return (return_schedule_id != -1) ? return_schedule_id : permanent_schedule_id;
+  }
+
+  // Advance by one slot. Returns true when the hop cycle completes (caller
+  // auto-returns the person).
+  bool advanceAndCheckComplete(int16_t n) {
+    ++temp_slot_progress;
+    if (temp_slot_progress % n != 0) return false;
+    if (repeats_remaining > 0) {
+      --repeats_remaining;
+      return false;
+    }
+    return true;
+  }
+
+  // Begin a PERMANENT (non-auto-returning) hop: sets target, return = original.
+  // Leaves progress/repeats untouched (caller sets Person::cached_schedule_type_).
+  void setPermanent(int16_t hop_idx) {
+    hopped_schedule_id = hop_idx;
+    return_schedule_id = -1;
+  }
+
+  // Reset to the inactive default state.
+  void clear() { *this = ScheduleHop{}; }
+};
+
+// =============================================================================
 // Person - Represents an individual in the simulation
 // =============================================================================
 enum class Sex : uint8_t { MALE = 0, FEMALE = 1, UNKNOWN = 2 };
