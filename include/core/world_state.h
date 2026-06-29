@@ -191,15 +191,17 @@ class WorldState {
   std::unordered_map<std::string, std::vector<uint32_t>>
       venues_by_type;  // type -> indices
 
-  // Global venue type map: lightweight lookup for ALL venues (including
-  // cross-domain ones not loaded on this rank). Maps VenueId → type_id.
-  // In MPI mode, each rank only loads its own venues into world.venues,
-  // so getVenue() returns nullptr for cross-domain venues. This map provides
-  // the type_id needed by selectVenue() for hierarchical venue selection.
+  // Global venue maps: cover ALL venues (local + cross-rank). In MPI mode the
+  // HDF5 loader pre-populates these before buildIndices(); in serial/test mode
+  // buildGlobalVenueMaps() fills them from world.venues during buildIndices().
+  // Single source of truth — getVenuesInGeoUnit() uses only these maps so the
+  // candidate pool is identical in serial and parallel runs.
   std::unordered_map<VenueId, uint8_t> global_venue_type_map;
+  std::unordered_map<VenueId, GeoUnitId> global_venue_geo_unit_map;
+  // type_name → sorted list of all VenueIds of that type (globally)
+  std::unordered_map<std::string, std::vector<VenueId>> global_venues_by_type_name;
 
-  // Helper: get venue type_id, falling back to global map for cross-domain
-  // venues
+  // Helper: get venue type_id, falling back to global map for cross-rank venues
   uint8_t getVenueTypeId(VenueId id) const {
     const Venue* v = getVenue(id);
     if (v) return v->type_id;
@@ -213,6 +215,10 @@ class WorldState {
 
   // Build lookup indices (call after loading)
   void buildIndices();
+
+  // Populate global_venue_geo_unit_map and global_venues_by_type_name from
+  // world.venues. No-op if already filled by the MPI HDF5 loader.
+  void buildGlobalVenueMaps();
 
   // Load susceptibility factors from CSV
   void loadRegionalRiskFactors(const std::string& csv_path);

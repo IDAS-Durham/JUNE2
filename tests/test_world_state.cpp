@@ -238,3 +238,35 @@ TEST_CASE("getVenuesInGeoUnit returns empty for unknown type") {
   auto venues = world.getVenuesInGeoUnit(0, "nonexistent");
   CHECK(venues.empty());
 }
+
+// Verify that getVenuesInGeoUnit returns non-local venues pre-loaded into the
+// global maps — the MPI-mode path where world.venues only holds local venues
+// but global_venues_by_type_name covers all ranks.
+TEST_CASE("getVenuesInGeoUnit includes non-local venues from global maps") {
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  world.venue_type_names = {"guest_house"};
+
+  GeographicalUnit gu;
+  gu.id = 10; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+
+  // Only one local venue (simulating MPI rank's local partition)
+  Venue local_v; local_v.id = 100; local_v.type_id = 0; local_v.geo_unit_id = 10;
+  world.venues.push_back(local_v);
+
+  // Pre-populate global maps with both the local venue AND a remote one (id=200),
+  // as the HDF5 loader would in MPI mode before buildIndices() is called.
+  world.global_venues_by_type_name["guest_house"] = {100, 200};
+  world.global_venue_geo_unit_map[100] = 10;
+  world.global_venue_geo_unit_map[200] = 10;  // remote venue, same geo_unit
+  world.global_venue_type_map[100] = 0;
+  world.global_venue_type_map[200] = 0;
+
+  world.buildIndices();  // must not overwrite the pre-populated global maps
+
+  auto result = world.getVenuesInGeoUnit(10, "guest_house");
+  REQUIRE(result.size() == 2);
+  CHECK(result[0] == 100);
+  CHECK(result[1] == 200);
+}

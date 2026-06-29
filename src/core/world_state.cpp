@@ -48,6 +48,22 @@ void WorldState::buildIndices() {
       current_id = geo_units[it->second].parent_id;
     }
   }
+
+  buildGlobalVenueMaps();
+}
+
+void WorldState::buildGlobalVenueMaps() {
+  if (!global_venues_by_type_name.empty()) return;  // MPI loader already filled
+  for (size_t i = 0; i < venues.size(); ++i) {
+    global_venue_geo_unit_map.emplace(venues[i].id, venues[i].geo_unit_id);
+    const std::string& type_name =
+        (venues[i].type_id < venue_type_names.size())
+            ? venue_type_names[venues[i].type_id]
+            : "unknown";
+    global_venues_by_type_name[type_name].push_back(venues[i].id);
+  }
+  for (auto& [_, ids] : global_venues_by_type_name)
+    std::sort(ids.begin(), ids.end());
 }
 
 Person* WorldState::getPerson(PersonId id) {
@@ -95,16 +111,18 @@ std::vector<Venue*> WorldState::getVenuesByType(const std::string& type) {
 std::vector<VenueId> WorldState::getVenuesInGeoUnit(
     GeoUnitId hosting_geo_unit_id, const std::string& venue_type_name) const {
   std::vector<VenueId> result;
-  auto type_it = venues_by_type.find(venue_type_name);
-  if (type_it == venues_by_type.end()) return result;
+  auto type_it = global_venues_by_type_name.find(venue_type_name);
+  if (type_it == global_venues_by_type_name.end()) return result;
 
-  for (uint32_t idx : type_it->second) {
-    // Walk up from this venue's geo_unit to check if hosting_geo_unit_id is
-    // an ancestor-or-self.
-    GeoUnitId current = venues[idx].geo_unit_id;
+  // global_venues_by_type_name is sorted by venue_id at build time, so the
+  // result is already sorted — no trailing sort needed.
+  for (VenueId vid : type_it->second) {
+    auto geo_it = global_venue_geo_unit_map.find(vid);
+    if (geo_it == global_venue_geo_unit_map.end()) continue;
+    GeoUnitId current = geo_it->second;
     while (current != -1) {
       if (current == hosting_geo_unit_id) {
-        result.push_back(venues[idx].id);
+        result.push_back(vid);
         break;
       }
       auto gu_it = geo_unit_index.find(current);
@@ -112,8 +130,6 @@ std::vector<VenueId> WorldState::getVenuesInGeoUnit(
       current = geo_units[gu_it->second].parent_id;
     }
   }
-
-  std::sort(result.begin(), result.end());
   return result;
 }
 

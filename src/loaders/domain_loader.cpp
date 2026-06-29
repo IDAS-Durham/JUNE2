@@ -307,7 +307,7 @@ WorldState HDF5Loader::loadDomainChunked(
   }
 
   detail::loadVenueSubsets(loader, owned_geo_units);
-  detail::buildGlobalVenueTypeMap(loader);
+  detail::buildGlobalVenueMaps(loader);
 
   MemoryUtils::logMemory("After loading all chunks, before indexing");
   loader.world_.buildIndices();

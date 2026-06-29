@@ -127,10 +127,10 @@ void loadVenueSubsets(HDF5Loader& loader,
                       const std::unordered_set<GeoUnitId>& owned_geo_units);
 
 // Read ALL venue IDs and type_ids from HDF5 into world.global_venue_type_map.
-// Needed for cross-domain venue lookups in selectVenue() under MPI: venues
-// owned by other ranks are not in world.venues, but activity mappings may
-// reference them.
-void buildGlobalVenueTypeMap(HDF5Loader& loader);
+// Build global venue maps (type, geo_unit, and by-type-name index) covering
+// ALL venues from HDF5. Required for deterministic getVenuesInGeoUnit() in
+// MPI mode and for cross-rank type lookups in selectVenue().
+void buildGlobalVenueMaps(HDF5Loader& loader);
 
 }  // namespace detail
 }  // namespace june

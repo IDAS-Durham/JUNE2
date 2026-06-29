@@ -624,14 +624,38 @@ void loadVenueSubsets(HDF5Loader& loader,
   }
 }
 
-void buildGlobalVenueTypeMap(HDF5Loader& loader) {
-  auto all_venue_ids = loader.readNumericDataset<int32_t>("/venues/ids");
-  auto all_venue_types = loader.readNumericDataset<uint8_t>("/venues/types");
-  size_t n = std::min(all_venue_ids.size(), all_venue_types.size());
-  loader.world_.global_venue_type_map.reserve(n);
+void buildGlobalVenueMaps(HDF5Loader& loader) {
+  auto all_ids   = loader.readNumericDataset<int32_t>("/venues/ids");
+  auto all_types = loader.readNumericDataset<uint8_t>("/venues/types");
+
+  // Reconstruct venue→geo_unit from the partition index (geo_unit_id →
+  // contiguous range of venues in the global array).
+  auto gu_ids = loader.readNumericDataset<int32_t>(
+      "/venues/partition_index/geo_unit_ids");
+  auto starts = loader.readNumericDataset<int32_t>(
+      "/venues/partition_index/start_indices");
+  auto counts = loader.readNumericDataset<int32_t>(
+      "/venues/partition_index/counts");
+
+  std::vector<GeoUnitId> venue_geo(all_ids.size(), -1);
+  for (size_t g = 0; g < gu_ids.size(); ++g)
+    for (int32_t k = 0; k < counts[g]; ++k)
+      venue_geo[static_cast<size_t>(starts[g]) + k] = gu_ids[g];
+
+  auto& world = loader.world_;
+  size_t n = all_ids.size();
+  world.global_venue_type_map.reserve(n);
+  world.global_venue_geo_unit_map.reserve(n);
   for (size_t i = 0; i < n; ++i) {
-    loader.world_.global_venue_type_map[all_venue_ids[i]] = all_venue_types[i];
+    world.global_venue_type_map[all_ids[i]]     = all_types[i];
+    world.global_venue_geo_unit_map[all_ids[i]] = venue_geo[i];
+    if (all_types[i] < world.venue_type_names.size()) {
+      world.global_venues_by_type_name[
+          world.venue_type_names[all_types[i]]].push_back(all_ids[i]);
+    }
   }
+  for (auto& [_, ids] : world.global_venues_by_type_name)
+    std::sort(ids.begin(), ids.end());
 }
 
 }  // namespace detail
