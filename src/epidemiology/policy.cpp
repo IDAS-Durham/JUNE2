@@ -101,9 +101,9 @@ std::optional<PersonLocation> PolicyManager::getOverride(
         if (frozen_it != frozen_states_.end() &&
             frozen_it->second.triggering_policy_index ==
                 static_cast<uint8_t>(i)) {
-          person.hopped_schedule_id =
+          person.schedule_hop.hopped_schedule_id =
               frozen_it->second.paused_hopped_schedule_id;
-          person.return_schedule_id =
+          person.schedule_hop.return_schedule_id =
               frozen_it->second.paused_return_schedule_id;
           frozen_states_.erase(frozen_it);
         }
@@ -138,7 +138,7 @@ std::optional<PersonLocation> PolicyManager::getOverride(
       // Freeze-hop path: pin person at current/last overnight venue. Only
       // applies to hopped persons.
       if (policy.action.replacement_schedule_idx >= 0 &&
-          person.hopped_schedule_id >= 0) {
+          person.schedule_hop.isActive()) {
         ensureResidenceIndexCached();
 
         auto frozen_it = frozen_states_.find(person.id);
@@ -166,12 +166,15 @@ std::optional<PersonLocation> PolicyManager::getOverride(
           }
         }
 
-        int16_t saved_hop = person.hopped_schedule_id;
-        int16_t saved_return = person.return_schedule_id;
+        int16_t saved_hop = person.schedule_hop.hopped_schedule_id;
+        int16_t saved_return = person.schedule_hop.return_schedule_id;
         frozen_states_[person.id] =
             FrozenPersonState{static_cast<uint8_t>(i), saved_hop, saved_return,
                               pin_venue, pin_subset};
-        person.hopped_schedule_id = policy.action.replacement_schedule_idx;
+        // Plain write, NOT setPermanent(): return_schedule_id must survive
+        // (saved above, restored on thaw); setPermanent would clobber it.
+        person.schedule_hop.hopped_schedule_id =
+            policy.action.replacement_schedule_idx;
 
         PersonLocation loc;
         loc.person_id = person.id;

@@ -56,6 +56,23 @@ Subset: membership is never pre-baked; it is recomputed each time the
 Calendar Event fires.
 _Avoid_: Subset (pre-baked, world-build-time — the opposite of this).
 
+**Schedule Hop**:
+A temporary or permanent departure from a Person's assigned schedule type,
+owned by the `ScheduleHop` struct on Person; active when
+`hopped_schedule_id != -1`. A _temporary_ hop advances monotonically through
+the hopped schedule's `flat_slots` (the counter is never reset on day-boundary
+wrap, so backward scans reach earlier repeats via `% n`); `repeats_remaining`
+counts full-cycle repeats still to run (0 = final/only). Auto-return fires when
+a full cycle completes with none remaining. Whether a hop is temporary is a
+property of its ScheduleType (`is_temporary`), not of the hop fields. All
+temporary hops begin at progress = 0, via two call-site onset patterns:
+_immediate_ (`maybeTriggerScheduleHop` runs slot 0 then advances, leaving
+progress = 1) and _deferred_ (`triggerEventsForDay` stops after `begin()`; slot
+0 runs on the first advance). _Permanent_ hops (a property-dispatched permanent
+schedule, or a policy freeze-in-place swap) set `hopped_schedule_id` without
+auto-return.
+_Avoid_: "temp schedule", "hopped state".
+
 ## Relationships
 
 - A **Person** has, per **Activity**, a list of candidate **Venue**

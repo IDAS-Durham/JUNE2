@@ -102,8 +102,8 @@ FairHopFixture buildFairHopFixture() {
     return std::make_pair(c.back(), SubsetIndex{0});
   };
 
-  f.world.people[0].hopped_schedule_id = 1;
-  f.world.people[0].temp_slot_progress = 0;
+  f.world.people[0].schedule_hop.hopped_schedule_id = 1;
+  f.world.people[0].schedule_hop.temp_slot_progress = 0;
   f.world.people[0].schedule_type_id = 0;
   return f;
 }
@@ -131,8 +131,9 @@ TEST_CASE("selectVenue guard resolves the calendar-event venue during a hop") {
   ActivityManager manager(f.world, f.config);
 
   CalendarEventManager calendar_manager({{f.event}});
-  calendar_manager.setActiveEvents({{f.world.people[0].id, 99}});
-  calendar_manager.rebuildVenueCachesAfterRestore(f.world);
+  CalendarEventManager::Snapshot snap;
+  snap.active_event[f.world.people[0].id] = 99;
+  calendar_manager.restore(std::move(snap), f.world);
   manager.setCalendarEventManager(&calendar_manager);
 
   std::vector<PersonLocation> locations(1);
@@ -340,10 +341,10 @@ TEST_CASE("event with custom venue_selector uses it instead of hash-select") {
 }
 
 // =============================================================================
-// rebuildVenueCachesAfterRestore fixes the restore-path bug
+// restore() repopulates venue cache (ordering enforced structurally)
 // =============================================================================
 
-TEST_CASE("rebuildVenueCachesAfterRestore repopulates venue cache for catchment events") {
+TEST_CASE("restore repopulates venue cache for catchment-path persons") {
   WorldState world;
   world.geo_level_names = {"sgu"};
   GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
@@ -368,13 +369,11 @@ TEST_CASE("rebuildVenueCachesAfterRestore repopulates venue cache for catchment 
   };
 
   CalendarEventManager manager({{event}});
+  CalendarEventManager::Snapshot snap;
+  snap.active_event[p.id] = 7;
+  snap.event_trigger_seed[7] = 42;
+  manager.restore(std::move(snap), world);
 
-  manager.setActiveEvents({{p.id, 7}});
-  manager.setEventTriggerSeeds({{7, 42}});
-  auto before = manager.resolveCalendarEventVenue(world.people[0]);
-  CHECK(before.first == -1);  // cache still empty before rebuild
-
-  manager.rebuildVenueCachesAfterRestore(world);
   auto after = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK((after.first == 100 || after.first == 101 || after.first == 102));
   CHECK(after.second == 0);
@@ -384,7 +383,7 @@ TEST_CASE("rebuildVenueCachesAfterRestore repopulates venue cache for catchment 
 // Checkpoint — active-event map round-trip
 // =============================================================================
 
-TEST_CASE("active-event map round-trips through get/setActiveEvents") {
+TEST_CASE("active-event map round-trips through snapshot_for_checkpoint/restore") {
   WorldState world;
   world.geo_level_names = {"sgu"};
   GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
@@ -411,11 +410,9 @@ TEST_CASE("active-event map round-trips through get/setActiveEvents") {
   REQUIRE(original.stats().triggered == 1);
 
   CalendarEventManager restored({{event}});
-  restored.setActiveEvents(original.getActiveEvents());
-  restored.setEventTriggerSeeds(original.getEventTriggerSeeds());
-  restored.rebuildVenueCachesAfterRestore(world);
+  restored.restore(original.snapshot_for_checkpoint(), world);
 
-  CHECK(restored.getActiveEvents() == original.getActiveEvents());
+  CHECK(restored.hasActiveEvent(world.people[0].id));
   auto venue = restored.resolveCalendarEventVenue(world.people[0]);
   CHECK(venue.first == 7);
   CHECK(venue.second == 0);

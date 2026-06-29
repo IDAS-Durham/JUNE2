@@ -258,8 +258,8 @@ class ActivityManager {
   // Checks current_slot for a schedule-hop trigger on the chosen activity
   // (first via the static hop_schedule_by_activity_idx table, then via the
   // YAML property-dispatched fallback). If a hop target is found, mutates
-  // person.hopped_schedule_id / return_schedule_id / cached_schedule_type_
-  // / temp_slot_progress as required, and for temporary hops rolls RNG
+  // person.schedule_hop and cached_schedule_type_ as required, and for
+  // temporary hops rolls RNG
   // for slot 0 of the target and updates scheduled_* outputs.
   void maybeTriggerScheduleHop(Person& person, const TimeSlot* current_slot,
                                int day_type_idx, uint64_t time_key,
@@ -339,7 +339,7 @@ class ActivityManager {
       int hop_start_day);
 
   // Handles a person who is currently on a hopped (temporary) schedule.
-  // Assigns from flat_slots[temp_slot_progress] and advances the counter.
+  // Assigns from flat_slots[schedule_hop.temp_slot_progress] and advances it.
   // Auto-returns the person when all flat_slots are exhausted.
   // Returns true if the person was handled (caller should continue the loop).
   bool advanceHoppedSchedule(Person& person, PersonLocation& loc,

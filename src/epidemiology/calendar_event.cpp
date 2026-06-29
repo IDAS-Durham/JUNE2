@@ -51,7 +51,7 @@ void CalendarEventManager::sweepCompletedHops(
     const std::vector<Person>& people) {
   if (active_event_.empty()) return;
   for (const Person& person : people) {
-    if (person.hopped_schedule_id == -1)
+    if (!person.schedule_hop.isActive())
       active_event_.erase(person.id);
   }
 }
@@ -86,7 +86,7 @@ void CalendarEventManager::triggerEventsForDay(
       Person& person = people[idx_it->second];
 
       // Collision: never override a person already mid-hop.
-      if (person.hopped_schedule_id != -1) {
+      if (person.schedule_hop.isActive()) {
         ++stats_.skipped_collision;
         continue;
       }
@@ -100,10 +100,10 @@ void CalendarEventManager::triggerEventsForDay(
         continue;
       }
 
-      person.hopped_schedule_id = event.schedule_type_idx;
-      person.return_schedule_id = -1;  // return to original schedule
-      person.temp_slot_progress = 0;
-      person.hop_repeats_remaining = event.duration_days;
+      // Deferred onset: no advance here; slot 0 runs on the first
+      // advanceAndCheckComplete.
+      person.schedule_hop = ScheduleHop::begin(
+          event.schedule_type_idx, -1, event.duration_days);
       active_event_[person.id] = event.calendar_event_id;
       ++stats_.triggered;
     }
@@ -130,6 +130,17 @@ std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
     return ev_it->second->venue_selector(candidates, person.id, seed);
   uint64_t h = SplitMix64(seed)();
   return {candidates[h % candidates.size()], 0};
+}
+
+CalendarEventManager::Snapshot CalendarEventManager::snapshot_for_checkpoint()
+    const {
+  return {active_event_, event_trigger_seed_};
+}
+
+void CalendarEventManager::restore(Snapshot snapshot, const WorldState& world) {
+  active_event_       = std::move(snapshot.active_event);
+  event_trigger_seed_ = std::move(snapshot.event_trigger_seed);
+  rebuildVenueCachesAfterRestore(world);
 }
 
 void CalendarEventManager::rebuildVenueCachesAfterRestore(

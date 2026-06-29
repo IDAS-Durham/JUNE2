@@ -116,10 +116,10 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
     m_pt.push_back(p.active_temporal_policy_participation);
     m_ds.push_back(p.symptom_policy_decisions);
     m_dt.push_back(p.temporal_policy_decisions);
-    hop.push_back(p.hopped_schedule_id);
-    ret.push_back(p.return_schedule_id);
-    tslot.push_back(p.temp_slot_progress);
-    hop_rep.push_back(p.hop_repeats_remaining);
+    hop.push_back(p.schedule_hop.hopped_schedule_id);
+    ret.push_back(p.schedule_hop.return_schedule_id);
+    tslot.push_back(p.schedule_hop.temp_slot_progress);
+    hop_rep.push_back(p.schedule_hop.repeats_remaining);
   }
   std::vector<int32_t> pi_gu, pi_start, pi_count;
   for (size_t i = 0; i < geo.size();) {
@@ -308,6 +308,36 @@ void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
            comp);
   writeVec(f, "/policy_frozen_states/pin_venue_id", fz_venue, I32, comp);
   writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
+}
+
+void writeShardCalendarEvents(H5::H5File& f,
+                              const CalendarEventManager::Snapshot& snap,
+                              int comp) {
+  if (snap.active_event.empty() && snap.event_trigger_seed.empty()) return;
+  std::vector<int32_t> ce_pids, ce_eids;
+  ce_pids.reserve(snap.active_event.size());
+  ce_eids.reserve(snap.active_event.size());
+  for (const auto& [pid, eid] : snap.active_event) {
+    ce_pids.push_back(static_cast<int32_t>(pid));
+    ce_eids.push_back(eid);
+  }
+  std::vector<int32_t> seed_eids;
+  std::vector<uint64_t> seed_vals;
+  seed_eids.reserve(snap.event_trigger_seed.size());
+  seed_vals.reserve(snap.event_trigger_seed.size());
+  for (const auto& [eid, seed] : snap.event_trigger_seed) {
+    seed_eids.push_back(eid);
+    seed_vals.push_back(seed);
+  }
+  f.createGroup("/calendar_events");
+  writeVec(f, "/calendar_events/person_ids", ce_pids,
+           H5::PredType::NATIVE_INT32, comp);
+  writeVec(f, "/calendar_events/event_ids", ce_eids,
+           H5::PredType::NATIVE_INT32, comp);
+  writeVec(f, "/calendar_events/seed_event_ids", seed_eids,
+           H5::PredType::NATIVE_INT32, comp);
+  writeVec(f, "/calendar_events/seed_values", seed_vals,
+           H5::PredType::NATIVE_UINT64, comp);
 }
 
 // Gather + write the sparse venue fomite-history shard section. One record
@@ -505,36 +535,8 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
 
   writeShardEpidemiology(f, epidemiology_.get(), comp);
   writeShardFrozenStates(f, policy_manager_.get(), comp);
-
-  // Calendar event active-hop state (sparse: only people mid-hop on an event)
-  const auto& active = calendar_event_manager_.getActiveEvents();
-  const auto& trigger_seeds = calendar_event_manager_.getEventTriggerSeeds();
-  if (!active.empty() || !trigger_seeds.empty()) {
-    std::vector<int32_t> ce_pids, ce_eids;
-    ce_pids.reserve(active.size());
-    ce_eids.reserve(active.size());
-    for (const auto& [pid, eid] : active) {
-      ce_pids.push_back(static_cast<int32_t>(pid));
-      ce_eids.push_back(eid);
-    }
-    f.createGroup("/calendar_events");
-    writeVec(f, "/calendar_events/person_ids", ce_pids,
-             H5::PredType::NATIVE_INT32, comp);
-    writeVec(f, "/calendar_events/event_ids", ce_eids,
-             H5::PredType::NATIVE_INT32, comp);
-    std::vector<int32_t> seed_eids;
-    std::vector<uint64_t> seed_vals;
-    seed_eids.reserve(trigger_seeds.size());
-    seed_vals.reserve(trigger_seeds.size());
-    for (const auto& [eid, seed] : trigger_seeds) {
-      seed_eids.push_back(eid);
-      seed_vals.push_back(seed);
-    }
-    writeVec(f, "/calendar_events/seed_event_ids", seed_eids,
-             H5::PredType::NATIVE_INT32, comp);
-    writeVec(f, "/calendar_events/seed_values", seed_vals,
-             H5::PredType::NATIVE_UINT64, comp);
-  }
+  writeShardCalendarEvents(f, calendar_event_manager_.snapshot_for_checkpoint(),
+                           comp);
 
   f.close();
 }

@@ -77,29 +77,20 @@ class CalendarEventManager {
       const Person& person) const;
 
   // Erase active-event entries for persons whose hop has completed (i.e.
-  // hopped_schedule_id == -1). Called at the top of triggerEventsForDay so
+  // !schedule_hop.isActive()). Called at the top of triggerEventsForDay so
   // stale entries are cleaned up once per day without coupling to ActivityManager.
   void sweepCompletedHops(const std::vector<Person>& people);
 
-  // Checkpoint accessors for the active-event-id map.
-  const std::unordered_map<PersonId, int32_t>& getActiveEvents() const {
-    return active_event_;
-  }
-  const std::unordered_map<int32_t, uint64_t>& getEventTriggerSeeds() const {
-    return event_trigger_seed_;
-  }
-  void setEventTriggerSeeds(std::unordered_map<int32_t, uint64_t> seeds) {
-    event_trigger_seed_ = std::move(seeds);
-  }
-  // Rebuild venue_candidates_cache_ for all persons mid-hop after a checkpoint
-  // restore. Must be called after setActiveEvents so the cache is consistent
-  // with active_event_. Fixes the latent bug where catchment-path persons
-  // would get {-1,-1} from the resolver because the cache was never populated.
-  void rebuildVenueCachesAfterRestore(const WorldState& world);
-
-  void setActiveEvents(std::unordered_map<PersonId, int32_t> active) {
-    active_event_ = std::move(active);
-  }
+  // Checkpoint seam: serialisable state (venue_candidates_cache_ is derived
+  // and rebuilt automatically by restore()).
+  struct Snapshot {
+    std::unordered_map<PersonId, int32_t>  active_event;
+    std::unordered_map<int32_t, uint64_t>  event_trigger_seed;
+  };
+  Snapshot snapshot_for_checkpoint() const;
+  // Restore from snapshot. Rebuilds venue_candidates_cache_ internally so
+  // call order is enforced structurally, not by convention.
+  void restore(Snapshot snapshot, const WorldState& world);
 
   // Trigger diagnostics.
   struct Stats {
@@ -134,6 +125,8 @@ class CalendarEventManager {
   // trigger-time build and the checkpoint-restore rebuild.
   std::vector<VenueId> buildVenueCandidates(const CalendarEvent& event,
                                             const WorldState& world) const;
+
+  void rebuildVenueCachesAfterRestore(const WorldState& world);
 
   // Attendees for a catchment-rule event: gathered from people_by_geo_unit for
   // each geo_unit in the catchment rule, filtered by event.attendee_filters.

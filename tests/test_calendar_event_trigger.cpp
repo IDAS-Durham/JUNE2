@@ -56,10 +56,10 @@ TEST_CASE("trigger sets hop fields for catchment-rule event") {
   CalendarEventManager manager({{makeCatchmentEvent(1, 1)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
 
-  CHECK(world.people[0].hopped_schedule_id == 1);
-  CHECK(world.people[0].return_schedule_id == -1);
-  CHECK(world.people[0].temp_slot_progress == 0);
-  CHECK(world.people[0].hop_repeats_remaining == 1);
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);
+  CHECK(world.people[0].schedule_hop.return_schedule_id == -1);
+  CHECK(world.people[0].schedule_hop.temp_slot_progress == 0);
+  CHECK(world.people[0].schedule_hop.repeats_remaining == 1);
   CHECK(manager.hasActiveEvent(world.people[0].id));
   CHECK(manager.stats().triggered == 1);
 }
@@ -68,16 +68,16 @@ TEST_CASE("trigger sets hop_repeats_remaining from duration_days") {
   WorldState world = buildCatchmentWorld();
   CalendarEventManager manager({{makeCatchmentEvent(1, 1, 1.0f, 3)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
-  CHECK(world.people[0].hop_repeats_remaining == 3);
+  CHECK(world.people[0].schedule_hop.repeats_remaining == 3);
 }
 
 TEST_CASE("trigger skips a person already on a hopped schedule") {
   WorldState world = buildCatchmentWorld();
-  world.people[0].hopped_schedule_id = 3;  // already mid-hop
+  world.people[0].schedule_hop.hopped_schedule_id = 3;  // already mid-hop
   CalendarEventManager manager({{makeCatchmentEvent(1, 5)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
 
-  CHECK(world.people[0].hopped_schedule_id == 3);  // unchanged
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 3);  // unchanged
   CHECK_FALSE(manager.hasActiveEvent(world.people[0].id));
   CHECK(manager.stats().triggered == 0);
   CHECK(manager.stats().skipped_collision == 1);
@@ -138,9 +138,9 @@ TEST_CASE("catchment-rule event triggers people in specified geo_units") {
   manager.triggerEventsForDay(0, world, world.people, 42, {{7, {10, 11}}});
 
   CHECK(manager.stats().triggered == 2);
-  CHECK(world.people[0].hopped_schedule_id == 1);
-  CHECK(world.people[1].hopped_schedule_id == 1);
-  CHECK(world.people[2].hopped_schedule_id == -1);
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);
+  CHECK(world.people[1].schedule_hop.hopped_schedule_id == 1);
+  CHECK(world.people[2].schedule_hop.hopped_schedule_id == -1);
 }
 
 TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
@@ -182,7 +182,7 @@ TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
   manager.triggerEventsForDay(0, world, world.people, 42, {{0, {0}}});
 
   CHECK(manager.stats().triggered == 2);
-  CHECK(world.people[0].hopped_schedule_id == -1);
-  CHECK(world.people[1].hopped_schedule_id == 1);
-  CHECK(world.people[2].hopped_schedule_id == 1);
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);
+  CHECK(world.people[1].schedule_hop.hopped_schedule_id == 1);
+  CHECK(world.people[2].schedule_hop.hopped_schedule_id == 1);
 }

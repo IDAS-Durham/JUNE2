@@ -174,7 +174,7 @@ std::tuple<int16_t, VenueId, SubsetIndex> ActivityManager::resolveHopSlot(
 bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
                                             size_t person_array_idx) {
   const ScheduleType& hopped =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
   if (!hopped.is_temporary) {
     return false;
   }
@@ -185,32 +185,23 @@ bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
   // index is temp_slot_progress; integer division by n gives its hop-day, hence
   // hop_start_day = current_sim_day_ - temp_slot_progress / n.
   const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
-  const int hop_start_day = current_sim_day_ - person.temp_slot_progress / n;
-  auto [act, v, s] =
-      resolveHopSlot(person, hopped, person.temp_slot_progress, hop_start_day);
+  const int hop_start_day = ScheduleHop::hopStartDay(
+      current_sim_day_, n, person.schedule_hop.temp_slot_progress);
+  auto [act, v, s] = resolveHopSlot(
+      person, hopped, person.schedule_hop.temp_slot_progress, hop_start_day);
   loc.venue_id = v;
   loc.subset_index = s;
   loc.activity_index = act;
   loc.encounter_type_id = 255;
   loc.person_id = person.id;
   loc.person_array_index = person_array_idx;
-  person.temp_slot_progress++;
 
-  // Detect day-boundary (completed one full cycle of flat_slots).
-  if (person.temp_slot_progress % n == 0) {
-    if (person.hop_repeats_remaining > 0) {
-      --person.hop_repeats_remaining;
-      // Do NOT reset temp_slot_progress — keep it monotonic.
-    } else {
-      int16_t return_to = (person.return_schedule_id != -1)
-                              ? person.return_schedule_id
-                              : static_cast<int16_t>(person.schedule_type_id);
-      person.cached_schedule_type_ = &config_.schedule.schedule_types[return_to];
-      person.hopped_schedule_id = -1;
-      person.return_schedule_id = -1;
-      person.temp_slot_progress = 0;
-      person.hop_repeats_remaining = 0;
-    }
+  // Advance one slot; auto-return when a full cycle completes with no repeats.
+  if (person.schedule_hop.advanceAndCheckComplete(n)) {
+    int16_t return_to = person.schedule_hop.effectiveReturnSchedule(
+        static_cast<int16_t>(person.schedule_type_id));
+    person.cached_schedule_type_ = &config_.schedule.schedule_types[return_to];
+    person.schedule_hop.clear();
   }
   return true;
 }
@@ -223,7 +214,7 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
     const Person& person = world_.people[i];
 
     // Hopped person: bypass normal slot
-    if (person.hopped_schedule_id != -1) {
+    if (person.schedule_hop.isActive()) {
       assignHoppedSingleSlot(person, i, slot, day_type_idx, locations);
       continue;
     }
@@ -356,7 +347,7 @@ void ActivityManager::assignActivitiesFromSchedule(
     Person& person = world_.people[i];  // Non-const for potential modifications
 
     // Hopped person: bypass precomputed schedule
-    if (person.hopped_schedule_id != -1) {
+    if (person.schedule_hop.isActive()) {
       assignHoppedScheduleSlot(person, i, time_slot_index, day_type_idx,
                                time_key, locations);
       continue;
@@ -533,12 +524,10 @@ void ActivityManager::maybeTriggerScheduleHop(
 
   const ScheduleType& target = config_.schedule.schedule_types[hop_idx];
   if (target.is_temporary && !target.flat_slots.empty()) {
-    person.hopped_schedule_id = hop_idx;
-    person.return_schedule_id =
-        (target.return_schedule_idx != -1)
-            ? target.return_schedule_idx
-            : static_cast<int16_t>(person.schedule_type_id);
-    person.temp_slot_progress = 0;
+    person.schedule_hop = ScheduleHop::begin(
+        hop_idx, (target.return_schedule_idx != -1)
+                     ? target.return_schedule_idx
+                     : static_cast<int16_t>(person.schedule_type_id));
     // Immediate: slot N of old = slot 0 of new schedule
     const TimeSlot& slot0 = target.flat_slots[0];
     uint64_t hop_key = mix_seed(base_seed_, person.id, time_key);
@@ -550,11 +539,14 @@ void ActivityManager::maybeTriggerScheduleHop(
     scheduled_activity_index = new_act;
     scheduled_venue_id = v;
     scheduled_subset_idx = s;
-    person.temp_slot_progress = 1;
+    // Immediate onset: slot 0 ran above; advance past it (progress -> 1).
+    // Completion bool discarded — matches legacy progress = 1; first real
+    // advance/auto-return happens on the next slot. repeats is always 0 here.
+    person.schedule_hop.advanceAndCheckComplete(
+        static_cast<int16_t>(target.flat_slots.size()));
   } else {
     // Permanent hop: update schedule pointer, no auto-return
-    person.hopped_schedule_id = hop_idx;
-    person.return_schedule_id = -1;
+    person.schedule_hop.setPermanent(hop_idx);
     person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
 }
@@ -648,7 +640,7 @@ void ActivityManager::assignHoppedSingleSlot(
   const size_t i = person_array_idx;
   Person& mutable_person = const_cast<Person&>(person);
   const ScheduleType& hopped_sched =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
   uint64_t time_key_hop =
       static_cast<uint64_t>(current_simulation_time_ * 1000);
 
@@ -693,7 +685,7 @@ void ActivityManager::assignHoppedScheduleSlot(
     std::vector<PersonLocation>& locations) {
   const size_t i = person_array_idx;
   const ScheduleType& hopped_sched =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
 
   if (hopped_sched.is_temporary) {
     advanceHoppedSchedule(person, locations[i], i);
@@ -747,16 +739,17 @@ std::pair<VenueId, SubsetIndex> ActivityManager::findLastNonNullVenueOnHop(
   // in.  When k crosses a day boundary (k < n), the modulo naturally reaches
   // back into the previous repeat's slots.
   const ScheduleType& hopped =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
   const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
   // This runs after advanceHoppedSchedule has incremented temp_slot_progress,
   // so the no-venue transit slot that just executed was at absolute index
   // temp_slot_progress - 1; hence hop_start_day = current_sim_day_ -
   // (temp_slot_progress - 1) / n.  resolveHopSlot then derives each scanned
   // slot's day type from hop_start_day + k / n, matching the forward path.
-  const int hop_start_day =
-      current_sim_day_ - (person.temp_slot_progress - 1) / n;
-  for (int16_t k = person.temp_slot_progress - 2; k >= 0; --k) {
+  const int hop_start_day = ScheduleHop::hopStartDay(
+      current_sim_day_, n,
+      static_cast<int16_t>(person.schedule_hop.temp_slot_progress - 1));
+  for (int16_t k = person.schedule_hop.temp_slot_progress - 2; k >= 0; --k) {
     auto [prev_act, v, sub] = resolveHopSlot(person, hopped, k, hop_start_day);
     if (v >= 0) return {v, sub};
   }
