@@ -49,6 +49,7 @@ std::vector<VenueId> CalendarEventManager::buildVenueCandidates(
 
 void CalendarEventManager::sweepCompletedHops(
     const std::vector<Person>& people) {
+  if (active_event_.empty()) return;
   for (const Person& person : people) {
     if (person.hopped_schedule_id == -1)
       active_event_.erase(person.id);

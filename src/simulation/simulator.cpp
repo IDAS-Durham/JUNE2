@@ -497,8 +497,8 @@ Simulator::Simulator(WorldState& world, const Config& config,
         config_.simulation.calendar_events_file, world_,
         config_.simulation.start_date, total_days_);
     calendar_event_manager_ = CalendarEventManager(std::move(events));
+    activity_manager_.setCalendarEventManager(&calendar_event_manager_);
   }
-  activity_manager_.setCalendarEventManager(&calendar_event_manager_);
 
   // Initialize events filename based on rank
 #ifdef USE_MPI
