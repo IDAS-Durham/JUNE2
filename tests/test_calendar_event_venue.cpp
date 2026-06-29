@@ -117,7 +117,7 @@ FairHopFixture buildFairHopFixture() {
 TEST_CASE("resolver returns {-1,-1} when person has no active event") {
   WorldState world = buildCatchmentWorld();
   CalendarEventManager manager;
-  auto result = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto result = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK(result.first == -1);
   CHECK(result.second == -1);
 }
@@ -190,14 +190,14 @@ TEST_CASE("catchment-rule event resolves venue via hash into candidate list") {
   manager.triggerEventsForDay(0, world, world.people, 999, {{0, {0}}});
   REQUIRE(manager.stats().triggered == 2);
 
-  auto v0 = manager.resolveCalendarEventVenue(world, world.people[0], 0);
-  auto v1 = manager.resolveCalendarEventVenue(world, world.people[1], 0);
+  auto v0 = manager.resolveCalendarEventVenue(world.people[0]);
+  auto v1 = manager.resolveCalendarEventVenue(world.people[1]);
   CHECK((v0.first == 20 || v0.first == 21 || v0.first == 22));
   CHECK(v0.second == 0);
   CHECK((v1.first == 20 || v1.first == 21 || v1.first == 22));
   CHECK(v1.second == 0);
 
-  auto v0_again = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto v0_again = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK(v0_again.first == v0.first);
 }
 
@@ -228,7 +228,7 @@ TEST_CASE("catchment-rule resolver returns {-1,-1} when candidate list is empty"
   manager.triggerEventsForDay(0, world, world.people, 42, {{0, {0}}});
   REQUIRE(manager.stats().triggered == 1);
 
-  auto v = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto v = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK(v.first == -1);
   CHECK(v.second == -1);
 }
@@ -261,7 +261,7 @@ TEST_CASE("event with custom builder uses it to populate venue candidates") {
   manager.triggerEventsForDay(0, world, world.people, 42, {{7, {0}}});
   REQUIRE(manager.stats().triggered == 1);
 
-  auto v = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto v = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK((v.first == 100 || v.first == 101 || v.first == 102));
   CHECK(v.second == 0);
 }
@@ -298,7 +298,7 @@ TEST_CASE("event with custom venue_selector uses it instead of hash-select") {
   manager.triggerEventsForDay(0, world, world.people, 42, {{7, {0}}});
   REQUIRE(manager.stats().triggered == 1);
 
-  auto v = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto v = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK(v.first == 102);
   CHECK(v.second == 0);
 }
@@ -335,11 +335,11 @@ TEST_CASE("rebuildVenueCachesAfterRestore repopulates venue cache for catchment 
 
   manager.setActiveEvents({{p.id, 7}});
   manager.setEventTriggerSeeds({{7, 42}});
-  auto before = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto before = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK(before.first == -1);  // cache still empty before rebuild
 
   manager.rebuildVenueCachesAfterRestore(world);
-  auto after = manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto after = manager.resolveCalendarEventVenue(world.people[0]);
   CHECK((after.first == 100 || after.first == 101 || after.first == 102));
   CHECK(after.second == 0);
 }
@@ -380,7 +380,7 @@ TEST_CASE("active-event map round-trips through get/setActiveEvents") {
   restored.rebuildVenueCachesAfterRestore(world);
 
   CHECK(restored.getActiveEvents() == original.getActiveEvents());
-  auto venue = restored.resolveCalendarEventVenue(world, world.people[0], 0);
+  auto venue = restored.resolveCalendarEventVenue(world.people[0]);
   CHECK(venue.first == 7);
   CHECK(venue.second == 0);
 }
@@ -437,13 +437,13 @@ TEST_CASE("multi-day Fair assigns the same venue on every day of the hop") {
 
   manager.triggerEventsForDay(0, world, world.people, /*seed=*/100, {{0, {0}}});
   REQUIRE(manager.stats().triggered == 1);
-  manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  manager.resolveCalendarEventVenue(world.people[0]);
 
   manager.triggerEventsForDay(1, world, world.people, /*seed=*/999999, {{0, {0}}});
-  manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  manager.resolveCalendarEventVenue(world.people[0]);
 
   manager.triggerEventsForDay(2, world, world.people, /*seed=*/777, {{0, {0}}});
-  manager.resolveCalendarEventVenue(world, world.people[0], 0);
+  manager.resolveCalendarEventVenue(world.people[0]);
 
   REQUIRE(seeds_at_resolve.size() == 3);
   CHECK(seeds_at_resolve[1] == seeds_at_resolve[0]);

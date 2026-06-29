@@ -155,14 +155,12 @@ int16_t ActivityManager::pickActivityByRate(
 std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
     const Person& person, int16_t activity_idx, const TimeSlot& slot,
     uint64_t time_key) {
-  // Calendar-event guard: if the person has an active calendar event whose
-  // membership field tags one of their candidate venues for this activity,
-  // that venue wins (re-derived fresh, never cached — ADR 0002). Mirrors the
-  // tryPickSpecifiedVenue pattern: a thin top-of-function delegation that
-  // leaves every non-calendar-event person/activity untouched.
+  // Calendar-event guard: if the person has an active calendar event, its
+  // cached candidate pool is hashed (person+event id) to pick the venue. A thin
+  // top-of-function delegation that leaves every non-calendar-event
+  // person/activity untouched.
   if (calendar_event_manager_) {
-    auto resolved = calendar_event_manager_->resolveCalendarEventVenue(
-        world_, person, activity_idx);
+    auto resolved = calendar_event_manager_->resolveCalendarEventVenue(person);
     if (resolved.first != -1) return resolved;
   }
 

@@ -101,8 +101,7 @@ void CalendarEventManager::triggerEventsForDay(
 }
 
 std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
-    const WorldState& /*world*/, const Person& person,
-    int16_t /*activity_idx*/) const {
+    const Person& person) const {
   auto active_it = active_event_.find(person.id);
   if (active_it == active_event_.end()) return {-1, -1};
   int32_t active_id = active_it->second;

@@ -76,7 +76,7 @@ class CalendarEventManager {
   // Returns {-1,-1} if the person has no active event or the candidate pool is
   // empty.
   std::pair<VenueId, SubsetIndex> resolveCalendarEventVenue(
-      const WorldState& world, const Person& person, int16_t activity_idx) const;
+      const Person& person) const;
 
   // Erase active-event entries for persons whose hop has completed (i.e.
   // hopped_schedule_id == -1). Called at the top of triggerEventsForDay so
