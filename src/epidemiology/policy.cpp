@@ -101,10 +101,9 @@ std::optional<PersonLocation> PolicyManager::getOverride(
         if (frozen_it != frozen_states_.end() &&
             frozen_it->second.triggering_policy_index ==
                 static_cast<uint8_t>(i)) {
-          person.schedule_hop.hopped_schedule_id =
-              frozen_it->second.paused_hopped_schedule_id;
-          person.schedule_hop.return_schedule_id =
-              frozen_it->second.paused_return_schedule_id;
+          person.schedule_hop.restoreTargets(
+              frozen_it->second.paused_hopped_schedule_id,
+              frozen_it->second.paused_return_schedule_id);
           frozen_states_.erase(frozen_it);
         }
 
@@ -171,10 +170,7 @@ std::optional<PersonLocation> PolicyManager::getOverride(
         frozen_states_[person.id] =
             FrozenPersonState{static_cast<uint8_t>(i), saved_hop, saved_return,
                               pin_venue, pin_subset};
-        // Plain write, NOT setPermanent(): return_schedule_id must survive
-        // (saved above, restored on thaw); setPermanent would clobber it.
-        person.schedule_hop.hopped_schedule_id =
-            policy.action.replacement_schedule_idx;
+        person.schedule_hop.swapTarget(policy.action.replacement_schedule_idx);
 
         PersonLocation loc;
         loc.person_id = person.id;
