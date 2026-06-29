@@ -181,6 +181,10 @@ struct ScheduleHop {
     return true;
   }
 
+  // Immediate-onset only: record that slot 0 has been consumed without
+  // evaluating completion (first auto-return check is on the next advance).
+  void consumeSlot0() { ++temp_slot_progress; }
+
   // Begin a PERMANENT (non-auto-returning) hop: sets target, return = original.
   // Leaves progress/repeats untouched (caller sets Person::cached_schedule_type_).
   void setPermanent(int16_t hop_idx) {

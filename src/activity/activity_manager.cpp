@@ -539,11 +539,7 @@ void ActivityManager::maybeTriggerScheduleHop(
     scheduled_activity_index = new_act;
     scheduled_venue_id = v;
     scheduled_subset_idx = s;
-    // Immediate onset: slot 0 ran above; advance past it (progress -> 1).
-    // Completion bool discarded — matches legacy progress = 1; first real
-    // advance/auto-return happens on the next slot. repeats is always 0 here.
-    person.schedule_hop.advanceAndCheckComplete(
-        static_cast<int16_t>(target.flat_slots.size()));
+    person.schedule_hop.consumeSlot0();
   } else {
     // Permanent hop: update schedule pointer, no auto-return
     person.schedule_hop.setPermanent(hop_idx);
