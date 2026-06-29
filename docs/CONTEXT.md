@@ -88,6 +88,15 @@ membership-field events re-derive Venue from membership data instead.
 _Avoid_: venue resolution strategy (resolution is the act of calling the
 strategy, not the strategy itself).
 
+**Visitor**:
+A person attending a venue owned by a different MPI rank for a given time
+slot. The person's disease state is sent to the venue's owning rank via MPI
+exchange; transmission is computed there. If the visitor is infected, a
+pending infection is routed back to the person's home rank and applied. The
+person's `active_event_` entry (if any) and all simulation state are held
+exclusively on their home rank.
+_Avoid_: ghost, halo (no replication of person state across ranks).
+
 ## Flagged ambiguities
 
 - An earlier session used the term "Feast" for this concept before

@@ -358,7 +358,8 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
       auto pids = readVec<int32_t>(f, "/calendar_events/person_ids", I32);
       auto eids = readVec<int32_t>(f, "/calendar_events/event_ids", I32);
       for (size_t i = 0; i < pids.size(); ++i)
-        active_events_accum[static_cast<PersonId>(pids[i])] = eids[i];
+        if (world_.getPerson(static_cast<PersonId>(pids[i])))
+          active_events_accum[static_cast<PersonId>(pids[i])] = eids[i];
       if (f.exists("/calendar_events/seed_event_ids")) {
         auto seids = readVec<int32_t>(f, "/calendar_events/seed_event_ids", I32);
         auto svals = readVec<uint64_t>(f, "/calendar_events/seed_values",
