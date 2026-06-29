@@ -28,15 +28,6 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
     throw std::runtime_error(std::string(source_name) + ": " + e.what());
   }
 
-  // Require these columns in the value section.
-  auto require_col = [&](const std::string& col) -> const std::string& {
-    static const std::string kEmpty;
-    // Check column exists in value_columns (will be absent from row.values if
-    // not present in header). We just try to access it per-row below.
-    return kEmpty;
-  };
-  (void)require_col;
-
   int row_number = 1;  // 1-indexed for error messages (header is row 1)
   for (const auto& row : table.rows) {
     ++row_number;
