@@ -84,15 +84,9 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       continue;
     }
 
-    if (event.catchment_rule_id >= 0) {
-      GeoUnitId geo_unit_id = event.hosting_geo_unit_id;
-      std::string venue_type = event.venue_type_name;
-      event.candidate_venue_builder = [geo_unit_id, venue_type](const WorldState& w) {
-        return w.getVenuesInGeoUnit(geo_unit_id, venue_type);
-      };
-      // No venue_selector: the catchment path uses the manager's default hash-select.
-    }
-
+    // No candidate_venue_builder / venue_selector installed: the manager
+    // derives the catchment pool from hosting_geo_unit_id + venue_type_name and
+    // hash-selects by default.
     events_by_day[event.start_day].push_back(std::move(event));
   }
 

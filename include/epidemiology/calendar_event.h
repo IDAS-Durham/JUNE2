@@ -29,8 +29,9 @@ struct CalendarEvent {
   GeoUnitId hosting_geo_unit_id = -1;
   std::string venue_type_name;
   std::vector<SelectionCriterion> attendee_filters;
-  // If set, called once at trigger time to build the candidate venue pool for
-  // this event. The pool is cached and used by venue_selector at resolve time.
+  // Optional override of the default candidate pool. The manager's default is
+  // getVenuesInGeoUnit(hosting_geo_unit_id, venue_type_name) for catchment
+  // events; tests set this to supply arbitrary venue pools instead.
   std::function<std::vector<VenueId>(const WorldState&)> candidate_venue_builder;
   // If set, called at resolve time to pick one venue from the cached pool.
   // Receives (candidates, person_id, seed); seed is pre-mixed from the trigger
@@ -135,6 +136,13 @@ class CalendarEventManager {
   // Seed recorded when each event first fires; stable across days so that a
   // person's venue assignment is identical throughout a multi-day hop.
   std::unordered_map<int32_t, uint64_t> event_trigger_seed_;
+
+  // Candidate venue pool for an event: the custom candidate_venue_builder if
+  // set, else getVenuesInGeoUnit(hosting_geo_unit_id, venue_type_name) for
+  // catchment events, else empty. Single source of truth for both the
+  // trigger-time build and the checkpoint-restore rebuild.
+  std::vector<VenueId> buildVenueCandidates(const CalendarEvent& event,
+                                            const WorldState& world) const;
 
   // Attendees for a catchment-rule event: gathered from people_by_geo_unit for
   // each geo_unit in the catchment rule, filtered by event.attendee_filters.

@@ -201,6 +201,42 @@ TEST_CASE("catchment-rule event resolves venue via hash into candidate list") {
   CHECK(v0_again.first == v0.first);
 }
 
+TEST_CASE("catchment-rule event with no builder uses manager default pool") {
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"guest_house"};
+  for (VenueId vid : {20, 21, 22}) {
+    Venue v; v.id = vid; v.type_id = 0; v.geo_unit_id = 0;
+    world.venues.push_back(v);
+  }
+  world.activity_names = {"Fair_lodging"};
+  world.schedule_type_names = {"regular", "Fair_lodging"};
+  Person& p = world.people.emplace_back();
+  p.id = 0; p.geo_unit_id = 0;
+  world.buildIndices();
+
+  CalendarEvent event;
+  event.calendar_event_id = 5;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = 0;
+  event.hosting_geo_unit_id = 0;
+  event.venue_type_name = "guest_house";
+  // No candidate_venue_builder: the manager derives the pool from the struct
+  // fields via getVenuesInGeoUnit.
+
+  CalendarEventManager manager({{event}});
+  manager.triggerEventsForDay(0, world, world.people, 999, {{0, {0}}});
+  REQUIRE(manager.stats().triggered == 1);
+
+  auto v = manager.resolveCalendarEventVenue(world.people[0]);
+  CHECK((v.first == 20 || v.first == 21 || v.first == 22));
+  CHECK(v.second == 0);
+}
+
 TEST_CASE("catchment-rule resolver returns {-1,-1} when candidate list is empty") {
   WorldState world;
   world.geo_level_names = {"sgu"};

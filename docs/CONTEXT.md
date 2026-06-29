@@ -77,11 +77,13 @@ _Avoid_: Subset (pre-baked, world-build-time — the opposite of this).
 
 **Venue assignment strategy**:
 What determines which Venue an attendee occupies during a calendar-triggered
-schedule hop. A `candidate_venue_builder` produces the eligible Venue pool for
-the event; one Venue is then chosen from that pool for a specific Person by
-deterministic hash-select. An optional `venue_selector` overrides the
-hash-select with custom choice logic; omitting it (the normal case) leaves
-hash-select as the default. Only applicable to catchment-rule events;
+schedule hop. By default the eligible Venue pool is the venues of
+`venue_type_name` located in `hosting_geo_unit_id` (`getVenuesInGeoUnit`); one
+Venue is then chosen from that pool for a specific Person by deterministic
+hash-select. An optional `candidate_venue_builder` overrides the default pool
+(used by tests to supply arbitrary venues); an optional `venue_selector`
+overrides the hash-select. Omitting both (the normal case) leaves the
+struct-derived pool + hash-select. Only applicable to catchment-rule events;
 membership-field events re-derive Venue from membership data instead.
 _Avoid_: venue resolution strategy (resolution is the act of calling the
 strategy, not the strategy itself).

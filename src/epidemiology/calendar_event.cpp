@@ -38,6 +38,15 @@ std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
   return attendees;
 }
 
+std::vector<VenueId> CalendarEventManager::buildVenueCandidates(
+    const CalendarEvent& event, const WorldState& world) const {
+  if (event.candidate_venue_builder) return event.candidate_venue_builder(world);
+  if (event.catchment_rule_id >= 0)
+    return world.getVenuesInGeoUnit(event.hosting_geo_unit_id,
+                                    event.venue_type_name);
+  return {};
+}
+
 void CalendarEventManager::sweepCompletedHops(
     const std::vector<Person>& people) {
   for (const Person& person : people) {
@@ -60,11 +69,11 @@ void CalendarEventManager::triggerEventsForDay(
     // Record trigger seed once per event (first firing wins; stable for multi-day hops).
     event_trigger_seed_.emplace(event.calendar_event_id, base_seed);
 
-    if (event.candidate_venue_builder &&
+    if ((event.candidate_venue_builder || event.catchment_rule_id >= 0) &&
         venue_candidates_cache_.find(event.calendar_event_id) ==
             venue_candidates_cache_.end()) {
       venue_candidates_cache_[event.calendar_event_id] =
-          event.candidate_venue_builder(world);
+          buildVenueCandidates(event, world);
     }
 
     const std::vector<PersonId> attendees =
@@ -129,8 +138,8 @@ void CalendarEventManager::rebuildVenueCachesAfterRestore(
     auto ev_it = events_by_id_.find(event_id);
     if (ev_it == events_by_id_.end()) continue;
     const CalendarEvent* ev = ev_it->second;
-    if (ev->candidate_venue_builder)
-      venue_candidates_cache_[event_id] = ev->candidate_venue_builder(world);
+    if (ev->candidate_venue_builder || ev->catchment_rule_id >= 0)
+      venue_candidates_cache_[event_id] = buildVenueCandidates(*ev, world);
   }
 }
 

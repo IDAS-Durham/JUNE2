@@ -154,7 +154,11 @@ TEST_CASE("loader skips out-of-window rows but keeps in-window ones") {
 // events
 // =============================================================================
 
-TEST_CASE("loader sets candidate_venue_builder for catchment event") {
+TEST_CASE("loader leaves candidate_venue_builder null and parses pool fields") {
+  // The loader installs no candidate_venue_builder: the catchment path relies
+  // on the manager's default pool, derived from hosting_geo_unit_id +
+  // venue_type_name. Re-adding a loader builder would re-encode those fields,
+  // so guard against it here and check the fields the default consumes.
   WorldState world = buildGeoHierarchyWorld();
   world.schedule_type_names = {"regular", "Fair_day_trip"};
 
@@ -167,11 +171,10 @@ TEST_CASE("loader sets candidate_venue_builder for catchment event") {
   REQUIRE(table[4].size() == 1);
   const CalendarEvent& event = table[4][0];
 
-  REQUIRE(event.candidate_venue_builder != nullptr);
-  auto candidates = event.candidate_venue_builder(world);
-  REQUIRE(candidates.size() == 2);
-  CHECK(candidates[0] == 10);
-  CHECK(candidates[1] == 11);
+  CHECK(event.candidate_venue_builder == nullptr);
+  CHECK(event.catchment_rule_id == 7);
+  CHECK(event.hosting_geo_unit_id == 1);
+  CHECK(event.venue_type_name == "fair");
 }
 
 TEST_CASE("loader leaves venue_selector null for catchment event") {
