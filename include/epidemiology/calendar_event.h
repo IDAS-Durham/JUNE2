@@ -39,9 +39,6 @@ struct CalendarEvent {
   // Null falls back to the default hash-select.
   std::function<std::pair<VenueId, SubsetIndex>(
       const std::vector<VenueId>&, PersonId, uint64_t)> venue_selector;
-  // Diagnostics only — never used to pick attendees or resolve venues:
-  VenueId venue_id = -1;
-  SubsetIndex subset_index = -1;
   std::string category;  // free text (e.g. "fair"); logging/metrics only
 };
 
@@ -115,12 +112,6 @@ class CalendarEventManager {
   bool hasActiveEvent(PersonId person_id) const {
     return active_event_.find(person_id) != active_event_.end();
   }
-
-  // Events starting on `day` (empty if none / out of range). Read-only view for
-  // diagnostics and the simulator's per-day trigger hook.
-  const std::vector<CalendarEvent>& eventsForDay(int day) const;
-
-  int numDays() const { return static_cast<int>(events_by_day_.size()); }
 
  private:
   // events_by_day_[day] -> events starting that day.

@@ -144,11 +144,4 @@ void CalendarEventManager::rebuildVenueCachesAfterRestore(
   }
 }
 
-const std::vector<CalendarEvent>& CalendarEventManager::eventsForDay(
-    int day) const {
-  static const std::vector<CalendarEvent> kEmpty;
-  if (day < 0 || day >= static_cast<int>(events_by_day_.size())) return kEmpty;
-  return events_by_day_[day];
-}
-
 }  // namespace june
