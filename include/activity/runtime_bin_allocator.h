@@ -56,9 +56,10 @@ class RuntimeBinAllocator {
   // outside [0, slot_duration_min). This is intentional: long-distance
   // commuters (e.g. Durham → London, ~3 hr) must still expose riders on
   // their destination-region legs to capture geographic disease spread.
-  // The downstream sub-interval FOI loop is responsible for distributing
-  // each rider's compressed presence across their legs proportionally
-  // (so total per-rider transit time is bounded by the slot duration).
+  // Co-presence is computed on the raw line-local offsets (exact contacts);
+  // each rider's total commute presence is capped at one slot-hour by the
+  // per-rider presence factor f_p (see getPresenceFactor), applied downstream
+  // in the FOI loop so the day budget stays bounded.
   void allocateForSlot(int time_slot_index, int day_type_idx,
                        const TimeSlot& slot, double current_simulation_time,
                        double delta_hours,
@@ -109,6 +110,21 @@ class RuntimeBinAllocator {
                                            : it->second;
   }
 
+  // Per-rider presence cap f_p = min(1, slot / T_p) for this slot, where T_p is
+  // the rider's total transport minutes. f_p = 1 for journeys that fit the slot
+  // (~99% of riders) and < 1 for over-long journeys, scaling that rider's FOI
+  // contribution (as source AND sink) so its total modeled commute presence
+  // stays ≤ one slot-hour. A pure function of the rider's own legs, computed on
+  // the home rank and broadcast with the windows, so it is identical on every
+  // rank (MPI bit-identity). Returns 1.0 if the (venue, person) wasn't bucketed
+  // this slot.
+  float getPresenceFactor(VenueId venue_id, PersonId person_id) const {
+    const uint64_t key = (static_cast<uint64_t>(venue_id) << 32) |
+                         static_cast<uint64_t>(person_id);
+    auto it = f_presence_by_vid_pid_.find(key);
+    return it == f_presence_by_vid_pid_.end() ? 1.0f : it->second;
+  }
+
   // True iff the SimulationConfig declares any partial-presence venue types
   // that are actually present in this world.
   bool isActive() const { return venue_type_mask_ != 0; }
@@ -140,6 +156,12 @@ class RuntimeBinAllocator {
   // bin_by_vid_pid_; the FOI loop consults this for both local and
   // cross-rank visitor riders so windows are identical on every rank.
   std::unordered_map<uint64_t, EffectiveWindow> windows_by_vid_pid_;
+
+  // Global (venue, person) → per-rider presence cap f_p. Broadcast alongside
+  // the windows in the same Allgatherv so it is bit-identical on every rank.
+  // The same f_p is replicated for each of a multi-leg rider's (venue, person)
+  // keys (f_p is a rider-level property, not a per-venue one).
+  std::unordered_map<uint64_t, float> f_presence_by_vid_pid_;
 };
 
 }  // namespace june

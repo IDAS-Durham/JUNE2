@@ -63,8 +63,7 @@ void ActivityManager::filterAvailableActivities(
 // activity. Couples e.g. an outbound route, a primary activity at the
 // destination, and a return route into a single per-day attendance
 // decision. Slots that don't touch linked activities (e.g. weekend slots
-// or non-routing slots) are unaffected. Fully generic: driven by YAML,
-// no hardcoded activity names.
+// or non-routing slots) are unaffected.
 void ActivityManager::maybeRollLinkedActivitiesDay(
     const Person& person, const TimeSlot& slot,
     const ScheduleType& schedule_type,
