@@ -33,20 +33,10 @@ _Avoid_: group (too generic), cohort.
 A scheduled occurrence (not an Activity) that some people attend on a
 specific date, triggering a temporary schedule hop. Examples include fairs
 requiring accommodation away from residence. Identified by a
-`calendar_event_id`. Attendee selection uses one of two paths:
-(a) **catchment-rule** — eligible people are drawn at trigger time from
+`calendar_event_id`. Attendees are drawn at trigger time from
 `people_by_geo_unit` using a **Catchment rule**, requiring no pre-baked
-membership. Current production path for MAY-generated worlds; or
-(b) **membership-field scan** — person already has a `calendar_event_id`
-membership field on their accommodation venue, pre-baked at world-build
-time. Legacy path only.
+membership.
 _Avoid_: feast, fair (too narrow — Calendar Event is the general concept).
-
-**Membership field**:
-A sparse, named per-(person, Venue-membership) metadata value (e.g.
-boarding/alighting time for a route leg, `calendar_event_id` for an
-accommodation membership). Used when a person's candidate Venue list for
-an Activity needs disambiguating by something other than venue identity.
 
 **Catchment rule**:
 A geo-unit eligibility list (`catchment_rule_id → [geo_unit_id, …]`)
@@ -81,16 +71,8 @@ _Avoid_: "temp schedule", "hopped state".
 - A **Calendar Event** is not itself an **Activity** — it is calendar data
   that triggers a schedule hop into a designated **Activity** (e.g.
   `Fair_accommodation`). The specific **Venue** is resolved at trigger
-  time via one of two paths:
-  - **Catchment-rule path**: attendees drawn from `people_by_geo_unit`
-    using a **Catchment rule**; no pre-baked membership required. Used
-    for MAY-generated worlds.
-  - **Membership-field path**: person has a `calendar_event_id`
-    **Membership field** on their accommodation venue, pre-baked at
-    world-build time. Used for legacy worlds.
-- A **Person** using the membership-field path may have multiple candidate
-  accommodation Venues under the same Activity — one per **Calendar Event**
-  attended, disambiguated via `calendar_event_id`.
+  time: attendees drawn from `people_by_geo_unit` using a **Catchment
+  rule**; no pre-baked membership required.
 
 **Venue assignment strategy**:
 What determines which Venue an attendee occupies during a calendar-triggered
@@ -100,8 +82,7 @@ Venue is then chosen from that pool for a specific Person by deterministic
 hash-select. An optional `candidate_venue_builder` overrides the default pool
 (used by tests to supply arbitrary venues); an optional `venue_selector`
 overrides the hash-select. Omitting both (the normal case) leaves the
-struct-derived pool + hash-select. Only applicable to catchment-rule events;
-membership-field events re-derive Venue from membership data instead.
+struct-derived pool + hash-select.
 _Avoid_: venue resolution strategy (resolution is the act of calling the
 strategy, not the strategy itself).
 
