@@ -595,6 +595,9 @@ struct SimulationConfig {
   std::string calendar_events_file;
   std::string calendar_event_catchment_rules_file;
 
+  // Optional on-the-fly venue allocator config. Empty = allocator not created.
+  std::string on_the_fly_venues_file;
+
   // Seed for global simulation (transmissions, participation)
   unsigned int random_seed = 0;
 

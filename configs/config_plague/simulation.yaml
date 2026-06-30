@@ -22,6 +22,7 @@ config_paths:
   # Calendar event CSVs from the MAY medieval world-builder.
   calendar_events_file: "/home/gavin/Documents/MAY2/MAY/output/Medieval/calendar_events.csv"
   calendar_event_catchment_rules_file: "/home/gavin/Documents/MAY2/MAY/output/Medieval/calendar_event_catchment_rules.csv"
+  on_the_fly_venues_file: "configs/config_plague/on_the_fly_venues.yaml"
 
 # Random seeds for reproducibility
 random_seed: 12345

@@ -499,6 +499,10 @@ Simulator::Simulator(WorldState& world, const Config& config,
     calendar_event_manager_ = CalendarEventManager(std::move(events));
     activity_manager_.setCalendarEventManager(&calendar_event_manager_);
   }
+  if (!config_.simulation.on_the_fly_venues_file.empty()) {
+    on_the_fly_allocator_.emplace(config_.simulation.on_the_fly_venues_file);
+    activity_manager_.setOnTheFlyVenueAllocator(&on_the_fly_allocator_.value());
+  }
 
   // Initialize events filename based on rank
 #ifdef USE_MPI

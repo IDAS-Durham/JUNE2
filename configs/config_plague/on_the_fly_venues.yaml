@@ -1,0 +1,14 @@
+rules:
+  fair_rule:
+    strategy: hosting_geo_unit
+    venue_type: fair
+    venue_stability: daily
+
+  fair_lodging_rule:
+    strategy: hosting_geo_unit
+    venue_type: guest_house
+    venue_stability: fixed  # same guest house for every night of the hop
+
+activity_rules:
+  fair_attendance: fair_rule
+  fair_lodging:    fair_lodging_rule

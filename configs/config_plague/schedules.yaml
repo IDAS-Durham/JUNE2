@@ -136,8 +136,10 @@ schedule_types:
   # FAIR SCHEDULES  (triggered by CalendarEventManager at fair start date)
   # 4 flat_slots per fair-day; hop_repeats_remaining = duration_days from CSV,
   # giving (1 + duration_days) full day-cycles at the fair before auto-return.
-  # Activity fair_attendance has no per-person venue mappings; the calendar
-  # event resolver supplies the venue from the hosting geo_unit instead.
+  # Venue resolution is handled by OnTheFlyVenueAllocator
+  # (configs/config_plague/on_the_fly_venues.yaml):
+  #   fair_attendance → hosting_geo_unit → fair (daily)
+  #   fair_lodging    → hosting_geo_unit → guest_house (fixed, stable across nights)
   # --------------------------------------------------------------------------
   Fair_day_trip:
     is_temporary: true
@@ -177,7 +179,7 @@ schedule_types:
       - name: "night_lodged"
         start: "21:00"
         end: "08:00"
-        allowed_activities: ["fair_attendance"]
+        allowed_activities: ["fair_lodging"]
 
   # ============================================================================
   # REGULAR SCHEDULE TYPES
