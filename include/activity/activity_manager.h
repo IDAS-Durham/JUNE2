@@ -18,6 +18,7 @@ namespace june {
 
 class PolicyManager;
 class CalendarEventManager;
+class OnTheFlyVenueAllocator;
 
 class ActivityManager {
  public:
@@ -47,6 +48,10 @@ class ActivityManager {
   // Set calendar-event manager (optional; drives calendar-triggered venue
   // resolution in selectVenue and active-event clearing on hop completion).
   void setCalendarEventManager(CalendarEventManager* calendar_event_manager);
+
+  // Set on-the-fly venue allocator (optional; provides dynamic venue pools for
+  // activities without a pre-baked mapping).
+  void setOnTheFlyVenueAllocator(OnTheFlyVenueAllocator* allocator);
 
   // Set current simulation time (needed for policy checks)
   void setCurrentTime(double current_time) {
@@ -84,6 +89,9 @@ class ActivityManager {
 
   // Calendar-event manager (optional - nullptr if no calendar events)
   CalendarEventManager* calendar_event_manager_ = nullptr;
+
+  // On-the-fly venue allocator (optional - nullptr if not configured)
+  OnTheFlyVenueAllocator* on_the_fly_allocator_ = nullptr;
 
   // Current simulation time (for policy checks)
   double current_simulation_time_ = 0.0;

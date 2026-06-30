@@ -134,6 +134,7 @@ set(JUNE_CORE_SOURCES
     src/interaction/interaction_manager_partial_presence.cpp
     src/activity/activity_manager.cpp
     src/activity/activity_manager_selection.cpp
+    src/activity/on_the_fly_venue_allocator.cpp
     src/core/config.cpp
     src/core/config_checks.cpp
     src/core/world_state.cpp
@@ -305,6 +306,7 @@ if(BUILD_TESTING)
   add_june_test(test_config_loading "tests/test_config_loading.cpp")
   add_june_test(test_config_checks "tests/test_config_checks.cpp")
   add_june_test(test_activity_manager "tests/test_activity_manager.cpp")
+  add_june_test(test_on_the_fly_venue_allocator "tests/test_on_the_fly_venue_allocator.cpp")
   add_june_test(test_schedule_csv "tests/test_schedule_csv.cpp")
   add_june_test(test_day_types "tests/test_day_types.cpp")
   add_june_test(test_schedule_hopper "tests/test_schedule_hopper.cpp")

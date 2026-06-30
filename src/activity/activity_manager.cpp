@@ -2,6 +2,7 @@
 
 #include <iomanip>
 
+#include "activity/on_the_fly_venue_allocator.h"
 #include "epidemiology/calendar_event.h"
 #include "epidemiology/policy.h"
 #include "utils/deterministic_rng.h"
@@ -21,6 +22,11 @@ void ActivityManager::setPolicyManager(PolicyManager* policy_manager) {
 void ActivityManager::setCalendarEventManager(
     CalendarEventManager* calendar_event_manager) {
   calendar_event_manager_ = calendar_event_manager;
+}
+
+void ActivityManager::setOnTheFlyVenueAllocator(
+    OnTheFlyVenueAllocator* allocator) {
+  on_the_fly_allocator_ = allocator;
 }
 
 void ActivityManager::assignScheduleTypes() {
