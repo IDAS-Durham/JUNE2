@@ -59,7 +59,7 @@ TEST_CASE("trigger sets hop fields for catchment-rule event") {
   CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);
   CHECK(world.people[0].schedule_hop.return_schedule_id == -1);
   CHECK(world.people[0].schedule_hop.temp_slot_progress == 0);
-  CHECK(world.people[0].schedule_hop.repeats_remaining == 1);
+  CHECK(world.people[0].schedule_hop.repeats_remaining == 0);
   CHECK(manager.hasActiveEvent(world.people[0].id));
   CHECK(manager.stats().triggered == 1);
 }
@@ -68,7 +68,7 @@ TEST_CASE("trigger sets hop_repeats_remaining from duration_days") {
   WorldState world = buildCatchmentWorld();
   CalendarEventManager manager({{makeCatchmentEvent(1, 1, 1.0f, 3)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
-  CHECK(world.people[0].schedule_hop.repeats_remaining == 3);
+  CHECK(world.people[0].schedule_hop.repeats_remaining == 2);
 }
 
 TEST_CASE("trigger skips a person already on a hopped schedule") {

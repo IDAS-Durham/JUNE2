@@ -88,7 +88,7 @@ void CalendarEventManager::triggerEventsForDay(
       // Deferred onset: no advance here; slot 0 runs on the first
       // advanceAndCheckComplete.
       person.schedule_hop = ScheduleHop::begin(
-          event.schedule_type_idx, -1, event.duration_days);
+          event.schedule_type_idx, -1, event.duration_days - 1);
       active_event_[person.id] = event.calendar_event_id;
       ++stats_.triggered;
     }
