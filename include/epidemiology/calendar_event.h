@@ -77,7 +77,6 @@ class CalendarEventManager {
   // Checkpoint seam: serialisable state.
   struct Snapshot {
     std::unordered_map<PersonId, int32_t>  active_event;
-    std::unordered_map<int32_t, uint64_t>  event_trigger_seed;
   };
   Snapshot snapshot_for_checkpoint() const;
   void restore(Snapshot snapshot, const WorldState& world);
@@ -107,9 +106,6 @@ class CalendarEventManager {
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
   Stats stats_;
-  // Seed recorded when each event first fires; stable across days so that a
-  // person's venue assignment is identical throughout a multi-day hop.
-  std::unordered_map<int32_t, uint64_t> event_trigger_seed_;
 
   // Attendees for a catchment-rule event: gathered from people_by_geo_unit for
   // each geo_unit in the catchment rule, filtered by event.attendee_filters.

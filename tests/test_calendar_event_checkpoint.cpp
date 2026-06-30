@@ -54,7 +54,6 @@ TEST_CASE("round-trip: active event and hosting geo-unit preserved after restore
 
   auto snap = original.snapshot_for_checkpoint();
   REQUIRE(snap.active_event.size() == 1);
-  REQUIRE(snap.event_trigger_seed.size() == 1);
 
   CalendarEventManager restored = makeManager(/*duration=*/3);
   restored.restore(std::move(snap), world);
@@ -77,5 +76,4 @@ TEST_CASE("snapshot_for_checkpoint on idle manager is empty") {
   CalendarEventManager manager = makeManager();
   auto snap = manager.snapshot_for_checkpoint();
   CHECK(snap.active_event.empty());
-  CHECK(snap.event_trigger_seed.empty());
 }

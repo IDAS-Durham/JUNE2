@@ -59,9 +59,6 @@ void CalendarEventManager::triggerEventsForDay(
   if (todays_events.empty()) return;
 
   for (const auto& event : todays_events) {
-    // Record trigger seed once per event (first firing wins; stable for multi-day hops).
-    event_trigger_seed_.emplace(event.calendar_event_id, base_seed);
-
     const std::vector<PersonId> attendees =
         attendeesForCatchmentEvent(event, world, catchment_rules);
 
@@ -109,12 +106,11 @@ std::optional<GeoUnitId> CalendarEventManager::getActiveHostingGeoUnit(
 
 CalendarEventManager::Snapshot CalendarEventManager::snapshot_for_checkpoint()
     const {
-  return {active_event_, event_trigger_seed_};
+  return {active_event_};
 }
 
 void CalendarEventManager::restore(Snapshot snapshot, const WorldState&) {
-  active_event_       = std::move(snapshot.active_event);
-  event_trigger_seed_ = std::move(snapshot.event_trigger_seed);
+  active_event_ = std::move(snapshot.active_event);
 }
 
 }  // namespace june

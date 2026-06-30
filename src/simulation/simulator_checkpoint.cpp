@@ -313,7 +313,7 @@ void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
 void writeShardCalendarEvents(H5::H5File& f,
                               const CalendarEventManager::Snapshot& snap,
                               int comp) {
-  if (snap.active_event.empty() && snap.event_trigger_seed.empty()) return;
+  if (snap.active_event.empty()) return;
   std::vector<int32_t> ce_pids, ce_eids;
   ce_pids.reserve(snap.active_event.size());
   ce_eids.reserve(snap.active_event.size());
@@ -321,23 +321,11 @@ void writeShardCalendarEvents(H5::H5File& f,
     ce_pids.push_back(static_cast<int32_t>(pid));
     ce_eids.push_back(eid);
   }
-  std::vector<int32_t> seed_eids;
-  std::vector<uint64_t> seed_vals;
-  seed_eids.reserve(snap.event_trigger_seed.size());
-  seed_vals.reserve(snap.event_trigger_seed.size());
-  for (const auto& [eid, seed] : snap.event_trigger_seed) {
-    seed_eids.push_back(eid);
-    seed_vals.push_back(seed);
-  }
   f.createGroup("/calendar_events");
   writeVec(f, "/calendar_events/person_ids", ce_pids,
            H5::PredType::NATIVE_INT32, comp);
   writeVec(f, "/calendar_events/event_ids", ce_eids,
            H5::PredType::NATIVE_INT32, comp);
-  writeVec(f, "/calendar_events/seed_event_ids", seed_eids,
-           H5::PredType::NATIVE_INT32, comp);
-  writeVec(f, "/calendar_events/seed_values", seed_vals,
-           H5::PredType::NATIVE_UINT64, comp);
 }
 
 // Gather + write the sparse venue fomite-history shard section. One record

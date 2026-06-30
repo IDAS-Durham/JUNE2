@@ -103,7 +103,6 @@ TEST_CASE("selectVenue guard resolves the calendar-event venue during a hop") {
   CalendarEventManager calendar_manager({{f.event}});
   CalendarEventManager::Snapshot snap;
   snap.active_event[f.world.people[0].id] = 99;
-  snap.event_trigger_seed[99] = 0;
   calendar_manager.restore(std::move(snap), f.world);
   manager.setCalendarEventManager(&calendar_manager);
 
@@ -220,7 +219,6 @@ TEST_CASE("OTF fixed-stability rule assigns same venue across days of a hop") {
   CalendarEventManager calendar_manager({{event}});
   CalendarEventManager::Snapshot snap;
   snap.active_event[person.id] = 1;
-  snap.event_trigger_seed[1] = 42;
   calendar_manager.restore(std::move(snap), world);
 
   static constexpr std::string_view kFixedYaml = R"(

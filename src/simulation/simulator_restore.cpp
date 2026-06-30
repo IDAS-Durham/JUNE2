@@ -279,13 +279,6 @@ void overlayShardCalendarEvents(H5::H5File& f, WorldState& world,
   for (size_t i = 0; i < pids.size(); ++i)
     if (world.getPerson(static_cast<PersonId>(pids[i])))
       snap.active_event[static_cast<PersonId>(pids[i])] = eids[i];
-  if (f.exists("/calendar_events/seed_event_ids")) {
-    auto seids = readVec<int32_t>(f, "/calendar_events/seed_event_ids", I32);
-    auto svals = readVec<uint64_t>(f, "/calendar_events/seed_values",
-                                   H5::PredType::NATIVE_UINT64);
-    for (size_t i = 0; i < seids.size(); ++i)
-      snap.event_trigger_seed[seids[i]] = svals[i];
-  }
 }
 
 // Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
