@@ -1,9 +1,12 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
+#include "activity/activity_manager.h"
 #include "activity/on_the_fly_venue_allocator.h"
 #include "activity/venue_resolve_context.h"
+#include "core/config.h"
 #include "core/world_state.h"
+#include "epidemiology/calendar_event.h"
 #include "test_utils.h"
 
 using namespace june;
@@ -117,4 +120,108 @@ TEST_CASE_FIXTURE(AllocatorFixture,
   const auto& pool = allocator.resolve("pub_visit", ctx, world);
 
   CHECK(pool.empty());
+}
+
+// =============================================================================
+// Integration: OTF allocator drives venue assignment for a calendar-event hop
+// =============================================================================
+
+namespace {
+
+// Helper: resolve allowed_activity_indices from allowed_activities.
+void resolveSlotIndicesOtf(TimeSlot& slot, const WorldState& world) {
+  slot.allowed_activity_indices.clear();
+  for (const auto& act : slot.allowed_activities) {
+    int idx = world.getActivityIndex(act);
+    if (idx >= 0)
+      slot.allowed_activity_indices.push_back(static_cast<int16_t>(idx));
+  }
+}
+
+}  // namespace
+
+TEST_CASE(
+    "OTF allocator resolves venue for calendar-event hop with no pre-baked venues") {
+  // World: two fair venues in geo_unit 0; person has no activity_meta for
+  // fair_attendance so getActivityVenues returns empty → must go through OTF.
+  WorldState world;
+  world.geo_level_names = {"county"};
+  world.venue_type_names = {"fair"};
+  world.activity_names = {"residence", "fair_attendance", "none", "dead",
+                           "no_venue"};
+  world.schedule_type_names = {"regular", "fair_hop"};
+
+  GeographicalUnit gu;
+  gu.id = 0; gu.parent_id = -1; gu.level_id = 0; gu.name = "TestCounty";
+  world.geo_units.push_back(gu);
+
+  for (int i = 0; i < 2; ++i) {
+    Venue v; v.id = i; v.type_id = 0; v.geo_unit_id = 0;
+    world.venues.push_back(v);
+  }
+
+  Person& person = world.people.emplace_back();
+  person.id = 0; person.geo_unit_id = 0;
+  world.buildIndices();
+
+  // Temporary hop schedule with a single fair_attendance slot.
+  ScheduleType regular; regular.name = "regular";
+  ScheduleType fair_hop; fair_hop.name = "fair_hop"; fair_hop.is_temporary = true;
+  TimeSlot fair_slot; fair_slot.name = "fair_slot";
+  fair_slot.allowed_activities = {"fair_attendance"};
+  resolveSlotIndicesOtf(fair_slot, world);
+  fair_hop.flat_slots.push_back(fair_slot);
+
+  Config config;
+  config.schedule.day_type_cycle = {"day"};
+  config.schedule.day_type_names = {"day"};
+  config.schedule.schedule_types.push_back(regular);
+  config.schedule.schedule_types.push_back(fair_hop);
+  config.schedule.default_schedule_type = "regular";
+  config.performance.precompute_schedules = false;
+  config.resolve(world);
+  world.num_day_types = 1;
+
+  // Put person on the hop (schedule_type_idx = 1, duration 1 day).
+  person.schedule_hop = ScheduleHop::begin(1, -1, 0);
+  person.schedule_type_id = 0;
+
+  // CalendarEvent: catchment_rule_id = -1 → restore() does not pre-build a
+  // venue pool. hosting_geo_unit_id = 0 is read by getActiveHostingGeoUnit.
+  CalendarEvent event;
+  event.calendar_event_id = 1;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = -1;
+  event.hosting_geo_unit_id = 0;
+  event.venue_type_name = "fair";
+
+  CalendarEventManager calendar_manager({{event}});
+  CalendarEventManager::Snapshot snap;
+  snap.active_event[person.id] = 1;
+  snap.event_trigger_seed[1] = 42;
+  calendar_manager.restore(std::move(snap), world);
+
+  static constexpr std::string_view kOtfYaml = R"(
+rules:
+  fair_rule:
+    strategy: hosting_geo_unit
+    venue_type: fair
+activity_rules:
+  fair_attendance: fair_rule
+)";
+  auto otf_allocator = OnTheFlyVenueAllocator::fromString(kOtfYaml);
+
+  ActivityManager activity_manager(world, config);
+  activity_manager.setCalendarEventManager(&calendar_manager);
+  activity_manager.setOnTheFlyVenueAllocator(&otf_allocator);
+
+  std::vector<PersonLocation> locations(1);
+  activity_manager.assignActivitiesFromSchedule(0, 0, locations);
+
+  const int16_t fair_idx =
+      static_cast<int16_t>(world.getActivityIndex("fair_attendance"));
+  CHECK(locations[0].activity_index == fair_idx);
+  CHECK(locations[0].venue_id >= 0);
 }

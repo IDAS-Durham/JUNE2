@@ -38,14 +38,6 @@ std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
   return attendees;
 }
 
-std::vector<VenueId> CalendarEventManager::buildVenueCandidates(
-    const CalendarEvent& event, const WorldState& world) const {
-  if (event.candidate_venue_builder) return event.candidate_venue_builder(world);
-  if (event.catchment_rule_id >= 0)
-    return world.getVenuesInGeoUnit(event.hosting_geo_unit_id,
-                                    event.venue_type_name);
-  return {};
-}
 
 void CalendarEventManager::sweepCompletedHops(
     const std::vector<Person>& people) {
@@ -69,13 +61,6 @@ void CalendarEventManager::triggerEventsForDay(
   for (const auto& event : todays_events) {
     // Record trigger seed once per event (first firing wins; stable for multi-day hops).
     event_trigger_seed_.emplace(event.calendar_event_id, base_seed);
-
-    if ((event.candidate_venue_builder || event.catchment_rule_id >= 0) &&
-        venue_candidates_cache_.find(event.calendar_event_id) ==
-            venue_candidates_cache_.end()) {
-      venue_candidates_cache_[event.calendar_event_id] =
-          buildVenueCandidates(event, world);
-    }
 
     const std::vector<PersonId> attendees =
         attendeesForCatchmentEvent(event, world, catchment_rules);
@@ -110,26 +95,16 @@ void CalendarEventManager::triggerEventsForDay(
   }
 }
 
-std::pair<VenueId, SubsetIndex> CalendarEventManager::resolveCalendarEventVenue(
-    const Person& person) const {
-  auto active_it = active_event_.find(person.id);
-  if (active_it == active_event_.end()) return {-1, -1};
-  int32_t active_id = active_it->second;
 
-  auto cache_it = venue_candidates_cache_.find(active_id);
-  if (cache_it == venue_candidates_cache_.end() || cache_it->second.empty())
-    return {-1, -1};
-
-  const auto& candidates = cache_it->second;
-  auto seed_it = event_trigger_seed_.find(active_id);
-  if (seed_it == event_trigger_seed_.end()) return {-1, -1};
-  uint64_t seed = mix_seed(seed_it->second, static_cast<uint64_t>(person.id),
-                           static_cast<uint64_t>(active_id));
-  auto ev_it = events_by_id_.find(active_id);
-  if (ev_it != events_by_id_.end() && ev_it->second->venue_selector)
-    return ev_it->second->venue_selector(candidates, person.id, seed);
-  uint64_t h = SplitMix64(seed)();
-  return {candidates[h % candidates.size()], 0};
+std::optional<GeoUnitId> CalendarEventManager::getActiveHostingGeoUnit(
+    PersonId person_id) const {
+  auto active_it = active_event_.find(person_id);
+  if (active_it == active_event_.end()) return std::nullopt;
+  auto ev_it = events_by_id_.find(active_it->second);
+  if (ev_it == events_by_id_.end()) return std::nullopt;
+  GeoUnitId gid = ev_it->second->hosting_geo_unit_id;
+  if (gid < 0) return std::nullopt;
+  return gid;
 }
 
 CalendarEventManager::Snapshot CalendarEventManager::snapshot_for_checkpoint()
@@ -137,22 +112,9 @@ CalendarEventManager::Snapshot CalendarEventManager::snapshot_for_checkpoint()
   return {active_event_, event_trigger_seed_};
 }
 
-void CalendarEventManager::restore(Snapshot snapshot, const WorldState& world) {
+void CalendarEventManager::restore(Snapshot snapshot, const WorldState&) {
   active_event_       = std::move(snapshot.active_event);
   event_trigger_seed_ = std::move(snapshot.event_trigger_seed);
-  rebuildVenueCachesAfterRestore(world);
-}
-
-void CalendarEventManager::rebuildVenueCachesAfterRestore(
-    const WorldState& world) {
-  for (const auto& [pid, event_id] : active_event_) {
-    if (venue_candidates_cache_.count(event_id)) continue;
-    auto ev_it = events_by_id_.find(event_id);
-    if (ev_it == events_by_id_.end()) continue;
-    const CalendarEvent* ev = ev_it->second;
-    if (ev->candidate_venue_builder || ev->catchment_rule_id >= 0)
-      venue_candidates_cache_[event_id] = buildVenueCandidates(*ev, world);
-  }
 }
 
 }  // namespace june

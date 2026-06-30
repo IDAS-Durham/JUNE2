@@ -73,6 +73,14 @@ bool OnTheFlyVenueAllocator::hasRule(std::string_view activity_name) const {
   return activity_to_rule_.count(std::string(activity_name)) > 0;
 }
 
+bool OnTheFlyVenueAllocator::isFixed(std::string_view activity_name) const {
+  auto rule_it = activity_to_rule_.find(std::string(activity_name));
+  if (rule_it == activity_to_rule_.end()) return false;
+  auto cfg_it = rules_.find(rule_it->second);
+  if (cfg_it == rules_.end()) return false;
+  return cfg_it->second.venue_stability == VenueStability::fixed;
+}
+
 const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
     std::string_view activity_name, const VenueResolveContext& context,
     const WorldState& world) {

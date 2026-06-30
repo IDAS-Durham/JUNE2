@@ -1,6 +1,7 @@
 #include <random>
 
 #include "activity/activity_manager.h"
+#include "activity/on_the_fly_venue_allocator.h"
 #include "epidemiology/calendar_event.h"
 #include "utils/deterministic_rng.h"
 #include "utils/random.h"
@@ -55,24 +56,48 @@ int16_t ActivityManager::selectActivity(const Person& person,
                             available_indices, rng);
 }
 
+VenueResolveContext ActivityManager::buildVenueResolveContext(
+    const Person& person) const {
+  VenueResolveContext ctx;
+  ctx.resident_geo_unit_id = person.geo_unit_id;
+  if (calendar_event_manager_) {
+    ctx.hosting_geo_unit_id =
+        calendar_event_manager_->getActiveHostingGeoUnit(person.id);
+  }
+  return ctx;
+}
+
 void ActivityManager::filterAvailableActivities(
     const Person& person, const TimeSlot& slot,
     std::vector<int16_t>& available) const {
   available.clear();
-  // Calendar-event hops: the resolver supplies the venue from the event's
-  // geo_unit, so the person need not have a pre-existing venue mapping.
-  bool calendar_bypass = calendar_event_manager_ &&
-                         calendar_event_manager_->hasActiveEvent(person.id);
+  // Build resolve context lazily — only if OTF allocator is present and
+  // a venue-less activity is encountered.
+  bool context_built = false;
+  VenueResolveContext ctx;
   for (int16_t act_idx : slot.allowed_activity_indices) {
     if (act_idx == no_venue_act_idx_ ||
-        slot.property_hop_dispatch_by_activity_idx.count(act_idx) ||
-        calendar_bypass) {
+        slot.property_hop_dispatch_by_activity_idx.count(act_idx)) {
       available.push_back(act_idx);
       continue;
     }
-    bool has_venues = !world_.getActivityVenues(person, act_idx).empty();
-    if (has_venues) {
+    if (!world_.getActivityVenues(person, act_idx).empty()) {
       available.push_back(act_idx);
+      continue;
+    }
+    // No pre-baked venues: ask OTF allocator if it can supply a pool.
+    if (on_the_fly_allocator_) {
+      const std::string_view act_name =
+          world_.activity_names[static_cast<size_t>(act_idx)];
+      if (on_the_fly_allocator_->hasRule(act_name)) {
+        if (!context_built) {
+          ctx = buildVenueResolveContext(person);
+          context_built = true;
+        }
+        if (!on_the_fly_allocator_->resolve(act_name, ctx, world_).empty()) {
+          available.push_back(act_idx);
+        }
+      }
     }
   }
 }
@@ -160,11 +185,21 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
   }
   auto venues = world_.getActivityVenues(person, activity_idx);
   if (venues.empty()) {
-    // No per-person venue map: delegate to the calendar-event resolver only
-    // when the person is explicitly on a calendar-event hop.
-    if (calendar_event_manager_ &&
-        calendar_event_manager_->hasActiveEvent(person.id)) {
-      return calendar_event_manager_->resolveCalendarEventVenue(person);
+    if (on_the_fly_allocator_) {
+      const std::string_view act_name =
+          world_.activity_names[static_cast<size_t>(activity_idx)];
+      VenueResolveContext ctx = buildVenueResolveContext(person);
+      const auto& pool =
+          on_the_fly_allocator_->resolve(act_name, ctx, world_);
+      if (!pool.empty()) {
+        uint64_t seed = on_the_fly_allocator_->isFixed(act_name)
+                            ? mix_seed(base_seed_, person.id, activity_idx)
+                            : mix_seed(base_seed_, person.id, activity_idx,
+                                       static_cast<uint64_t>(current_sim_day_));
+        SplitMix64 rng(seed);
+        std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
+        return {pool[dist(rng)], 0};
+      }
     }
     return {-1, -1};
   }

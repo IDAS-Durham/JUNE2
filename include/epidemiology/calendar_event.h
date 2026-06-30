@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -42,10 +43,9 @@ struct CalendarEvent {
   std::string category;  // free text (e.g. "fair"); logging/metrics only
 };
 
-// Owns calendar events, the thin per-person active-event-id state, and the
-// run-time venue resolver. The candidate venue list per event is cached eagerly
-// at trigger time (see venue_candidates_cache_); the specific venue each person
-// attends is hash-selected per-person, so ADR 0002 is respected.
+// Owns calendar events and the thin per-person active-event-id state.
+// Venue resolution is delegated to OnTheFlyVenueAllocator via
+// getActiveHostingGeoUnit, which ActivityManager calls at assignment time.
 class CalendarEventManager {
  public:
   CalendarEventManager() = default;
@@ -69,27 +69,17 @@ class CalendarEventManager {
       const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules =
           {});
 
-  // Resolve the Venue for `person`'s active calendar event. Hashes person+event
-  // id to pick from the cached candidate pool built at trigger time.
-  // Returns {-1,-1} if the person has no active event or the candidate pool is
-  // empty.
-  std::pair<VenueId, SubsetIndex> resolveCalendarEventVenue(
-      const Person& person) const;
-
   // Erase active-event entries for persons whose hop has completed (i.e.
   // !schedule_hop.isActive()). Called at the top of triggerEventsForDay so
   // stale entries are cleaned up once per day without coupling to ActivityManager.
   void sweepCompletedHops(const std::vector<Person>& people);
 
-  // Checkpoint seam: serialisable state (venue_candidates_cache_ is derived
-  // and rebuilt automatically by restore()).
+  // Checkpoint seam: serialisable state.
   struct Snapshot {
     std::unordered_map<PersonId, int32_t>  active_event;
     std::unordered_map<int32_t, uint64_t>  event_trigger_seed;
   };
   Snapshot snapshot_for_checkpoint() const;
-  // Restore from snapshot. Rebuilds venue_candidates_cache_ internally so
-  // call order is enforced structurally, not by convention.
   void restore(Snapshot snapshot, const WorldState& world);
 
   // Trigger diagnostics.
@@ -104,6 +94,11 @@ class CalendarEventManager {
     return active_event_.find(person_id) != active_event_.end();
   }
 
+  // Returns the hosting_geo_unit_id of the person's active event, or nullopt
+  // if the person has no active event or the event has no hosting geo-unit.
+  std::optional<GeoUnitId> getActiveHostingGeoUnit(PersonId person_id) const;
+
+
  private:
   // events_by_day_[day] -> events starting that day.
   std::vector<std::vector<CalendarEvent>> events_by_day_;
@@ -111,22 +106,10 @@ class CalendarEventManager {
   std::unordered_map<int32_t, const CalendarEvent*> events_by_id_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
-  // Candidate venues per event, populated eagerly in triggerEventsForDay.
-  // Avoids O(N_venues) scan per hopped person per slot.
-  std::unordered_map<int32_t, std::vector<VenueId>> venue_candidates_cache_;
   Stats stats_;
   // Seed recorded when each event first fires; stable across days so that a
   // person's venue assignment is identical throughout a multi-day hop.
   std::unordered_map<int32_t, uint64_t> event_trigger_seed_;
-
-  // Candidate venue pool for an event: the custom candidate_venue_builder if
-  // set, else getVenuesInGeoUnit(hosting_geo_unit_id, venue_type_name) for
-  // catchment events, else empty. Single source of truth for both the
-  // trigger-time build and the checkpoint-restore rebuild.
-  std::vector<VenueId> buildVenueCandidates(const CalendarEvent& event,
-                                            const WorldState& world) const;
-
-  void rebuildVenueCachesAfterRestore(const WorldState& world);
 
   // Attendees for a catchment-rule event: gathered from people_by_geo_unit for
   // each geo_unit in the catchment rule, filtered by event.attendee_filters.

@@ -24,6 +24,11 @@ class OnTheFlyVenueAllocator {
 
   bool hasRule(std::string_view activity_name) const;
 
+  // True when the rule for this activity uses venue_stability: fixed.
+  // Callers should omit sim_day from their seed so the venue is stable
+  // across multiple days of a hop.
+  bool isFixed(std::string_view activity_name) const;
+
   // Returns memoised venue pool for the given activity and context.
   // Empty if no rule is defined or no venues match.
   const std::vector<VenueId>& resolve(std::string_view activity_name,

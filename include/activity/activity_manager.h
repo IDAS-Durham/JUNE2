@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "activity/venue_resolve_context.h"
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
@@ -230,6 +231,11 @@ class ActivityManager {
   // happens later). Output is cleared at the start.
   void filterAvailableActivities(const Person& person, const TimeSlot& slot,
                                  std::vector<int16_t>& available) const;
+
+  // Builds a VenueResolveContext for `person`: resident_geo_unit_id from the
+  // person's geo_unit; hosting_geo_unit_id from the active calendar event (if
+  // any). Cheap — just integer lookups.
+  VenueResolveContext buildVenueResolveContext(const Person& person) const;
 
   // For schedules that opt into linked_activities and slots whose allowed
   // activities touch the linked set, rolls the per-day participation

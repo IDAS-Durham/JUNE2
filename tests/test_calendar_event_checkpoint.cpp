@@ -35,23 +35,22 @@ CalendarEventManager makeManager(int16_t duration = 3) {
   e.compliance_rate = 1.0f;
   e.duration_days = duration;
   e.catchment_rule_id = 0;
-  e.candidate_venue_builder = [](const WorldState& w) {
-    return w.getVenuesInGeoUnit(0, "fair");
-  };
+  e.hosting_geo_unit_id = 0;
   return CalendarEventManager({{e}});
 }
 
 }  // namespace
 
-TEST_CASE("round-trip: resolveCalendarEventVenue matches after restore") {
+// Venue resolution after restore is verified via getActiveHostingGeoUnit,
+// which is what the OTF allocator reads to build the VenueResolveContext.
+TEST_CASE("round-trip: active event and hosting geo-unit preserved after restore") {
   WorldState world = buildCatchmentWorld();
   CalendarEventManager original = makeManager(/*duration=*/3);
   original.triggerEventsForDay(0, world, world.people, 999, {{0, {0}}});
 
   REQUIRE(original.hasActiveEvent(world.people[0].id));
-  const auto venue_before =
-      original.resolveCalendarEventVenue(world.people[0]);
-  REQUIRE(venue_before.first != -1);
+  REQUIRE(original.getActiveHostingGeoUnit(world.people[0].id).has_value());
+  REQUIRE(*original.getActiveHostingGeoUnit(world.people[0].id) == 0);
 
   auto snap = original.snapshot_for_checkpoint();
   REQUIRE(snap.active_event.size() == 1);
@@ -61,8 +60,8 @@ TEST_CASE("round-trip: resolveCalendarEventVenue matches after restore") {
   restored.restore(std::move(snap), world);
 
   REQUIRE(restored.hasActiveEvent(world.people[0].id));
-  const auto venue_after = restored.resolveCalendarEventVenue(world.people[0]);
-  CHECK(venue_after == venue_before);
+  CHECK(restored.getActiveHostingGeoUnit(world.people[0].id).has_value());
+  CHECK(*restored.getActiveHostingGeoUnit(world.people[0].id) == 0);
 }
 
 TEST_CASE("restore on empty snapshot leaves manager idle") {
