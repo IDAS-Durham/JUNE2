@@ -133,6 +133,7 @@ TEST_CASE("selectVenue guard resolves the calendar-event venue during a hop") {
   CalendarEventManager calendar_manager({{f.event}});
   CalendarEventManager::Snapshot snap;
   snap.active_event[f.world.people[0].id] = 99;
+  snap.event_trigger_seed[99] = 0;
   calendar_manager.restore(std::move(snap), f.world);
   manager.setCalendarEventManager(&calendar_manager);
 
