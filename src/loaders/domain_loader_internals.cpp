@@ -426,8 +426,7 @@ void loadActivityMappingsInSpan(
 }
 
 uint32_t matchMembershipRowToFlatIndex(const WorldState& world,
-                                       const Person& person,
-                                       VenueId venue_id,
+                                       const Person& person, VenueId venue_id,
                                        const SubsetIndex* subset_index) {
   for (const auto& meta : world.getActivityMetas(person)) {
     auto venues = world.getActivityVenues(meta);
@@ -459,8 +458,7 @@ void loadMembershipMetadata(
   // house). Absent on worlds serialised before this column existed; fall
   // back to venue_id-only matching for those.
   std::vector<int32_t> sids;
-  bool have_subset_indices =
-      loader.datasetExists(base + "/subset_indices");
+  bool have_subset_indices = loader.datasetExists(base + "/subset_indices");
   if (have_subset_indices) {
     sids = loader.readNumericDataset<int32_t>(base + "/subset_indices");
     have_subset_indices = (sids.size() == pids.size());
@@ -477,10 +475,9 @@ void loadMembershipMetadata(
     auto pit = local_person_idx_map.find(pids[i]);
     if (pit == local_person_idx_map.end()) continue;
     const Person& person = loader.world_.people[pit->second];
-    const SubsetIndex* subset_index =
-        have_subset_indices ? &sids[i] : nullptr;
+    const SubsetIndex* subset_index = have_subset_indices ? &sids[i] : nullptr;
     row_flat_idx[i] = matchMembershipRowToFlatIndex(loader.world_, person,
-                                                     vids[i], subset_index);
+                                                    vids[i], subset_index);
   }
 
   for (size_t f = 0; f < field_names.size(); ++f) {
@@ -625,7 +622,7 @@ void loadVenueSubsets(HDF5Loader& loader,
 }
 
 void buildGlobalVenueMaps(HDF5Loader& loader) {
-  auto all_ids   = loader.readNumericDataset<int32_t>("/venues/ids");
+  auto all_ids = loader.readNumericDataset<int32_t>("/venues/ids");
   auto all_types = loader.readNumericDataset<uint8_t>("/venues/types");
 
   // Reconstruct venue→geo_unit from the partition index (geo_unit_id →
@@ -634,8 +631,8 @@ void buildGlobalVenueMaps(HDF5Loader& loader) {
       "/venues/partition_index/geo_unit_ids");
   auto starts = loader.readNumericDataset<int32_t>(
       "/venues/partition_index/start_indices");
-  auto counts = loader.readNumericDataset<int32_t>(
-      "/venues/partition_index/counts");
+  auto counts =
+      loader.readNumericDataset<int32_t>("/venues/partition_index/counts");
 
   std::vector<GeoUnitId> venue_geo(all_ids.size(), -1);
   for (size_t g = 0; g < gu_ids.size(); ++g)
@@ -647,7 +644,7 @@ void buildGlobalVenueMaps(HDF5Loader& loader) {
   world.global_venue_type_map.reserve(n);
   world.global_venue_geo_unit_map.reserve(n);
   for (size_t i = 0; i < n; ++i) {
-    world.global_venue_type_map[all_ids[i]]     = all_types[i];
+    world.global_venue_type_map[all_ids[i]] = all_types[i];
     world.global_venue_geo_unit_map[all_ids[i]] = venue_geo[i];
     world.addVenueToTypeIndex(all_ids[i], all_types[i]);
   }

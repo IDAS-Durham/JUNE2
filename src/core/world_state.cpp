@@ -53,9 +53,9 @@ void WorldState::buildIndices() {
 }
 
 void WorldState::addVenueToTypeIndex(VenueId venue_id, uint8_t type_id) {
-  const std::string& type_name =
-      (type_id < venue_type_names.size()) ? venue_type_names[type_id]
-                                           : "unknown";
+  const std::string& type_name = (type_id < venue_type_names.size())
+                                     ? venue_type_names[type_id]
+                                     : "unknown";
   global_venues_by_type_name[type_name].push_back(venue_id);
 }
 

@@ -31,9 +31,9 @@ namespace {
 // Case-insensitive "does haystack contain needle".
 bool containsNoCase(const std::string& haystack, const std::string& needle) {
   auto lower = [](unsigned char c) { return std::tolower(c); };
-  auto it = std::search(
-      haystack.begin(), haystack.end(), needle.begin(), needle.end(),
-      [&](char a, char b) { return lower(a) == lower(b); });
+  auto it = std::search(haystack.begin(), haystack.end(), needle.begin(),
+                        needle.end(),
+                        [&](char a, char b) { return lower(a) == lower(b); });
   return it != haystack.end();
 }
 

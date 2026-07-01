@@ -30,7 +30,8 @@ std::unordered_map<int32_t, std::vector<GeoUnitId>> CatchmentRuleLoader::parse(
     ++line_number;
     std::string trimmed = trim(line);
     if (trimmed.empty()) continue;
-    if (line_number == 1 && trimmed.rfind("catchment_rule_id", 0) == 0) continue;
+    if (line_number == 1 && trimmed.rfind("catchment_rule_id", 0) == 0)
+      continue;
 
     std::vector<std::string> fields;
     std::stringstream ss(line);

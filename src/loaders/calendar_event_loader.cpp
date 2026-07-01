@@ -12,9 +12,8 @@
 namespace june {
 
 std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
-    std::istream& input, const WorldState& world,
-    const std::string& start_date, int num_sim_days,
-    const std::string& source_name) {
+    std::istream& input, const WorldState& world, const std::string& start_date,
+    int num_sim_days, const std::string& source_name) {
   std::vector<std::vector<CalendarEvent>> events_by_day(
       num_sim_days > 0 ? num_sim_days : 0);
 
@@ -49,7 +48,8 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       const std::string& schedule_name = get("schedule_name");
       int schedule_idx = world.getScheduleTypeIndex(schedule_name);
       if (schedule_idx < 0) {
-        throw std::runtime_error("unknown schedule_name '" + schedule_name + "'");
+        throw std::runtime_error("unknown schedule_name '" + schedule_name +
+                                 "'");
       }
       event.schedule_type_idx = static_cast<int16_t>(schedule_idx);
       event.hosting_geo_unit_id =
@@ -57,9 +57,9 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       event.venue_type_name = get("venue_type_name");
       event.catchment_rule_id = std::stoi(get("catchment_rule_id"));
       const std::string& dur_str = get("duration_days");
-      event.duration_days =
-          dur_str.empty() ? int16_t{1}
-                          : static_cast<int16_t>(std::stoi(dur_str));
+      event.duration_days = dur_str.empty()
+                                ? int16_t{1}
+                                : static_cast<int16_t>(std::stoi(dur_str));
       if (event.duration_days < 1) {
         std::cerr << "WARNING: " << source_name << ":" << row_number
                   << ": duration_days=" << event.duration_days

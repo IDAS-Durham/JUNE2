@@ -1,9 +1,9 @@
 #include "activity/on_the_fly_venue_allocator.h"
 
+#include <yaml-cpp/yaml.h>
+
 #include <iostream>
 #include <stdexcept>
-
-#include <yaml-cpp/yaml.h>
 
 #include "core/world_state.h"
 
@@ -18,7 +18,8 @@ const std::vector<VenueId> OnTheFlyVenueAllocator::empty_pool_{};
 OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const std::string& config_path)
     : OnTheFlyVenueAllocator(YAML::LoadFile(config_path)) {}
 
-OnTheFlyVenueAllocator OnTheFlyVenueAllocator::fromString(std::string_view yaml) {
+OnTheFlyVenueAllocator OnTheFlyVenueAllocator::fromString(
+    std::string_view yaml) {
   return OnTheFlyVenueAllocator(YAML::Load(std::string(yaml)));
 }
 
@@ -75,7 +76,10 @@ void OnTheFlyVenueAllocator::checkConsistency(const WorldState& world) const {
     if (rule.geo_unit_level.empty()) continue;
     bool found = false;
     for (const auto& level : world.geo_level_names) {
-      if (level == rule.geo_unit_level) { found = true; break; }
+      if (level == rule.geo_unit_level) {
+        found = true;
+        break;
+      }
     }
     if (!found) {
       std::string known;
@@ -119,7 +123,8 @@ const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
   } else {
     geo_unit_id = context.resident_geo_unit_id;
     if (!rule.geo_unit_level.empty()) {
-      GeoUnitId ancestor = world.ancestorAtLevel(geo_unit_id, rule.geo_unit_level);
+      GeoUnitId ancestor =
+          world.ancestorAtLevel(geo_unit_id, rule.geo_unit_level);
       if (ancestor == -1) {
         std::cerr << "[OTF] Warning: rule '" << rule_name
                   << "': no ancestor at level '" << rule.geo_unit_level

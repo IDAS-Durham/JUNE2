@@ -195,8 +195,7 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
       const std::string_view act_name =
           world_.activity_names[static_cast<size_t>(activity_idx)];
       VenueResolveContext ctx = buildVenueResolveContext(person);
-      const auto& pool =
-          on_the_fly_allocator_->resolve(act_name, ctx, world_);
+      const auto& pool = on_the_fly_allocator_->resolve(act_name, ctx, world_);
       if (!pool.empty()) {
         uint64_t seed = on_the_fly_allocator_->isFixed(act_name)
                             ? mix_seed(base_seed_, person.id, activity_idx)

@@ -16,7 +16,8 @@ int main(int argc, char* argv[]) {
   std::vector<std::string> input_files;
 
   // Shorthand: merge_events <run_dir> <n_ranks>
-  // Expands to: run_dir/simulation_events_rank{0..n-1}.h5 -> run_dir/simulation_events.h5
+  // Expands to: run_dir/simulation_events_rank{0..n-1}.h5 ->
+  // run_dir/simulation_events.h5
   if (argc == 3 && std::filesystem::is_directory(argv[1])) {
     std::filesystem::path run_dir(argv[1]);
     int n_ranks = std::stoi(argv[2]);

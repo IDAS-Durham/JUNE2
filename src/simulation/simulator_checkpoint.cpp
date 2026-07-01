@@ -324,8 +324,8 @@ void writeShardCalendarEvents(H5::H5File& f,
   f.createGroup("/calendar_events");
   writeVec(f, "/calendar_events/person_ids", ce_pids,
            H5::PredType::NATIVE_INT32, comp);
-  writeVec(f, "/calendar_events/event_ids", ce_eids,
-           H5::PredType::NATIVE_INT32, comp);
+  writeVec(f, "/calendar_events/event_ids", ce_eids, H5::PredType::NATIVE_INT32,
+           comp);
 }
 
 // Gather + write the sparse venue fomite-history shard section. One record

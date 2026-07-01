@@ -590,9 +590,9 @@ void Simulator::runOneDay(int day, int rank) {
 #endif
 
   // 2.5. Trigger calendar events (schedule hops for fairs, etc.)
-  calendar_event_manager_.triggerEventsForDay(
-      day, world_, world_.people, config_.simulation.random_seed,
-      catchment_rules_);
+  calendar_event_manager_.triggerEventsForDay(day, world_, world_.people,
+                                              config_.simulation.random_seed,
+                                              catchment_rules_);
 
   // 3. Negotiate Coordinated Encounters
   negotiateAndLogDailyEncounters(day, rank);

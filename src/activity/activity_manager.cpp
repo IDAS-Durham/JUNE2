@@ -173,7 +173,8 @@ std::tuple<int16_t, VenueId, SubsetIndex> ActivityManager::resolveHopSlot(
       mix_seed(base_seed_, person.id, static_cast<uint64_t>(s));
   const int16_t act =
       selectActivity(person, slot, s, &hopped, day_type_idx, hop_key);
-  auto [v, sub] = selectVenue(person, act, slot, hop_key, hop_start_day + k / n);
+  auto [v, sub] =
+      selectVenue(person, act, slot, hop_key, hop_start_day + k / n);
   return {act, v, sub};
 }
 

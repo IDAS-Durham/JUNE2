@@ -12,14 +12,13 @@ CalendarEventManager::CalendarEventManager(
     std::vector<std::vector<CalendarEvent>> events_by_day)
     : events_by_day_(std::move(events_by_day)) {
   for (const auto& day_events : events_by_day_)
-    for (const auto& ev : day_events)
-      events_by_id_[ev.calendar_event_id] = &ev;
+    for (const auto& ev : day_events) events_by_id_[ev.calendar_event_id] = &ev;
 }
 
 std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
     const CalendarEvent& event, const WorldState& world,
-    const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
-        catchment_rules) const {
+    const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules)
+    const {
   std::vector<PersonId> attendees;
   auto rule_it = catchment_rules.find(event.catchment_rule_id);
   if (rule_it == catchment_rules.end()) return attendees;
@@ -38,12 +37,11 @@ std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
   return attendees;
 }
 
-
 void CalendarEventManager::sweepCompletedHops(
     const std::unordered_map<PersonId, size_t>& person_index,
     const std::vector<Person>& people) {
   if (active_event_.empty()) return;
-  for (auto it = active_event_.begin(); it != active_event_.end(); ) {
+  for (auto it = active_event_.begin(); it != active_event_.end();) {
     auto idx_it = person_index.find(it->first);
     if (idx_it == person_index.end() ||
         !people[idx_it->second].schedule_hop.isActive())
@@ -56,7 +54,8 @@ void CalendarEventManager::sweepCompletedHops(
 void CalendarEventManager::triggerEventsForDay(
     int day, const WorldState& world, std::vector<Person>& people,
     uint64_t base_seed,
-    const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules) {
+    const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
+        catchment_rules) {
   sweepCompletedHops(world.person_index, people);
 
   if (day < 0 || day >= static_cast<int>(events_by_day_.size())) return;
@@ -89,14 +88,13 @@ void CalendarEventManager::triggerEventsForDay(
 
       // Deferred onset: no advance here; slot 0 runs on the first
       // advanceAndCheckComplete.
-      person.schedule_hop = ScheduleHop::begin(
-          event.schedule_type_idx, -1, event.duration_days - 1);
+      person.schedule_hop = ScheduleHop::begin(event.schedule_type_idx, -1,
+                                               event.duration_days - 1);
       active_event_[person.id] = event.calendar_event_id;
       ++stats_.triggered;
     }
   }
 }
-
 
 std::optional<GeoUnitId> CalendarEventManager::getActiveHostingGeoUnit(
     PersonId person_id) const {
