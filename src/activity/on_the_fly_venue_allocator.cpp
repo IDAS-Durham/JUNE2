@@ -70,11 +70,11 @@ OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const YAML::Node& root) {
 // ---------------------------------------------------------------------------
 
 bool OnTheFlyVenueAllocator::hasRule(std::string_view activity_name) const {
-  return activity_to_rule_.count(std::string(activity_name)) > 0;
+  return activity_to_rule_.count(activity_name) > 0;
 }
 
 bool OnTheFlyVenueAllocator::isFixed(std::string_view activity_name) const {
-  auto rule_it = activity_to_rule_.find(std::string(activity_name));
+  auto rule_it = activity_to_rule_.find(activity_name);
   if (rule_it == activity_to_rule_.end()) return false;
   auto cfg_it = rules_.find(rule_it->second);
   if (cfg_it == rules_.end()) return false;
@@ -84,7 +84,7 @@ bool OnTheFlyVenueAllocator::isFixed(std::string_view activity_name) const {
 const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
     std::string_view activity_name, const VenueResolveContext& context,
     const WorldState& world) {
-  auto rule_it = activity_to_rule_.find(std::string(activity_name));
+  auto rule_it = activity_to_rule_.find(activity_name);
   if (rule_it == activity_to_rule_.end()) return empty_pool_;
 
   const std::string& rule_name = rule_it->second;
@@ -98,11 +98,12 @@ const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
     geo_unit_id = context.resident_geo_unit_id;
   }
 
-  CacheKey key{rule_name, geo_unit_id};
-  auto cache_it = cache_.find(key);
+  CacheKeyView probe_key{rule_name, geo_unit_id};
+  auto cache_it = cache_.find(probe_key);
   if (cache_it != cache_.end()) return cache_it->second;
 
   auto pool = world.getVenuesInGeoUnit(geo_unit_id, rule.venue_type);
+  CacheKey key{rule_name, geo_unit_id};
   auto [inserted_it, _] = cache_.emplace(std::move(key), std::move(pool));
   return inserted_it->second;
 }
