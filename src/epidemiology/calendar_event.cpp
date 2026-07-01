@@ -109,7 +109,7 @@ CalendarEventManager::Snapshot CalendarEventManager::snapshot_for_checkpoint()
   return {active_event_};
 }
 
-void CalendarEventManager::restore(Snapshot snapshot, const WorldState&) {
+void CalendarEventManager::restore(Snapshot snapshot) {
   active_event_ = std::move(snapshot.active_event);
 }
 

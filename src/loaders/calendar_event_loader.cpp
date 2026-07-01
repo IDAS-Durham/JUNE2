@@ -84,9 +84,6 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       continue;
     }
 
-    // No candidate_venue_builder / venue_selector installed: the manager
-    // derives the catchment pool from hosting_geo_unit_id + venue_type_name and
-    // hash-selects by default.
     events_by_day[event.start_day].push_back(std::move(event));
   }
 

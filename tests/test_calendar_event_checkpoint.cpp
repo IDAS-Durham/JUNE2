@@ -56,7 +56,7 @@ TEST_CASE("round-trip: active event and hosting geo-unit preserved after restore
   REQUIRE(snap.active_event.size() == 1);
 
   CalendarEventManager restored = makeManager(/*duration=*/3);
-  restored.restore(std::move(snap), world);
+  restored.restore(std::move(snap));
 
   REQUIRE(restored.hasActiveEvent(world.people[0].id));
   CHECK(restored.getActiveHostingGeoUnit(world.people[0].id).has_value());
@@ -67,7 +67,7 @@ TEST_CASE("restore on empty snapshot leaves manager idle") {
   WorldState world = buildCatchmentWorld();
   CalendarEventManager manager = makeManager();
   CalendarEventManager::Snapshot empty_snap;
-  manager.restore(std::move(empty_snap), world);
+  manager.restore(std::move(empty_snap));
   CHECK(!manager.hasActiveEvent(world.people[0].id));
 }
 

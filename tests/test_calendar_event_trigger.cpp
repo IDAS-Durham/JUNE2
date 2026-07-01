@@ -39,9 +39,6 @@ CalendarEvent makeCatchmentEvent(int32_t id, int16_t sched_idx,
   e.compliance_rate = compliance;
   e.duration_days = duration;
   e.catchment_rule_id = 0;
-  e.candidate_venue_builder = [](const WorldState& w) {
-    return w.getVenuesInGeoUnit(0, "fair");
-  };
   return e;
 }
 
@@ -130,9 +127,6 @@ TEST_CASE("catchment-rule event triggers people in specified geo_units") {
   event.schedule_type_idx = 1;
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = 7;
-  event.candidate_venue_builder = [](const WorldState& w) {
-    return w.getVenuesInGeoUnit(10, "fair");
-  };
 
   CalendarEventManager manager({{event}});
   manager.triggerEventsForDay(0, world, world.people, 42, {{7, {10, 11}}});
@@ -173,9 +167,6 @@ TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
   event.schedule_type_idx = 1;
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = 0;
-  event.candidate_venue_builder = [](const WorldState& w) {
-    return w.getVenuesInGeoUnit(0, "fair");
-  };
   event.attendee_filters = {age_filter};
 
   CalendarEventManager manager({{event}});

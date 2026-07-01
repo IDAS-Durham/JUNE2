@@ -1,11 +1,9 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include "core/config.h"
@@ -16,10 +14,9 @@ namespace june {
 class WorldState;
 
 // A calendar-triggered event. On `start_day`, attendees drawn from the
-// catchment rule hop onto the temporary schedule `schedule_type_idx`. Each
-// attendee's Venue is selected at resolve time from the candidate pool built
-// by `candidate_venue_builder`. Generic: "Fair" appears only in the data
-// (category / schedule name), never here.
+// catchment rule hop onto the temporary schedule `schedule_type_idx`. Venue
+// assignment is handled by OnTheFlyVenueAllocator at activity-selection time.
+// Generic: "Fair" appears only in the data (category / schedule name), never here.
 struct CalendarEvent {
   int32_t calendar_event_id = -1;
   int start_day = -1;              // sim day (0-based) the event triggers on
@@ -30,16 +27,6 @@ struct CalendarEvent {
   GeoUnitId hosting_geo_unit_id = -1;
   std::string venue_type_name;
   std::vector<SelectionCriterion> attendee_filters;
-  // Optional override of the default candidate pool. The manager's default is
-  // getVenuesInGeoUnit(hosting_geo_unit_id, venue_type_name) for catchment
-  // events; tests set this to supply arbitrary venue pools instead.
-  std::function<std::vector<VenueId>(const WorldState&)> candidate_venue_builder;
-  // If set, called at resolve time to pick one venue from the cached pool.
-  // Receives (candidates, person_id, seed); seed is pre-mixed from the trigger
-  // seed + person_id + event_id, so the selector need not do any seeding itself.
-  // Null falls back to the default hash-select.
-  std::function<std::pair<VenueId, SubsetIndex>(
-      const std::vector<VenueId>&, PersonId, uint64_t)> venue_selector;
   std::string category;  // free text (e.g. "fair"); logging/metrics only
 };
 
@@ -79,7 +66,7 @@ class CalendarEventManager {
     std::unordered_map<PersonId, int32_t>  active_event;
   };
   Snapshot snapshot_for_checkpoint() const;
-  void restore(Snapshot snapshot, const WorldState& world);
+  void restore(Snapshot snapshot);
 
   // Trigger diagnostics.
   struct Stats {

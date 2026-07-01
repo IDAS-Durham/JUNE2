@@ -81,6 +81,13 @@ class ActivityManager {
   void assignActivitiesFromSchedule(int time_slot_index, int day_type_idx,
                                     std::vector<PersonLocation>& locations);
 
+  // Scans backwards through an already-hopped schedule's flat_slots to find
+  // the last slot that produced a real venue (venue_id >= 0). Used to resolve
+  // a pin venue when the policy fires during a no_venue transit slot.
+  // Falls back to home residence if no prior overnight slot is found.
+  std::pair<VenueId, SubsetIndex> findLastNonNullVenueOnHop(
+      const Person& person);
+
  private:
   WorldState& world_;
   const Config& config_;
@@ -115,6 +122,10 @@ class ActivityManager {
       const Person& person, int16_t activity_idx,
       const TimeSlot&
           slot,  // Used for specified_activity (to select specific venue index)
+      uint64_t time_key, int logical_day);
+  // Thin wrapper: forwards current_sim_day_ as logical_day.
+  std::pair<VenueId, SubsetIndex> selectVenue(
+      const Person& person, int16_t activity_idx, const TimeSlot& slot,
       uint64_t time_key);
 
   PerformanceStats stats_;
@@ -359,12 +370,6 @@ class ActivityManager {
   bool advanceHoppedSchedule(Person& person, PersonLocation& loc,
                              size_t person_array_idx);
 
-  // Scans backwards through an already-hopped schedule's flat_slots to find
-  // the last slot that produced a real venue (venue_id >= 0). Used to resolve
-  // a pin venue when the policy fires during a no_venue transit slot.
-  // Falls back to home residence if no prior overnight slot is found.
-  std::pair<VenueId, SubsetIndex> findLastNonNullVenueOnHop(
-      const Person& person);
 };
 
 }  // namespace june

@@ -180,6 +180,12 @@ int16_t ActivityManager::pickActivityByRate(
 std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
     const Person& person, int16_t activity_idx, const TimeSlot& slot,
     uint64_t time_key) {
+  return selectVenue(person, activity_idx, slot, time_key, current_sim_day_);
+}
+
+std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
+    const Person& person, int16_t activity_idx, const TimeSlot& slot,
+    uint64_t time_key, int logical_day) {
   if (activity_idx == no_venue_act_idx_) {
     return {-1, -1};
   }
@@ -195,7 +201,7 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
         uint64_t seed = on_the_fly_allocator_->isFixed(act_name)
                             ? mix_seed(base_seed_, person.id, activity_idx)
                             : mix_seed(base_seed_, person.id, activity_idx,
-                                       static_cast<uint64_t>(current_sim_day_));
+                                       static_cast<uint64_t>(logical_day));
         SplitMix64 rng(seed);
         std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
         return {pool[dist(rng)], 0};

@@ -367,7 +367,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     overlayShardManagerState(f, world_, lpt_map, frozen_accum);
     overlayShardCalendarEvents(f, world_, ce_snap);
   }
-  calendar_event_manager_.restore(std::move(ce_snap), world_);
+  calendar_event_manager_.restore(std::move(ce_snap));
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
 

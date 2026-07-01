@@ -200,7 +200,7 @@ TEST_CASE(
   CalendarEventManager calendar_manager({{event}});
   CalendarEventManager::Snapshot snap;
   snap.active_event[person.id] = 1;
-  calendar_manager.restore(std::move(snap), world);
+  calendar_manager.restore(std::move(snap));
 
   static constexpr std::string_view kOtfYaml = R"(
 rules:
