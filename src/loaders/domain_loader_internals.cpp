@@ -649,13 +649,9 @@ void buildGlobalVenueMaps(HDF5Loader& loader) {
   for (size_t i = 0; i < n; ++i) {
     world.global_venue_type_map[all_ids[i]]     = all_types[i];
     world.global_venue_geo_unit_map[all_ids[i]] = venue_geo[i];
-    if (all_types[i] < world.venue_type_names.size()) {
-      world.global_venues_by_type_name[
-          world.venue_type_names[all_types[i]]].push_back(all_ids[i]);
-    }
+    world.addVenueToTypeIndex(all_ids[i], all_types[i]);
   }
-  for (auto& [_, ids] : world.global_venues_by_type_name)
-    std::sort(ids.begin(), ids.end());
+  world.sortGlobalVenuesByTypeName();
 }
 
 }  // namespace detail

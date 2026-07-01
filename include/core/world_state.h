@@ -220,6 +220,14 @@ class WorldState {
   // world.venues. No-op if already filled by the MPI HDF5 loader.
   void buildGlobalVenueMaps();
 
+  // Shared by WorldState::buildGlobalVenueMaps() and the MPI HDF5 loader's
+  // detail::buildGlobalVenueMaps(): append venue_id to the type-name bucket,
+  // falling back to "unknown" for an out-of-range type_id.
+  void addVenueToTypeIndex(VenueId venue_id, uint8_t type_id);
+
+  // Sort each global_venues_by_type_name bucket ascending by VenueId.
+  void sortGlobalVenuesByTypeName();
+
   // Load susceptibility factors from CSV
   void loadRegionalRiskFactors(const std::string& csv_path);
 

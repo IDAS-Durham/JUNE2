@@ -52,18 +52,25 @@ void WorldState::buildIndices() {
   buildGlobalVenueMaps();
 }
 
+void WorldState::addVenueToTypeIndex(VenueId venue_id, uint8_t type_id) {
+  const std::string& type_name =
+      (type_id < venue_type_names.size()) ? venue_type_names[type_id]
+                                           : "unknown";
+  global_venues_by_type_name[type_name].push_back(venue_id);
+}
+
+void WorldState::sortGlobalVenuesByTypeName() {
+  for (auto& [_, ids] : global_venues_by_type_name)
+    std::sort(ids.begin(), ids.end());
+}
+
 void WorldState::buildGlobalVenueMaps() {
   if (!global_venues_by_type_name.empty()) return;  // MPI loader already filled
   for (size_t i = 0; i < venues.size(); ++i) {
     global_venue_geo_unit_map.emplace(venues[i].id, venues[i].geo_unit_id);
-    const std::string& type_name =
-        (venues[i].type_id < venue_type_names.size())
-            ? venue_type_names[venues[i].type_id]
-            : "unknown";
-    global_venues_by_type_name[type_name].push_back(venues[i].id);
+    addVenueToTypeIndex(venues[i].id, venues[i].type_id);
   }
-  for (auto& [_, ids] : global_venues_by_type_name)
-    std::sort(ids.begin(), ids.end());
+  sortGlobalVenuesByTypeName();
 }
 
 Person* WorldState::getPerson(PersonId id) {
