@@ -40,11 +40,16 @@ std::vector<PersonId> CalendarEventManager::attendeesForCatchmentEvent(
 
 
 void CalendarEventManager::sweepCompletedHops(
+    const std::unordered_map<PersonId, size_t>& person_index,
     const std::vector<Person>& people) {
   if (active_event_.empty()) return;
-  for (const Person& person : people) {
-    if (!person.schedule_hop.isActive())
-      active_event_.erase(person.id);
+  for (auto it = active_event_.begin(); it != active_event_.end(); ) {
+    auto idx_it = person_index.find(it->first);
+    if (idx_it == person_index.end() ||
+        !people[idx_it->second].schedule_hop.isActive())
+      it = active_event_.erase(it);
+    else
+      ++it;
   }
 }
 
@@ -52,7 +57,7 @@ void CalendarEventManager::triggerEventsForDay(
     int day, const WorldState& world, std::vector<Person>& people,
     uint64_t base_seed,
     const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules) {
-  sweepCompletedHops(people);
+  sweepCompletedHops(world.person_index, people);
 
   if (day < 0 || day >= static_cast<int>(events_by_day_.size())) return;
   const auto& todays_events = events_by_day_[day];

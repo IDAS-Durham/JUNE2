@@ -177,3 +177,16 @@ TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
   CHECK(world.people[1].schedule_hop.hopped_schedule_id == 1);
   CHECK(world.people[2].schedule_hop.hopped_schedule_id == 1);
 }
+
+TEST_CASE("sweepCompletedHops removes entry once hop becomes inactive") {
+  WorldState world = buildCatchmentWorld();
+  CalendarEventManager manager({{makeCatchmentEvent(1, 1, 1.0f, 1)}});
+
+  manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
+  REQUIRE(manager.hasActiveEvent(world.people[0].id));
+
+  world.people[0].schedule_hop.clear();  // isActive() == false
+
+  manager.triggerEventsForDay(99, world, world.people, 123, {});
+  CHECK_FALSE(manager.hasActiveEvent(world.people[0].id));
+}

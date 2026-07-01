@@ -59,7 +59,9 @@ class CalendarEventManager {
   // Erase active-event entries for persons whose hop has completed (i.e.
   // !schedule_hop.isActive()). Called at the top of triggerEventsForDay so
   // stale entries are cleaned up once per day without coupling to ActivityManager.
-  void sweepCompletedHops(const std::vector<Person>& people);
+  void sweepCompletedHops(
+      const std::unordered_map<PersonId, size_t>& person_index,
+      const std::vector<Person>& people);
 
   // Checkpoint seam: serialisable state.
   struct Snapshot {
