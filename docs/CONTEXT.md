@@ -63,6 +63,23 @@ schedule, or a policy freeze-in-place swap) set `hopped_schedule_id` without
 auto-return.
 _Avoid_: "temp schedule", "hopped state".
 
+**Logical day** (of a hop slot):
+The calendar day on which a specific slot within a Schedule Hop was originally
+scheduled to execute: `hop_start_day + k / n`, where `k` is
+`temp_slot_progress` at time of execution and `n` is `flat_slots.size()`.
+Equals `current_sim_day_` on the forward pass but differs when
+`findLastNonNullVenueOnHop` re-resolves an earlier slot on a later calendar
+day. OTF daily venue seeds must use the logical day so forward and backward
+resolution always agree.
+_Avoid_: confusing with `current_sim_day_` (the wall-clock day at call time).
+
+**`current_sim_day_`** (simulation wall-clock day):
+The calendar day the simulation is currently advancing through at the moment a
+function executes. Identical to the logical day for forward-pass slot
+resolution, but not for `findLastNonNullVenueOnHop`, which re-resolves
+previously-executed slots from a later wall-clock position.
+_Avoid_: treating as synonymous with logical day inside hop backward scans.
+
 ## Relationships
 
 - A **Person** has, per **Activity**, a list of candidate **Venue**
