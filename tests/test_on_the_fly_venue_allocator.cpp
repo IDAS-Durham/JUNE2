@@ -111,6 +111,79 @@ TEST_CASE_FIXTURE(AllocatorFixture,
   CHECK(pool[2] == 12);
 }
 
+// =============================================================================
+// geo_unit_level: ancestor-based venue resolution
+// =============================================================================
+
+struct MultiLevelFixture {
+  // Hierarchy: district(10) → village1(11), village2(12)
+  // Pubs: 100, 101 in village1; 200 in village2
+  WorldState world;
+  VenueResolveContext ctx;
+
+  MultiLevelFixture() {
+    world.geo_level_names = {"district", "village"};
+    world.venue_type_names = {"pub"};
+
+    auto add_gu = [&](GeoUnitId id, uint8_t level, GeoUnitId parent) {
+      GeographicalUnit gu;
+      gu.id = id; gu.level_id = level; gu.parent_id = parent;
+      world.geo_units.push_back(gu);
+    };
+    add_gu(10, 0, -1);   // district
+    add_gu(11, 1, 10);   // village1
+    add_gu(12, 1, 10);   // village2
+
+    auto add_pub = [&](VenueId id, GeoUnitId geo) {
+      Venue v; v.id = id; v.type_id = 0; v.geo_unit_id = geo;
+      world.venues.push_back(v);
+    };
+    add_pub(100, 11);
+    add_pub(101, 11);
+    add_pub(200, 12);
+
+    world.buildIndices();
+    ctx.resident_geo_unit_id = 11;  // person lives in village1
+  }
+};
+
+static constexpr std::string_view kDistrictLevelYaml = R"(
+rules:
+  pub_district_rule:
+    strategy: resident_geo_unit
+    venue_type: pub
+    geo_unit_level: district
+activity_rules:
+  pub_visit: pub_district_rule
+)";
+
+TEST_CASE_FIXTURE(MultiLevelFixture,
+                  "resolve resident_geo_unit with geo_unit_level returns full ancestor pool") {
+  auto allocator = OnTheFlyVenueAllocator::fromString(kDistrictLevelYaml);
+  const auto& pool = allocator.resolve("pub_visit", ctx, world);
+
+  REQUIRE(pool.size() == 3);
+  CHECK(pool[0] == 100);
+  CHECK(pool[1] == 101);
+  CHECK(pool[2] == 200);
+}
+
+TEST_CASE_FIXTURE(MultiLevelFixture,
+                  "resolve resident_geo_unit with geo_unit_level returns empty when ancestor not found") {
+  static constexpr std::string_view kMissingLevelYaml = R"(
+rules:
+  pub_region_rule:
+    strategy: resident_geo_unit
+    venue_type: pub
+    geo_unit_level: region
+activity_rules:
+  pub_visit: pub_region_rule
+)";
+  auto allocator = OnTheFlyVenueAllocator::fromString(kMissingLevelYaml);
+  const auto& pool = allocator.resolve("pub_visit", ctx, world);
+  CHECK(pool.empty());
+}
+
 TEST_CASE_FIXTURE(AllocatorFixture,
                   "resolve returns empty when no matching venues in geo_unit") {
   auto allocator = OnTheFlyVenueAllocator::fromString(kBaseYaml);
@@ -120,6 +193,27 @@ TEST_CASE_FIXTURE(AllocatorFixture,
   const auto& pool = allocator.resolve("pub_visit", ctx, world);
 
   CHECK(pool.empty());
+}
+
+// =============================================================================
+// checkConsistency
+// =============================================================================
+
+TEST_CASE_FIXTURE(MultiLevelFixture, "checkConsistency throws for unknown geo_unit_level") {
+  auto allocator = OnTheFlyVenueAllocator::fromString(kDistrictLevelYaml);
+  CHECK_NOTHROW(allocator.checkConsistency(world));
+
+  static constexpr std::string_view kBadLevelYaml = R"(
+rules:
+  pub_bad_rule:
+    strategy: resident_geo_unit
+    venue_type: pub
+    geo_unit_level: typo_level
+activity_rules:
+  pub_visit: pub_bad_rule
+)";
+  auto bad_allocator = OnTheFlyVenueAllocator::fromString(kBadLevelYaml);
+  CHECK_THROWS_AS(bad_allocator.checkConsistency(world), std::runtime_error);
 }
 
 // =============================================================================

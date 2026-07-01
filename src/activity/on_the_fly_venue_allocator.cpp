@@ -1,5 +1,6 @@
 #include "activity/on_the_fly_venue_allocator.h"
 
+#include <iostream>
 #include <stdexcept>
 
 #include <yaml-cpp/yaml.h>
@@ -69,6 +70,27 @@ OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const YAML::Node& root) {
 // Public interface
 // ---------------------------------------------------------------------------
 
+void OnTheFlyVenueAllocator::checkConsistency(const WorldState& world) const {
+  for (const auto& [rule_name, rule] : rules_) {
+    if (rule.geo_unit_level.empty()) continue;
+    bool found = false;
+    for (const auto& level : world.geo_level_names) {
+      if (level == rule.geo_unit_level) { found = true; break; }
+    }
+    if (!found) {
+      std::string known;
+      for (const auto& level : world.geo_level_names) {
+        if (!known.empty()) known += ", ";
+        known += '"' + level + '"';
+      }
+      throw std::runtime_error(
+          "OTF rule '" + rule_name + "' specifies geo_unit_level '" +
+          rule.geo_unit_level +
+          "' which is not a known geo level. Known levels: " + known + ".");
+    }
+  }
+}
+
 bool OnTheFlyVenueAllocator::hasRule(std::string_view activity_name) const {
   return activity_to_rule_.count(activity_name) > 0;
 }
@@ -96,6 +118,17 @@ const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
     geo_unit_id = *context.hosting_geo_unit_id;
   } else {
     geo_unit_id = context.resident_geo_unit_id;
+    if (!rule.geo_unit_level.empty()) {
+      GeoUnitId ancestor = world.ancestorAtLevel(geo_unit_id, rule.geo_unit_level);
+      if (ancestor == -1) {
+        std::cerr << "[OTF] Warning: rule '" << rule_name
+                  << "': no ancestor at level '" << rule.geo_unit_level
+                  << "' for geo_unit_id " << geo_unit_id
+                  << ". Returning empty pool.\n";
+        return empty_pool_;
+      }
+      geo_unit_id = ancestor;
+    }
   }
 
   CacheKeyView probe_key{rule_name, geo_unit_id};

@@ -140,6 +140,21 @@ std::vector<VenueId> WorldState::getVenuesInGeoUnit(
   return result;
 }
 
+GeoUnitId WorldState::ancestorAtLevel(GeoUnitId id,
+                                      std::string_view level_name) const {
+  GeoUnitId current = id;
+  while (current != -1) {
+    auto it = geo_unit_index.find(current);
+    if (it == geo_unit_index.end()) break;
+    const GeographicalUnit& gu = geo_units[it->second];
+    if (gu.level_id < geo_level_names.size() &&
+        geo_level_names[gu.level_id] == level_name)
+      return current;
+    current = gu.parent_id;
+  }
+  return -1;
+}
+
 std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {
   std::vector<Person*> result;
   auto it = people_by_geo_unit.find(id);

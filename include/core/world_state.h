@@ -248,6 +248,10 @@ class WorldState {
   std::vector<VenueId> getVenuesInGeoUnit(GeoUnitId hosting_geo_unit_id,
                                            const std::string& venue_type_name) const;
 
+  // Returns id of the nearest ancestor (or self) of `id` at `level_name`.
+  // Returns -1 if not found.
+  GeoUnitId ancestorAtLevel(GeoUnitId id, std::string_view level_name) const;
+
   // Get all people in a geographic unit (including descendants)
   std::vector<Person*> getPeopleInUnit(GeoUnitId id);
   std::vector<Person*> getPeopleInUnit(const std::string& level,

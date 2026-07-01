@@ -501,6 +501,7 @@ Simulator::Simulator(WorldState& world, const Config& config,
   }
   if (!config_.simulation.on_the_fly_venues_file.empty()) {
     on_the_fly_allocator_.emplace(config_.simulation.on_the_fly_venues_file);
+    on_the_fly_allocator_->checkConsistency(world_);
     activity_manager_.setOnTheFlyVenueAllocator(&on_the_fly_allocator_.value());
   }
 

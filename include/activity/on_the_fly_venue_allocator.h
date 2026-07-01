@@ -36,6 +36,10 @@ class OnTheFlyVenueAllocator {
                                       const VenueResolveContext& context,
                                       const WorldState& world);
 
+  // Checks that all geo_unit_level names in rules exist in world.geo_level_names.
+  // Throws std::runtime_error with a diagnostic if any are unknown.
+  void checkConsistency(const WorldState& world) const;
+
  private:
   enum class VenueStability { daily, fixed };
   enum class Strategy { hosting_geo_unit, resident_geo_unit };
