@@ -134,6 +134,7 @@ set(JUNE_CORE_SOURCES
     src/interaction/interaction_manager_partial_presence.cpp
     src/activity/activity_manager.cpp
     src/activity/activity_manager_selection.cpp
+    src/activity/on_the_fly_venue_allocator.cpp
     src/core/config.cpp
     src/core/config_checks.cpp
     src/core/world_state.cpp
@@ -150,6 +151,9 @@ set(JUNE_CORE_SOURCES
     src/utils/event_logging/event_merger_lookups.cpp
     src/epidemiology/epidemiology.cpp
     src/epidemiology/policy.cpp
+    src/epidemiology/calendar_event.cpp
+    src/loaders/calendar_event_loader.cpp
+    src/loaders/catchment_rule_loader.cpp
     src/simulation/simulator.cpp
     src/simulation/simulator_checkpoint.cpp
     src/simulation/simulator_encounters.cpp
@@ -245,6 +249,9 @@ endif()
 add_executable(disease_sim src/main.cpp)
 target_link_libraries(disease_sim PRIVATE june_core)
 
+add_executable(merge_events src/merge_events.cpp)
+target_link_libraries(merge_events PRIVATE june_core)
+
 if(GPERFTOOLS_FOUND)
   message(STATUS "Profiling enabled: gperftools CPU profiler linked via june_core")
 endif()
@@ -297,11 +304,20 @@ if(BUILD_TESTING)
   add_june_test(test_vaccines "tests/test_vaccines.cpp")
   add_june_test(test_vaccination_manager "tests/test_vaccination_manager.cpp")
   add_june_test(test_config_loading "tests/test_config_loading.cpp")
+  add_june_test(test_config_checks "tests/test_config_checks.cpp")
   add_june_test(test_activity_manager "tests/test_activity_manager.cpp")
+  add_june_test(test_on_the_fly_venue_allocator "tests/test_on_the_fly_venue_allocator.cpp")
   add_june_test(test_schedule_csv "tests/test_schedule_csv.cpp")
   add_june_test(test_day_types "tests/test_day_types.cpp")
   add_june_test(test_schedule_hopper "tests/test_schedule_hopper.cpp")
+  add_june_test(test_schedule_hop_state "tests/test_schedule_hop_state.cpp")
+  add_june_test(test_calendar_event_trigger    "tests/test_calendar_event_trigger.cpp")
+  add_june_test(test_calendar_event_loader     "tests/test_calendar_event_loader.cpp")
+  add_june_test(test_calendar_event_venue      "tests/test_calendar_event_venue.cpp")
+  add_june_test(test_calendar_event_checkpoint "tests/test_calendar_event_checkpoint.cpp")
+  add_june_test(test_catchment_rule_loader "tests/test_catchment_rule_loader.cpp")
   add_june_test(test_cross_domain_venues "tests/test_cross_domain_venues.cpp")
+  add_june_test(test_membership_metadata_matching "tests/test_membership_metadata_matching.cpp")
   add_june_test(test_integration "tests/test_integration.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_epidemiology "tests/test_epidemiology.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_simulator "tests/test_simulator.cpp;src/loaders/disease_loader.cpp")

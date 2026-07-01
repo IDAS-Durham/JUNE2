@@ -70,6 +70,32 @@ struct CouplingMatrixConfig {
 CouplingMatrixConfig loadCouplingMatrix(const std::string& yaml_path);
 
 // ---------------------------------------------------------------------------
+// HDF5 C++ ABI clash guard.
+//
+// The compartmental plugin is dlopen'd at runtime. If it was linked against a
+// different libhdf5_cpp than the host disease_sim binary, dlopen pulls a
+// *second* HDF5 C++ library into the process, HDF5's global DataSpace::ALL
+// constant gets initialised twice, and the load dies with the cryptic
+// "DataSpace::getConstant is being invoked on an allocated ALL_". That throw
+// is a catchable H5::Exception that unwinds out of dlopen (proven: it reached
+// main's catch in the field report), so we trap it at the dlopen site and
+// convert it into an actionable message. Pure (no platform binary parsing) so
+// it works on any POSIX target, not just Linux/ELF.
+// ---------------------------------------------------------------------------
+
+// True iff an HDF5 C++ exception's function/detail strings carry the
+// duplicate-constant signature (DataSpace::getConstant / allocated ALL_) that
+// indicates two libhdf5_cpp libraries loaded into one process. Kept narrow so
+// unrelated H5::Exceptions are never misattributed to an ABI clash.
+bool isHdf5DuplicateConstantError(const std::string& func_name,
+                                  const std::string& detail_msg);
+
+// Multi-line, human-readable explanation of the ABI clash + remedy, naming the
+// offending plugin. Printed (rank 0) before the run aborts. Pure → testable.
+std::string formatHdf5AbiMismatchMessage(const std::string& plugin_path,
+                                         const std::string& detail_msg);
+
+// ---------------------------------------------------------------------------
 // Sidecar YAML fields. Promoted to header so tests can construct directly.
 // ---------------------------------------------------------------------------
 

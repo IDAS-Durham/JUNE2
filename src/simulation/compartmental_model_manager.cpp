@@ -4,7 +4,10 @@
 #include <hdf5.h>
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
+#include <cctype>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -22,6 +25,19 @@ namespace CompartmentalGraphSchema {
 constexpr const char* VENUE_ID_PTR = "/nodes/venue_id_ptr";
 constexpr const char* VENUE_ID_DATA = "/nodes/venue_id_data";
 }  // namespace CompartmentalGraphSchema
+
+namespace {
+
+// Case-insensitive "does haystack contain needle".
+bool containsNoCase(const std::string& haystack, const std::string& needle) {
+  auto lower = [](unsigned char c) { return std::tolower(c); };
+  auto it = std::search(haystack.begin(), haystack.end(), needle.begin(),
+                        needle.end(),
+                        [&](char a, char b) { return lower(a) == lower(b); });
+  return it != haystack.end();
+}
+
+}  // namespace
 
 // =============================================================================
 // loadCouplingMatrix: free function
@@ -242,10 +258,59 @@ PluginSidecarConfig CompartmentalModelManager::realLoadSidecar(
   return cfg;
 }
 
+bool isHdf5DuplicateConstantError(const std::string& func_name,
+                                  const std::string& detail_msg) {
+  // The HDF5 C++ library throws this from DataSpace::getConstant() when its
+  // global ALL_ constant is initialised a second time — i.e. a second
+  // libhdf5_cpp has been loaded into the process. Match either token so the
+  // probe survives wording changes across HDF5 versions.
+  return containsNoCase(func_name, "getConstant") ||
+         containsNoCase(detail_msg, "ALL_");
+}
+
+std::string formatHdf5AbiMismatchMessage(const std::string& plugin_path,
+                                         const std::string& detail_msg) {
+  std::ostringstream os;
+  os << '\n'
+     << "+--------------------------------------------------------------------"
+        "--------+\n"
+     << "|  FATAL: HDF5 C++ library (libhdf5_cpp) ABI clash                    "
+        "        |\n"
+     << "+--------------------------------------------------------------------"
+        "--------+\n"
+     << "The compartmental-model plugin was linked against a DIFFERENT "
+        "libhdf5_cpp\n"
+     << "than this disease_sim binary. Loading it pulled a second HDF5 C++ "
+        "library\n"
+     << "into the process, so HDF5's global DataSpace::ALL constant was "
+        "initialised\n"
+     << "twice and the loader aborted with:\n"
+     << "    " << detail_msg << '\n'
+     << '\n'
+     << "Plugin: " << plugin_path << '\n'
+     << '\n'
+     << "Fix: rebuild the plugin against the SAME HDF5 (same conda env / "
+        "toolchain)\n"
+     << "as disease_sim, then confirm the sonames match:\n"
+     << "    ldd " << plugin_path << " | grep libhdf5_cpp\n"
+     << "    ldd <path-to>/disease_sim   | grep libhdf5_cpp\n"
+     << "Both must report the same libhdf5_cpp.so.<N>.\n"
+     << "+--------------------------------------------------------------------"
+        "--------+\n";
+  return os.str();
+}
+
 ICompartmentalModel* CompartmentalModelManager::realLoadPlugin(
     const std::string& so_path, DestroyCompartmentalModelFn& out_destroy_fn,
     void*& out_dl_handle) {
   dlerror();
+  // NB: if the plugin links a different libhdf5_cpp than the host, dlopen runs
+  // that second library's global constructors, HDF5's DataSpace::ALL constant
+  // is initialised twice, and an H5::Exception is thrown from inside ld.so's
+  // call_init. That exception cannot be caught at this frame (a handler here
+  // is bypassed, or worse turns clean propagation into std::terminate) — it is
+  // detected instead in main's top-level H5::Exception handler, which is the
+  // proven-reliable seam. See isHdf5DuplicateConstantError / main.cpp.
   out_dl_handle = dlopen(so_path.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!out_dl_handle) {
     std::cerr << "[CompartmentalModelManager] dlopen failed for '" << so_path

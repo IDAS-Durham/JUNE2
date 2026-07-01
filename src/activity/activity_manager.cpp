@@ -2,6 +2,8 @@
 
 #include <iomanip>
 
+#include "activity/on_the_fly_venue_allocator.h"
+#include "epidemiology/calendar_event.h"
 #include "epidemiology/policy.h"
 #include "utils/deterministic_rng.h"
 #include "utils/random.h"
@@ -11,12 +13,20 @@ namespace june {
 ActivityManager::ActivityManager(WorldState& world, const Config& config)
     : world_(world),
       config_(config),
-      base_seed_(config.simulation.random_seed) {
-  venues_by_id_buffer_.resize(world_.venue_type_names.size());
-}
+      base_seed_(config.simulation.random_seed) {}
 
 void ActivityManager::setPolicyManager(PolicyManager* policy_manager) {
   policy_manager_ = policy_manager;
+}
+
+void ActivityManager::setCalendarEventManager(
+    CalendarEventManager* calendar_event_manager) {
+  calendar_event_manager_ = calendar_event_manager;
+}
+
+void ActivityManager::setOnTheFlyVenueAllocator(
+    OnTheFlyVenueAllocator* allocator) {
+  on_the_fly_allocator_ = allocator;
 }
 
 void ActivityManager::assignScheduleTypes() {
@@ -151,41 +161,54 @@ void ActivityManager::initializeLocations(
   }
 }
 
+std::tuple<int16_t, VenueId, SubsetIndex> ActivityManager::resolveHopSlot(
+    const Person& person, const ScheduleType& hopped, int16_t k,
+    int hop_start_day) {
+  const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
+  const int16_t s = k % n;
+  const TimeSlot& slot = hopped.flat_slots[s];
+  const int day_type_idx =
+      config_.schedule.getDayTypeIndex(hop_start_day + k / n);
+  const uint64_t hop_key =
+      mix_seed(base_seed_, person.id, static_cast<uint64_t>(s));
+  const int16_t act =
+      selectActivity(person, slot, s, &hopped, day_type_idx, hop_key);
+  auto [v, sub] =
+      selectVenue(person, act, slot, hop_key, hop_start_day + k / n);
+  return {act, v, sub};
+}
+
 bool ActivityManager::advanceHoppedSchedule(Person& person, PersonLocation& loc,
-                                            size_t person_array_idx,
-                                            int day_type_idx) {
+                                            size_t person_array_idx) {
   const ScheduleType& hopped =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
-  if (!hopped.is_temporary ||
-      person.temp_slot_progress >=
-          static_cast<int16_t>(hopped.flat_slots.size())) {
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
+  if (!hopped.is_temporary) {
     return false;
   }
 
-  const TimeSlot& slot = hopped.flat_slots[person.temp_slot_progress];
-  uint64_t hop_key = mix_seed(base_seed_, person.id,
-                              static_cast<uint64_t>(person.temp_slot_progress));
-  int16_t act = selectActivity(person, slot, person.temp_slot_progress, &hopped,
-                               day_type_idx, hop_key);
-  auto [v, s] = selectVenue(person, act, slot, hop_key);
+  // temp_slot_progress is kept monotonically increasing across day-boundary
+  // wraps so that findLastNonNullVenueOnHop can scan back through previous
+  // repeats via (k % n).  This slot runs before the increment, so its absolute
+  // index is temp_slot_progress; integer division by n gives its hop-day, hence
+  // hop_start_day = current_sim_day_ - temp_slot_progress / n.
+  const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
+  const int hop_start_day = ScheduleHop::hopStartDay(
+      current_sim_day_, n, person.schedule_hop.temp_slot_progress);
+  auto [act, v, s] = resolveHopSlot(
+      person, hopped, person.schedule_hop.temp_slot_progress, hop_start_day);
   loc.venue_id = v;
   loc.subset_index = s;
   loc.activity_index = act;
   loc.encounter_type_id = 255;
   loc.person_id = person.id;
   loc.person_array_index = person_array_idx;
-  person.temp_slot_progress++;
 
-  // If all flat_slots exhausted, return to original (or specified) schedule
-  if (person.temp_slot_progress >=
-      static_cast<int16_t>(hopped.flat_slots.size())) {
-    int16_t return_to = (person.return_schedule_id != -1)
-                            ? person.return_schedule_id
-                            : static_cast<int16_t>(person.schedule_type_id);
+  // Advance one slot; auto-return when a full cycle completes with no repeats.
+  if (person.schedule_hop.advanceAndCheckComplete(n)) {
+    int16_t return_to = person.schedule_hop.effectiveReturnSchedule(
+        static_cast<int16_t>(person.schedule_type_id));
     person.cached_schedule_type_ = &config_.schedule.schedule_types[return_to];
-    person.hopped_schedule_id = -1;
-    person.return_schedule_id = -1;
-    person.temp_slot_progress = 0;
+    person.schedule_hop.clear();
   }
   return true;
 }
@@ -198,7 +221,7 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
     const Person& person = world_.people[i];
 
     // Hopped person: bypass normal slot
-    if (person.hopped_schedule_id != -1) {
+    if (person.schedule_hop.isActive()) {
       assignHoppedSingleSlot(person, i, slot, day_type_idx, locations);
       continue;
     }
@@ -331,7 +354,7 @@ void ActivityManager::assignActivitiesFromSchedule(
     Person& person = world_.people[i];  // Non-const for potential modifications
 
     // Hopped person: bypass precomputed schedule
-    if (person.hopped_schedule_id != -1) {
+    if (person.schedule_hop.isActive()) {
       assignHoppedScheduleSlot(person, i, time_slot_index, day_type_idx,
                                time_key, locations);
       continue;
@@ -508,12 +531,10 @@ void ActivityManager::maybeTriggerScheduleHop(
 
   const ScheduleType& target = config_.schedule.schedule_types[hop_idx];
   if (target.is_temporary && !target.flat_slots.empty()) {
-    person.hopped_schedule_id = hop_idx;
-    person.return_schedule_id =
-        (target.return_schedule_idx != -1)
-            ? target.return_schedule_idx
-            : static_cast<int16_t>(person.schedule_type_id);
-    person.temp_slot_progress = 0;
+    person.schedule_hop = ScheduleHop::begin(
+        hop_idx, (target.return_schedule_idx != -1)
+                     ? target.return_schedule_idx
+                     : static_cast<int16_t>(person.schedule_type_id));
     // Immediate: slot N of old = slot 0 of new schedule
     const TimeSlot& slot0 = target.flat_slots[0];
     uint64_t hop_key = mix_seed(base_seed_, person.id, time_key);
@@ -525,11 +546,10 @@ void ActivityManager::maybeTriggerScheduleHop(
     scheduled_activity_index = new_act;
     scheduled_venue_id = v;
     scheduled_subset_idx = s;
-    person.temp_slot_progress = 1;
+    person.schedule_hop.consumeSlot0();
   } else {
     // Permanent hop: update schedule pointer, no auto-return
-    person.hopped_schedule_id = hop_idx;
-    person.return_schedule_id = -1;
+    person.schedule_hop.setPermanent(hop_idx);
     person.cached_schedule_type_ = &config_.schedule.schedule_types[hop_idx];
   }
 }
@@ -623,12 +643,12 @@ void ActivityManager::assignHoppedSingleSlot(
   const size_t i = person_array_idx;
   Person& mutable_person = const_cast<Person&>(person);
   const ScheduleType& hopped_sched =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
   uint64_t time_key_hop =
       static_cast<uint64_t>(current_simulation_time_ * 1000);
 
   if (hopped_sched.is_temporary) {
-    advanceHoppedSchedule(mutable_person, locations[i], i, day_type_idx);
+    advanceHoppedSchedule(mutable_person, locations[i], i);
   } else {
     // Non-temporary hop: execute normal day-type slots
     if (day_type_idx <
@@ -668,10 +688,10 @@ void ActivityManager::assignHoppedScheduleSlot(
     std::vector<PersonLocation>& locations) {
   const size_t i = person_array_idx;
   const ScheduleType& hopped_sched =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
 
   if (hopped_sched.is_temporary) {
-    advanceHoppedSchedule(person, locations[i], i, day_type_idx);
+    advanceHoppedSchedule(person, locations[i], i);
   } else {
     // Non-temporary hop (e.g. freeze_in_place): execute normal day-type
     // slots
@@ -715,19 +735,25 @@ void ActivityManager::assignHoppedScheduleSlot(
 std::pair<VenueId, SubsetIndex> ActivityManager::findLastNonNullVenueOnHop(
     const Person& person) {
   ensureIndicesCached();
-  // temp_slot_progress was already incremented by advanceHoppedSchedule, so
-  // the last executed slot was (temp_slot_progress - 2) after the increment,
-  // since the current call incremented it to temp_slot_progress.
-  // Scan from (temp_slot_progress - 2) downward for the last real venue.
+  // temp_slot_progress is monotonically increasing (not reset on day-boundary
+  // wrap).  k iterates backward through the sequence of executed slots; s = k
+  // % n gives the actual flat_slots index and the deterministic key, so each
+  // logical slot always hashes identically regardless of which repeat it falls
+  // in.  When k crosses a day boundary (k < n), the modulo naturally reaches
+  // back into the previous repeat's slots.
   const ScheduleType& hopped =
-      config_.schedule.schedule_types[person.hopped_schedule_id];
-  for (int16_t s = person.temp_slot_progress - 2; s >= 0; --s) {
-    const TimeSlot& prev_slot = hopped.flat_slots[s];
-    uint64_t hop_key =
-        mix_seed(base_seed_, person.id, static_cast<uint64_t>(s));
-    int16_t prev_act =
-        selectActivity(person, prev_slot, s, &hopped, -1, hop_key);
-    auto [v, sub] = selectVenue(person, prev_act, prev_slot, hop_key);
+      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
+  const int16_t n = static_cast<int16_t>(hopped.flat_slots.size());
+  // This runs after advanceHoppedSchedule has incremented temp_slot_progress,
+  // so the no-venue transit slot that just executed was at absolute index
+  // temp_slot_progress - 1; hence hop_start_day = current_sim_day_ -
+  // (temp_slot_progress - 1) / n.  resolveHopSlot then derives each scanned
+  // slot's day type from hop_start_day + k / n, matching the forward path.
+  const int hop_start_day = ScheduleHop::hopStartDay(
+      current_sim_day_, n,
+      static_cast<int16_t>(person.schedule_hop.temp_slot_progress - 1));
+  for (int16_t k = person.schedule_hop.temp_slot_progress - 2; k >= 0; --k) {
+    auto [prev_act, v, sub] = resolveHopSlot(person, hopped, k, hop_start_day);
     if (v >= 0) return {v, sub};
   }
   // No prior overnight venue; fall back to home residence

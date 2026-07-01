@@ -96,7 +96,7 @@ std::vector<uint32_t> buildOwnedPersonOrder(const std::vector<Person>& people) {
 // (sorted by geo_unit_id, person_id) so the run-based index aligns.
 void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
                           const std::vector<Person>& people, int comp) {
-  std::vector<int32_t> ids, geo, hop, ret, tslot;
+  std::vector<int32_t> ids, geo, hop, ret, tslot, hop_rep;
   std::vector<double> imm_l, imm_a, imm_w, death_t;
   std::vector<uint8_t> dead;
   std::vector<uint32_t> m_as, m_at, m_ps, m_pt, m_ds, m_dt;
@@ -116,9 +116,10 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
     m_pt.push_back(p.active_temporal_policy_participation);
     m_ds.push_back(p.symptom_policy_decisions);
     m_dt.push_back(p.temporal_policy_decisions);
-    hop.push_back(p.hopped_schedule_id);
-    ret.push_back(p.return_schedule_id);
-    tslot.push_back(p.temp_slot_progress);
+    hop.push_back(p.schedule_hop.hopped_schedule_id);
+    ret.push_back(p.schedule_hop.return_schedule_id);
+    tslot.push_back(p.schedule_hop.temp_slot_progress);
+    hop_rep.push_back(p.schedule_hop.repeats_remaining);
   }
   std::vector<int32_t> pi_gu, pi_start, pi_count;
   for (size_t i = 0; i < geo.size();) {
@@ -155,6 +156,7 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
   writeVec(f, "/population/hopped_schedule_id", hop, I32, comp);
   writeVec(f, "/population/return_schedule_id", ret, I32, comp);
   writeVec(f, "/population/temp_slot_progress", tslot, I32, comp);
+  writeVec(f, "/population/hop_repeats_remaining", hop_rep, I32, comp);
 }
 
 // Gather + write the sparse infection shard section. One record per infected
@@ -306,6 +308,24 @@ void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
            comp);
   writeVec(f, "/policy_frozen_states/pin_venue_id", fz_venue, I32, comp);
   writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
+}
+
+void writeShardCalendarEvents(H5::H5File& f,
+                              const CalendarEventManager::Snapshot& snap,
+                              int comp) {
+  if (snap.active_event.empty()) return;
+  std::vector<int32_t> ce_pids, ce_eids;
+  ce_pids.reserve(snap.active_event.size());
+  ce_eids.reserve(snap.active_event.size());
+  for (const auto& [pid, eid] : snap.active_event) {
+    ce_pids.push_back(static_cast<int32_t>(pid));
+    ce_eids.push_back(eid);
+  }
+  f.createGroup("/calendar_events");
+  writeVec(f, "/calendar_events/person_ids", ce_pids,
+           H5::PredType::NATIVE_INT32, comp);
+  writeVec(f, "/calendar_events/event_ids", ce_eids, H5::PredType::NATIVE_INT32,
+           comp);
 }
 
 // Gather + write the sparse venue fomite-history shard section. One record
@@ -503,6 +523,9 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
 
   writeShardEpidemiology(f, epidemiology_.get(), comp);
   writeShardFrozenStates(f, policy_manager_.get(), comp);
+  writeShardCalendarEvents(f, calendar_event_manager_.snapshot_for_checkpoint(),
+                           comp);
+
   f.close();
 }
 

@@ -645,6 +645,15 @@ void ScheduleConfig::resolveSlots(const WorldState& world) {
 
     // Resolve flat_slots for temporary schedules
     resolveSlotVec(sched_type.flat_slots);
+
+    // A temporary schedule with no flat_slots is malformed: every hop consumer
+    // divides by flat_slots.size() (hopStartDay, advanceAndCheckComplete), so
+    // an empty one would divide by zero mid-simulation. Fail fast at load
+    // instead.
+    if (sched_type.is_temporary && sched_type.flat_slots.empty()) {
+      throw std::runtime_error("temporary schedule '" + sched_type.name +
+                               "' has no flat_slots");
+    }
   }
 
   // Resolve return_schedule_idx for temporary schedules

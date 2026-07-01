@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "activity/venue_resolve_context.h"
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
@@ -17,6 +18,8 @@
 namespace june {
 
 class PolicyManager;
+class CalendarEventManager;
+class OnTheFlyVenueAllocator;
 
 class ActivityManager {
  public:
@@ -43,10 +46,23 @@ class ActivityManager {
   // Set policy manager (for runtime behavior overrides)
   void setPolicyManager(PolicyManager* policy_manager);
 
+  // Set calendar-event manager (optional; drives calendar-triggered venue
+  // resolution in selectVenue and active-event clearing on hop completion).
+  void setCalendarEventManager(CalendarEventManager* calendar_event_manager);
+
+  // Set on-the-fly venue allocator (optional; provides dynamic venue pools for
+  // activities without a pre-baked mapping).
+  void setOnTheFlyVenueAllocator(OnTheFlyVenueAllocator* allocator);
+
   // Set current simulation time (needed for policy checks)
   void setCurrentTime(double current_time) {
     current_simulation_time_ = current_time;
   }
+
+  // Set current simulation day as an integer. Used by the hop path to derive
+  // the day type of each hopped slot without floating-point drift from
+  // current_simulation_time_ at day boundaries.
+  void setCurrentDay(int sim_day) { current_sim_day_ = sim_day; }
 
   // Assign all people to activities for a given time slot
   void assignActivities(const TimeSlot& slot, int day_type_idx,
@@ -65,6 +81,13 @@ class ActivityManager {
   void assignActivitiesFromSchedule(int time_slot_index, int day_type_idx,
                                     std::vector<PersonLocation>& locations);
 
+  // Scans backwards through an already-hopped schedule's flat_slots to find
+  // the last slot that produced a real venue (venue_id >= 0). Used to resolve
+  // a pin venue when the policy fires during a no_venue transit slot.
+  // Falls back to home residence if no prior overnight slot is found.
+  std::pair<VenueId, SubsetIndex> findLastNonNullVenueOnHop(
+      const Person& person);
+
  private:
   WorldState& world_;
   const Config& config_;
@@ -72,8 +95,18 @@ class ActivityManager {
   // Policy manager (optional - nullptr if no policies)
   PolicyManager* policy_manager_ = nullptr;
 
+  // Calendar-event manager (optional - nullptr if no calendar events)
+  CalendarEventManager* calendar_event_manager_ = nullptr;
+
+  // On-the-fly venue allocator (optional - nullptr if not configured)
+  OnTheFlyVenueAllocator* on_the_fly_allocator_ = nullptr;
+
   // Current simulation time (for policy checks)
   double current_simulation_time_ = 0.0;
+
+  // Current simulation day as an integer (set by Simulator::simulateDay). Used
+  // to derive hopped-slot day types without fp drift.
+  int current_sim_day_ = 0;
 
   // Select activity for a person based on time slot and participation rates
   // Returns activity index (int16_t) instead of string for performance
@@ -81,11 +114,18 @@ class ActivityManager {
                          size_t slot_idx, const ScheduleType* schedule_type,
                          int day_type_idx, uint64_t time_key);
 
-  // Select specific venue/subset for an activity
+  // Select specific venue/subset for an activity.
+  // Not re-entrant: hierarchical sampling uses thread_local scratch buffers
+  // shared across calls on the same thread, so calls must be sequential per
+  // thread (safe across threads, not safe recursively/interleaved).
   std::pair<VenueId, SubsetIndex> selectVenue(
       const Person& person, int16_t activity_idx,
       const TimeSlot&
           slot,  // Used for specified_activity (to select specific venue index)
+      uint64_t time_key, int logical_day);
+  // Thin wrapper: forwards current_sim_day_ as logical_day.
+  std::pair<VenueId, SubsetIndex> selectVenue(
+      const Person& person, int16_t activity_idx, const TimeSlot& slot,
       uint64_t time_key);
 
   PerformanceStats stats_;
@@ -95,18 +135,6 @@ class ActivityManager {
   int16_t residence_act_idx_ = -1;
   int16_t none_act_idx_ = -1;
   int16_t no_venue_act_idx_ = -1;
-
-  // Optimization buffers (reused to avoid allocations)
-  std::vector<std::vector<std::pair<VenueId, SubsetIndex>>>
-      venues_by_id_buffer_;
-  std::vector<uint8_t> venue_type_ids_buffer_;
-  std::vector<double> weights_buffer_;
-  // Cumulative-weight scratch reused per selectVenue() call. Built from
-  // weights_buffer_ via buildCumulative; sampled with sampleFromCumulative.
-  // Replaces a per-call std::discrete_distribution construction.
-  std::vector<double> cumulative_buffer_;
-  // Cross-rank venues (not loaded locally) collected during selectVenue()
-  std::vector<std::pair<VenueId, SubsetIndex>> cross_rank_venues_buffer_;
 
   void ensureIndicesCached();
 
@@ -144,18 +172,18 @@ class ActivityManager {
                                           int16_t activity_idx) const;
 
   // Step 1 of selectVenue's hierarchical pick: groups `venues` by their
-  // venue type id into venues_by_id_buffer_, tracks the populated type ids
-  // in venue_type_ids_buffer_, and collects cross-rank / unknown-type
-  // venues into cross_rank_venues_buffer_. All three buffers are cleared
-  // first.
+  // venue type id into the thread_local venues_by_id_buffer, tracks the
+  // populated type ids in venue_type_ids_buffer, and collects cross-rank /
+  // unknown-type venues into cross_rank_venues_buffer. All three buffers
+  // are cleared first.
   void groupVenuesByType(
       std::span<const std::pair<VenueId, SubsetIndex>> venues);
 
   // Step 2 of selectVenue's hierarchical pick: picks a venue type id from
-  // venue_type_ids_buffer_ weighted by activity preferences (filling
-  // weights_buffer_ and cumulative_buffer_ as it goes). Caller must have
+  // venue_type_ids_buffer weighted by activity preferences (filling
+  // weights_buffer and cumulative_buffer as it goes). Caller must have
   // populated the buffers via groupVenuesByType and verified
-  // !venue_type_ids_buffer_.empty().
+  // !venue_type_ids_buffer.empty().
   uint8_t pickWeightedVenueType(const Person& person, int16_t activity_idx,
                                 SplitMix64& rng);
 
@@ -215,6 +243,11 @@ class ActivityManager {
   void filterAvailableActivities(const Person& person, const TimeSlot& slot,
                                  std::vector<int16_t>& available) const;
 
+  // Builds a VenueResolveContext for `person`: resident_geo_unit_id from the
+  // person's geo_unit; hosting_geo_unit_id from the active calendar event (if
+  // any). Cheap — just integer lookups.
+  VenueResolveContext buildVenueResolveContext(const Person& person) const;
+
   // For schedules that opt into linked_activities and slots whose allowed
   // activities touch the linked set, rolls the per-day participation
   // decision once per (person, sim_day) and caches it on the Person.
@@ -250,8 +283,8 @@ class ActivityManager {
   // Checks current_slot for a schedule-hop trigger on the chosen activity
   // (first via the static hop_schedule_by_activity_idx table, then via the
   // YAML property-dispatched fallback). If a hop target is found, mutates
-  // person.hopped_schedule_id / return_schedule_id / cached_schedule_type_
-  // / temp_slot_progress as required, and for temporary hops rolls RNG
+  // person.schedule_hop and cached_schedule_type_ as required, and for
+  // temporary hops rolls RNG
   // for slot 0 of the target and updates scheduled_* outputs.
   void maybeTriggerScheduleHop(Person& person, const TimeSlot* current_slot,
                                int day_type_idx, uint64_t time_key,
@@ -318,19 +351,25 @@ class ActivityManager {
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 
+  // Single source of truth for resolving one hopped flat-slot into its
+  // (activity, venue, subset) triple via mix_seed -> selectActivity ->
+  // selectVenue.  k is the monotonic (non-modular) slot index; the modular
+  // index s = k % n drives both slot access and the deterministic key, so the
+  // same logical slot always hashes identically.  hop_start_day is the sim day
+  // the hop began; the slot's day type is derived from hop_start_day + k / n.
+  // Shared by advanceHoppedSchedule (forward) and findLastNonNullVenueOnHop
+  // (backward) so the two can never diverge.
+  std::tuple<int16_t, VenueId, SubsetIndex> resolveHopSlot(
+      const Person& person, const ScheduleType& hopped, int16_t k,
+      int hop_start_day);
+
   // Handles a person who is currently on a hopped (temporary) schedule.
-  // Assigns from flat_slots[temp_slot_progress] and advances the counter.
+  // Assigns from flat_slots[schedule_hop.temp_slot_progress] and advances it.
   // Auto-returns the person when all flat_slots are exhausted.
   // Returns true if the person was handled (caller should continue the loop).
   bool advanceHoppedSchedule(Person& person, PersonLocation& loc,
-                             size_t person_array_idx, int day_type_idx);
+                             size_t person_array_idx);
 
-  // Scans backwards through an already-hopped schedule's flat_slots to find
-  // the last slot that produced a real venue (venue_id >= 0). Used to resolve
-  // a pin venue when the policy fires during a no_venue transit slot.
-  // Falls back to home residence if no prior overnight slot is found.
-  std::pair<VenueId, SubsetIndex> findLastNonNullVenueOnHop(
-      const Person& person);
 };
 
 }  // namespace june

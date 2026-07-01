@@ -514,3 +514,38 @@ TEST_CASE("NodePartition default-constructs empty") {
   CHECK(p.owned_node_indices.empty());
   CHECK(p.node_venue_ids.empty());
 }
+
+// =============================================================================
+// HDF5 C++ ABI clash guard (pure helpers — no .so needed)
+// =============================================================================
+
+TEST_CASE(
+    "isHdf5DuplicateConstantError matches the duplicate-libhdf5_cpp signature") {
+  // The real exception thrown when a second libhdf5_cpp is loaded.
+  CHECK(isHdf5DuplicateConstantError(
+      "DataSpace::getConstant",
+      "getConstant is being invoked on an allocated ALL_"));
+  // Either token alone is sufficient (survives version wording changes).
+  CHECK(isHdf5DuplicateConstantError("H5::DataSpace::getConstant", ""));
+  CHECK(isHdf5DuplicateConstantError("", "...allocated ALL_..."));
+  // Case-insensitive.
+  CHECK(isHdf5DuplicateConstantError("dataspace::GETCONSTANT", ""));
+}
+
+TEST_CASE("isHdf5DuplicateConstantError ignores unrelated HDF5 errors") {
+  CHECK_FALSE(
+      isHdf5DuplicateConstantError("H5File::H5File", "Unable to open file"));
+  CHECK_FALSE(isHdf5DuplicateConstantError("DataSet::read",
+                                           "selection out of bounds"));
+  CHECK_FALSE(isHdf5DuplicateConstantError("", ""));
+}
+
+TEST_CASE("formatHdf5AbiMismatchMessage names the plugin and the remedy") {
+  const std::string msg = formatHdf5AbiMismatchMessage(
+      "/some/path/libplague_rats_june_plugin.so", "allocated ALL_");
+  CHECK(msg.find("/some/path/libplague_rats_june_plugin.so") !=
+        std::string::npos);
+  CHECK(msg.find("libhdf5_cpp") != std::string::npos);
+  CHECK(msg.find("ldd") != std::string::npos);  // the verification command
+  CHECK(msg.find("allocated ALL_") != std::string::npos);  // raw detail echoed
+}

@@ -1,0 +1,20 @@
+rules:
+  fair_rule:
+    strategy: hosting_geo_unit
+    venue_type: fair
+    venue_stability: daily
+
+  fair_lodging_rule:
+    strategy: hosting_geo_unit
+    venue_type: guest_house
+    venue_stability: fixed  # same guest house for every night of the hop
+
+  fair_lodging_district_rule:
+    strategy: resident_geo_unit
+    venue_type: guest_house
+    geo_unit_level: MBD_Temp_ID  # pool = all guest-houses in person's MBD
+    venue_stability: fixed
+
+activity_rules:
+  fair_attendance: fair_rule
+  fair_lodging:    fair_lodging_rule
