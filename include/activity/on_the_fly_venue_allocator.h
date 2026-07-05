@@ -36,9 +36,17 @@ class OnTheFlyVenueAllocator {
                                       const VenueResolveContext& context,
                                       const WorldState& world);
 
-  // Checks that all geo_unit_level names in rules exist in world.geo_level_names.
-  // Throws std::runtime_error with a diagnostic if any are unknown.
+  // Checks that all geo_unit_level names in rules exist in
+  // world.geo_level_names. Throws std::runtime_error with a diagnostic if any
+  // are unknown.
   void checkConsistency(const WorldState& world) const;
+
+  // Warm the cache with every pool this allocator can serve, then seal it, so
+  // the caller can free the global venue maps. hosting_geo_units are the
+  // calendar-event hosting units; resident-strategy rules scan world.people.
+  // After sealing, resolve() throws on a cache miss instead of returning empty.
+  void precomputeAllPools(const WorldState& world,
+                          const std::vector<GeoUnitId>& hosting_geo_units);
 
  private:
   enum class VenueStability { daily, fixed };
@@ -71,7 +79,8 @@ class OnTheFlyVenueAllocator {
     }
 
    private:
-    static std::size_t hashOf(std::string_view rule_name, GeoUnitId geo_unit_id) {
+    static std::size_t hashOf(std::string_view rule_name,
+                              GeoUnitId geo_unit_id) {
       return std::hash<std::string_view>{}(rule_name) ^
              (std::hash<GeoUnitId>{}(geo_unit_id) << 32);
     }
@@ -104,8 +113,13 @@ class OnTheFlyVenueAllocator {
                      std::equal_to<>>
       activity_to_rule_;
   std::unordered_map<std::string, RuleConfig> rules_;
-  std::unordered_map<CacheKey, std::vector<VenueId>, CacheKeyHash, CacheKeyEqual>
+  std::unordered_map<CacheKey, std::vector<VenueId>, CacheKeyHash,
+                     CacheKeyEqual>
       cache_;
+
+  // Set by precomputeAllPools(). Once sealed, a cache miss in resolve() is a
+  // bug (the global maps have been freed), so resolve() throws.
+  bool sealed_ = false;
 
   static const std::vector<VenueId> empty_pool_;
 };

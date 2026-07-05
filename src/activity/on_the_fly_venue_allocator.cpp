@@ -140,10 +140,40 @@ const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
   auto cache_it = cache_.find(probe_key);
   if (cache_it != cache_.end()) return cache_it->second;
 
+  // After sealing, the global venue maps have been freed, so every real query
+  // must already be cached. A miss means precomputeAllPools() failed to cover
+  // this (rule, geo) — fail loud rather than silently assign no venue.
+  if (sealed_)
+    throw std::runtime_error(
+        "OnTheFlyVenueAllocator: pool not precomputed for rule '" + rule_name +
+        "' geo_unit " + std::to_string(geo_unit_id) +
+        " (global venue maps already freed)");
+
   auto pool = world.getVenuesInGeoUnit(geo_unit_id, rule.venue_type);
   CacheKey key{rule_name, geo_unit_id};
   auto [inserted_it, _] = cache_.emplace(std::move(key), std::move(pool));
   return inserted_it->second;
+}
+
+void OnTheFlyVenueAllocator::precomputeAllPools(
+    const WorldState& world, const std::vector<GeoUnitId>& hosting_geo_units) {
+  for (const auto& [activity, rule_name] : activity_to_rule_) {
+    const RuleConfig& rule = rules_.at(rule_name);
+    if (rule.strategy == Strategy::hosting_geo_unit) {
+      for (GeoUnitId g : hosting_geo_units) {
+        VenueResolveContext ctx;
+        ctx.hosting_geo_unit_id = g;
+        resolve(activity, ctx, world);  // fills cache_
+      }
+    } else {  // resident_geo_unit: every resident geo is a possible query
+      for (const Person& p : world.people) {
+        VenueResolveContext ctx;
+        ctx.resident_geo_unit_id = p.geo_unit_id;
+        resolve(activity, ctx, world);  // cache_ dedups by (rule, geo)
+      }
+    }
+  }
+  sealed_ = true;  // from now on a cache miss in resolve() throws
 }
 
 }  // namespace june

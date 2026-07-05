@@ -503,7 +503,14 @@ Simulator::Simulator(WorldState& world, const Config& config,
     on_the_fly_allocator_.emplace(config_.simulation.on_the_fly_venues_file);
     on_the_fly_allocator_->checkConsistency(world_);
     activity_manager_.setOnTheFlyVenueAllocator(&on_the_fly_allocator_.value());
+    // Warm every pool the allocator can serve while the maps still exist.
+    on_the_fly_allocator_->precomputeAllPools(
+        world_, calendar_event_manager_.hostingGeoUnits());
   }
+  // global_venue_geo_unit_map / global_venues_by_type_name exist only to build
+  // OTF pools (now precomputed), so free them. The halo-sized type_map used for
+  // cross-rank FOI lookups stays.
+  world_.dropGlobalVenueMaps();
 
   // Initialize events filename based on rank
 #ifdef USE_MPI

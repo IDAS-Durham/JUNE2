@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -199,7 +200,8 @@ class WorldState {
   std::unordered_map<VenueId, uint8_t> global_venue_type_map;
   std::unordered_map<VenueId, GeoUnitId> global_venue_geo_unit_map;
   // type_name → sorted list of all VenueIds of that type (globally)
-  std::unordered_map<std::string, std::vector<VenueId>> global_venues_by_type_name;
+  std::unordered_map<std::string, std::vector<VenueId>>
+      global_venues_by_type_name;
 
   // Helper: get venue type_id, falling back to global map for cross-rank venues
   uint8_t getVenueTypeId(VenueId id) const {
@@ -243,14 +245,21 @@ class WorldState {
 
   std::vector<Venue*> getVenuesByType(const std::string& type);
 
-  // Return ids of all venues of `venue_type_name` located in `hosting_geo_unit_id`
-  // or any of its descendants. Sorted by venue_id for deterministic assignment.
-  std::vector<VenueId> getVenuesInGeoUnit(GeoUnitId hosting_geo_unit_id,
-                                           const std::string& venue_type_name) const;
+  // Return ids of all venues of `venue_type_name` located in
+  // `hosting_geo_unit_id` or any of its descendants. Sorted by venue_id for
+  // deterministic assignment.
+  std::vector<VenueId> getVenuesInGeoUnit(
+      GeoUnitId hosting_geo_unit_id, const std::string& venue_type_name) const;
 
   // Returns id of the nearest ancestor (or self) of `id` at `level_name`.
   // Returns -1 if not found.
   GeoUnitId ancestorAtLevel(GeoUnitId id, std::string_view level_name) const;
+
+  // Halo prototype: free the two all-venue maps used only by
+  // getVenuesInGeoUnit, after the OTF allocator has precomputed every pool it
+  // needs. Logs freed sizes. global_venue_type_map is kept (it is the
+  // halo-sized FOI lookup).
+  void dropGlobalVenueMaps();
 
   // Get all people in a geographic unit (including descendants)
   std::vector<Person*> getPeopleInUnit(GeoUnitId id);
