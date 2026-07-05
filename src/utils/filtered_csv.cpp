@@ -31,16 +31,12 @@ std::vector<std::string> splitCSVLine(const std::string& line) {
 
 }  // namespace
 
-FilteredTable loadFilteredCSV(const std::string& path) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
-    throw std::runtime_error("Failed to open filtered CSV: " + path);
-  }
-
+FilteredTable loadFilteredCSV(std::istream& input,
+                              const std::string& source_name) {
   std::string header_line;
   {
     bool found = false;
-    while (std::getline(file, header_line)) {
+    while (std::getline(input, header_line)) {
       auto fnw = header_line.find_first_not_of(" \t\r\n");
       if (fnw != std::string::npos && header_line[fnw] != '#') {
         found = true;
@@ -49,19 +45,16 @@ FilteredTable loadFilteredCSV(const std::string& path) {
     }
     if (!found)
       throw std::runtime_error("Filtered CSV is empty or all comments: " +
-                               path);
+                               source_name);
   }
 
   std::vector<std::string> headers = splitCSVLine(header_line);
-
   auto filter_cols = filtering::findFilterColumns(headers);
 
-  // Index filter-column positions so we can skip them when emitting values.
   std::unordered_set<int> filter_idx_set;
   for (const auto& pc : filter_cols) filter_idx_set.insert(pc.first);
 
   FilteredTable table;
-  // Preserve header order for value columns (non-filter columns).
   std::vector<std::pair<int, std::string>> value_cols;
   for (int i = 0; i < (int)headers.size(); ++i) {
     if (headers[i].empty()) continue;
@@ -71,13 +64,12 @@ FilteredTable loadFilteredCSV(const std::string& path) {
   }
 
   std::string line;
-  while (std::getline(file, line)) {
+  while (std::getline(input, line)) {
     auto first = line.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) continue;  // blank
-    if (line[first] == '#') continue;          // comment
+    if (first == std::string::npos) continue;
+    if (line[first] == '#') continue;
 
     std::vector<std::string> fields = splitCSVLine(line);
-
     FilteredRow row;
     row.criteria = filtering::parseCriteriaFromRow(fields, filter_cols);
     for (const auto& [col_idx, name] : value_cols) {
@@ -89,6 +81,14 @@ FilteredTable loadFilteredCSV(const std::string& path) {
   }
 
   return table;
+}
+
+FilteredTable loadFilteredCSV(const std::string& path) {
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open filtered CSV: " + path);
+  }
+  return loadFilteredCSV(file, path);
 }
 
 }  // namespace csv

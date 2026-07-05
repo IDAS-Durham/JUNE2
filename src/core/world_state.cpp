@@ -48,6 +48,29 @@ void WorldState::buildIndices() {
       current_id = geo_units[it->second].parent_id;
     }
   }
+
+  buildGlobalVenueMaps();
+}
+
+void WorldState::addVenueToTypeIndex(VenueId venue_id, uint8_t type_id) {
+  const std::string& type_name = (type_id < venue_type_names.size())
+                                     ? venue_type_names[type_id]
+                                     : "unknown";
+  global_venues_by_type_name[type_name].push_back(venue_id);
+}
+
+void WorldState::sortGlobalVenuesByTypeName() {
+  for (auto& [_, ids] : global_venues_by_type_name)
+    std::sort(ids.begin(), ids.end());
+}
+
+void WorldState::buildGlobalVenueMaps() {
+  if (!global_venues_by_type_name.empty()) return;  // MPI loader already filled
+  for (size_t i = 0; i < venues.size(); ++i) {
+    global_venue_geo_unit_map.emplace(venues[i].id, venues[i].geo_unit_id);
+    addVenueToTypeIndex(venues[i].id, venues[i].type_id);
+  }
+  sortGlobalVenuesByTypeName();
 }
 
 Person* WorldState::getPerson(PersonId id) {
@@ -90,6 +113,46 @@ std::vector<Venue*> WorldState::getVenuesByType(const std::string& type) {
     }
   }
   return result;
+}
+
+std::vector<VenueId> WorldState::getVenuesInGeoUnit(
+    GeoUnitId hosting_geo_unit_id, const std::string& venue_type_name) const {
+  std::vector<VenueId> result;
+  auto type_it = global_venues_by_type_name.find(venue_type_name);
+  if (type_it == global_venues_by_type_name.end()) return result;
+
+  // global_venues_by_type_name is sorted by venue_id at build time, so the
+  // result is already sorted — no trailing sort needed.
+  for (VenueId vid : type_it->second) {
+    auto geo_it = global_venue_geo_unit_map.find(vid);
+    if (geo_it == global_venue_geo_unit_map.end()) continue;
+    GeoUnitId current = geo_it->second;
+    while (current != -1) {
+      if (current == hosting_geo_unit_id) {
+        result.push_back(vid);
+        break;
+      }
+      auto gu_it = geo_unit_index.find(current);
+      if (gu_it == geo_unit_index.end()) break;
+      current = geo_units[gu_it->second].parent_id;
+    }
+  }
+  return result;
+}
+
+GeoUnitId WorldState::ancestorAtLevel(GeoUnitId id,
+                                      std::string_view level_name) const {
+  GeoUnitId current = id;
+  while (current != -1) {
+    auto it = geo_unit_index.find(current);
+    if (it == geo_unit_index.end()) break;
+    const GeographicalUnit& gu = geo_units[it->second];
+    if (gu.level_id < geo_level_names.size() &&
+        geo_level_names[gu.level_id] == level_name)
+      return current;
+    current = gu.parent_id;
+  }
+  return -1;
 }
 
 std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {

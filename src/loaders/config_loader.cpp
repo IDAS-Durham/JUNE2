@@ -128,6 +128,15 @@ void parseSimulationConfigPaths(const YAML::Node& paths,
   if (paths["compartmental_model_sidecar"])
     config.compartmental_model_sidecar =
         paths["compartmental_model_sidecar"].as<std::string>();
+  if (paths["calendar_events_file"])
+    config.calendar_events_file =
+        paths["calendar_events_file"].as<std::string>();
+  if (paths["calendar_event_catchment_rules_file"])
+    config.calendar_event_catchment_rules_file =
+        paths["calendar_event_catchment_rules_file"].as<std::string>();
+  if (paths["on_the_fly_venues_file"])
+    config.on_the_fly_venues_file =
+        paths["on_the_fly_venues_file"].as<std::string>();
 }
 
 // Read the `output:` block onto the SimulationConfig output fields.

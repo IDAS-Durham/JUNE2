@@ -132,6 +132,55 @@ schedule_types:
         end: "12:00"
         allowed_activities: ["residence"]
 
+  # --------------------------------------------------------------------------
+  # FAIR SCHEDULES  (triggered by CalendarEventManager at fair start date)
+  # 4 flat_slots per fair-day; hop_repeats_remaining = duration_days from CSV,
+  # giving (1 + duration_days) full day-cycles at the fair before auto-return.
+  # Venue resolution is handled by OnTheFlyVenueAllocator
+  # (configs/config_plague/on_the_fly_venues.yaml):
+  #   fair_attendance → hosting_geo_unit → fair (daily)
+  #   fair_lodging    → hosting_geo_unit → guest_house (fixed, stable across nights)
+  # --------------------------------------------------------------------------
+  Fair_day_trip:
+    is_temporary: true
+    flat_slots:
+      - name: "morning_at_fair"
+        start: "08:00"
+        end: "09:00"
+        allowed_activities: ["fair_attendance"]
+      - name: "day_at_fair"
+        start: "09:00"
+        end: "17:00"
+        allowed_activities: ["fair_attendance"]
+      - name: "evening_at_fair"
+        start: "17:00"
+        end: "21:00"
+        allowed_activities: ["fair_attendance"]
+      - name: "night_at_fair"
+        start: "21:00"
+        end: "08:00"
+        allowed_activities: ["fair_attendance"]
+
+  Fair_lodging:
+    is_temporary: true
+    flat_slots:
+      - name: "morning_lodged"
+        start: "08:00"
+        end: "09:00"
+        allowed_activities: ["fair_attendance"]
+      - name: "day_lodged"
+        start: "09:00"
+        end: "17:00"
+        allowed_activities: ["fair_attendance"]
+      - name: "evening_lodged"
+        start: "17:00"
+        end: "21:00"
+        allowed_activities: ["fair_attendance"]
+      - name: "night_lodged"
+        start: "21:00"
+        end: "08:00"
+        allowed_activities: ["fair_lodging"]
+
   # ============================================================================
   # REGULAR SCHEDULE TYPES
   # All must share identical slot boundaries within each day type.

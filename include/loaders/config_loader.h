@@ -16,9 +16,9 @@ class ConfigLoader {
   static ContactMatrixConfig loadContactMatrices(const std::string& filename);
   static CoordinatedEncounterConfig loadCoordinatedEncounters(
       const std::string& filename);
+  static SimulationConfig loadSimulation(const std::string& filename);
 
  private:
-  static SimulationConfig loadSimulation(const std::string& filename);
   static ScheduleConfig loadSchedule(const std::string& filename);
   static PerformanceConfig loadPerformance(const std::string& filename);
   static ParallelConfig loadParallel(const std::string& filename);
