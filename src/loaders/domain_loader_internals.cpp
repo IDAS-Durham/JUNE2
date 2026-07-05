@@ -206,6 +206,11 @@ void registerSystemAndConfigActivities(WorldState& world,
           register_activity(act);
       }
     }
+    for (const auto& slot : sched_type.flat_slots) {
+      for (const auto& act : slot.allowed_activities) register_activity(act);
+      for (const auto& act : slot.coordinated_only_activities)
+        register_activity(act);
+    }
   }
 }
 
@@ -420,6 +425,21 @@ void loadActivityMappingsInSpan(
   }
 }
 
+uint32_t matchMembershipRowToFlatIndex(const WorldState& world,
+                                       const Person& person, VenueId venue_id,
+                                       const SubsetIndex* subset_index) {
+  for (const auto& meta : world.getActivityMetas(person)) {
+    auto venues = world.getActivityVenues(meta);
+    for (size_t k = 0; k < venues.size(); ++k) {
+      if (venues[k].first != venue_id) continue;
+      if (subset_index != nullptr && venues[k].second != *subset_index)
+        continue;
+      return meta.venue_start + static_cast<uint32_t>(k);
+    }
+  }
+  return kAbsentFlatIndex;
+}
+
 void loadMembershipMetadata(
     HDF5Loader& loader,
     const std::unordered_map<PersonId, size_t>& local_person_idx_map) {
@@ -433,27 +453,31 @@ void loadMembershipMetadata(
 
   if (pids.size() != vids.size() || field_names.empty()) return;
 
+  // subset_index disambiguates multiple Subsets a person holds at the same
+  // Venue (e.g. two Feast accommodation memberships sharing one guest
+  // house). Absent on worlds serialised before this column existed; fall
+  // back to venue_id-only matching for those.
+  std::vector<int32_t> sids;
+  bool have_subset_indices = loader.datasetExists(base + "/subset_indices");
+  if (have_subset_indices) {
+    sids = loader.readNumericDataset<int32_t>(base + "/subset_indices");
+    have_subset_indices = (sids.size() == pids.size());
+  }
+
   loader.world_.membership_field_names = field_names;
   loader.world_.membership_field_values.assign(field_names.size(), {});
 
   // Locate each side-table row in this rank's activity_venues. Rows that
-  // belong to a non-local person are kept as kAbsent and skipped later.
-  const uint32_t kAbsent = std::numeric_limits<uint32_t>::max();
-  std::vector<uint32_t> row_flat_idx(pids.size(), kAbsent);
+  // belong to a non-local person are kept as kAbsentFlatIndex and skipped
+  // later.
+  std::vector<uint32_t> row_flat_idx(pids.size(), kAbsentFlatIndex);
   for (size_t i = 0; i < pids.size(); ++i) {
     auto pit = local_person_idx_map.find(pids[i]);
     if (pit == local_person_idx_map.end()) continue;
     const Person& person = loader.world_.people[pit->second];
-    for (const auto& meta : loader.world_.getActivityMetas(person)) {
-      auto venues = loader.world_.getActivityVenues(meta);
-      for (size_t k = 0; k < venues.size(); ++k) {
-        if (venues[k].first == vids[i]) {
-          row_flat_idx[i] = meta.venue_start + static_cast<uint32_t>(k);
-          break;
-        }
-      }
-      if (row_flat_idx[i] != kAbsent) break;
-    }
+    const SubsetIndex* subset_index = have_subset_indices ? &sids[i] : nullptr;
+    row_flat_idx[i] = matchMembershipRowToFlatIndex(loader.world_, person,
+                                                    vids[i], subset_index);
   }
 
   for (size_t f = 0; f < field_names.size(); ++f) {
@@ -462,7 +486,7 @@ void loadMembershipMetadata(
     auto& sink = loader.world_.membership_field_values[f];
     sink.reserve(vals.size() / 4);
     for (size_t i = 0; i < vals.size(); ++i) {
-      if (row_flat_idx[i] == kAbsent) continue;
+      if (row_flat_idx[i] == kAbsentFlatIndex) continue;
       if (vals[i] == WorldState::kMembershipFieldAbsent) continue;
       sink[row_flat_idx[i]] = vals[i];
     }
@@ -597,14 +621,34 @@ void loadVenueSubsets(HDF5Loader& loader,
   }
 }
 
-void buildGlobalVenueTypeMap(HDF5Loader& loader) {
-  auto all_venue_ids = loader.readNumericDataset<int32_t>("/venues/ids");
-  auto all_venue_types = loader.readNumericDataset<uint8_t>("/venues/types");
-  size_t n = std::min(all_venue_ids.size(), all_venue_types.size());
-  loader.world_.global_venue_type_map.reserve(n);
+void buildGlobalVenueMaps(HDF5Loader& loader) {
+  auto all_ids = loader.readNumericDataset<int32_t>("/venues/ids");
+  auto all_types = loader.readNumericDataset<uint8_t>("/venues/types");
+
+  // Reconstruct venue→geo_unit from the partition index (geo_unit_id →
+  // contiguous range of venues in the global array).
+  auto gu_ids = loader.readNumericDataset<int32_t>(
+      "/venues/partition_index/geo_unit_ids");
+  auto starts = loader.readNumericDataset<int32_t>(
+      "/venues/partition_index/start_indices");
+  auto counts =
+      loader.readNumericDataset<int32_t>("/venues/partition_index/counts");
+
+  std::vector<GeoUnitId> venue_geo(all_ids.size(), -1);
+  for (size_t g = 0; g < gu_ids.size(); ++g)
+    for (int32_t k = 0; k < counts[g]; ++k)
+      venue_geo[static_cast<size_t>(starts[g]) + k] = gu_ids[g];
+
+  auto& world = loader.world_;
+  size_t n = all_ids.size();
+  world.global_venue_type_map.reserve(n);
+  world.global_venue_geo_unit_map.reserve(n);
   for (size_t i = 0; i < n; ++i) {
-    loader.world_.global_venue_type_map[all_venue_ids[i]] = all_venue_types[i];
+    world.global_venue_type_map[all_ids[i]] = all_types[i];
+    world.global_venue_geo_unit_map[all_ids[i]] = venue_geo[i];
+    world.addVenueToTypeIndex(all_ids[i], all_types[i]);
   }
+  world.sortGlobalVenuesByTypeName();
 }
 
 }  // namespace detail

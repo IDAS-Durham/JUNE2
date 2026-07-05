@@ -197,9 +197,9 @@ disease:
     # respiratory:  droplet spread; driven by pneumonic stages only.
     modes:
       - name: animal_bite
-        susceptibility_multiplier: 0.0
+        susceptibility_multiplier: 1.0
       - name: respiratory
-        susceptibility_multiplier: 0.0
+        susceptibility_multiplier: 1.0
 
       # Rat-flea reservoir coupling: infectious free fleas (FI) from the
       # compartmental model drive human exposure.

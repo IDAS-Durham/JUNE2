@@ -138,6 +138,42 @@ TEST_CASE("ContactMatrix beta scales contacts at load time") {
   }
 }
 
+TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
+  SUBCASE("both paths present") {
+    std::string yaml_path = "tmp_sim_cal_events.yaml";
+    {
+      std::ofstream f(yaml_path);
+      f << "time:\n"
+           "  start_date: \"2020-01-01\"\n"
+           "  end_date: \"2020-01-10\"\n"
+           "config_paths:\n"
+           "  calendar_events_file: \"data/calendar_events.csv\"\n"
+           "  calendar_event_catchment_rules_file: \"data/catchment_rules.csv\"\n";
+    }
+    SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path);
+    CHECK(cfg.calendar_events_file == "data/calendar_events.csv");
+    CHECK(cfg.calendar_event_catchment_rules_file ==
+          "data/catchment_rules.csv");
+    std::filesystem::remove(yaml_path);
+  }
+
+  SUBCASE("absent keys leave fields empty, no error") {
+    std::string yaml_path = "tmp_sim_no_cal_events.yaml";
+    {
+      std::ofstream f(yaml_path);
+      f << "time:\n"
+           "  start_date: \"2020-01-01\"\n"
+           "  end_date: \"2020-01-10\"\n"
+           "config_paths:\n"
+           "  disease_file: \"disease.yaml\"\n";
+    }
+    SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path);
+    CHECK(cfg.calendar_events_file == "");
+    CHECK(cfg.calendar_event_catchment_rules_file == "");
+    std::filesystem::remove(yaml_path);
+  }
+}
+
 TEST_CASE("ConfigLoader - Optional Files Handling") {
   SUBCASE("Missing vaccines file is optional and disables the module") {
     // Vaccines is the only truly-optional sub-config: a missing file means

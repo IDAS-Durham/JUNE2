@@ -271,11 +271,12 @@ struct TemporalPolicy {
 struct FrozenPersonState {
   uint8_t triggering_policy_index;
   int16_t paused_hopped_schedule_id;  // travel schedule to resume on recovery
-  int16_t paused_return_schedule_id;  // saved return_schedule_id
+  int16_t paused_return_schedule_id;  // saved schedule_hop.return_schedule_id
   VenueId pin_venue_id;
   SubsetIndex pin_subset_index;
-  // temp_slot_progress NOT saved: preserved automatically (non-temporary hops
-  // never touch it, so it holds the correct travel-schedule resume position)
+  // schedule_hop.temp_slot_progress NOT saved: preserved automatically
+  // (non-temporary hops never touch it, so it holds the correct
+  // travel-schedule resume position)
 };
 
 // =============================================================================

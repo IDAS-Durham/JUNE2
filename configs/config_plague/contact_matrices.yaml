@@ -46,6 +46,28 @@ contact_matrices:
           - [1.0, 0.5]
           - [0.5, 1.0]
 
+  fair:
+    modes:
+      animal_bite:
+        # Livestock and vermin present at market; lower exposure than household.
+        bins: ["all"]
+        contacts: [[0.5]]
+      respiratory:
+        # Dense crowds; higher contact rate than church or household.
+        bins: ["all"]
+        contacts: [[2.0]]
+
+  guest_house:
+    modes:
+      animal_bite:
+        # Rat-infested taverns and inns; higher exposure than household.
+        bins: ["all"]
+        contacts: [[1.2]]
+      respiratory:
+        # Shared rooms; slightly lower than household (not family).
+        bins: ["all"]
+        contacts: [[0.8]]
+
   land:
     modes:
       animal_bite:
@@ -54,14 +76,14 @@ contact_matrices:
         contacts:
           - [0.33, 0.13, 0.13]
           - [0.13, 0.23, 0.13]
-          - [0.13, 0.13, 0.23]	  
+          - [0.13, 0.13, 0.23]
 
       respiratory:
         # Outdoor work gives more space; respiratory spread is lower than indoors.
         bins: ["0-12", "male", "female"]
         contacts:
           - [0.23, 0.05, 0.05]
-          - [0.05, 0.05, 0.05]	  
+          - [0.05, 0.05, 0.05]
           - [0.05, 0.05, 0.13]
 
 
