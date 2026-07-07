@@ -16,7 +16,8 @@ class WorldState;
 // A calendar-triggered event. On `start_day`, attendees drawn from the
 // catchment rule hop onto the temporary schedule `schedule_type_idx`. Venue
 // assignment is handled by OnTheFlyVenueAllocator at activity-selection time.
-// Generic: "Fair" appears only in the data (category / schedule name), never here.
+// Generic: "Fair" appears only in the data (category / schedule name), never
+// here.
 struct CalendarEvent {
   int32_t calendar_event_id = -1;
   int start_day = -1;              // sim day (0-based) the event triggers on
@@ -53,19 +54,20 @@ class CalendarEventManager {
   void triggerEventsForDay(
       int day, const WorldState& world, std::vector<Person>& people,
       uint64_t base_seed,
-      const std::unordered_map<int32_t, std::vector<GeoUnitId>>& catchment_rules =
-          {});
+      const std::unordered_map<int32_t, std::vector<GeoUnitId>>&
+          catchment_rules = {});
 
   // Erase active-event entries for persons whose hop has completed (i.e.
   // !schedule_hop.isActive()). Called at the top of triggerEventsForDay so
-  // stale entries are cleaned up once per day without coupling to ActivityManager.
+  // stale entries are cleaned up once per day without coupling to
+  // ActivityManager.
   void sweepCompletedHops(
       const std::unordered_map<PersonId, size_t>& person_index,
       const std::vector<Person>& people);
 
   // Checkpoint seam: serialisable state.
   struct Snapshot {
-    std::unordered_map<PersonId, int32_t>  active_event;
+    std::unordered_map<PersonId, int32_t> active_event;
   };
   Snapshot snapshot_for_checkpoint() const;
   void restore(Snapshot snapshot);
@@ -86,11 +88,15 @@ class CalendarEventManager {
   // if the person has no active event or the event has no hosting geo-unit.
   std::optional<GeoUnitId> getActiveHostingGeoUnit(PersonId person_id) const;
 
+  // Distinct hosting geo units across all events (dups harmless). Used by the
+  // halo prototype to precompute hosting-strategy OTF pools.
+  std::vector<GeoUnitId> hostingGeoUnits() const;
 
  private:
   // events_by_day_[day] -> events starting that day.
   std::vector<std::vector<CalendarEvent>> events_by_day_;
-  // O(1) lookup from calendar_event_id to its definition (pointer into events_by_day_).
+  // O(1) lookup from calendar_event_id to its definition (pointer into
+  // events_by_day_).
   std::unordered_map<int32_t, const CalendarEvent*> events_by_id_;
   // person -> opaque active calendar_event_id (never a venue).
   std::unordered_map<PersonId, int32_t> active_event_;
