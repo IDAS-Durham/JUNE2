@@ -24,13 +24,10 @@ void WorldState::buildIndices() {
     } else {
       venues_by_type["unknown"].push_back(i);
     }
-    // Populate global_venue_type_map for local venues. In MPI mode the HDF5
-    // loader pre-populates this from ALL venues; here we ensure local venues
-    // are always present, including in tests/serial mode.
-    if (global_venue_type_map.find(venues[i].id) ==
-        global_venue_type_map.end()) {
-      global_venue_type_map[venues[i].id] = venues[i].type_id;
-    }
+    // global_venue_type_map is not populated for local venues: getVenueTypeId()
+    // resolves them via getVenue() first, so the map only ever needs the
+    // foreign halo (filled by the HDF5 loader's buildGlobalVenueMaps in MPI
+    // mode).
   }
 
   for (size_t i = 0; i < geo_units.size(); ++i) {
@@ -48,6 +45,29 @@ void WorldState::buildIndices() {
       current_id = geo_units[it->second].parent_id;
     }
   }
+
+  buildGlobalVenueMaps();
+}
+
+void WorldState::addVenueToTypeIndex(VenueId venue_id, uint8_t type_id) {
+  const std::string& type_name = (type_id < venue_type_names.size())
+                                     ? venue_type_names[type_id]
+                                     : "unknown";
+  global_venues_by_type_name[type_name].push_back(venue_id);
+}
+
+void WorldState::sortGlobalVenuesByTypeName() {
+  for (auto& [_, ids] : global_venues_by_type_name)
+    std::sort(ids.begin(), ids.end());
+}
+
+void WorldState::buildGlobalVenueMaps() {
+  if (!global_venues_by_type_name.empty()) return;  // MPI loader already filled
+  for (size_t i = 0; i < venues.size(); ++i) {
+    global_venue_geo_unit_map.emplace(venues[i].id, venues[i].geo_unit_id);
+    addVenueToTypeIndex(venues[i].id, venues[i].type_id);
+  }
+  sortGlobalVenuesByTypeName();
 }
 
 Person* WorldState::getPerson(PersonId id) {
@@ -90,6 +110,59 @@ std::vector<Venue*> WorldState::getVenuesByType(const std::string& type) {
     }
   }
   return result;
+}
+
+std::vector<VenueId> WorldState::getVenuesInGeoUnit(
+    GeoUnitId hosting_geo_unit_id, const std::string& venue_type_name) const {
+  std::vector<VenueId> result;
+  auto type_it = global_venues_by_type_name.find(venue_type_name);
+  if (type_it == global_venues_by_type_name.end()) return result;
+
+  // global_venues_by_type_name is sorted by venue_id at build time, so the
+  // result is already sorted — no trailing sort needed.
+  for (VenueId vid : type_it->second) {
+    auto geo_it = global_venue_geo_unit_map.find(vid);
+    if (geo_it == global_venue_geo_unit_map.end()) continue;
+    GeoUnitId current = geo_it->second;
+    while (current != -1) {
+      if (current == hosting_geo_unit_id) {
+        result.push_back(vid);
+        break;
+      }
+      auto gu_it = geo_unit_index.find(current);
+      if (gu_it == geo_unit_index.end()) break;
+      current = geo_units[gu_it->second].parent_id;
+    }
+  }
+  return result;
+}
+
+GeoUnitId WorldState::ancestorAtLevel(GeoUnitId id,
+                                      std::string_view level_name) const {
+  GeoUnitId current = id;
+  while (current != -1) {
+    auto it = geo_unit_index.find(current);
+    if (it == geo_unit_index.end()) break;
+    const GeographicalUnit& gu = geo_units[it->second];
+    if (gu.level_id < geo_level_names.size() &&
+        geo_level_names[gu.level_id] == level_name)
+      return current;
+    current = gu.parent_id;
+  }
+  return -1;
+}
+
+void WorldState::dropGlobalVenueMaps() {
+  size_t by_type_venues = 0;
+  for (auto& [k, v] : global_venues_by_type_name) by_type_venues += v.size();
+  std::cerr << "[HALO] freeing OTF maps: geo_unit_map_entries="
+            << global_venue_geo_unit_map.size()
+            << " by_type_name_venue_entries=" << by_type_venues
+            << " (type_map kept, entries=" << global_venue_type_map.size()
+            << ")\n";
+  std::unordered_map<VenueId, GeoUnitId>().swap(global_venue_geo_unit_map);
+  std::unordered_map<std::string, std::vector<VenueId>>().swap(
+      global_venues_by_type_name);
 }
 
 std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {

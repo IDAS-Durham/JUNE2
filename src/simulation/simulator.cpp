@@ -18,6 +18,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "loaders/calendar_event_loader.h"
+#include "loaders/catchment_rule_loader.h"
 #include "utils/event_logging/event_writer.h"
 
 namespace june {
@@ -485,6 +487,31 @@ Simulator::Simulator(WorldState& world, const Config& config,
   // Pre-compute schedules
   activity_manager_.precomputeSchedules();
 
+  // Load calendar events (optional — no-op if paths are empty)
+  if (!config_.simulation.calendar_event_catchment_rules_file.empty()) {
+    catchment_rules_ = CatchmentRuleLoader::load(
+        config_.simulation.calendar_event_catchment_rules_file);
+  }
+  if (!config_.simulation.calendar_events_file.empty()) {
+    auto events = CalendarEventLoader::load(
+        config_.simulation.calendar_events_file, world_,
+        config_.simulation.start_date, total_days_);
+    calendar_event_manager_ = CalendarEventManager(std::move(events));
+    activity_manager_.setCalendarEventManager(&calendar_event_manager_);
+  }
+  if (!config_.simulation.on_the_fly_venues_file.empty()) {
+    on_the_fly_allocator_.emplace(config_.simulation.on_the_fly_venues_file);
+    on_the_fly_allocator_->checkConsistency(world_);
+    activity_manager_.setOnTheFlyVenueAllocator(&on_the_fly_allocator_.value());
+    // Warm every pool the allocator can serve while the maps still exist.
+    on_the_fly_allocator_->precomputeAllPools(
+        world_, calendar_event_manager_.hostingGeoUnits());
+  }
+  // global_venue_geo_unit_map / global_venues_by_type_name exist only to build
+  // OTF pools (now precomputed), so free them. The halo-sized type_map used for
+  // cross-rank FOI lookups stays.
+  world_.dropGlobalVenueMaps();
+
   // Initialize events filename based on rank
 #ifdef USE_MPI
   if (domain_mgr_) {
@@ -568,6 +595,11 @@ void Simulator::runOneDay(int day, int rank) {
     domain_mgr_->exchangeDeathFlags();
   }
 #endif
+
+  // 2.5. Trigger calendar events (schedule hops for fairs, etc.)
+  calendar_event_manager_.triggerEventsForDay(day, world_, world_.people,
+                                              config_.simulation.random_seed,
+                                              catchment_rules_);
 
   // 3. Negotiate Coordinated Encounters
   negotiateAndLogDailyEncounters(day, rank);
@@ -659,6 +691,7 @@ void Simulator::printRunSummary() {
 
 void Simulator::simulateDay(int day_num) {
   int day_type_idx = config_.schedule.getDayTypeIndex(day_num);
+  activity_manager_.setCurrentDay(day_num);
 
   // Track per-day-type occurrence counts
   if (day_type_idx >= static_cast<int>(day_type_counts_.size()))

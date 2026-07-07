@@ -12,6 +12,7 @@
 
 #include "loaders/config_loader.h"
 #include "loaders/hdf5_loader.h"
+#include "simulation/compartmental_model_manager.h"
 #include "simulation/simulator.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/memory_utils.h"
@@ -302,9 +303,15 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  // Hoisted out of the try so the top-level H5::Exception handler can tell
+  // whether a compartmental plugin (the only thing that dlopen's a second
+  // libhdf5_cpp) was in play — see the catch below.
+  std::string compartmental_sidecar_path;
+
   try {
     // Load configuration (all ranks load config)
     Config config = ConfigLoader::loadAll(sim_config_file);
+    compartmental_sidecar_path = config.simulation.compartmental_model_sidecar;
 
     // Resolve infection_seeds_file: CLI arg takes priority, then
     // simulation.yaml, then hardcoded default
@@ -608,8 +615,33 @@ int main(int argc, char* argv[]) {
     }
 
   } catch (H5::Exception& e) {
-    std::cerr << "[Rank " << rank << "] HDF5 error: " << e.getCDetailMsg()
-              << std::endl;
+    // Special-case the duplicate-libhdf5_cpp ABI clash: when a compartmental
+    // plugin is dlopen'd against a different libhdf5_cpp than this binary, HDF5
+    // initialises its global DataSpace::ALL constant twice and throws from
+    // inside ld.so's call_init. That throw cannot be caught at the dlopen site
+    // (a handler there is bypassed or escalates to std::terminate), but it does
+    // unwind cleanly to here — so this is where we convert it into actionable
+    // guidance. Gated on a configured sidecar so it fires iff a plugin (the
+    // only second libhdf5_cpp) was actually loaded.
+    if (!compartmental_sidecar_path.empty() &&
+        june::isHdf5DuplicateConstantError(e.getFuncName(), e.getDetailMsg())) {
+      if (rank == 0) {
+        std::string plugin_path;
+        try {
+          plugin_path = june::CompartmentalModelManager::realLoadSidecar(
+                            compartmental_sidecar_path)
+                            .plugin_so_path;
+        } catch (...) {
+          // best-effort: fall back to the sidecar path in the message
+          plugin_path = compartmental_sidecar_path;
+        }
+        std::cerr << june::formatHdf5AbiMismatchMessage(plugin_path,
+                                                        e.getDetailMsg());
+      }
+    } else {
+      std::cerr << "[Rank " << rank << "] HDF5 error: " << e.getCDetailMsg()
+                << std::endl;
+    }
 #ifdef USE_MPI
     MPI_Abort(MPI_COMM_WORLD, 1);
 #endif

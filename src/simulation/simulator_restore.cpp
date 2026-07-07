@@ -118,6 +118,7 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
   auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
   auto ret = readVec<int32_t>(f, "/population/return_schedule_id", I32);
   auto tsl = readVec<int32_t>(f, "/population/temp_slot_progress", I32);
+  auto hop_rep = readVec<int32_t>(f, "/population/hop_repeats_remaining", I32);
   size_t n = 0;
   for (size_t i = 0; i < ids.size(); ++i) {
     Person* p = world.getPerson(ids[i]);
@@ -134,9 +135,10 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
     p->active_temporal_policy_participation = m_pt[i];
     p->symptom_policy_decisions = m_ds[i];
     p->temporal_policy_decisions = m_dt[i];
-    p->hopped_schedule_id = static_cast<int16_t>(hop[i]);
-    p->return_schedule_id = static_cast<int16_t>(ret[i]);
-    p->temp_slot_progress = static_cast<int16_t>(tsl[i]);
+    p->schedule_hop.hopped_schedule_id = static_cast<int16_t>(hop[i]);
+    p->schedule_hop.return_schedule_id = static_cast<int16_t>(ret[i]);
+    p->schedule_hop.temp_slot_progress = static_cast<int16_t>(tsl[i]);
+    p->schedule_hop.repeats_remaining = static_cast<int16_t>(hop_rep[i]);
     // Clear any default-constructed infection/vaccine; reinstated below.
     p->infection.reset();
     p->vaccine_trajectory.reset();
@@ -268,6 +270,17 @@ size_t overlayShardFomite(H5::H5File& f, WorldState& world) {
   return n;
 }
 
+void overlayShardCalendarEvents(H5::H5File& f, WorldState& world,
+                                CalendarEventManager::Snapshot& snap) {
+  if (!f.exists("/calendar_events")) return;
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  auto pids = readVec<int32_t>(f, "/calendar_events/person_ids", I32);
+  auto eids = readVec<int32_t>(f, "/calendar_events/event_ids", I32);
+  for (size_t i = 0; i < pids.size(); ++i)
+    if (world.getPerson(static_cast<PersonId>(pids[i])))
+      snap.active_event[static_cast<PersonId>(pids[i])] = eids[i];
+}
+
 // Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
 // matches the configured seed (no silent override), and return the
 // completed_day to resume from. The caller has already canonicalised cp.
@@ -342,6 +355,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   YAML::Node si = YAML::LoadFile((cp / "shard_index.yaml").string());
   int n_shards = si["num_ranks"].as<int>();
   size_t n_people = 0, n_inf = 0, n_vax = 0, n_fom = 0;
+  CalendarEventManager::Snapshot ce_snap;
   for (int s = 0; s < n_shards; ++s) {
     fs::path sf = cp / ("delta_rank" + std::to_string(s) + ".h5");
     if (!fs::exists(sf)) continue;
@@ -351,7 +365,9 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
     n_fom += overlayShardFomite(f, world_);
     overlayShardManagerState(f, world_, lpt_map, frozen_accum);
+    overlayShardCalendarEvents(f, world_, ce_snap);
   }
+  calendar_event_manager_.restore(std::move(ce_snap));
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
 

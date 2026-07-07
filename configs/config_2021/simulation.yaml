@@ -1,6 +1,6 @@
 time:
     start_date : "2024-01-01"
-    end_date : "2024-03-01"
+    end_date : "2024-07-01"
 
 config_paths:
 # Configuration paths
@@ -14,6 +14,10 @@ config_paths:
   parallel_file: "configs/config_2021/parallel.yaml"
   policies_file: "configs/config_2021/policies.yaml"
   infection_seeds_file: "configs/config_2021/infection_seeds.yaml"
+  # Optional: calendar event CSVs produced by the MAY world-builder.
+  # Leave absent or empty to run without calendar events.
+  # calendar_events_file: "data/calendar_events.csv"
+  # calendar_event_catchment_rules_file: "data/calendar_event_catchment_rules.csv"
 
 #Random seeds for reproducibility
 random_seed: 12345

@@ -27,5 +27,5 @@ global_parameters:
 #        "TEMP003582": [10]
 #       "TEMP005602": [10]
 
-bulk_csv: "data/bulk_seeds_plague.csv"
+bulk_csv: "data/data_plague/bulk_seeds_plague.csv"
 # config/bulk_seeds.csv"
