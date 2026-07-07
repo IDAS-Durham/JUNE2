@@ -5,6 +5,7 @@
 #include <limits>
 #include <optional>
 #include <stdexcept>
+#include <unordered_set>
 #include <variant>
 
 #include "core/config.h"
@@ -641,10 +642,21 @@ void buildGlobalVenueMaps(HDF5Loader& loader) {
 
   auto& world = loader.world_;
   size_t n = all_ids.size();
-  world.global_venue_type_map.reserve(n);
+
+  // global_venue_type_map only needs the foreign venues a local person can
+  // reach (locals resolve via getVenue first). The geo/by-type maps are built
+  // full here — the OTF allocator needs them to precompute pools — then freed
+  // by dropGlobalVenueMaps() once the pools are warm.
+  std::unordered_set<VenueId> halo;
+  for (const auto& [vid, sub] : world.activity_venues)
+    if (world.venue_index.find(vid) == world.venue_index.end())
+      halo.insert(vid);
+
+  world.global_venue_type_map.reserve(halo.size());
   world.global_venue_geo_unit_map.reserve(n);
   for (size_t i = 0; i < n; ++i) {
-    world.global_venue_type_map[all_ids[i]] = all_types[i];
+    if (halo.count(all_ids[i]))
+      world.global_venue_type_map[all_ids[i]] = all_types[i];
     world.global_venue_geo_unit_map[all_ids[i]] = venue_geo[i];
     world.addVenueToTypeIndex(all_ids[i], all_types[i]);
   }
