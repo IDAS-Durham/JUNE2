@@ -283,6 +283,9 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   // Inject Coordinated Encounters for this timeslot into the locations array.
   injectCoordinatedEncountersIntoSlot(time_slot_index);
 
+  // Place followers at their host's resolved location for this slot.
+  injectFollowsIntoSlot(time_slot_index);
+
   // Per-slot venue distribution print (collective Reduce → rank 0 prints).
   printSlotVenueDistribution(world_, locations_, domain_mgr_, rank);
 

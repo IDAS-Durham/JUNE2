@@ -767,11 +767,38 @@ struct FrequencyGroup {
   std::vector<FrequencyRow> rows;
 };
 
+// A follower travels with a host while the host is on a schedule-hop (a trip):
+// each slot the follower is placed wherever the host ends up. The people a host
+// can invite are the co-members of one of its venues, whose type is named in
+// config. Nothing here is tied to a specific venue.
+struct FollowConfig {
+  bool enabled = false;
+  // Exactly one pool source. venue co-members must be co-resident with the host
+  // (e.g. household) so enrolment stays rank-local; a network draws the host's
+  // own partner list, whose members may live in other domains (guild,
+  // workmates) and are enrolled/mirrored across ranks.
+  std::string
+      pool_venue_type;  // enrol co-members of the host's venue of this type
+  std::string network;  // OR enrol the host's partners in this network
+  std::string encounter_type;  // tag stamped on a follower's mirrored location
+  double probability =
+      1.0;           // per-host chance to enrol followers when a hop starts
+  bool log = false;  // log each follow at establishment (can be many)
+  // Resolved against the World registry in
+  // CoordinatedEncounterConfig::resolve():
+  int pool_venue_type_id = -1;
+  int network_idx = -1;
+  uint8_t encounter_type_id = 255;
+
+  bool usesNetwork() const { return !network.empty(); }
+};
+
 struct CoordinatedEncounterConfig {
   bool enabled = false;
   bool log_commitments = false;
   std::vector<CoordinatedEncounterDef> encounters;
   std::unordered_map<std::string, FrequencyGroup> frequency_groups;
+  FollowConfig follow;
 
   void resolve(WorldState& world, ContactMatrixConfig& contact_matrices);
 };

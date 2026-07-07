@@ -682,6 +682,36 @@ void PerformanceConfig::resolve(const WorldState& world) {
 
 void CoordinatedEncounterConfig::resolve(
     WorldState& world, ContactMatrixConfig& contact_matrices) {
+  // Follow is resolved first because it works even with encounters disabled.
+  if (follow.enabled) {
+    bool has_venue = !follow.pool_venue_type.empty();
+    bool has_network = follow.usesNetwork();
+    if (has_venue == has_network) {
+      throw std::runtime_error(
+          "follow requires exactly one pool source: set either "
+          "'pool_venue_type' or 'network', not both/neither");
+    }
+    if (has_venue) {
+      follow.pool_venue_type_id =
+          world.getVenueTypeIndex(follow.pool_venue_type);
+      if (follow.pool_venue_type_id < 0) {
+        throw std::runtime_error("follow.pool_venue_type '" +
+                                 follow.pool_venue_type +
+                                 "' is not a venue type in this world");
+      }
+    } else {
+      follow.network_idx = world.getNetworkTypeIndex(follow.network);
+      if (follow.network_idx < 0) {
+        throw std::runtime_error("follow.network '" + follow.network +
+                                 "' is not a network in this world");
+      }
+    }
+    if (!follow.encounter_type.empty()) {
+      int e = world.getEncounterTypeIndex(follow.encounter_type);
+      if (e >= 0) follow.encounter_type_id = static_cast<uint8_t>(e);
+    }
+  }
+
   if (!enabled) return;
 
   // Build deterministic name→id mapping from sorted keys

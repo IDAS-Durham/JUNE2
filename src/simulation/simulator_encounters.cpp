@@ -2,6 +2,7 @@
 // + local-rank logging. Split from simulator.cpp (declared in
 // simulation/simulator.h).
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -9,6 +10,10 @@
 #include <vector>
 
 #include "simulation/simulator.h"
+#include "utils/deterministic_rng.h"
+#ifdef USE_MPI
+#include "parallel/mpi_utils.h"
+#endif
 
 namespace june {
 
@@ -233,6 +238,11 @@ void applyEncounterInjection(
     for (size_t array_idx : ee.eligible_indices) {
       locations[array_idx].venue_id = enc.venue_id;
       locations[array_idx].encounter_type_id = enc.encounter_type_id;
+      // Bug #13: adopt the host's subset so every participant bins as the
+      // host's subgroup, not by the stale subset_index of the venue they were
+      // scheduled to. -1 on virtual venues (no subsets), so left untouched.
+      if (enc.host_subset_index >= 0)
+        locations[array_idx].subset_index = enc.host_subset_index;
     }
 
 #ifdef USE_MPI
@@ -372,6 +382,318 @@ void Simulator::injectCoordinatedEncountersIntoSlot(int time_slot_index) {
   // for encounters that meet their min_required threshold.
   applyEncounterInjection(slot_encounters, daily_encounters,
                           global_eligible_map, locations_, domain_mgr_);
+}
+
+namespace {
+
+// Find the host's venue of the configured pool type, or -1 if it has none.
+VenueId findPoolVenue(const WorldState& world, const Person& host,
+                      int pool_venue_type_id) {
+  for (const auto& meta : world.getActivityMetas(host)) {
+    for (const auto& vs : world.getActivityVenues(meta)) {
+      const Venue* v = world.getVenue(vs.first);
+      if (v && v->type_id == pool_venue_type_id) return vs.first;
+    }
+  }
+  return -1;
+}
+
+// The host's candidate pool: co-members of its venue of the configured type, or
+// its partners in the configured network. Both return global PersonIds; callers
+// enrol only those local to this rank (remote network partners are routed
+// separately).
+std::vector<PersonId> gatherPool(const WorldState& world,
+                                 const FollowConfig& fc, const Person& host) {
+  std::vector<PersonId> pool;
+  if (fc.usesNetwork()) {
+    for (PersonId m : world.getNetworkPartners(host, fc.network_idx))
+      pool.push_back(m);
+    return pool;
+  }
+  VenueId pool_venue = findPoolVenue(world, host, fc.pool_venue_type_id);
+  if (pool_venue < 0) return pool;
+  for (const auto& sub : world.getSubsets(*world.getVenue(pool_venue)))
+    for (PersonId m : world.getSubsetMembers(sub)) pool.push_back(m);
+  return pool;
+}
+
+// A host passes its once-per-trip probability roll. Deterministic per
+// (seed, host, hop-start day) so the same host commits the same way at any rank
+// count and stays committed for every day of a multi-day trip.
+bool hostRollsFollow(const FollowConfig& fc, uint64_t seed, PersonId host,
+                     int hop_start_day) {
+  if (fc.probability >= 1.0) return true;
+  SplitMix64 rng(mix_seed(seed, static_cast<uint64_t>(host),
+                          static_cast<uint64_t>(hop_start_day)));
+  double u =
+      static_cast<double>(rng()) / static_cast<double>(SplitMix64::max());
+  return u < fc.probability;
+}
+
+// Any local person newly on a hop rolls once to gather followers from its pool.
+// A host is only tried once per trip, and someone already following (or away on
+// their own trip, or dead) is never enrolled. Only pool members local to this
+// rank are enrolled here; remote network partners are collected into
+// remote_invites for cross-rank routing by the caller.
+// Returns {hosts that gained followers, total local followers enrolled}.
+std::pair<int, int> enrolFollowHosts(
+    WorldState& world, const FollowConfig& fc, const ScheduleConfig& sched,
+    uint64_t seed, std::unordered_set<PersonId>& active_hosts,
+    std::unordered_map<PersonId, PersonId>& follower_host, int current_day,
+    std::vector<std::pair<PersonId, PersonId>>* remote_invites,
+    std::unordered_map<PersonId, PersonId>* new_follows) {
+  int hosts = 0, followers = 0;
+  for (Person& host : world.people) {
+    if (host.is_dead || !host.schedule_hop.isActive()) continue;
+    if (active_hosts.count(host.id) || follower_host.count(host.id)) continue;
+    active_hosts.insert(host.id);
+
+    // Key the roll on the hop's start day, not today, so a trip resumed from a
+    // checkpoint mid-way re-rolls identically to the uninterrupted run. Both
+    // are derivable from the checkpointed hop state, so follows need no
+    // checkpoint serialization of their own.
+    int hopped = host.schedule_hop.hopped_schedule_id;
+    int n =
+        (hopped >= 0 && hopped < static_cast<int>(sched.schedule_types.size()))
+            ? static_cast<int>(sched.schedule_types[hopped].flat_slots.size())
+            : 1;
+    if (n < 1) n = 1;
+    int hop_start_day =
+        ScheduleHop::hopStartDay(current_day, static_cast<int16_t>(n),
+                                 host.schedule_hop.temp_slot_progress);
+    if (!hostRollsFollow(fc, seed, host.id, hop_start_day)) continue;
+
+    int enrolled = 0;
+    for (PersonId m : gatherPool(world, fc, host)) {
+      if (m == host.id) continue;
+      // A follower eligible for several on-hop hosts follows the smallest
+      // host_id. This tiebreak is order-independent, so the choice is the same
+      // however the world is partitioned across ranks.
+      auto existing = follower_host.find(m);
+      if (existing != follower_host.end() && existing->second <= host.id)
+        continue;
+      auto mi = world.person_index.find(m);
+      if (mi == world.person_index.end()) {
+        // Not local. For a network pool this partner lives in another domain;
+        // route an invite to their rank. Venue pools are co-resident, so a
+        // non-local member cannot occur there.
+        if (remote_invites) remote_invites->push_back({m, host.id});
+        continue;
+      }
+      const Person& mp = world.people[mi->second];
+      if (mp.is_dead || mp.schedule_hop.isActive()) continue;
+      follower_host[m] = host.id;
+      if (new_follows) (*new_follows)[m] = host.id;
+      ++enrolled;
+    }
+    if (enrolled > 0) {
+      ++hosts;
+      followers += enrolled;
+    }
+  }
+  return {hosts, followers};
+}
+
+#ifdef USE_MPI
+// Allgatherv a flat int array; every rank receives all ranks' contributions
+// concatenated in rank order.
+std::vector<int> allgathervInts(const std::vector<int>& local) {
+  int nr;
+  MPI_Comm_size(MPI_COMM_WORLD, &nr);
+  int local_n = static_cast<int>(local.size());
+  std::vector<int> sizes(nr);
+  MPI_Allgather(&local_n, 1, MPI_INT, sizes.data(), 1, MPI_INT, MPI_COMM_WORLD);
+  std::vector<int> displs;
+  int total = 0;
+  mpi_utils::computeDisplacements(sizes, displs, total);
+  std::vector<int> all(total);
+  MPI_Allgatherv(const_cast<int*>(local.data()), local_n, MPI_INT, all.data(),
+                 sizes.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
+  return all;
+}
+
+// Route network follow invites across ranks: apply each (follower, host) pair
+// whose follower is local, keeping the smallest host_id (order-independent, so
+// identical at any rank count).
+void applyFollowInvites(
+    const std::vector<std::pair<PersonId, PersonId>>& invites,
+    WorldState& world, std::unordered_map<PersonId, PersonId>& follower_host,
+    std::unordered_map<PersonId, PersonId>* new_follows) {
+  std::vector<int> local;
+  local.reserve(invites.size() * 2);
+  for (const auto& [f, h] : invites) {
+    local.push_back(static_cast<int>(f));
+    local.push_back(static_cast<int>(h));
+  }
+  std::vector<int> all = allgathervInts(local);
+  for (size_t i = 0; i + 1 < all.size(); i += 2) {
+    PersonId f = all[i], h = all[i + 1];
+    auto existing = follower_host.find(f);
+    if (existing != follower_host.end() && existing->second <= h) continue;
+    auto mi = world.person_index.find(f);
+    if (mi == world.person_index.end()) continue;  // not local to this rank
+    const Person& fp = world.people[mi->second];
+    if (fp.is_dead || fp.schedule_hop.isActive()) continue;
+    follower_host[f] = h;
+    if (new_follows) (*new_follows)[f] = h;
+  }
+}
+
+// Broadcast every rank's active-follow-host locations so remote followers can
+// mirror. Adds each broadcast host to active_now, and (venue >= 0) to host_loc.
+void broadcastHostLocations(
+    const std::unordered_set<PersonId>& active_hosts, WorldState& world,
+    const std::vector<PersonLocation>& locations,
+    std::unordered_map<PersonId, std::pair<VenueId, SubsetIndex>>& host_loc,
+    std::unordered_set<PersonId>& active_now) {
+  std::vector<int> local;
+  for (PersonId h : active_hosts) {
+    auto hi = world.person_index.find(h);
+    if (hi == world.person_index.end()) continue;
+    const PersonLocation& hl = locations[hi->second];
+    local.push_back(static_cast<int>(h));
+    local.push_back(static_cast<int>(hl.venue_id));
+    local.push_back(static_cast<int>(hl.subset_index));
+  }
+  std::vector<int> all = allgathervInts(local);
+  for (size_t i = 0; i + 3 <= all.size(); i += 3) {
+    PersonId h = all[i];
+    VenueId v = all[i + 1];
+    SubsetIndex s = all[i + 2];
+    active_now.insert(h);
+    if (v >= 0) host_loc[h] = {v, s};
+  }
+}
+#endif  // USE_MPI
+
+}  // namespace
+
+void Simulator::injectFollowsIntoSlot(int time_slot_index) {
+  const auto& fc = config_.coordinated_encounters.follow;
+  if (!fc.enabled) return;
+
+  static const bool dbg = std::getenv("JUNE_DEBUG_FOLLOW") != nullptr;
+  // JUNE_DEBUG_FOLLOW_SAMPLE=N traces the first N followers through every slot
+  // of their trip, so one travel party can be read end to end without drowning
+  // in a line per follower per slot.
+  static const int sample_n = [] {
+    const char* e = std::getenv("JUNE_DEBUG_FOLLOW_SAMPLE");
+    return e ? std::atoi(e) : 0;
+  }();
+  static std::set<PersonId> sampled;
+  const int day = static_cast<int>(current_simulation_time_);
+
+  // Network pools may enrol partners in other domains; venue pools are always
+  // co-resident, so they need no cross-rank routing or per-slot broadcast.
+  bool cross_rank = false;
+#ifdef USE_MPI
+  cross_rank = domain_mgr_ != nullptr && fc.usesNetwork();
+#endif
+
+  // 1. Enrol newly-active local hosts. Remote network partners are routed to
+  //    their own ranks and applied there.
+  std::vector<std::pair<PersonId, PersonId>> remote_invites;
+  std::unordered_map<PersonId, PersonId> new_follows;
+  auto [new_hosts, new_followers] = enrolFollowHosts(
+      world_, fc, config_.schedule, config_.simulation.random_seed,
+      active_follow_hosts_, follower_host_, day,
+      cross_rank ? &remote_invites : nullptr, fc.log ? &new_follows : nullptr);
+#ifdef USE_MPI
+  if (cross_rank)
+    applyFollowInvites(remote_invites, world_, follower_host_,
+                       fc.log ? &new_follows : nullptr);
+#endif
+
+  // Log each newly-established follow on the follower's rank (single log; event
+  // shards merge at run end). group_id = host_id groups a host's whole travel
+  // party; the follow encounter_type distinguishes these rows from coordinated
+  // encounters.
+  if (fc.log) {
+    for (const auto& [follower, host] : new_follows)
+      event_logger_.logCoordinatedEncounter(
+          host, follower, current_simulation_time_, fc.encounter_type_id,
+          time_slot_index, static_cast<uint64_t>(host));
+  }
+
+  // 2. Which hosts are still on a hop this slot, and where? Local hosts come
+  //    from locations_; remote (network) hosts from a broadcast. A local host
+  //    whose hop ended is dropped from active_follow_hosts_ so it stops being
+  //    broadcast and its followers get released below.
+  std::unordered_map<PersonId, std::pair<VenueId, SubsetIndex>> host_loc;
+  std::unordered_set<PersonId> active_now;
+  for (auto it = active_follow_hosts_.begin();
+       it != active_follow_hosts_.end();) {
+    auto hi = world_.person_index.find(*it);
+    bool live = hi != world_.person_index.end() &&
+                world_.people[hi->second].schedule_hop.isActive();
+    if (!live) {
+      it = active_follow_hosts_.erase(it);
+      continue;
+    }
+    active_now.insert(*it);
+    const PersonLocation& hl = locations_[hi->second];
+    if (hl.venue_id >= 0) host_loc[*it] = {hl.venue_id, hl.subset_index};
+    ++it;
+  }
+#ifdef USE_MPI
+  if (cross_rank)
+    broadcastHostLocations(active_follow_hosts_, world_, locations_, host_loc,
+                           active_now);
+#endif
+
+  // 3. Release followers whose host is no longer on a hop anywhere.
+  int released = 0;
+  for (auto f = follower_host_.begin(); f != follower_host_.end();) {
+    if (!active_now.count(f->second)) {
+      f = follower_host_.erase(f);
+      ++released;
+    } else {
+      ++f;
+    }
+  }
+
+  // 4. Mirror each follower onto its host's location for this slot.
+  int mirrored = 0;
+  for (const auto& [follower, host] : follower_host_) {
+    auto fi = world_.person_index.find(follower);
+    if (fi == world_.person_index.end() || world_.people[fi->second].is_dead)
+      continue;
+    auto hl = host_loc.find(host);
+    if (hl == host_loc.end()) continue;  // host active but no venue this slot
+
+    PersonLocation& floc = locations_[fi->second];
+    // The follower's own policy wins. If a policy would move them (sick and
+    // sent home, say), leave them where the policy put them.
+    if (policy_manager_ &&
+        policy_manager_
+            ->getOverride(world_.people[fi->second], floc.activity_index,
+                          floc.venue_id, floc.subset_index,
+                          current_simulation_time_, time_slot_index)
+            .has_value())
+      continue;
+
+    // Copy the host's (venue, subset). The host resolved the subset against
+    // this venue, so it is valid there and identical at any rank count.
+    floc.venue_id = hl->second.first;
+    floc.encounter_type_id = fc.encounter_type_id;
+    floc.subset_index = hl->second.second;
+    ++mirrored;
+
+    if (dbg && sample_n) {
+      if (static_cast<int>(sampled.size()) < sample_n) sampled.insert(follower);
+      if (sampled.count(follower))
+        std::cerr << "[FOLLOW/trace] day " << day << " slot " << time_slot_index
+                  << ": follower " << follower << " at host " << host
+                  << " venue " << floc.venue_id << " subset "
+                  << floc.subset_index << "\n";
+    }
+  }
+
+  if (dbg)
+    std::cerr << "[FOLLOW] day " << day << " slot " << time_slot_index << ": +"
+              << new_hosts << " host(s)/" << new_followers << " follower(s), -"
+              << released << " released, " << follower_host_.size()
+              << " active, mirrored " << mirrored << "\n";
 }
 
 }  // namespace june

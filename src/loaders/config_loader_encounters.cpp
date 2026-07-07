@@ -330,6 +330,21 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
         return a.priority < b.priority;
       });
 
+  // Optional follow ("travel-together") block. Independent of the encounters
+  // above: it can be on even when coordinated_encounters.enabled is false.
+  if (ce_node["follow"]) {
+    const auto& fn = ce_node["follow"];
+    if (fn["enabled"]) config.follow.enabled = fn["enabled"].as<bool>();
+    if (fn["pool_venue_type"])
+      config.follow.pool_venue_type = fn["pool_venue_type"].as<std::string>();
+    if (fn["network"]) config.follow.network = fn["network"].as<std::string>();
+    if (fn["encounter_type"])
+      config.follow.encounter_type = fn["encounter_type"].as<std::string>();
+    if (fn["probability"])
+      config.follow.probability = fn["probability"].as<double>();
+    if (fn["log"]) config.follow.log = fn["log"].as<bool>();
+  }
+
   return config;
 }
 

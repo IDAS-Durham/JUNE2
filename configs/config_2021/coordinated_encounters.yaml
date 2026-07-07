@@ -2,6 +2,32 @@ coordinated_encounters:
   enabled: true
   log_commitments: true
 
+  # ---------------------------------------------------------------------------
+  # follow ("travel-together"): while a HOST is on a temporary schedule-hop (a
+  # trip), its followers are placed at the host's resolved venue every slot, for
+  # the whole trip. Disabled by default. It only fires when someone is actually
+  # on a hop, so a scenario needs a hop_on_activity somewhere (see the commented
+  # travel_trip in schedules.yaml). Independent of the encounters above.
+  #
+  #   Run: build/disease_sim worlds/world_2021.h5 --config <this simulation.yaml>
+  #   See it: prefix with JUNE_DEBUG_FOLLOW=1 (per-slot summary) or
+  #           JUNE_DEBUG_FOLLOW_SAMPLE=3 (trace 3 followers across their trip).
+  #
+  # Set EXACTLY ONE pool source:
+  #   pool_venue_type  — co-members of the host's venue of this type. Must be
+  #                      co-resident with the host (household); rank-local, no
+  #                      extra MPI cost.
+  #   network          — the host's partners in this network. Use this for pools
+  #                      that span domains (guild, workmates); enrolment + a
+  #                      per-slot host-location broadcast are routed across ranks.
+  #
+  # follow:
+  #   enabled: true
+  #   pool_venue_type: household     # OR:  network: friendships
+  #   probability: 1.0               # per-host chance to gather followers at hop start
+  #   encounter_type: ""             # optional log tag (falls back to 255)
+  #   log: false                     # log every follow at establishment (can be MANY rows)
+
   encounters:
     - name: "social_encounters"
       priority: 10

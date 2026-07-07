@@ -642,6 +642,23 @@ void CoordinatedEncounterManager::finalizeEncounters(
       final_ev.encounter_type_id = event_replies[0].encounter_type_id;
       final_ev.participants = attendees;
 
+      // Resolve the host's subset at the venue while the host is local (this
+      // rank hosts the encounter). Every participant adopts it at injection.
+      // Virtual venues (negative id) have no subsets, so leave it at -1.
+      if (final_ev.venue_id >= 0) {
+        if (const Person* h = world_.getPerson(final_ev.host_id)) {
+          for (const auto& meta : world_.getActivityMetas(*h)) {
+            for (const auto& vs : world_.getActivityVenues(meta)) {
+              if (vs.first == final_ev.venue_id) {
+                final_ev.host_subset_index = vs.second;
+                break;
+              }
+            }
+            if (final_ev.host_subset_index >= 0) break;
+          }
+        }
+      }
+
       out_finalized.push_back(final_ev);
       daily_encounters_.push_back(final_ev);
     }

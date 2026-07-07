@@ -56,7 +56,9 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
 void overlayShardManagerState(
     H5::H5File& f, const WorldState& world,
     std::unordered_map<PersonId, double>& lpt_map,
-    std::unordered_map<PersonId, FrozenPersonState>& frozen_accum) {
+    std::unordered_map<PersonId, FrozenPersonState>& frozen_accum,
+    std::unordered_map<PersonId, PersonId>& follow_accum,
+    std::unordered_set<PersonId>& active_host_accum) {
   const auto I32 = H5::PredType::NATIVE_INT32;
   const auto U8 = H5::PredType::NATIVE_UINT8;
   const auto F64 = H5::PredType::NATIVE_DOUBLE;
@@ -83,6 +85,19 @@ void overlayShardManagerState(
     st.pin_venue_id = fzv[i];
     st.pin_subset_index = fzs[i];
     frozen_accum[fzp[i]] = st;
+  }
+
+  // Follows: keep a relationship if THIS rank owns the follower, and a
+  // tried-host if it owns the host. Guarded so checkpoints predating the
+  // follow feature still restore.
+  if (H5Lexists(f.getId(), "/follow", H5P_DEFAULT) > 0) {
+    auto ff = readVec<int32_t>(f, "/follow/follower_id", I32);
+    auto fh = readVec<int32_t>(f, "/follow/host_id", I32);
+    for (size_t i = 0; i < ff.size(); ++i)
+      if (world.getPerson(ff[i])) follow_accum[ff[i]] = fh[i];
+    auto ah = readVec<int32_t>(f, "/follow/active_host_id", I32);
+    for (int32_t h : ah)
+      if (world.getPerson(h)) active_host_accum.insert(h);
   }
 }
 
@@ -347,9 +362,11 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
 
   restoreCheckpointStateFile(cp);
 
-  // frozen_states_ + lpt are per-rank: accumulated from the shards below.
+  // frozen_states_ + lpt + follows are per-rank: accumulated from the shards.
   std::unordered_map<PersonId, double> lpt_map;
   std::unordered_map<PersonId, FrozenPersonState> frozen_accum;
+  std::unordered_map<PersonId, PersonId> follow_accum;
+  std::unordered_set<PersonId> active_host_accum;
 
   // ---- delta shards: overlay onto this rank's owned world_ by global id ----
   YAML::Node si = YAML::LoadFile((cp / "shard_index.yaml").string());
@@ -364,12 +381,15 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     n_inf += overlayShardInfection(f, world_, disease_.get());
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
     n_fom += overlayShardFomite(f, world_);
-    overlayShardManagerState(f, world_, lpt_map, frozen_accum);
+    overlayShardManagerState(f, world_, lpt_map, frozen_accum, follow_accum,
+                             active_host_accum);
     overlayShardCalendarEvents(f, world_, ce_snap);
   }
   calendar_event_manager_.restore(std::move(ce_snap));
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
+  follower_host_ = std::move(follow_accum);
+  active_follow_hosts_ = std::move(active_host_accum);
 
   // ---- rebuild derived caches; set resume point ----
   if (epidemiology_) epidemiology_->restoreAfterCheckpoint(lpt_map);

@@ -310,6 +310,28 @@ void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
   writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
 }
 
+// Follow relationships + tried-hosts. follower_host_ is keyed by (local)
+// follower, active_follow_hosts_ by (local) host. Per-rank global-id-keyed
+// manager state, so it lives in the shard and a resume at a different rank
+// count keeps every rank's entries. Both are needed: restoring the
+// relationships alone would let a still-active host re-attach a follower that
+// had been released mid-trip, which the uninterrupted run does not do.
+void writeShardFollows(
+    H5::H5File& f, const std::unordered_map<PersonId, PersonId>& follower_host,
+    const std::unordered_set<PersonId>& active_hosts, int comp) {
+  std::vector<int32_t> f_follower, f_host, active;
+  for (const auto& [follower, host] : follower_host) {
+    f_follower.push_back(static_cast<int32_t>(follower));
+    f_host.push_back(static_cast<int32_t>(host));
+  }
+  for (PersonId h : active_hosts) active.push_back(static_cast<int32_t>(h));
+  const auto I32 = H5::PredType::NATIVE_INT32;
+  f.createGroup("/follow");
+  writeVec(f, "/follow/follower_id", f_follower, I32, comp);
+  writeVec(f, "/follow/host_id", f_host, I32, comp);
+  writeVec(f, "/follow/active_host_id", active, I32, comp);
+}
+
 void writeShardCalendarEvents(H5::H5File& f,
                               const CalendarEventManager::Snapshot& snap,
                               int comp) {
@@ -523,6 +545,7 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
 
   writeShardEpidemiology(f, epidemiology_.get(), comp);
   writeShardFrozenStates(f, policy_manager_.get(), comp);
+  writeShardFollows(f, follower_host_, active_follow_hosts_, comp);
   writeShardCalendarEvents(f, calendar_event_manager_.snapshot_for_checkpoint(),
                            comp);
 

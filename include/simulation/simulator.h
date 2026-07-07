@@ -175,6 +175,16 @@ class Simulator {
   // onto every eligible participant's PersonLocation.
   void injectCoordinatedEncountersIntoSlot(int time_slot_index);
 
+  // Travel-together: while a host stays on a schedule-hop, each of its
+  // followers is placed at the host's resolved venue for the slot. Runs right
+  // after encounter injection so the host's location for this slot is already
+  // settled. follower_host_ maps a follower to the host it shadows;
+  // active_follow_hosts_ is the set of hosts we have already tried to enrol for
+  // (so a host does not re-roll its pool every slot of the same trip).
+  void injectFollowsIntoSlot(int time_slot_index);
+  std::unordered_map<PersonId, PersonId> follower_host_;
+  std::unordered_set<PersonId> active_follow_hosts_;
+
   // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
   // (symptom transitions / recoveries / deaths) and then decay the venue
   // fomite buffer for this slot. Both wrapped in try/catch with a Fatal
