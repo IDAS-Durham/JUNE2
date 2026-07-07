@@ -24,13 +24,10 @@ void WorldState::buildIndices() {
     } else {
       venues_by_type["unknown"].push_back(i);
     }
-    // Populate global_venue_type_map for local venues. In MPI mode the HDF5
-    // loader pre-populates this from ALL venues; here we ensure local venues
-    // are always present, including in tests/serial mode.
-    if (global_venue_type_map.find(venues[i].id) ==
-        global_venue_type_map.end()) {
-      global_venue_type_map[venues[i].id] = venues[i].type_id;
-    }
+    // global_venue_type_map is not populated for local venues: getVenueTypeId()
+    // resolves them via getVenue() first, so the map only ever needs the
+    // foreign halo (filled by the HDF5 loader's buildGlobalVenueMaps in MPI
+    // mode).
   }
 
   for (size_t i = 0; i < geo_units.size(); ++i) {
@@ -153,6 +150,19 @@ GeoUnitId WorldState::ancestorAtLevel(GeoUnitId id,
     current = gu.parent_id;
   }
   return -1;
+}
+
+void WorldState::dropGlobalVenueMaps() {
+  size_t by_type_venues = 0;
+  for (auto& [k, v] : global_venues_by_type_name) by_type_venues += v.size();
+  std::cerr << "[HALO] freeing OTF maps: geo_unit_map_entries="
+            << global_venue_geo_unit_map.size()
+            << " by_type_name_venue_entries=" << by_type_venues
+            << " (type_map kept, entries=" << global_venue_type_map.size()
+            << ")\n";
+  std::unordered_map<VenueId, GeoUnitId>().swap(global_venue_geo_unit_map);
+  std::unordered_map<std::string, std::vector<VenueId>>().swap(
+      global_venues_by_type_name);
 }
 
 std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {

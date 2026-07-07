@@ -107,6 +107,13 @@ std::optional<GeoUnitId> CalendarEventManager::getActiveHostingGeoUnit(
   return gid;
 }
 
+std::vector<GeoUnitId> CalendarEventManager::hostingGeoUnits() const {
+  std::vector<GeoUnitId> gs;
+  for (const auto& [id, ev] : events_by_id_)
+    if (ev->hosting_geo_unit_id >= 0) gs.push_back(ev->hosting_geo_unit_id);
+  return gs;
+}
+
 CalendarEventManager::Snapshot CalendarEventManager::snapshot_for_checkpoint()
     const {
   return {active_event_};
