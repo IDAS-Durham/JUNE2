@@ -20,7 +20,7 @@ config_paths:
   # calendar_event_catchment_rules_file: "data/calendar_event_catchment_rules.csv"
 
 #Random seeds for reproducibility
-#random_seed: 12345
+random_seed: 12345
 
 output:
     stats_interval_days: 1
