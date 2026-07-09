@@ -3,30 +3,39 @@ coordinated_encounters:
   log_commitments: true
 
   # ---------------------------------------------------------------------------
-  # follow ("travel-together"): while a HOST is on a temporary schedule-hop (a
-  # trip), its followers are placed at the host's resolved venue every slot, for
-  # the whole trip. Disabled by default. It only fires when someone is actually
-  # on a hop, so a scenario needs a hop_on_activity somewhere (see the commented
-  # travel_trip in schedules.yaml). Independent of the encounters above.
+  # follow: a FOLLOWER is placed wherever its HOST resolves each slot, reusing
+  # the injection overlay. Disabled by default; independent of the encounters
+  # above. It has three axes: the pool a host's followers come from, how a
+  # binding forms (establishment), and how long it lasts (span).
   #
-  #   Run: build/disease_sim worlds/world_2021.h5 --config <this simulation.yaml>
-  #   See it: prefix with JUNE_DEBUG_FOLLOW=1 (per-slot summary) or
-  #           JUNE_DEBUG_FOLLOW_SAMPLE=3 (trace 3 followers across their trip).
-  #
-  # Set EXACTLY ONE pool source:
-  #   pool_venue_type  — co-members of the host's venue of this type. Must be
-  #                      co-resident with the host (household); rank-local, no
-  #                      extra MPI cost.
-  #   network          — the host's partners in this network. Use this for pools
-  #                      that span domains (guild, workmates); enrolment + a
-  #                      per-slot host-location broadcast are routed across ranks.
+  # Pool — set EXACTLY ONE:
+  #   pool_venue_type  — co-members of the host's venue of this type. Co-resident
+  #                      with the host (household); rank-local, no extra MPI cost.
+  #   network          — the host's partners in this network. Spans domains;
+  #                      enrolment + a per-slot host-location broadcast are routed
+  #                      across ranks.
   #
   # follow:
   #   enabled: true
   #   pool_venue_type: household     # OR:  network: friendships
-  #   probability: 1.0               # per-host chance to gather followers at hop start
+  #
+  #   establishment: stochastic      # stochastic | criteria  (default stochastic)
+  #   probability: 1.0               # stochastic: per-host chance to gather followers
+  #   eligibility:                   # criteria: who is a follower
+  #     max_age: 5                   #   omit a bound to ignore it
+  #     # min_age: 18
+  #     # require_property: needs_care
+  #   host_eligibility:              # criteria + venue only: who may be a host
+  #     min_age: 18                  #   (rejected with a network pool)
+  #
+  #   span: hop                      # hop | standing  (default hop; hop needs a
+  #                                  # hop_on_activity, see schedules.yaml)
+  #
+  #   activity_exceptions: [medical_facility]  # host activities that stop mirroring
+  #   venue_exceptions:    [gym]               # host venue types that stop mirroring
+  #
   #   encounter_type: ""             # optional log tag (falls back to 255)
-  #   log: false                     # log every follow at establishment (can be MANY rows)
+  #   log: false                     # log every follow when it forms (can be MANY rows)
 
   encounters:
     - name: "social_encounters"

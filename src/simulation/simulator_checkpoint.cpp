@@ -545,7 +545,12 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
 
   writeShardEpidemiology(f, epidemiology_.get(), comp);
   writeShardFrozenStates(f, policy_manager_.get(), comp);
-  writeShardFollows(f, follower_host_, active_follow_hosts_, comp);
+  // Only stochastic bindings need saving. A criteria binding is derived from a
+  // deterministic rule with no randomness, so it rebuilds itself on the first
+  // slot after a resume and writing it would be redundant.
+  if (config_.coordinated_encounters.follow.establishment ==
+      FollowConfig::Establishment::Stochastic)
+    writeShardFollows(f, follower_host_, active_follow_hosts_, comp);
   writeShardCalendarEvents(f, calendar_event_manager_.snapshot_for_checkpoint(),
                            comp);
 

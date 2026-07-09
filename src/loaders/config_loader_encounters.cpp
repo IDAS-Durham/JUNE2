@@ -330,8 +330,8 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
         return a.priority < b.priority;
       });
 
-  // Optional follow ("travel-together") block. Independent of the encounters
-  // above: it can be on even when coordinated_encounters.enabled is false.
+  // Optional follow block. Independent of the encounters above: it can be on
+  // even when coordinated_encounters.enabled is false.
   if (ce_node["follow"]) {
     const auto& fn = ce_node["follow"];
     if (fn["enabled"]) config.follow.enabled = fn["enabled"].as<bool>();
@@ -343,6 +343,49 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
     if (fn["probability"])
       config.follow.probability = fn["probability"].as<double>();
     if (fn["log"]) config.follow.log = fn["log"].as<bool>();
+
+    if (fn["establishment"]) {
+      std::string e = fn["establishment"].as<std::string>();
+      if (e == "stochastic")
+        config.follow.establishment = FollowConfig::Establishment::Stochastic;
+      else if (e == "criteria")
+        config.follow.establishment = FollowConfig::Establishment::Criteria;
+      else
+        throw std::runtime_error(
+            "follow.establishment must be 'stochastic' "
+            "or 'criteria', got '" +
+            e + "'");
+    }
+    if (fn["span"]) {
+      std::string s = fn["span"].as<std::string>();
+      if (s == "hop")
+        config.follow.span = FollowConfig::Span::Hop;
+      else if (s == "standing")
+        config.follow.span = FollowConfig::Span::Standing;
+      else
+        throw std::runtime_error(
+            "follow.span must be 'hop' or 'standing', got '" + s + "'");
+    }
+
+    auto parsePredicate = [](const YAML::Node& n) {
+      EligPredicate p;
+      if (n["min_age"]) p.min_age = n["min_age"].as<double>();
+      if (n["max_age"]) p.max_age = n["max_age"].as<double>();
+      if (n["require_property"])
+        p.property = n["require_property"].as<std::string>();
+      return p;
+    };
+    if (fn["eligibility"])
+      config.follow.follower = parsePredicate(fn["eligibility"]);
+    if (fn["host_eligibility"])
+      config.follow.host = parsePredicate(fn["host_eligibility"]);
+
+    if (fn["activity_exceptions"])
+      for (const auto& a : fn["activity_exceptions"])
+        config.follow.activity_exceptions.push_back(a.as<std::string>());
+    if (fn["venue_exceptions"])
+      for (const auto& m : fn["venue_exceptions"])
+        config.follow.venue_exceptions.push_back(m.as<std::string>());
   }
 
   return config;

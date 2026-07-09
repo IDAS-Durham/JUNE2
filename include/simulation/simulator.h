@@ -175,15 +175,19 @@ class Simulator {
   // onto every eligible participant's PersonLocation.
   void injectCoordinatedEncountersIntoSlot(int time_slot_index);
 
-  // Travel-together: while a host stays on a schedule-hop, each of its
-  // followers is placed at the host's resolved venue for the slot. Runs right
-  // after encounter injection so the host's location for this slot is already
-  // settled. follower_host_ maps a follower to the host it shadows;
-  // active_follow_hosts_ is the set of hosts we have already tried to enrol for
-  // (so a host does not re-roll its pool every slot of the same trip).
+  // Follow: each slot, every follower is placed at the venue its host resolved
+  // to. Runs right after encounter injection so the host's location for the
+  // slot is already settled. follower_host_ maps a follower to the host it
+  // shadows; active_follow_hosts_ is the set of hosts currently bound (for a
+  // stochastic trip this is the hosts already enrolled so they do not re-roll
+  // each slot; for a criteria binding it is who a rebuild last picked).
   void injectFollowsIntoSlot(int time_slot_index);
   std::unordered_map<PersonId, PersonId> follower_host_;
   std::unordered_set<PersonId> active_follow_hosts_;
+  // Last day the criteria bindings were rebuilt. Starts at -1 so a fresh or
+  // just-restored run rebuilds on its first slot; not saved in a checkpoint,
+  // which is what makes a criteria binding derive itself again after a resume.
+  int follow_day_ = -1;
 
   // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
   // (symptom transitions / recoveries / deaths) and then decay the venue

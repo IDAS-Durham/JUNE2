@@ -767,30 +767,77 @@ struct FrequencyGroup {
   std::vector<FrequencyRow> rows;
 };
 
-// A follower travels with a host while the host is on a schedule-hop (a trip):
-// each slot the follower is placed wherever the host ends up. The people a host
-// can invite are the co-members of one of its venues, whose type is named in
-// config. Nothing here is tied to a specific venue.
+// A follower is placed wherever a host ends up, every slot they are bound. The
+// subsystem has three independent knobs: which pool a host's followers come
+// from, how the binding forms (establishment), and how long it lasts (span).
+
+// A conjunctive test over a person's demographics and properties. Used on both
+// sides of criteria establishment: once to decide who is a follower, once to
+// decide who may be their host. Every bound that is set must hold; a bound left
+// unset is ignored, so an empty predicate matches everyone.
+struct EligPredicate {
+  double min_age = -1.0;  // require age >= min_age when >= 0
+  double max_age = -1.0;  // require age <  max_age when >= 0
+  std::string property;   // require this property to be present when non-empty
+  int property_idx = -1;  // resolved index into the person-property registry
+  bool empty() const {
+    return min_age < 0 && max_age < 0 && property.empty();
+  }
+  bool matches(const WorldState& world, const Person& p) const;
+};
+
 struct FollowConfig {
   bool enabled = false;
-  // Exactly one pool source. venue co-members must be co-resident with the host
-  // (e.g. household) so enrolment stays rank-local; a network draws the host's
-  // own partner list, whose members may live in other domains (guild,
-  // workmates) and are enrolled/mirrored across ranks.
-  std::string
-      pool_venue_type;  // enrol co-members of the host's venue of this type
-  std::string network;  // OR enrol the host's partners in this network
+
+  // Pool. Set exactly one. Venue co-members must live with the host (a
+  // household), so the pool is entirely on the host's rank and needs no
+  // messaging. A network draws the host's partner list, whose members can live
+  // in other domains, so enrolment and mirroring are routed across ranks.
+  std::string pool_venue_type;  // co-members of the host's venue of this type
+  std::string network;          // OR the host's partners in this network
+
+  // Establishment: how a follower binds to a host. Stochastic rolls a per-host
+  // probability, keyed so the outcome is the same at any rank count. Criteria
+  // uses the two predicates below instead, with no randomness, so the binding
+  // can be recomputed from scratch and never needs to be saved in a checkpoint.
+  enum class Establishment { Stochastic, Criteria };
+  Establishment establishment = Establishment::Stochastic;
+  double probability = 1.0;  // stochastic only: per-host chance to enrol
+  EligPredicate follower;    // criteria only: who becomes a follower
+  EligPredicate host;        // criteria only: who may serve as their host
+
+  // Span: how long a binding survives. Hop lasts one of the host's trips and
+  // ends when the host returns. Standing is re-checked each day and lasts until
+  // the follower or host stops qualifying (a death, say).
+  enum class Span { Hop, Standing };
+  Span span = Span::Hop;
+
+  // Two ways to stop mirroring for a slot, both looking at where the host is
+  // going and both meaning "the follower keeps its own schedule this slot". They
+  // are combined with OR. activity_exceptions lists host activities: an infant
+  // does not trail a parent to work (primary_activity) or onto a ward when the
+  // parent is a patient (medical_facility), while a parent sent home sick
+  // (residence) is still followed. venue_exceptions lists host venue types, the
+  // cut activity cannot make since one activity reaches many venues: leisure
+  // reaches a cinema, a gym and a grocery, so "follow to the cinema but not the
+  // gym" can only be said as a venue type.
+  std::vector<std::string> activity_exceptions;
+  std::vector<std::string> venue_exceptions;
+
   std::string encounter_type;  // tag stamped on a follower's mirrored location
-  double probability =
-      1.0;           // per-host chance to enrol followers when a hop starts
-  bool log = false;  // log each follow at establishment (can be many)
-  // Resolved against the World registry in
-  // CoordinatedEncounterConfig::resolve():
+  bool log = false;            // log each follow when it forms (can be many)
+
+  // Filled in by CoordinatedEncounterConfig::resolve against the world:
   int pool_venue_type_id = -1;
   int network_idx = -1;
   uint8_t encounter_type_id = 255;
+  std::vector<int16_t> activity_exception_ids;
+  std::vector<uint8_t> venue_exception_type_ids;
 
   bool usesNetwork() const { return !network.empty(); }
+  bool usesCriteria() const {
+    return establishment == Establishment::Criteria;
+  }
 };
 
 struct CoordinatedEncounterConfig {
