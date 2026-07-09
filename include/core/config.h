@@ -780,14 +780,17 @@ struct EligPredicate {
   double max_age = -1.0;  // require age <  max_age when >= 0
   std::string property;   // require this property to be present when non-empty
   int property_idx = -1;  // resolved index into the person-property registry
-  bool empty() const {
-    return min_age < 0 && max_age < 0 && property.empty();
-  }
+  bool empty() const { return min_age < 0 && max_age < 0 && property.empty(); }
   bool matches(const WorldState& world, const Person& p) const;
 };
 
 struct FollowConfig {
   bool enabled = false;
+
+  // A short label for this rule, unique within the follows list. It defaults to
+  // the rule's position and names its checkpoint shard, so it must be a valid
+  // HDF5 group token (non-empty, no '/').
+  std::string name;
 
   // Pool. Set exactly one. Venue co-members must live with the host (a
   // household), so the pool is entirely on the host's rank and needs no
@@ -813,14 +816,14 @@ struct FollowConfig {
   Span span = Span::Hop;
 
   // Two ways to stop mirroring for a slot, both looking at where the host is
-  // going and both meaning "the follower keeps its own schedule this slot". They
-  // are combined with OR. activity_exceptions lists host activities: an infant
-  // does not trail a parent to work (primary_activity) or onto a ward when the
-  // parent is a patient (medical_facility), while a parent sent home sick
-  // (residence) is still followed. venue_exceptions lists host venue types, the
-  // cut activity cannot make since one activity reaches many venues: leisure
-  // reaches a cinema, a gym and a grocery, so "follow to the cinema but not the
-  // gym" can only be said as a venue type.
+  // going and both meaning "the follower keeps its own schedule this slot".
+  // They are combined with OR. activity_exceptions lists host activities: an
+  // infant does not trail a parent to work (primary_activity) or onto a ward
+  // when the parent is a patient (medical_facility), while a parent sent home
+  // sick (residence) is still followed. venue_exceptions lists host venue
+  // types, the cut activity cannot make since one activity reaches many venues:
+  // leisure reaches a cinema, a gym and a grocery, so "follow to the cinema but
+  // not the gym" can only be said as a venue type.
   std::vector<std::string> activity_exceptions;
   std::vector<std::string> venue_exceptions;
 
@@ -835,9 +838,7 @@ struct FollowConfig {
   std::vector<uint8_t> venue_exception_type_ids;
 
   bool usesNetwork() const { return !network.empty(); }
-  bool usesCriteria() const {
-    return establishment == Establishment::Criteria;
-  }
+  bool usesCriteria() const { return establishment == Establishment::Criteria; }
 };
 
 struct CoordinatedEncounterConfig {
@@ -845,7 +846,9 @@ struct CoordinatedEncounterConfig {
   bool log_commitments = false;
   std::vector<CoordinatedEncounterDef> encounters;
   std::unordered_map<std::string, FrequencyGroup> frequency_groups;
-  FollowConfig follow;
+  // Follow rules, resolved in list order. A scenario writes either a single
+  // `follow:` block (sugar for a one-element list) or a `follows:` sequence.
+  std::vector<FollowConfig> follows;
 
   void resolve(WorldState& world, ContactMatrixConfig& contact_matrices);
 };

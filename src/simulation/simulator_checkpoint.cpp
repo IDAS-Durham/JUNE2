@@ -310,14 +310,17 @@ void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
   writeVec(f, "/policy_frozen_states/pin_subset_index", fz_subset, I32, comp);
 }
 
-// Follow relationships + tried-hosts. follower_host_ is keyed by (local)
-// follower, active_follow_hosts_ by (local) host. Per-rank global-id-keyed
+// Follow relationships + tried-hosts, for one rule. follower_host is keyed by
+// (local) follower, active_hosts by (local) host. Per-rank global-id-keyed
 // manager state, so it lives in the shard and a resume at a different rank
 // count keeps every rank's entries. Both are needed: restoring the
 // relationships alone would let a still-active host re-attach a follower that
-// had been released mid-trip, which the uninterrupted run does not do.
+// had been released mid-trip, which the uninterrupted run does not do. Several
+// rules can be active at once, so each stochastic rule writes under its own
+// name below the shared `/follow` group.
 void writeShardFollows(
-    H5::H5File& f, const std::unordered_map<PersonId, PersonId>& follower_host,
+    H5::H5File& f, const std::string& name,
+    const std::unordered_map<PersonId, PersonId>& follower_host,
     const std::unordered_set<PersonId>& active_hosts, int comp) {
   std::vector<int32_t> f_follower, f_host, active;
   for (const auto& [follower, host] : follower_host) {
@@ -326,10 +329,13 @@ void writeShardFollows(
   }
   for (PersonId h : active_hosts) active.push_back(static_cast<int32_t>(h));
   const auto I32 = H5::PredType::NATIVE_INT32;
-  f.createGroup("/follow");
-  writeVec(f, "/follow/follower_id", f_follower, I32, comp);
-  writeVec(f, "/follow/host_id", f_host, I32, comp);
-  writeVec(f, "/follow/active_host_id", active, I32, comp);
+  if (H5Lexists(f.getId(), "/follow", H5P_DEFAULT) <= 0)
+    f.createGroup("/follow");
+  const std::string g = "/follow/" + name;
+  f.createGroup(g);
+  writeVec(f, g + "/follower_id", f_follower, I32, comp);
+  writeVec(f, g + "/host_id", f_host, I32, comp);
+  writeVec(f, g + "/active_host_id", active, I32, comp);
 }
 
 void writeShardCalendarEvents(H5::H5File& f,
@@ -547,10 +553,17 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
   writeShardFrozenStates(f, policy_manager_.get(), comp);
   // Only stochastic bindings need saving. A criteria binding is derived from a
   // deterministic rule with no randomness, so it rebuilds itself on the first
-  // slot after a resume and writing it would be redundant.
-  if (config_.coordinated_encounters.follow.establishment ==
-      FollowConfig::Establishment::Stochastic)
-    writeShardFollows(f, follower_host_, active_follow_hosts_, comp);
+  // slot after a resume and writing it would be redundant. Each stochastic rule
+  // writes its own shard, named after the rule.
+  {
+    const auto& rules = config_.coordinated_encounters.follows;
+    for (size_t ri = 0; ri < rules.size() && ri < follow_state_.size(); ++ri) {
+      if (rules[ri].establishment != FollowConfig::Establishment::Stochastic)
+        continue;
+      writeShardFollows(f, rules[ri].name, follow_state_[ri].follower_host,
+                        follow_state_[ri].active_hosts, comp);
+    }
+  }
   writeShardCalendarEvents(f, calendar_event_manager_.snapshot_for_checkpoint(),
                            comp);
 

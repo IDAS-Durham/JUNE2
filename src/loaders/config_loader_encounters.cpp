@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "loaders/config_loader.h"
 #include "loaders/config_loader_detail.h"
@@ -330,62 +331,87 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
         return a.priority < b.priority;
       });
 
-  // Optional follow block. Independent of the encounters above: it can be on
-  // even when coordinated_encounters.enabled is false.
-  if (ce_node["follow"]) {
-    const auto& fn = ce_node["follow"];
-    if (fn["enabled"]) config.follow.enabled = fn["enabled"].as<bool>();
+  // Optional follow rules. Independent of the encounters above: they work even
+  // when coordinated_encounters.enabled is false. A scenario writes either a
+  // single `follow:` block (sugar for one rule) or a `follows:` sequence, never
+  // both. Each rule resolves independently in list order.
+  auto parsePredicate = [](const YAML::Node& n) {
+    EligPredicate p;
+    if (n["min_age"]) p.min_age = n["min_age"].as<double>();
+    if (n["max_age"]) p.max_age = n["max_age"].as<double>();
+    if (n["require_property"])
+      p.property = n["require_property"].as<std::string>();
+    return p;
+  };
+  auto parseFollowRule = [&](const YAML::Node& fn) {
+    FollowConfig f;
+    if (fn["name"]) f.name = fn["name"].as<std::string>();
+    if (fn["enabled"]) f.enabled = fn["enabled"].as<bool>();
     if (fn["pool_venue_type"])
-      config.follow.pool_venue_type = fn["pool_venue_type"].as<std::string>();
-    if (fn["network"]) config.follow.network = fn["network"].as<std::string>();
+      f.pool_venue_type = fn["pool_venue_type"].as<std::string>();
+    if (fn["network"]) f.network = fn["network"].as<std::string>();
     if (fn["encounter_type"])
-      config.follow.encounter_type = fn["encounter_type"].as<std::string>();
-    if (fn["probability"])
-      config.follow.probability = fn["probability"].as<double>();
-    if (fn["log"]) config.follow.log = fn["log"].as<bool>();
+      f.encounter_type = fn["encounter_type"].as<std::string>();
+    if (fn["probability"]) f.probability = fn["probability"].as<double>();
+    if (fn["log"]) f.log = fn["log"].as<bool>();
 
     if (fn["establishment"]) {
       std::string e = fn["establishment"].as<std::string>();
       if (e == "stochastic")
-        config.follow.establishment = FollowConfig::Establishment::Stochastic;
+        f.establishment = FollowConfig::Establishment::Stochastic;
       else if (e == "criteria")
-        config.follow.establishment = FollowConfig::Establishment::Criteria;
+        f.establishment = FollowConfig::Establishment::Criteria;
       else
         throw std::runtime_error(
-            "follow.establishment must be 'stochastic' "
-            "or 'criteria', got '" +
+            "follow.establishment must be 'stochastic' or 'criteria', got '" +
             e + "'");
     }
     if (fn["span"]) {
       std::string s = fn["span"].as<std::string>();
       if (s == "hop")
-        config.follow.span = FollowConfig::Span::Hop;
+        f.span = FollowConfig::Span::Hop;
       else if (s == "standing")
-        config.follow.span = FollowConfig::Span::Standing;
+        f.span = FollowConfig::Span::Standing;
       else
         throw std::runtime_error(
             "follow.span must be 'hop' or 'standing', got '" + s + "'");
     }
 
-    auto parsePredicate = [](const YAML::Node& n) {
-      EligPredicate p;
-      if (n["min_age"]) p.min_age = n["min_age"].as<double>();
-      if (n["max_age"]) p.max_age = n["max_age"].as<double>();
-      if (n["require_property"])
-        p.property = n["require_property"].as<std::string>();
-      return p;
-    };
-    if (fn["eligibility"])
-      config.follow.follower = parsePredicate(fn["eligibility"]);
-    if (fn["host_eligibility"])
-      config.follow.host = parsePredicate(fn["host_eligibility"]);
+    if (fn["eligibility"]) f.follower = parsePredicate(fn["eligibility"]);
+    if (fn["host_eligibility"]) f.host = parsePredicate(fn["host_eligibility"]);
 
     if (fn["activity_exceptions"])
       for (const auto& a : fn["activity_exceptions"])
-        config.follow.activity_exceptions.push_back(a.as<std::string>());
+        f.activity_exceptions.push_back(a.as<std::string>());
     if (fn["venue_exceptions"])
       for (const auto& m : fn["venue_exceptions"])
-        config.follow.venue_exceptions.push_back(m.as<std::string>());
+        f.venue_exceptions.push_back(m.as<std::string>());
+    return f;
+  };
+
+  if (ce_node["follow"] && ce_node["follows"]) {
+    throw std::runtime_error(
+        "coordinated_encounters: set either 'follow' (one rule) or 'follows' "
+        "(a list), not both");
+  }
+  if (ce_node["follow"]) {
+    config.follows.push_back(parseFollowRule(ce_node["follow"]));
+  } else if (ce_node["follows"]) {
+    for (const auto& fn : ce_node["follows"])
+      config.follows.push_back(parseFollowRule(fn));
+  }
+
+  // A rule's name defaults to its position and keys its checkpoint shard, so it
+  // must be a valid HDF5 group token and unique across the list.
+  std::unordered_set<std::string> seen_names;
+  for (size_t i = 0; i < config.follows.size(); ++i) {
+    FollowConfig& f = config.follows[i];
+    if (f.name.empty()) f.name = std::to_string(i);
+    if (f.name.find('/') != std::string::npos)
+      throw std::runtime_error("follow rule name '" + f.name +
+                               "' must not contain '/'");
+    if (!seen_names.insert(f.name).second)
+      throw std::runtime_error("duplicate follow rule name '" + f.name + "'");
   }
 
   return config;

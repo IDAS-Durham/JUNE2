@@ -697,7 +697,9 @@ bool EligPredicate::matches(const WorldState& world, const Person& p) const {
 void CoordinatedEncounterConfig::resolve(
     WorldState& world, ContactMatrixConfig& contact_matrices) {
   // Follow is resolved first because it works even with encounters disabled.
-  if (follow.enabled) {
+  // Each rule in the list resolves independently against the world.
+  for (FollowConfig& follow : follows) {
+    if (!follow.enabled) continue;
     bool has_venue = !follow.pool_venue_type.empty();
     bool has_network = follow.usesNetwork();
     if (has_venue == has_network) {
