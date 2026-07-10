@@ -26,6 +26,11 @@ A `lookups/*` table (`people`, `venues`, `people_properties/*`,
 `population_summary`) that maps an id (`person_id`, `venue_id`) to static
 metadata about that entity. Loaded by `io/`, joined onto event tables by
 `enrich/`.
+`people_properties/*` is a special case: each property (`ethnicity`,
+`comorbidities`, etc.) is its own same-length dataset with no `person_id`
+column of its own — row *i* corresponds to row *i* of `lookups/people` by
+construction (both written from the same ordered iteration in the engine's
+event writer), not by an id join.
 
 **Registry**:
 An ordered list of strings under `metadata/registries/*` (e.g.

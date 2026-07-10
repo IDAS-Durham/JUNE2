@@ -160,11 +160,17 @@ def inspect_file(path: str) -> FileSummary
   `encounter_type_id`). Symptom id columns are `uint16`, so their unset value
   (if any) needs confirming against the engine before assuming `255` applies
   there too.
+- `chunk_threshold_bytes = 500_000_000` / `chunk_rows = 5_000_000` confirmed as
+  final defaults (Phase 2) — kept as a safety net per ADR-0004 even though no
+  in-scope table on any inspected run reaches the threshold.
+- `include_properties=True` on `load_people_lookup` attaches each
+  `lookups/people_properties/*` dataset as a column by row position, not by an
+  id join — confirmed against `src/utils/event_logging/event_writer_lookups.cpp`
+  (`writePersonLookupTable`), which writes `lookups/people` and every
+  `people_properties/*` dataset from the same ordered `world.people` iteration.
 
 ## Open questions
 
-- Exact `chunk_threshold_bytes` / `chunk_rows` defaults — proposed 500MB /
-  5,000,000 rows above; confirm or adjust during implementation.
 - Whether `symptom_id` columns (`uint16`) use `255` as their unset value or a
   different sentinel — needs a source check before `decode_registry_column`
   is used on them.
