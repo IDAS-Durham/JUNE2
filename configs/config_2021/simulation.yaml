@@ -26,6 +26,10 @@ output:
     stats_interval_days: 1
     flush_interval_days: 7
     max_event_buffer_size: 100000
+    # Largest H5 dataset; default off repo-wide. Kept on here so
+    # test_mpi_full_reproducibility.sh's coordinated_encounters check
+    # (E2) has a dataset to diff across rank counts.
+    save_coordinated_encounters: true
 
 #Regional Risk Factors
 regional_risk:

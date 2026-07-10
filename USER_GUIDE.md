@@ -98,6 +98,7 @@ output:
     stats_interval_days:   1
     flush_interval_days:   7
     max_event_buffer_size: 100000
+    save_coordinated_encounters: false
 
 regional_risk:
     enabled: false
@@ -110,6 +111,7 @@ regional_risk:
 | `random_seed` | Master RNG seed. Same seed + same world ⇒ bit-identical output (across MPI rank counts too). |
 | `output.stats_interval_days` | How often summary stats are written. |
 | `output.flush_interval_days` | How often the event buffer is flushed to HDF5. |
+| `output.save_coordinated_encounters` | Write coordinated encounters to `/events/coordinated_encounters`. Default `false` — it's the largest dataset in `simulation_events.h5` and rarely needed for analysis; encounters still happen and still drive transmission either way, only the H5 record is skipped. |
 | `regional_risk` | Optional per-geo multipliers on transmission and severity. |
 
 > **Paths** are resolved relative to the working directory you launched

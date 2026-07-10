@@ -174,6 +174,55 @@ TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
   }
 }
 
+TEST_CASE("SimulationConfig - save_coordinated_encounters parsed from output") {
+  SUBCASE("absent defaults to false") {
+    std::string yaml_path = "tmp_sim_output_no_sce.yaml";
+    {
+      std::ofstream f(yaml_path);
+      f << "time:\n"
+           "  start_date: \"2020-01-01\"\n"
+           "  end_date: \"2020-01-10\"\n"
+           "output:\n"
+           "  stats_interval_days: 1\n";
+    }
+    SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path);
+    CHECK(cfg.save_coordinated_encounters == false);
+    std::filesystem::remove(yaml_path);
+  }
+
+  SUBCASE("explicit true is honoured") {
+    std::string yaml_path = "tmp_sim_output_sce_true.yaml";
+    {
+      std::ofstream f(yaml_path);
+      f << "time:\n"
+           "  start_date: \"2020-01-01\"\n"
+           "  end_date: \"2020-01-10\"\n"
+           "output:\n"
+           "  stats_interval_days: 1\n"
+           "  save_coordinated_encounters: true\n";
+    }
+    SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path);
+    CHECK(cfg.save_coordinated_encounters == true);
+    std::filesystem::remove(yaml_path);
+  }
+
+  SUBCASE("explicit false is honoured") {
+    std::string yaml_path = "tmp_sim_output_sce_false.yaml";
+    {
+      std::ofstream f(yaml_path);
+      f << "time:\n"
+           "  start_date: \"2020-01-01\"\n"
+           "  end_date: \"2020-01-10\"\n"
+           "output:\n"
+           "  stats_interval_days: 1\n"
+           "  save_coordinated_encounters: false\n";
+    }
+    SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path);
+    CHECK(cfg.save_coordinated_encounters == false);
+    std::filesystem::remove(yaml_path);
+  }
+}
+
 TEST_CASE("ConfigLoader - Optional Files Handling") {
   SUBCASE("Missing vaccines file is optional and disables the module") {
     // Vaccines is the only truly-optional sub-config: a missing file means
