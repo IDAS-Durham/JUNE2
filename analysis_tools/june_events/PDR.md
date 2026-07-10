@@ -157,9 +157,11 @@ def inspect_file(path: str) -> FileSummary
   to discover what a given file actually contains.
 - Sentinels confirmed against `include/core/types.h`: `INFECTION_SEED_VENUE_ID
   = -999` (int32 `venue_id`), `255` (uint8 registry-index unset, e.g.
-  `encounter_type_id`). Symptom id columns are `uint16`, so their unset value
-  (if any) needs confirming against the engine before assuming `255` applies
-  there too.
+  `encounter_type_id`). `symptom_id`/`infector_symptom_id` (`uint16`) default
+  to `0` — a real registry index (`symptoms[0]`), not a sentinel — so
+  `decode_registry_column` is never called with an unset value on those
+  columns; `UNSET_REGISTRY_INDEX` only applies to uint8 registry indices like
+  `encounter_type_id`.
 - `chunk_threshold_bytes = 500_000_000` / `chunk_rows = 5_000_000` confirmed as
   final defaults (Phase 2) — kept as a safety net per ADR-0004 even though no
   in-scope table on any inspected run reaches the threshold.
@@ -171,9 +173,6 @@ def inspect_file(path: str) -> FileSummary
 
 ## Open questions
 
-- Whether `symptom_id` columns (`uint16`) use `255` as their unset value or a
-  different sentinel — needs a source check before `decode_registry_column`
-  is used on them.
 - `enrich_with_state_at_time`'s name/signature is a new generalisation (no
   existing precedent covers it) — worth re-checking once a second call site
   (e.g. deaths × infections) is written against it.
