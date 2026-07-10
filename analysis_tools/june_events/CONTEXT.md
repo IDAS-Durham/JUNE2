@@ -42,7 +42,11 @@ A reserved id/index value meaning "not applicable" rather than a real
 reference. Two conventions exist in the current schema: `venue_id == -999`
 (`INFECTION_SEED_VENUE_ID` in the engine) marks a seed infection with no
 venue; `255` marks an unset uint8 registry index (e.g. `encounter_type_id`).
-Both must be excluded before joins or registry decodes, not treated as data.
+The `255` registry sentinel must be excluded before a registry decode (see
+**Registry decode**), not treated as data. `-999` is different: `lookups/venues`
+carries a real row for `venue_id == -999` (`type == "infection_seed"`), so
+joining on it is not an error case — it resolves to a meaningful label, not
+`NaN`.
 
 **Registry decode**:
 Translating a registry-indexed column (e.g. `encounter_type_id`) into its

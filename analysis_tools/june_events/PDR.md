@@ -105,7 +105,12 @@ def decode_registry_column(
 ```python
 def enrich_with_people(event_df, people_lookup, prefix="person_") -> pd.DataFrame
 def enrich_with_venues(event_df, venues_lookup, prefix="venue_") -> pd.DataFrame
-    # left join; seed rows (venue_id == SEED_VENUE_ID) keep NaN venue_* columns by design
+    # left join on event_df["person_id"] / event_df["venue_id"] only (no
+    # id_column param this phase, e.g. no infector-side enrichment yet);
+    # venues_lookup carries a real venue_id == SEED_VENUE_ID row
+    # (type == "infection_seed"), so seed infections join naturally to a
+    # meaningful label rather than needing NaN-by-design special-casing;
+    # prefix applies to lookup's non-key columns only, not the id column itself
 ```
 
 `enrich/temporal.py`
@@ -118,7 +123,13 @@ def enrich_with_state_at_time(
     state_column: str = "new_symptom_id",
 ) -> pd.DataFrame
     # backward merge_asof; generalises the infector-symptom-at-infection
-    # pattern to any (id, time, state) triple
+    # pattern to any (id, time, state) triple. state_change_df's own person
+    # identifier is assumed to always be "person_id" (per CONTEXT.md's
+    # Lookup table convention) and is matched against event_df[id_column]
+    # internally — no separate parameter for it. Rows where the id had no
+    # state_change_df entry at or before time_column correctly get NaN
+    # (e.g. the id's current state was never logged as an explicit
+    # transition before this instant) rather than a fallback default.
 ```
 
 `inspect/types.py`
@@ -173,6 +184,11 @@ def inspect_file(path: str) -> FileSummary
 
 ## Open questions
 
-- `enrich_with_state_at_time`'s name/signature is a new generalisation (no
-  existing precedent covers it) — worth re-checking once a second call site
-  (e.g. deaths × infections) is written against it.
+None outstanding. `enrich_with_state_at_time`'s generalisation was confirmed
+against two call sites on real data: infector-symptom-at-infection
+(infections × symptom_changes, id_column="infector_id", >99% match against
+the engine's own infector_symptom_id where a prior state was logged; the
+remainder are correctly NaN — the infector's current state was never logged
+as an explicit transition before that instant) and deaths × symptom_changes
+(id_column="person_id", 100% coverage — every death is preceded by a logged
+symptom transition).
