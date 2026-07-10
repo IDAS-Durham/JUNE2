@@ -328,8 +328,9 @@ void Simulator::logFinalizedEncountersLocally(
     const std::vector<CoordinatedEncounter>& finalized, int rank) {
   // Skip before anything enters the EventLogger buffer, so disabling this
   // avoids the RAM cost too, not just the HDF5 write. Encounters still
-  // happen and still drive transmission (see injectCoordinatedEncountersIntoSlot);
-  // this only gates whether they're recorded to simulation_events.h5.
+  // happen and still drive transmission (see
+  // injectCoordinatedEncountersIntoSlot); this only gates whether they're
+  // recorded to simulation_events.h5.
   if (!config_.simulation.save_coordinated_encounters) return;
 
   // group_id fans one unique uint64 per real encounter across every pair-row

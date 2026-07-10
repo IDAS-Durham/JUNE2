@@ -148,7 +148,8 @@ TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
            "  end_date: \"2020-01-10\"\n"
            "config_paths:\n"
            "  calendar_events_file: \"data/calendar_events.csv\"\n"
-           "  calendar_event_catchment_rules_file: \"data/catchment_rules.csv\"\n";
+           "  calendar_event_catchment_rules_file: "
+           "\"data/catchment_rules.csv\"\n";
     }
     SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path);
     CHECK(cfg.calendar_events_file == "data/calendar_events.csv");
