@@ -28,3 +28,5 @@ tmp/
 /scripts/*
 !/scripts/setup_hooks.sh
 /tools
+__pycache__/
+.pytest_cache/
