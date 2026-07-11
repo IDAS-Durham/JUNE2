@@ -1,0 +1,58 @@
+#pragma once
+
+#include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "core/config.h"
+#include "core/types.h"
+#include "core/world_state.h"
+
+// Internal helpers of the follow subsystem, exposed here only so the follow
+// unit tests can drive the binding logic directly on a synthetic world. The
+// definitions live in simulator_encounters.cpp; nothing outside the simulator
+// and its tests should depend on them.
+namespace june {
+namespace follow_detail {
+
+// The host's venue of the given pool type, or -1 if it has none.
+VenueId findPoolVenue(const WorldState& world, const Person& host,
+                      int pool_venue_type_id);
+
+// The host's candidate pool: co-members of its venue of the configured type, or
+// its partners in the configured network. Returns global PersonIds.
+std::vector<PersonId> gatherPool(const WorldState& world,
+                                 const FollowConfig& fc, const Person& host);
+
+// A host's deterministic per-(seed, host, day) probability roll.
+bool hostRollsFollow(const FollowConfig& fc, uint64_t seed, PersonId host,
+                     int hop_start_day);
+
+// Rebuild the criteria bindings from scratch: every eligible person follows the
+// lowest-id host in its pool. follower_excl / host_excl are the people already
+// bound by an earlier rule (a follower is barred if in either; a host only if
+// in host_excl).
+void rebuildCriteriaBindings(
+    WorldState& world, const FollowConfig& fc,
+    std::unordered_map<PersonId, PersonId>& follower_host,
+    std::unordered_set<PersonId>& active_hosts,
+    std::vector<std::pair<PersonId, PersonId>>* remote_hosts,
+    std::unordered_map<PersonId, PersonId>* new_follows,
+    const std::unordered_set<PersonId>& follower_excl,
+    const std::unordered_set<PersonId>& host_excl);
+
+// Stochastic enrolment: each host rolls once and gathers followers from its
+// pool. Returns {hosts that gained followers, total local followers enrolled}.
+std::pair<int, int> enrolFollowHosts(
+    WorldState& world, const FollowConfig& fc, const ScheduleConfig& sched,
+    uint64_t seed, bool standing, std::unordered_set<PersonId>& active_hosts,
+    std::unordered_map<PersonId, PersonId>& follower_host, int current_day,
+    std::vector<std::pair<PersonId, PersonId>>* remote_invites,
+    std::unordered_map<PersonId, PersonId>* new_follows,
+    const std::unordered_set<PersonId>& follower_excl,
+    const std::unordered_set<PersonId>& host_excl);
+
+}  // namespace follow_detail
+}  // namespace june

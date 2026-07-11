@@ -5,37 +5,56 @@ coordinated_encounters:
   # ---------------------------------------------------------------------------
   # follow: a FOLLOWER is placed wherever its HOST resolves each slot, reusing
   # the injection overlay. Disabled by default; independent of the encounters
-  # above. It has three axes: the pool a host's followers come from, how a
+  # above. Each rule has three axes: the pool a host's followers come from, how a
   # binding forms (establishment), and how long it lasts (span).
   #
-  # Pool — set EXACTLY ONE:
+  # Pool — set EXACTLY ONE per rule:
   #   pool_venue_type  — co-members of the host's venue of this type. Co-resident
   #                      with the host (household); rank-local, no extra MPI cost.
   #   network          — the host's partners in this network. Spans domains;
   #                      enrolment + a per-slot host-location broadcast are routed
   #                      across ranks.
   #
+  # A scenario can run SEVERAL rules at once — write a `follows:` LIST. Rules
+  # resolve in list order: across all of them a person is a HOST under any number
+  # of rules but a FOLLOWER under at most one (the first that binds it), and never
+  # both (no follow chains). So a standing host cannot also join a hop — e.g. a
+  # parent being followed by their under-5 will not itself follow a friend's trip.
+  #
+  # follows:
+  #   - name: infants                # unique per rule; defaults to the list index
+  #     enabled: true
+  #     pool_venue_type: household    # co-members of the host's household
+  #     establishment: criteria       # deterministic predicate, no roll
+  #     span: standing                # re-evaluated daily (no trip needed)
+  #     eligibility:                  # criteria: who is a follower
+  #       max_age: 5                  #   omit a bound to ignore it
+  #       # min_age: 18
+  #       # require_property: needs_care
+  #     host_eligibility:             # criteria + venue only: who may be a host
+  #       min_age: 18                 #   (rejected with a network pool)
+  #     activity_exceptions: [medical_facility]  # host activities that stop mirroring
+  #     venue_exceptions:    [gym]               # host venue types that stop mirroring
+  #
+  #   - name: friends_on_trips        # a second, simultaneous rule
+  #     enabled: true
+  #     network: friendships          # the host's partners in this network
+  #     establishment: stochastic     # per-host probability roll
+  #     probability: 0.3              # stochastic: per-host chance to gather followers
+  #     span: hop                     # lasts the host's trip (needs a
+  #                                   # hop_on_activity, see schedules.yaml)
+  #     encounter_type: ""            # optional log tag (falls back to 255)
+  #     log: false                    # log every follow when it forms (can be MANY rows)
+  #
+  # A single rule can use the singular `follow:` block as sugar for a one-element
+  # list (setting both `follow:` and `follows:` is an error):
+  #
   # follow:
   #   enabled: true
-  #   pool_venue_type: household     # OR:  network: friendships
-  #
-  #   establishment: stochastic      # stochastic | criteria  (default stochastic)
-  #   probability: 1.0               # stochastic: per-host chance to gather followers
-  #   eligibility:                   # criteria: who is a follower
-  #     max_age: 5                   #   omit a bound to ignore it
-  #     # min_age: 18
-  #     # require_property: needs_care
-  #   host_eligibility:              # criteria + venue only: who may be a host
-  #     min_age: 18                  #   (rejected with a network pool)
-  #
-  #   span: hop                      # hop | standing  (default hop; hop needs a
-  #                                  # hop_on_activity, see schedules.yaml)
-  #
-  #   activity_exceptions: [medical_facility]  # host activities that stop mirroring
-  #   venue_exceptions:    [gym]               # host venue types that stop mirroring
-  #
-  #   encounter_type: ""             # optional log tag (falls back to 255)
-  #   log: false                     # log every follow when it forms (can be MANY rows)
+  #   pool_venue_type: household
+  #   establishment: stochastic
+  #   probability: 1.0
+  #   span: hop
 
   encounters:
     - name: "social_encounters"

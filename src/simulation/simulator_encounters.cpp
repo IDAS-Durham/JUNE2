@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "simulation/follow_bindings.h"
 #include "simulation/simulator.h"
 #include "utils/deterministic_rng.h"
 #ifdef USE_MPI
@@ -394,6 +395,13 @@ struct HostSlot {
   int16_t activity = -1;
 };
 
+}  // namespace
+
+// The binding helpers live in a named namespace (rather than the anonymous one)
+// so the follow unit tests can drive them directly on a synthetic world. They
+// are otherwise internal to this translation unit.
+namespace follow_detail {
+
 // Find the host's venue of the configured pool type, or -1 if it has none.
 VenueId findPoolVenue(const WorldState& world, const Person& host,
                       int pool_venue_type_id) {
@@ -577,6 +585,10 @@ std::pair<int, int> enrolFollowHosts(
   }
   return {hosts, followers};
 }
+
+}  // namespace follow_detail
+
+namespace {
 
 #ifdef USE_MPI
 // Allgatherv a flat int array; every rank receives all ranks' contributions
@@ -780,17 +792,17 @@ void Simulator::processFollowRule(
   if (fc.usesCriteria()) {
     if (day != st.follow_day) {
       st.follow_day = day;
-      rebuildCriteriaBindings(world_, fc, st.follower_host, st.active_hosts,
-                              cross_rank ? &remote_pairs : nullptr,
-                              fc.log ? &new_follows : nullptr, follower_excl,
-                              *host_excl);
+      follow_detail::rebuildCriteriaBindings(
+          world_, fc, st.follower_host, st.active_hosts,
+          cross_rank ? &remote_pairs : nullptr, fc.log ? &new_follows : nullptr,
+          follower_excl, *host_excl);
 #ifdef USE_MPI
       if (cross_rank)
         activateRemoteCriteriaHosts(remote_pairs, world_, st.active_hosts);
 #endif
     }
   } else {
-    enrolFollowHosts(
+    follow_detail::enrolFollowHosts(
         world_, fc, config_.schedule, config_.simulation.random_seed,
         span_standing, st.active_hosts, st.follower_host, day,
         cross_rank ? &remote_pairs : nullptr, fc.log ? &new_follows : nullptr,
