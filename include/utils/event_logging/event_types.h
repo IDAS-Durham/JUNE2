@@ -108,7 +108,8 @@ struct FollowEvent {
   PersonId host;
   PersonId follower;
   double time;
-  uint8_t rule_id;  // index into the follows list; see the follow_rules registry
+  // Index into the follows list, named by the follow_rules registry.
+  uint8_t rule_id;
   int slot;
 };
 

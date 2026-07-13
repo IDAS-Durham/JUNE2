@@ -948,13 +948,16 @@ void Simulator::processFollowRule(
               : std::to_string(static_cast<int>(host_venue_type));
       throw std::runtime_error(
           "follow rule '" + fc.name + "': follower " +
-          std::to_string(follower) + " would be placed on partial-presence "
-          "venue " + std::to_string(hl->second.venue) + " (type '" + type_name +
+          std::to_string(follower) +
+          " would be placed on partial-presence "
+          "venue " +
+          std::to_string(hl->second.venue) + " (type '" + type_name +
           "') by following host " + std::to_string(host) +
           ". Followers on partial-presence venues are not supported: they get "
           "no carriage or boarding window and would ride with zero force of "
           "infection. Exclude them with activity_exceptions (e.g. 'commute') "
-          "or venue_exceptions (e.g. '" + type_name + "') on this rule.");
+          "or venue_exceptions (e.g. '" +
+          type_name + "') on this rule.");
     }
 
     // Copy the host's (venue, subset). The host resolved the subset against
