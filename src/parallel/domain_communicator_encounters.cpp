@@ -374,6 +374,7 @@ void unpackFinalizedFromRank(
     ptr = unpackField(ptr, enc.venue_type_id);
     ptr = unpackField(ptr, enc.slot);
     ptr = unpackField(ptr, enc.encounter_type_id);
+    ptr = unpackField(ptr, enc.host_subset_index);
     int participant_count;
     ptr = unpackField(ptr, participant_count);
     bool has_local = false;
@@ -390,9 +391,9 @@ void unpackFinalizedFromRank(
 }
 
 // Serializes one rank's finalized encounters into the variable-length
-// Allgatherv send buffer. Layout per encounter: 21-byte header
-// (encounter_id, host_id, venue_id, venue_type_id, slot,
-// encounter_type_id) + participant_count (4 bytes) + participant_count *
+// Allgatherv send buffer. Layout per encounter: 25-byte header
+// (encounter_id, host_id, venue_id, venue_type_id, slot, encounter_type_id,
+// host_subset_index) + participant_count (4 bytes) + participant_count *
 // PersonId (4 bytes each). All sizes are computed up-front per record so
 // the buffer is resized once per record (no slot left to grow on
 // participant_count drift).
@@ -401,7 +402,7 @@ std::vector<char> packFinalizedLocal(
   std::vector<char> local_buf;
   for (const auto& enc : local_finalized) {
     int participant_count = static_cast<int>(enc.participants.size());
-    size_t entry_size = 25 + participant_count * 4;
+    size_t entry_size = 29 + participant_count * 4;
     size_t offset = local_buf.size();
     local_buf.resize(offset + entry_size);
     char* ptr = local_buf.data() + offset;
@@ -412,6 +413,7 @@ std::vector<char> packFinalizedLocal(
     ptr = packField(ptr, enc.venue_type_id);
     ptr = packField(ptr, enc.slot);
     ptr = packField(ptr, enc.encounter_type_id);
+    ptr = packField(ptr, enc.host_subset_index);
     ptr = packField(ptr, participant_count);
     for (june::PersonId pid : enc.participants) {
       ptr = packField(ptr, pid);

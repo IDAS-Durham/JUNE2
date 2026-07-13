@@ -49,6 +49,8 @@ class EventWriter {
   static void writeCoordinatedEncounterEvents(H5::H5File& file,
                                               const EventLogger& logger,
                                               int compression_level);
+  static void writeFollowEvents(H5::H5File& file, const EventLogger& logger,
+                                int compression_level);
 
   // Helper methods for lookup tables
   static void writePersonLookupTable(

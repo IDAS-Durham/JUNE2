@@ -2,6 +2,105 @@ coordinated_encounters:
   enabled: true
   log_commitments: true
 
+  # ---------------------------------------------------------------------------
+  # follow: a FOLLOWER is placed wherever its HOST resolves each slot, reusing
+  # the injection overlay. Disabled by default; independent of the encounters
+  # above. Each rule has three axes: the pool a host's followers come from, how a
+  # binding forms (establishment), and how long it lasts (span).
+  #
+  # Pool — set EXACTLY ONE per rule:
+  #   pool_venue_type  — co-members of the host's venue of this type. Co-resident
+  #                      with the host (household); rank-local, no extra MPI cost.
+  #   network          — the host's partners in this network. Spans domains;
+  #                      enrolment + a per-slot host-location broadcast are routed
+  #                      across ranks.
+  #
+  # A scenario can run SEVERAL rules at once — write a `follows:` LIST. Rules
+  # resolve in list order: across all of them a person is a HOST under any number
+  # of rules but a FOLLOWER under at most one (the first that binds it), and never
+  # both (no follow chains). So a standing host cannot also join a hop — e.g. a
+  # parent being followed by their under-5 will not itself follow a friend's trip.
+  #
+  # follows:
+  #   - name: infants                # unique per rule; defaults to the list index
+  #     enabled: true
+  #     pool_venue_type: household    # co-members of the host's household
+  #     establishment: criteria       # deterministic predicate, no roll
+  #     span: standing                # re-evaluated daily (no trip needed)
+  #
+  #     # eligibility / host_eligibility take the same {property, operator, value}
+  #     # criteria as a policy's applies_to. Every entry in a list must hold, and
+  #     # an empty list matches everyone. Age is nothing special to the engine:
+  #     # any person attribute works (sex, geo_unit_id, properties.<name>,
+  #     # activities.<name>.length, networks.<name>.length), with the operators
+  #     # > < >= <= == != in contains. A property this world does not carry is a
+  #     # config error, not a filter that silently matches nobody.
+  #     eligibility:                  # criteria: who is a follower
+  #       - property: age             #   a follower is anyone under 5 ...
+  #         operator: "<"
+  #         value: 5
+  #     # - property: properties.needs_care   # ... and, if this line were on,
+  #     #   operator: "=="                    #     anyone under 5 who also
+  #     #   value: "yes"                      #     needs care (the list is ANDed)
+  #     host_eligibility:             # criteria + venue only: who may be a host
+  #       - property: age             #   (rejected with a network pool)
+  #         operator: ">="
+  #         value: 18
+  #     activity_exceptions: [medical_facility]  # host activities that stop mirroring
+  #     venue_exceptions:    [gym]               # host venue types that stop mirroring
+  #     follower_activity_exceptions: [primary_activity]  # the FOLLOWER's own
+  #                                   # activities that outrank following, so a
+  #                                   # child with a school day of its own goes to
+  #                                   # school wherever the parent is
+  #
+  #   - name: friends_on_trips        # a second, simultaneous rule
+  #     enabled: true
+  #     network: friendships          # the host's partners in this network
+  #     establishment: stochastic     # per-host probability roll
+  #     probability: 0.3              # stochastic: per-host chance to gather followers
+  #     span: hop                     # lasts the host's trip (needs a
+  #                                   # hop_on_activity, see schedules.yaml)
+  #     encounter_type: ""            # optional log tag (falls back to 255)
+  #     log: false                    # log every follow when it forms (can be MANY rows)
+  #
+  # A single rule can use the singular `follow:` block as sugar for a one-element
+  # list (setting both `follow:` and `follows:` is an error):
+  #
+  # follow:
+  #   enabled: true
+  #   pool_venue_type: household
+  #   establishment: stochastic
+  #   probability: 1.0
+  #   span: hop
+
+  follows:
+    # Under-10s go where a parent goes, with three carve-outs. The parent is the
+    # lowest-id adult in the household, picked once and re-checked each day.
+    - name: kids_with_a_parent
+      enabled: true
+      pool_venue_type: household
+      establishment: criteria
+      span: standing
+      eligibility:
+        - property: age
+          operator: "<"
+          value: 10
+      host_eligibility:
+        - property: age
+          operator: ">="
+          value: 18
+      # A child does not go to work with the parent, is not carried along on the
+      # parent's commute, and does not go to the gym with them either. Each of
+      # these leaves the child on its own schedule for the slot.
+      activity_exceptions: [primary_activity, commute]
+      venue_exceptions: [gym]
+      # And a child with a school day of its own goes to school, wherever the
+      # parent happens to be. Without this line a child whose parent has no
+      # primary activity would be dragged around by the parent all day and never
+      # get there, because the parent is never at an excepted activity.
+      follower_activity_exceptions: [primary_activity]
+      log: true
+
   encounters:
     - name: "social_encounters"
       priority: 10

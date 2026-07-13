@@ -37,6 +37,14 @@ struct SelectionCriterion {
   // Resolve string values to codes for early interning
   void resolve(const WorldState& world);
 
+  // Resolve, and refuse anything this world cannot answer: a property path the
+  // engine does not recognise, a properties.* name the world does not carry, or
+  // an operator that is not implemented. Any of those would otherwise evaluate
+  // false for every person, so a misspelt filter reads as "nobody qualifies"
+  // instead of as the config error it is. `context` names the offending config
+  // block in the error message.
+  void resolveOrThrow(const WorldState& world, const std::string& context);
+
  private:
   enum class PropertyType {
     UNKNOWN,
@@ -768,11 +776,92 @@ struct FrequencyGroup {
   std::vector<FrequencyRow> rows;
 };
 
+// A follower is placed wherever a host ends up, every slot they are bound. The
+// subsystem has three independent knobs: which pool a host's followers come
+// from, how the binding forms (establishment), and how long it lasts (span).
+
+struct FollowConfig {
+  bool enabled = false;
+
+  // A short label for this rule, unique within the follows list. It defaults to
+  // the rule's position and names its checkpoint shard, so it must be a valid
+  // HDF5 group token (non-empty, no '/').
+  std::string name;
+
+  // Pool. Set exactly one. Venue co-members must live with the host (a
+  // household), so the pool is entirely on the host's rank and needs no
+  // messaging. A network draws the host's partner list, whose members can live
+  // in other domains, so enrolment and mirroring are routed across ranks.
+  std::string pool_venue_type;  // co-members of the host's venue of this type
+  std::string network;          // OR the host's partners in this network
+
+  // Establishment: how a follower binds to a host. Stochastic rolls a per-host
+  // probability, keyed so the outcome is the same at any rank count. Criteria
+  // uses the two predicates below instead, with no randomness, so the binding
+  // can be recomputed from scratch and never needs to be saved in a checkpoint.
+  enum class Establishment { Stochastic, Criteria };
+  Establishment establishment = Establishment::Stochastic;
+  double probability = 1.0;  // stochastic only: per-host chance to enrol
+
+  // Criteria only: who becomes a follower, and who may host them. Each list is
+  // a conjunction, so every criterion must hold and an empty list matches
+  // everyone. These are the same person criteria policies and seeds take, which
+  // is why the engine knows nothing about age here: whether a follower is a
+  // toddler, a nurse or anyone at all is a sentence the scenario writes.
+  std::vector<SelectionCriterion> follower;
+  std::vector<SelectionCriterion> host;
+
+  // Span: how long a binding survives. Hop lasts one of the host's trips and
+  // ends when the host returns. Standing is re-checked each day and lasts until
+  // the follower or host stops qualifying (a death, say).
+  enum class Span { Hop, Standing };
+  Span span = Span::Hop;
+
+  // Three ways to stop mirroring for a slot, combined with OR, each meaning
+  // "the follower keeps its own schedule this slot".
+  //
+  // Two of them ask where the HOST is going. activity_exceptions lists host
+  // activities: an infant does not trail a parent to work (primary_activity) or
+  // onto a ward when the parent is a patient (medical_facility), while a parent
+  // sent home sick (residence) is still followed. venue_exceptions lists host
+  // venue types, the cut activity cannot make since one activity reaches many
+  // venues: leisure reaches a cinema, a gym and a grocery, so "follow to the
+  // cinema but not the gym" can only be said as a venue type.
+  //
+  // The third asks what the FOLLOWER would otherwise be doing.
+  // follower_activity_exceptions lists the follower's own activities, and it is
+  // how a follower with somewhere of its own to be keeps that appointment: a
+  // school-age child follows a parent around, but when the child's own day says
+  // school, school wins, whether the parent is at work, at home or out. Without
+  // it the host's location always overwrites the follower's, so a child bound
+  // to a parent who has no primary activity would silently never reach school.
+  std::vector<std::string> activity_exceptions;
+  std::vector<std::string> venue_exceptions;
+  std::vector<std::string> follower_activity_exceptions;
+
+  std::string encounter_type;  // tag stamped on a follower's mirrored location
+  bool log = false;            // log each follow when it forms (can be many)
+
+  // Filled in by CoordinatedEncounterConfig::resolve against the world:
+  int pool_venue_type_id = -1;
+  int network_idx = -1;
+  uint8_t encounter_type_id = 255;
+  std::vector<int16_t> activity_exception_ids;
+  std::vector<uint8_t> venue_exception_type_ids;
+  std::vector<int16_t> follower_activity_exception_ids;
+
+  bool usesNetwork() const { return !network.empty(); }
+  bool usesCriteria() const { return establishment == Establishment::Criteria; }
+};
+
 struct CoordinatedEncounterConfig {
   bool enabled = false;
   bool log_commitments = false;
   std::vector<CoordinatedEncounterDef> encounters;
   std::unordered_map<std::string, FrequencyGroup> frequency_groups;
+  // Follow rules, resolved in list order. A scenario writes either a single
+  // `follow:` block (sugar for a one-element list) or a `follows:` sequence.
+  std::vector<FollowConfig> follows;
 
   void resolve(WorldState& world, ContactMatrixConfig& contact_matrices);
 };

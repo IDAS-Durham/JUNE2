@@ -170,6 +170,7 @@ PYEOF
 DATASETS=(
   "dataset:/events/relationships"
   "dataset:/events/coordinated_encounters|fields=person_a,person_b,time,encounter_type_id,slot"
+  "dataset:/events/follows"
   "dataset:/events/infections"
 )
 # NOTE: /lookups/profile_assignments is NOT diffed here — the multi-rank
