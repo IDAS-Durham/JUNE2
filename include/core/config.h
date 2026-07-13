@@ -612,6 +612,7 @@ struct SimulationConfig {
   int flush_interval_days = 0;  // 0 = only at the end
   int max_event_buffer_size = 100000;
   bool save_population_summary = true;
+  bool save_coordinated_encounters = false;  // largest H5 dataset; opt-in
   std::vector<std::string> summary_properties = {
       "ethnicity", "has_comorbidities", "work_mode"};
 
