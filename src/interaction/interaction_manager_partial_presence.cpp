@@ -272,13 +272,25 @@ InteractionManager::buildPartialPresenceCarriages(
 }
 
 void InteractionManager::validatePartialPresencePreconditions(
-    const Venue* venue, VenueId actual_venue_id,
-    uint8_t encounter_type_id) const {
+    const std::vector<InteractionMember>& members, const Venue* venue,
+    VenueId actual_venue_id, uint8_t encounter_type_id) const {
   if (actual_venue_id < 0)
     throw std::runtime_error(
         "computePartialPresenceLambda: virtual encounter venues not supported");
   if (!venue)
     throw std::runtime_error("computePartialPresenceLambda: null venue");
+  // Every member, not just the group's representative. A venue group is keyed
+  // on venue_id alone, so a single rider carrying an encounter type (a follower
+  // trailing its host onto a line, say) sits anywhere in the group: checking
+  // only the first would make this fire or not depending on sort order.
+  for (const auto& m : members) {
+    if (m.encounter_type_id != 255)
+      throw std::runtime_error(
+          "computePartialPresenceLambda: coordinated-encounter participants "
+          "not supported on partial-presence types in v1 (person " +
+          std::to_string(m.id) + ", encounter_type_id " +
+          std::to_string(static_cast<int>(m.encounter_type_id)) + ")");
+  }
   if (encounter_type_id != 255)
     throw std::runtime_error(
         "computePartialPresenceLambda: coordinated-encounter venues not "
@@ -301,7 +313,7 @@ InteractionManager::computePartialPresenceLambda(
     uint8_t encounter_type_id) {
   PartialPresenceLambdaResult result;
 
-  validatePartialPresencePreconditions(venue, actual_venue_id,
+  validatePartialPresencePreconditions(members, venue, actual_venue_id,
                                        encounter_type_id);
 
   const uint8_t venue_type_id = venue->type_id;

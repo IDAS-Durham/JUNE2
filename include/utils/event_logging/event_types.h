@@ -101,6 +101,17 @@ struct CoordinatedEncounterEvent {
   uint64_t group_id;
 };
 
+// A follower bound to a host by a follow rule. Not a coordinated encounter:
+// nothing was proposed, negotiated or accepted, so these live in their own
+// dataset rather than sharing the encounter one.
+struct FollowEvent {
+  PersonId host;
+  PersonId follower;
+  double time;
+  uint8_t rule_id;  // index into the follows list; see the follow_rules registry
+  int slot;
+};
+
 // =============================================================================
 // HDF5 Record Structures (C-compatible for H5::CompType)
 // =============================================================================
@@ -151,6 +162,14 @@ struct CoordinatedEncounterRecord {
   uint8_t encounter_type_id;
   int slot;
   uint64_t group_id;
+};
+
+struct FollowRecord {
+  int host;
+  int follower;
+  double time;
+  uint8_t rule_id;
+  int slot;
 };
 
 struct PersonRecord {

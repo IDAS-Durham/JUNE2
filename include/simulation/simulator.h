@@ -201,8 +201,10 @@ class Simulator {
   // earlier rule, so this rule yields to them (a follower is exclusive to the
   // first rule that binds it; a host may recur, but no one is both). The rule
   // adds its own hosts and followers to those sets on the way out.
-  void processFollowRule(int time_slot_index, int day, const FollowConfig& fc,
-                         FollowRuntime& st,
+  // rule_id is the rule's index in the follows list, and is what /events/follows
+  // records against the follow_rules registry.
+  void processFollowRule(int time_slot_index, int day, uint8_t rule_id,
+                         const FollowConfig& fc, FollowRuntime& st,
                          std::unordered_set<PersonId>& committed_hosts,
                          std::unordered_set<PersonId>& committed_followers);
 

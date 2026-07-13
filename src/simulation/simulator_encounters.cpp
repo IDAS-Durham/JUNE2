@@ -749,14 +749,14 @@ void Simulator::injectFollowsIntoSlot(int time_slot_index) {
   for (size_t ri = 0; ri < rules.size(); ++ri) {
     const FollowConfig& fc = rules[ri];
     if (!fc.enabled) continue;
-    processFollowRule(time_slot_index, day, fc, follow_state_[ri],
-                      committed_hosts, committed_followers);
+    processFollowRule(time_slot_index, day, static_cast<uint8_t>(ri), fc,
+                      follow_state_[ri], committed_hosts, committed_followers);
   }
 }
 
 void Simulator::processFollowRule(
-    int time_slot_index, int day, const FollowConfig& fc, FollowRuntime& st,
-    std::unordered_set<PersonId>& committed_hosts,
+    int time_slot_index, int day, uint8_t rule_id, const FollowConfig& fc,
+    FollowRuntime& st, std::unordered_set<PersonId>& committed_hosts,
     std::unordered_set<PersonId>& committed_followers) {
   // Network pools may enrol partners in other domains; venue pools are always
   // co-resident, so they need no cross-rank routing or per-slot broadcast.
@@ -846,14 +846,13 @@ void Simulator::processFollowRule(
   }
 
   // Log each newly-established follow on the follower's rank (single log; event
-  // shards merge at run end). group_id = host_id groups a host's whole travel
-  // party; the follow encounter_type distinguishes these rows from coordinated
-  // encounters.
+  // shards merge at run end). These go to /events/follows, not the encounter
+  // dataset: a follow is a binding, not a negotiated encounter, and a host's
+  // travel party is recovered by grouping on (rule_id, host).
   if (fc.log) {
     for (const auto& [follower, host] : new_follows)
-      event_logger_.logCoordinatedEncounter(
-          host, follower, current_simulation_time_, fc.encounter_type_id,
-          time_slot_index, static_cast<uint64_t>(host));
+      event_logger_.logFollow(host, follower, current_simulation_time_, rule_id,
+                              time_slot_index);
   }
 
   // 2. Which hosts are placed somewhere this slot, and where? Local hosts come
@@ -912,9 +911,9 @@ void Simulator::processFollowRule(
     if (hl == host_loc.end()) continue;  // host active but no venue this slot
 
     PersonLocation& floc = locations_[fi->second];
+    const uint8_t host_venue_type = world_.getVenueTypeId(hl->second.venue);
     if (follow_detail::mirrorSuppressed(fc, hl->second.activity,
-                                        world_.getVenueTypeId(hl->second.venue),
-                                        floc.activity_index))
+                                        host_venue_type, floc.activity_index))
       continue;
     // The follower's own policy wins. If a policy would move them (sick and
     // sent home, say), leave them where the policy put them.
@@ -925,6 +924,31 @@ void Simulator::processFollowRule(
                           current_simulation_time_, time_slot_index)
             .has_value())
       continue;
+
+    // A partial-presence venue (a commute line) bins its riders into carriages
+    // and gives each an effective boarding window, and it does that in step 1
+    // of the slot, before any follower is placed. A follower mirrored onto one
+    // here was never bucketed, so the FOI loop finds no carriage for them and
+    // skips them: aboard for bookkeeping, but neither infecting nor infectable.
+    // Refuse rather than model a ghost rider. Travelling together properly
+    // means inheriting the host's carriage and window, which this does not do.
+    const uint64_t pp_mask =
+        config_.simulation.partial_presence.enabled_venue_type_mask;
+    if (host_venue_type < 64 && ((pp_mask >> host_venue_type) & 1ULL)) {
+      const std::string type_name =
+          host_venue_type < world_.venue_type_names.size()
+              ? world_.venue_type_names[host_venue_type]
+              : std::to_string(static_cast<int>(host_venue_type));
+      throw std::runtime_error(
+          "follow rule '" + fc.name + "': follower " +
+          std::to_string(follower) + " would be placed on partial-presence "
+          "venue " + std::to_string(hl->second.venue) + " (type '" + type_name +
+          "') by following host " + std::to_string(host) +
+          ". Followers on partial-presence venues are not supported: they get "
+          "no carriage or boarding window and would ride with zero force of "
+          "infection. Exclude them with activity_exceptions (e.g. 'commute') "
+          "or venue_exceptions (e.g. '" + type_name + "') on this rule.");
+    }
 
     // Copy the host's (venue, subset). The host resolved the subset against
     // this venue, so it is valid there and identical at any rank count.
