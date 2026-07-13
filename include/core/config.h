@@ -37,6 +37,14 @@ struct SelectionCriterion {
   // Resolve string values to codes for early interning
   void resolve(const WorldState& world);
 
+  // Resolve, and refuse anything this world cannot answer: a property path the
+  // engine does not recognise, a properties.* name the world does not carry, or
+  // an operator that is not implemented. Any of those would otherwise evaluate
+  // false for every person, so a misspelt filter reads as "nobody qualifies"
+  // instead of as the config error it is. `context` names the offending config
+  // block in the error message.
+  void resolveOrThrow(const WorldState& world, const std::string& context);
+
  private:
   enum class PropertyType {
     UNKNOWN,
@@ -771,19 +779,6 @@ struct FrequencyGroup {
 // subsystem has three independent knobs: which pool a host's followers come
 // from, how the binding forms (establishment), and how long it lasts (span).
 
-// A conjunctive test over a person's demographics and properties. Used on both
-// sides of criteria establishment: once to decide who is a follower, once to
-// decide who may be their host. Every bound that is set must hold; a bound left
-// unset is ignored, so an empty predicate matches everyone.
-struct EligPredicate {
-  double min_age = -1.0;  // require age >= min_age when >= 0
-  double max_age = -1.0;  // require age <  max_age when >= 0
-  std::string property;   // require this property to be present when non-empty
-  int property_idx = -1;  // resolved index into the person-property registry
-  bool empty() const { return min_age < 0 && max_age < 0 && property.empty(); }
-  bool matches(const WorldState& world, const Person& p) const;
-};
-
 struct FollowConfig {
   bool enabled = false;
 
@@ -806,8 +801,14 @@ struct FollowConfig {
   enum class Establishment { Stochastic, Criteria };
   Establishment establishment = Establishment::Stochastic;
   double probability = 1.0;  // stochastic only: per-host chance to enrol
-  EligPredicate follower;    // criteria only: who becomes a follower
-  EligPredicate host;        // criteria only: who may serve as their host
+
+  // Criteria only: who becomes a follower, and who may host them. Each list is
+  // a conjunction, so every criterion must hold and an empty list matches
+  // everyone. These are the same person criteria policies and seeds take, which
+  // is why the engine knows nothing about age here: whether a follower is a
+  // toddler, a nurse or anyone at all is a sentence the scenario writes.
+  std::vector<SelectionCriterion> follower;
+  std::vector<SelectionCriterion> host;
 
   // Span: how long a binding survives. Hop lasts one of the host's trips and
   // ends when the host returns. Standing is re-checked each day and lasts until
@@ -815,17 +816,27 @@ struct FollowConfig {
   enum class Span { Hop, Standing };
   Span span = Span::Hop;
 
-  // Two ways to stop mirroring for a slot, both looking at where the host is
-  // going and both meaning "the follower keeps its own schedule this slot".
-  // They are combined with OR. activity_exceptions lists host activities: an
-  // infant does not trail a parent to work (primary_activity) or onto a ward
-  // when the parent is a patient (medical_facility), while a parent sent home
-  // sick (residence) is still followed. venue_exceptions lists host venue
-  // types, the cut activity cannot make since one activity reaches many venues:
-  // leisure reaches a cinema, a gym and a grocery, so "follow to the cinema but
-  // not the gym" can only be said as a venue type.
+  // Three ways to stop mirroring for a slot, combined with OR, each meaning
+  // "the follower keeps its own schedule this slot".
+  //
+  // Two of them ask where the HOST is going. activity_exceptions lists host
+  // activities: an infant does not trail a parent to work (primary_activity) or
+  // onto a ward when the parent is a patient (medical_facility), while a parent
+  // sent home sick (residence) is still followed. venue_exceptions lists host
+  // venue types, the cut activity cannot make since one activity reaches many
+  // venues: leisure reaches a cinema, a gym and a grocery, so "follow to the
+  // cinema but not the gym" can only be said as a venue type.
+  //
+  // The third asks what the FOLLOWER would otherwise be doing.
+  // follower_activity_exceptions lists the follower's own activities, and it is
+  // how a follower with somewhere of its own to be keeps that appointment: a
+  // school-age child follows a parent around, but when the child's own day says
+  // school, school wins, whether the parent is at work, at home or out. Without
+  // it the host's location always overwrites the follower's, so a child bound
+  // to a parent who has no primary activity would silently never reach school.
   std::vector<std::string> activity_exceptions;
   std::vector<std::string> venue_exceptions;
+  std::vector<std::string> follower_activity_exceptions;
 
   std::string encounter_type;  // tag stamped on a follower's mirrored location
   bool log = false;            // log each follow when it forms (can be many)
@@ -836,6 +847,7 @@ struct FollowConfig {
   uint8_t encounter_type_id = 255;
   std::vector<int16_t> activity_exception_ids;
   std::vector<uint8_t> venue_exception_type_ids;
+  std::vector<int16_t> follower_activity_exception_ids;
 
   bool usesNetwork() const { return !network.empty(); }
   bool usesCriteria() const { return establishment == Establishment::Criteria; }

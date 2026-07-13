@@ -70,7 +70,9 @@ TEST_CASE("follows: parses a list of rules in order with their fields") {
       "      establishment: criteria\n"
       "      span: standing\n"
       "      eligibility:\n"
-      "        max_age: 5\n"
+      "        - property: age\n"
+      "          operator: \"<\"\n"
+      "          value: 5\n"
       "    - name: friends\n"
       "      enabled: true\n"
       "      network: friendships\n"
@@ -80,10 +82,26 @@ TEST_CASE("follows: parses a list of rules in order with their fields") {
   CHECK(cfg.follows[0].name == "infants");
   CHECK(cfg.follows[0].usesCriteria());
   CHECK(cfg.follows[0].span == FollowConfig::Span::Standing);
-  CHECK(cfg.follows[0].follower.max_age == doctest::Approx(5));
+  REQUIRE(cfg.follows[0].follower.size() == 1);
+  CHECK(cfg.follows[0].follower[0].property_path == "age");
+  CHECK(cfg.follows[0].follower[0].operator_type == "<");
+  CHECK(std::get<int>(cfg.follows[0].follower[0].value) == 5);
   CHECK(cfg.follows[1].name == "friends");
   CHECK(cfg.follows[1].usesNetwork());
   CHECK(cfg.follows[1].span == FollowConfig::Span::Hop);
+}
+
+TEST_CASE("eligibility written as a mapping is rejected, not read as empty") {
+  // An empty criteria list matches everyone, so a mapping quietly ignored here
+  // would enrol the whole world instead of the toddlers the scenario meant.
+  CHECK_THROWS(
+      parseCE("  follows:\n"
+              "    - name: infants\n"
+              "      enabled: true\n"
+              "      pool_venue_type: household\n"
+              "      establishment: criteria\n"
+              "      eligibility:\n"
+              "        max_age: 5\n"));
 }
 
 TEST_CASE("an un-named rule defaults its name to its list index") {
@@ -192,7 +210,18 @@ static WorldState buildHouseholds(
   return world;
 }
 
-// A venue/criteria rule: followers are age < max_age, hosts are age >= min_age.
+// One person criterion, built the way a config would spell it.
+static SelectionCriterion ageCrit(const std::string& op, double value) {
+  SelectionCriterion c;
+  c.property_path = "age";
+  c.operator_type = op;
+  c.value = value;
+  return c;
+}
+
+// A venue/criteria rule: followers are younger than max_age, hosts are at least
+// min_host_age. Age is the axis these cases happen to use; the engine reads
+// whatever criteria the rule carries.
 static FollowConfig criteriaRule(double max_age, double min_host_age) {
   FollowConfig fc;
   fc.enabled = true;
@@ -200,9 +229,119 @@ static FollowConfig criteriaRule(double max_age, double min_host_age) {
   fc.pool_venue_type_id = 0;
   fc.establishment = FollowConfig::Establishment::Criteria;
   fc.span = FollowConfig::Span::Standing;
-  fc.follower.max_age = max_age;
-  fc.host.min_age = min_host_age;
+  fc.follower = {ageCrit("<", max_age)};
+  fc.host = {ageCrit(">=", min_host_age)};
   return fc;
+}
+
+TEST_CASE("eligibility reads any person attribute, not just age") {
+  // Nothing about follow is age-shaped: the same machinery binds on sex. One
+  // household of four, where the rule says a female follows the lowest-id male.
+  WorldState world = buildHouseholds({{40.f, 41.f, 42.f, 43.f}});
+  world.people[0].sex = Sex::FEMALE;
+  world.people[1].sex = Sex::MALE;
+  world.people[2].sex = Sex::FEMALE;
+  world.people[3].sex = Sex::MALE;
+
+  FollowConfig fc;
+  fc.enabled = true;
+  fc.pool_venue_type = "household";
+  fc.pool_venue_type_id = 0;
+  fc.establishment = FollowConfig::Establishment::Criteria;
+  fc.span = FollowConfig::Span::Standing;
+  SelectionCriterion is_female;
+  is_female.property_path = "sex";
+  is_female.operator_type = "==";
+  is_female.value = std::string("female");
+  SelectionCriterion is_male;
+  is_male.property_path = "sex";
+  is_male.operator_type = "==";
+  is_male.value = std::string("male");
+  fc.follower = {is_female};
+  fc.host = {is_male};
+  for (auto* side : {&fc.follower, &fc.host})
+    for (SelectionCriterion& c : *side) c.resolveOrThrow(world, "test");
+
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+
+  REQUIRE(fh.size() == 2);
+  CHECK(fh[0] == 1);  // female 0 -> lowest-id male
+  CHECK(fh[2] == 1);  // female 2 -> same host
+  CHECK(hosts.count(1));
+  CHECK(hosts.count(3) == 0);  // an eligible host nobody picked stays inactive
+}
+
+TEST_CASE("several criteria on one side are ANDed") {
+  // A follower must be both under 5 and female, so the under-5 male is left
+  // alone even though he passes the age bound.
+  WorldState world = buildHouseholds({{40.f, 3.f, 4.f}});
+  world.people[0].sex = Sex::FEMALE;
+  world.people[1].sex = Sex::MALE;
+  world.people[2].sex = Sex::FEMALE;
+
+  FollowConfig fc = criteriaRule(5, 18);
+  SelectionCriterion is_female;
+  is_female.property_path = "sex";
+  is_female.operator_type = "==";
+  is_female.value = std::string("female");
+  fc.follower.push_back(is_female);
+  for (SelectionCriterion& c : fc.follower) c.resolveOrThrow(world, "test");
+
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+
+  REQUIRE(fh.size() == 1);
+  CHECK(fh.count(2) == 1);  // the under-5 female follows
+  CHECK(fh.count(1) == 0);  // the under-5 male does not
+}
+
+// Resolve one follow rule against a world and return the error it raised, or
+// an empty string when it resolved cleanly.
+static std::string resolveError(WorldState& world, const FollowConfig& fc) {
+  CoordinatedEncounterConfig cfg;
+  cfg.follows.push_back(fc);
+  ContactMatrixConfig matrices;
+  try {
+    cfg.resolve(world, matrices);
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return "";
+}
+
+TEST_CASE("a criterion this world cannot answer is rejected at resolve") {
+  // Each of these would evaluate false for every person, so the rule would
+  // quietly bind nobody. Resolve has to throw, and name what it choked on.
+  WorldState world = buildHouseholds({{40.f, 3.f}});
+
+  // Positive control: the well-formed rule these three are mutations of
+  // resolves cleanly, so a throw below is about the criterion and nothing else.
+  CHECK(resolveError(world, criteriaRule(5, 18)) == "");
+
+  FollowConfig unknown_path = criteriaRule(5, 18);
+  unknown_path.follower[0].property_path = "aeg";
+  CHECK(resolveError(world, unknown_path).find("'aeg'") != std::string::npos);
+
+  FollowConfig missing_property = criteriaRule(5, 18);
+  SelectionCriterion needs_care;
+  needs_care.property_path = "properties.needs_care";
+  needs_care.operator_type = "==";
+  needs_care.value = std::string("yes");
+  missing_property.follower = {needs_care};
+  CHECK(resolveError(world, missing_property).find("needs_care") !=
+        std::string::npos);
+
+  FollowConfig bad_operator = criteriaRule(5, 18);
+  bad_operator.follower = {ageCrit("=<", 5)};
+  CHECK(resolveError(world, bad_operator).find("'=<'") != std::string::npos);
+
+  // The host side is resolved too, not just the follower side.
+  FollowConfig bad_host = criteriaRule(5, 18);
+  bad_host.host[0].property_path = "properties.rank";
+  CHECK(resolveError(world, bad_host).find("rank") != std::string::npos);
 }
 
 TEST_CASE(
@@ -297,4 +436,65 @@ TEST_CASE(
   CHECK(hosts.count(0) == 0);    // barred by host_excl
   for (const auto& [f, h] : fh)  // no host is also a follower
     CHECK(hosts.count(f) == 0);
+}
+
+// ===========================================================================
+// Mirroring exceptions
+// ===========================================================================
+//
+// The slot decision: given where the host went and what the follower would
+// otherwise be doing, does the follower mirror the host or keep its own day?
+// Activity and venue-type ids are the world's registry indices; here 1 is the
+// activity a rule excepts, 7 the venue type it excepts, and -1 means "no
+// activity this slot".
+
+static FollowConfig exceptionRule(std::vector<int16_t> host_activities,
+                                  std::vector<uint8_t> host_venue_types,
+                                  std::vector<int16_t> follower_activities) {
+  FollowConfig fc;
+  fc.activity_exception_ids = std::move(host_activities);
+  fc.venue_exception_type_ids = std::move(host_venue_types);
+  fc.follower_activity_exception_ids = std::move(follower_activities);
+  return fc;
+}
+
+TEST_CASE("with no exceptions a follower always mirrors its host") {
+  FollowConfig fc = exceptionRule({}, {}, {});
+  CHECK(follow_detail::mirrorSuppressed(fc, 1, 7, 1) == false);
+}
+
+TEST_CASE("an excepted host activity keeps the follower on its own schedule") {
+  FollowConfig fc = exceptionRule({1}, {}, {});
+  CHECK(follow_detail::mirrorSuppressed(fc, 1, 3, -1) == true);
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, -1) == false);
+  // It fires on the HOST's activity, never the follower's.
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, 1) == false);
+}
+
+TEST_CASE(
+    "an excepted host venue type keeps the follower on its own schedule") {
+  FollowConfig fc = exceptionRule({}, {7}, {});
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 7, -1) == true);
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, -1) == false);
+}
+
+TEST_CASE("a follower with an excepted activity of its own keeps it") {
+  // The case the host-side exceptions cannot reach: the host is somewhere
+  // perfectly followable (activity 2, an ordinary venue), and the follower
+  // still goes to its own activity 1.
+  FollowConfig fc = exceptionRule({}, {}, {1});
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, 1) == true);
+  // A follower with nothing of its own on (-1) has nothing to protect.
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, -1) == false);
+  // A follower doing something else still follows.
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, 4) == false);
+}
+
+TEST_CASE("the three exceptions are ORed") {
+  FollowConfig fc = exceptionRule({1}, {7}, {1});
+  CHECK(follow_detail::mirrorSuppressed(fc, 1, 3, -1) ==
+        true);  // host activity
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 7, -1) == true);  // host venue
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, 1) == true);   // own activity
+  CHECK(follow_detail::mirrorSuppressed(fc, 2, 3, 4) == false);  // none fire
 }

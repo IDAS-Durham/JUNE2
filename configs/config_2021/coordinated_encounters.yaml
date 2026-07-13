@@ -27,14 +27,31 @@ coordinated_encounters:
   #     pool_venue_type: household    # co-members of the host's household
   #     establishment: criteria       # deterministic predicate, no roll
   #     span: standing                # re-evaluated daily (no trip needed)
+  #
+  #     # eligibility / host_eligibility take the same {property, operator, value}
+  #     # criteria as a policy's applies_to. Every entry in a list must hold, and
+  #     # an empty list matches everyone. Age is nothing special to the engine:
+  #     # any person attribute works (sex, geo_unit_id, properties.<name>,
+  #     # activities.<name>.length, networks.<name>.length), with the operators
+  #     # > < >= <= == != in contains. A property this world does not carry is a
+  #     # config error, not a filter that silently matches nobody.
   #     eligibility:                  # criteria: who is a follower
-  #       max_age: 5                  #   omit a bound to ignore it
-  #       # min_age: 18
-  #       # require_property: needs_care
+  #       - property: age             #   a follower is anyone under 5 ...
+  #         operator: "<"
+  #         value: 5
+  #     # - property: properties.needs_care   # ... and, if this line were on,
+  #     #   operator: "=="                    #     anyone under 5 who also
+  #     #   value: "yes"                      #     needs care (the list is ANDed)
   #     host_eligibility:             # criteria + venue only: who may be a host
-  #       min_age: 18                 #   (rejected with a network pool)
+  #       - property: age             #   (rejected with a network pool)
+  #         operator: ">="
+  #         value: 18
   #     activity_exceptions: [medical_facility]  # host activities that stop mirroring
   #     venue_exceptions:    [gym]               # host venue types that stop mirroring
+  #     follower_activity_exceptions: [primary_activity]  # the FOLLOWER's own
+  #                                   # activities that outrank following, so a
+  #                                   # child with a school day of its own goes to
+  #                                   # school wherever the parent is
   #
   #   - name: friends_on_trips        # a second, simultaneous rule
   #     enabled: true
@@ -55,6 +72,34 @@ coordinated_encounters:
   #   establishment: stochastic
   #   probability: 1.0
   #   span: hop
+
+  follows:
+    # Under-10s go where a parent goes, with three carve-outs. The parent is the
+    # lowest-id adult in the household, picked once and re-checked each day.
+    - name: kids_with_a_parent
+      enabled: true
+      pool_venue_type: household
+      establishment: criteria
+      span: standing
+      eligibility:
+        - property: age
+          operator: "<"
+          value: 10
+      host_eligibility:
+        - property: age
+          operator: ">="
+          value: 18
+      # A child does not go to work with the parent, is not carried along on the
+      # parent's commute, and does not go to the gym with them either. Each of
+      # these leaves the child on its own schedule for the slot.
+      activity_exceptions: [primary_activity, commute]
+      venue_exceptions: [gym]
+      # And a child with a school day of its own goes to school, wherever the
+      # parent happens to be. Without this line a child whose parent has no
+      # primary activity would be dragged around by the parent all day and never
+      # get there, because the parent is never at an excepted activity.
+      follower_activity_exceptions: [primary_activity]
+      log: true
 
   encounters:
     - name: "social_encounters"

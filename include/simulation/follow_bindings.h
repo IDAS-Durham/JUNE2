@@ -43,6 +43,14 @@ void rebuildCriteriaBindings(
     const std::unordered_set<PersonId>& follower_excl,
     const std::unordered_set<PersonId>& host_excl);
 
+// Does an exception stop this follower from being mirrored onto its host for
+// the slot? Any of the three firing means the follower keeps its own schedule:
+// the host is at an excepted activity, the host is at an excepted venue type,
+// or the follower has an activity of its own that outranks following. Pass -1
+// for an activity the person does not have this slot.
+bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
+                      uint8_t host_venue_type, int16_t follower_activity);
+
 // Stochastic enrolment: each host rolls once and gathers followers from its
 // pool. Returns {hosts that gained followers, total local followers enrolled}.
 std::pair<int, int> enrolFollowHosts(

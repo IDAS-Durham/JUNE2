@@ -2,7 +2,6 @@
 // + local-rank logging. Split from simulator.cpp (declared in
 // simulation/simulator.h).
 #include <algorithm>
-#include <cstdlib>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -414,6 +413,36 @@ VenueId findPoolVenue(const WorldState& world, const Person& host,
   return -1;
 }
 
+// Does an exception keep this follower on its own schedule for the slot?
+//
+// Two of the three ask where the host is going. An excepted host activity peels
+// an infant off to its own nursery while the parent is at work, and drops a
+// host who is a patient being treated (medical_facility) while still following
+// one merely sent home sick (residence). An excepted host venue type makes the
+// cut activity cannot: leisure reaches a cinema, a gym and a grocery alike.
+//
+// The third asks what the follower would otherwise be doing, and it is the only
+// one that can outrank a host who is somewhere perfectly followable. A
+// school-age child trails a parent all day, but when the child's own schedule
+// says school, school wins, whether the parent is at work, at home, or out. The
+// host-side exceptions cannot express that: a parent with no primary activity
+// is never at an excepted activity, so without this the parent's venue would
+// overwrite the child's school every time.
+bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
+                      uint8_t host_venue_type, int16_t follower_activity) {
+  auto listed = [](const auto& ids, auto value) {
+    return std::find(ids.begin(), ids.end(), value) != ids.end();
+  };
+  if (listed(fc.activity_exception_ids, host_activity)) return true;
+  if (listed(fc.venue_exception_type_ids, host_venue_type)) return true;
+  // -1 means the follower has nowhere of its own to be this slot, so there is
+  // nothing for an exception to protect and it follows.
+  if (follower_activity >= 0 &&
+      listed(fc.follower_activity_exception_ids, follower_activity))
+    return true;
+  return false;
+}
+
 // The host's candidate pool: co-members of its venue of the configured type, or
 // its partners in the configured network. Both return global PersonIds; callers
 // enrol only those local to this rank (remote network partners are routed
@@ -463,7 +492,8 @@ void rebuildCriteriaBindings(
   active_hosts.clear();
   const bool net = fc.usesNetwork();
   for (const Person& f : world.people) {
-    if (f.is_dead || !fc.follower.matches(world, f)) continue;
+    if (f.is_dead || !filtering::matchesCriteria(f, &world, fc.follower))
+      continue;
     if (follower_excl.count(f.id)) continue;  // claimed by an earlier rule
     PersonId host = -1;
     for (PersonId m : gatherPool(world, fc, f)) {
@@ -475,7 +505,8 @@ void rebuildCriteriaBindings(
         auto mi = world.person_index.find(m);
         if (mi == world.person_index.end()) continue;
         const Person& mp = world.people[mi->second];
-        if (mp.is_dead || !fc.host.matches(world, mp)) continue;
+        if (mp.is_dead || !filtering::matchesCriteria(mp, &world, fc.host))
+          continue;
         host = m;
       }
     }
@@ -881,28 +912,10 @@ void Simulator::processFollowRule(
     if (hl == host_loc.end()) continue;  // host active but no venue this slot
 
     PersonLocation& floc = locations_[fi->second];
-    // When the host is at an excepted activity, no follower goes with it and
-    // each keeps its own schedule for the slot. This peels an infant off to its
-    // own nursery while the parent is at work (primary_activity), and it is
-    // also how a follower drops a host who is a patient being treated
-    // (medical_facility) while still following one merely sent home sick
-    // (residence). It applies whether or not the follower has its own activity.
-    if (!fc.activity_exception_ids.empty() &&
-        std::find(fc.activity_exception_ids.begin(),
-                  fc.activity_exception_ids.end(),
-                  hl->second.activity) != fc.activity_exception_ids.end())
+    if (follow_detail::mirrorSuppressed(fc, hl->second.activity,
+                                        world_.getVenueTypeId(hl->second.venue),
+                                        floc.activity_index))
       continue;
-    // A follower does not follow the host into an excepted venue type, whatever
-    // took the host there. This is the cut activity cannot make: leisure
-    // reaches a cinema, a gym and a grocery, so "follow to the cinema but not
-    // the gym" has to name the venue type.
-    if (!fc.venue_exception_type_ids.empty()) {
-      uint8_t htype = world_.getVenueTypeId(hl->second.venue);
-      if (std::find(fc.venue_exception_type_ids.begin(),
-                    fc.venue_exception_type_ids.end(),
-                    htype) != fc.venue_exception_type_ids.end())
-        continue;
-    }
     // The follower's own policy wins. If a policy would move them (sick and
     // sent home, say), leave them where the policy put them.
     if (policy_manager_ &&

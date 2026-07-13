@@ -335,13 +335,20 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
   // when coordinated_encounters.enabled is false. A scenario writes either a
   // single `follow:` block (sugar for one rule) or a `follows:` sequence, never
   // both. Each rule resolves independently in list order.
-  auto parsePredicate = [](const YAML::Node& n) {
-    EligPredicate p;
-    if (n["min_age"]) p.min_age = n["min_age"].as<double>();
-    if (n["max_age"]) p.max_age = n["max_age"].as<double>();
-    if (n["require_property"])
-      p.property = n["require_property"].as<std::string>();
-    return p;
+  // eligibility / host_eligibility take the engine's ordinary person criteria,
+  // the same {property, operator, value} entries a policy's applies_to or a
+  // frequency group's filters take. A rule that wants toddlers says
+  // `property: age, operator: "<", value: 5`, and nothing in the loader knows
+  // that age is special.
+  auto parseEligibility = [](const YAML::Node& n, const std::string& which) {
+    if (!n.IsSequence())
+      throw std::runtime_error(
+          "follow." + which +
+          " must be a list of {property, operator, value} entries, e.g. "
+          "- property: age / operator: \"<\" / value: 5");
+    std::vector<SelectionCriterion> out;
+    config_detail::parseSelectionCriteria(n, out);
+    return out;
   };
   auto parseFollowRule = [&](const YAML::Node& fn) {
     FollowConfig f;
@@ -377,8 +384,10 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
             "follow.span must be 'hop' or 'standing', got '" + s + "'");
     }
 
-    if (fn["eligibility"]) f.follower = parsePredicate(fn["eligibility"]);
-    if (fn["host_eligibility"]) f.host = parsePredicate(fn["host_eligibility"]);
+    if (fn["eligibility"])
+      f.follower = parseEligibility(fn["eligibility"], "eligibility");
+    if (fn["host_eligibility"])
+      f.host = parseEligibility(fn["host_eligibility"], "host_eligibility");
 
     if (fn["activity_exceptions"])
       for (const auto& a : fn["activity_exceptions"])
@@ -386,6 +395,9 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
     if (fn["venue_exceptions"])
       for (const auto& m : fn["venue_exceptions"])
         f.venue_exceptions.push_back(m.as<std::string>());
+    if (fn["follower_activity_exceptions"])
+      for (const auto& a : fn["follower_activity_exceptions"])
+        f.follower_activity_exceptions.push_back(a.as<std::string>());
     return f;
   };
 

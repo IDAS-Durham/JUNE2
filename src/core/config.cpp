@@ -1,6 +1,7 @@
 #include "core/config.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <random>
@@ -680,18 +681,34 @@ void PerformanceConfig::resolve(const WorldState& world) {
   masks_resolved = true;
 }
 
-bool EligPredicate::matches(const WorldState& world, const Person& p) const {
-  if (min_age >= 0 && p.age < min_age) return false;
-  if (max_age >= 0 && p.age >= max_age) return false;
-  if (property_idx >= 0) {
-    // Present means the person carries this property with a non-null value,
-    // mirroring how getPersonProperty decides presence.
-    if (property_idx >= p.properties_count) return false;
-    size_t abs = p.properties_start + static_cast<size_t>(property_idx);
-    if (abs >= world.person_properties.size()) return false;
-    if (world.person_properties[abs] == -1) return false;
+void SelectionCriterion::resolveOrThrow(const WorldState& world,
+                                        const std::string& context) {
+  resolve(world);
+
+  if (cached_type == PropertyType::UNKNOWN) {
+    throw std::runtime_error(
+        context + ": property '" + property_path +
+        "' is not one this engine can read off a person. "
+        "Known forms: age, sex, geo_unit_id, id, is_alive, "
+        "properties.<name>, activities.<name>.length, "
+        "activities.<name>.venue_type, "
+        "networks.<name>.length, partner_in_network(<n>)");
   }
-  return true;
+  if (cached_type == PropertyType::CUSTOM_PROPERTY && cached_prop_idx < 0) {
+    throw std::runtime_error(context + ": person property '" +
+                             cached_sub_property +
+                             "' is not carried by this world");
+  }
+
+  static const std::array<const char*, 8> kOperators = {
+      ">", "<", ">=", "<=", "==", "!=", "in", "contains"};
+  if (std::find_if(kOperators.begin(), kOperators.end(), [&](const char* op) {
+        return operator_type == op;
+      }) == kOperators.end()) {
+    throw std::runtime_error(context + ": operator '" + operator_type +
+                             "' is not supported (use one of > < >= <= == != "
+                             "in contains)");
+  }
 }
 
 void CoordinatedEncounterConfig::resolve(
@@ -727,24 +744,21 @@ void CoordinatedEncounterConfig::resolve(
       if (e >= 0) follow.encounter_type_id = static_cast<uint8_t>(e);
     }
 
-    // Criteria establishment resolves its two predicates against the person
-    // property registry. An empty predicate side is fine (matches everyone),
-    // but a named property that the world does not carry is a config mistake.
-    auto resolveProp = [&](EligPredicate& pred, const char* which) {
-      if (pred.property.empty()) return;
-      pred.property_idx = world.getPersonPropertyIndex(pred.property);
-      if (pred.property_idx < 0)
-        throw std::runtime_error(std::string("follow.") + which +
-                                 ".require_property '" + pred.property +
-                                 "' is not a person property in this world");
+    // Criteria establishment resolves both criteria lists against the world. An
+    // empty list is fine and matches everyone, but a criterion the world cannot
+    // answer is a config mistake, not a filter that nobody passes.
+    auto resolveCriteria = [&](std::vector<SelectionCriterion>& criteria,
+                               const char* which) {
+      for (SelectionCriterion& c : criteria)
+        c.resolveOrThrow(world, std::string("follow.") + which);
     };
-    resolveProp(follow.follower, "eligibility");
-    resolveProp(follow.host, "host_eligibility");
+    resolveCriteria(follow.follower, "eligibility");
+    resolveCriteria(follow.host, "host_eligibility");
 
     // A network partner can live on another rank, where its age and properties
     // are not visible, so host_eligibility cannot be applied to a network pool.
     // The host there is simply the lowest-id partner. Reject the combination
-    // rather than silently ignore the predicate.
+    // rather than silently ignore the criteria.
     if (follow.usesNetwork() && !follow.host.empty()) {
       throw std::runtime_error(
           "follow.host_eligibility is not supported with a network pool; "
@@ -752,7 +766,7 @@ void CoordinatedEncounterConfig::resolve(
           "the host by age or property.");
     }
 
-    // The two suppression lists name activities and venue types. Reject any
+    // The three suppression lists name activities and venue types. Reject any
     // name the world does not know rather than silently ignoring it.
     for (const auto& a : follow.activity_exceptions) {
       int idx = world.getActivityIndex(a);
@@ -760,6 +774,14 @@ void CoordinatedEncounterConfig::resolve(
         throw std::runtime_error("follow.activity_exceptions: '" + a +
                                  "' is not an activity in this world");
       follow.activity_exception_ids.push_back(static_cast<int16_t>(idx));
+    }
+    for (const auto& a : follow.follower_activity_exceptions) {
+      int idx = world.getActivityIndex(a);
+      if (idx < 0)
+        throw std::runtime_error("follow.follower_activity_exceptions: '" + a +
+                                 "' is not an activity in this world");
+      follow.follower_activity_exception_ids.push_back(
+          static_cast<int16_t>(idx));
     }
     for (const auto& m : follow.venue_exceptions) {
       int idx = world.getVenueTypeIndex(m);
