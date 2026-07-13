@@ -89,6 +89,7 @@ void EventWriter::saveToHDF5WithLookups(
     writeRelationshipEvents(file, logger, config.simulation.compression_level);
     writeCoordinatedEncounterEvents(file, logger,
                                     config.simulation.compression_level);
+    writeFollowEvents(file, logger, config.simulation.compression_level);
 
     // Always write lookups and metadata at the end, even if file exists
     H5::Group lookups_group =
@@ -120,6 +121,13 @@ void EventWriter::saveToHDF5WithLookups(
                         world.encounter_type_names);
     writeStringRegistry(registries_group, "activities", world.activity_names);
     writeStringRegistry(registries_group, "symptoms", world.symptom_names);
+
+    // rule_id in /events/follows indexes this, in follows-list order.
+    std::vector<std::string> follow_rule_names;
+    follow_rule_names.reserve(config.coordinated_encounters.follows.size());
+    for (const auto& f : config.coordinated_encounters.follows)
+      follow_rule_names.push_back(f.name);
+    writeStringRegistry(registries_group, "follow_rules", follow_rule_names);
 
     if (isLogRank()) {
       std::cout << "Events and lookup tables saved successfully!" << std::endl;
@@ -385,6 +393,33 @@ void EventWriter::writeCoordinatedEncounterEvents(H5::H5File& file,
                     HOFFSET(detail::CoordinatedEncounterRecord, group_id),
                     H5::PredType::NATIVE_UINT64);
   writeDatasetTemplate(file, "/events/coordinated_encounters", records, type,
+                       compression_level);
+}
+
+void EventWriter::writeFollowEvents(H5::H5File& file, const EventLogger& logger,
+                                    int compression_level) {
+  if (logger.follows_.empty()) return;
+  std::vector<detail::FollowRecord> records(logger.follows_.size());
+  for (size_t i = 0; i < logger.follows_.size(); ++i) {
+    const auto& event = logger.follows_[i];
+    records[i].host = event.host;
+    records[i].follower = event.follower;
+    records[i].time = event.time;
+    records[i].rule_id = event.rule_id;
+    records[i].slot = event.slot;
+  }
+  H5::CompType type(sizeof(detail::FollowRecord));
+  type.insertMember("host", HOFFSET(detail::FollowRecord, host),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("follower", HOFFSET(detail::FollowRecord, follower),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("time", HOFFSET(detail::FollowRecord, time),
+                    H5::PredType::NATIVE_DOUBLE);
+  type.insertMember("rule_id", HOFFSET(detail::FollowRecord, rule_id),
+                    H5::PredType::NATIVE_UINT8);
+  type.insertMember("slot", HOFFSET(detail::FollowRecord, slot),
+                    H5::PredType::NATIVE_INT);
+  writeDatasetTemplate(file, "/events/follows", records, type,
                        compression_level);
 }
 

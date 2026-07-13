@@ -175,6 +175,39 @@ class Simulator {
   // onto every eligible participant's PersonLocation.
   void injectCoordinatedEncountersIntoSlot(int time_slot_index);
 
+  // Follow: each slot, every follower is placed at the venue its host resolved
+  // to. Runs right after encounter injection so the host's location for the
+  // slot is already settled. A scenario may configure several rules at once;
+  // each keeps its own binding state and they are applied in config order.
+  void injectFollowsIntoSlot(int time_slot_index);
+
+  // One rule's binding state. follower_host maps a follower to the host it
+  // shadows; active_hosts is the set of hosts currently bound (for a stochastic
+  // trip this is the hosts already enrolled so they do not re-roll each slot;
+  // for a criteria binding it is who a rebuild last picked). follow_day is the
+  // last day the criteria bindings were rebuilt; it starts at -1 so a fresh or
+  // just-restored run rebuilds on its first slot, and it is not saved in a
+  // checkpoint, which is what makes a criteria binding derive itself after a
+  // resume.
+  struct FollowRuntime {
+    std::unordered_map<PersonId, PersonId> follower_host;
+    std::unordered_set<PersonId> active_hosts;
+    int follow_day = -1;
+  };
+  std::vector<FollowRuntime> follow_state_;
+
+  // Apply one follow rule for this slot. committed_hosts / committed_followers
+  // accumulate across rules in config order: everyone already bound by an
+  // earlier rule, so this rule yields to them (a follower is exclusive to the
+  // first rule that binds it; a host may recur, but no one is both). The rule
+  // adds its own hosts and followers to those sets on the way out.
+  // rule_id is the rule's index in the follows list, and is what
+  // /events/follows records against the follow_rules registry.
+  void processFollowRule(int time_slot_index, int day, uint8_t rule_id,
+                         const FollowConfig& fc, FollowRuntime& st,
+                         std::unordered_set<PersonId>& committed_hosts,
+                         std::unordered_set<PersonId>& committed_followers);
+
   // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
   // (symptom transitions / recoveries / deaths) and then decay the venue
   // fomite buffer for this slot. Both wrapped in try/catch with a Fatal

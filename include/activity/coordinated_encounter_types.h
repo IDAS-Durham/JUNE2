@@ -86,6 +86,11 @@ struct CoordinatedEncounter {
   int venue_type_id;
   int slot;
   uint8_t encounter_type_id;
+  // Host's subset at venue_id, resolved on the host's rank at finalize. Every
+  // injected participant adopts it so they bin as the host's subgroup rather
+  // than by the subset_index of the venue they were scheduled to. -1 on
+  // virtual venues (no subsets).
+  SubsetIndex host_subset_index = -1;
 
   std::set<PersonId> participants;
 };

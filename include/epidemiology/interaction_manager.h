@@ -344,10 +344,11 @@ class InteractionManager {
       Person*& person_out, const VisitorInfo*& visitor_out) const;
 
   // Throws std::runtime_error if any v1 precondition of partial-presence FOI
-  // is violated for this venue/encounter. Pure check, no side effects.
-  void validatePartialPresencePreconditions(const Venue* venue,
-                                            VenueId actual_venue_id,
-                                            uint8_t encounter_type_id) const;
+  // is violated for this venue/encounter, checking every member rather than the
+  // group's representative. Pure check, no side effects.
+  void validatePartialPresencePreconditions(
+      const std::vector<InteractionMember>& members, const Venue* venue,
+      VenueId actual_venue_id, uint8_t encounter_type_id) const;
 
   // Step 1 of computePartialPresenceLambda: resolve each member's carriage
   // (via runtime_bin_allocator_), matrix_bin, and effective presence window,

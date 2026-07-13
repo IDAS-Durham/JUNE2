@@ -166,6 +166,10 @@ void parseSimulationOutput(const YAML::Node& output, SimulationConfig& config) {
     config.save_population_summary =
         output["save_population_summary"].as<bool>();
   }
+  if (output["save_coordinated_encounters"]) {
+    config.save_coordinated_encounters =
+        output["save_coordinated_encounters"].as<bool>();
+  }
   if (output["summary_properties"]) {
     config.summary_properties =
         output["summary_properties"].as<std::vector<std::string>>();

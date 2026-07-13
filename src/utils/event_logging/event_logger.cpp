@@ -96,6 +96,11 @@ void EventLogger::logCoordinatedEncounter(PersonId person_a, PersonId person_b,
       {person_a, person_b, time, encounter_type_id, slot, group_id});
 }
 
+void EventLogger::logFollow(PersonId host, PersonId follower, double time,
+                            uint8_t rule_id, int slot) {
+  follows_.push_back({host, follower, time, rule_id, slot});
+}
+
 void EventLogger::clear() {
   infections_.clear();
   symptom_changes_.clear();
@@ -106,6 +111,7 @@ void EventLogger::clear() {
   vaccinations_.clear();
   relationships_.clear();
   coordinated_encounters_.clear();
+  follows_.clear();
 }
 
 void EventLogger::printEncounterStats(
