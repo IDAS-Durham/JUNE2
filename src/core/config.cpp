@@ -1,6 +1,7 @@
 #include "core/config.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <random>
@@ -680,8 +681,121 @@ void PerformanceConfig::resolve(const WorldState& world) {
   masks_resolved = true;
 }
 
+void SelectionCriterion::resolveOrThrow(const WorldState& world,
+                                        const std::string& context) {
+  resolve(world);
+
+  if (cached_type == PropertyType::UNKNOWN) {
+    throw std::runtime_error(
+        context + ": property '" + property_path +
+        "' is not one this engine can read off a person. "
+        "Known forms: age, sex, geo_unit_id, id, is_alive, "
+        "properties.<name>, activities.<name>.length, "
+        "activities.<name>.venue_type, "
+        "networks.<name>.length, partner_in_network(<n>)");
+  }
+  if (cached_type == PropertyType::CUSTOM_PROPERTY && cached_prop_idx < 0) {
+    throw std::runtime_error(context + ": person property '" +
+                             cached_sub_property +
+                             "' is not carried by this world");
+  }
+
+  static const std::array<const char*, 8> kOperators = {
+      ">", "<", ">=", "<=", "==", "!=", "in", "contains"};
+  if (std::find_if(kOperators.begin(), kOperators.end(), [&](const char* op) {
+        return operator_type == op;
+      }) == kOperators.end()) {
+    throw std::runtime_error(context + ": operator '" + operator_type +
+                             "' is not supported (use one of > < >= <= == != "
+                             "in contains)");
+  }
+}
+
 void CoordinatedEncounterConfig::resolve(
     WorldState& world, ContactMatrixConfig& contact_matrices) {
+  // Follow is resolved first because it works even with encounters disabled.
+  // Each rule in the list resolves independently against the world.
+  for (FollowConfig& follow : follows) {
+    if (!follow.enabled) continue;
+    bool has_venue = !follow.pool_venue_type.empty();
+    bool has_network = follow.usesNetwork();
+    if (has_venue == has_network) {
+      throw std::runtime_error(
+          "follow requires exactly one pool source: set either "
+          "'pool_venue_type' or 'network', not both/neither");
+    }
+    if (has_venue) {
+      follow.pool_venue_type_id =
+          world.getVenueTypeIndex(follow.pool_venue_type);
+      if (follow.pool_venue_type_id < 0) {
+        throw std::runtime_error("follow.pool_venue_type '" +
+                                 follow.pool_venue_type +
+                                 "' is not a venue type in this world");
+      }
+    } else {
+      follow.network_idx = world.getNetworkTypeIndex(follow.network);
+      if (follow.network_idx < 0) {
+        throw std::runtime_error("follow.network '" + follow.network +
+                                 "' is not a network in this world");
+      }
+    }
+    if (!follow.encounter_type.empty()) {
+      int e = world.getEncounterTypeIndex(follow.encounter_type);
+      if (e >= 0) follow.encounter_type_id = static_cast<uint8_t>(e);
+    }
+
+    // Criteria establishment resolves both criteria lists against the world. An
+    // empty list is fine and matches everyone, but a criterion the world cannot
+    // answer is a config mistake, not a filter that nobody passes.
+    auto resolveCriteria = [&](std::vector<SelectionCriterion>& criteria,
+                               const char* which) {
+      for (SelectionCriterion& c : criteria)
+        c.resolveOrThrow(world, std::string("follow.") + which);
+    };
+    resolveCriteria(follow.follower, "eligibility");
+    resolveCriteria(follow.host, "host_eligibility");
+
+    // A network partner can live on another rank, where its age and properties
+    // are not visible, so host_eligibility cannot be applied to a network pool.
+    // The host there is simply the lowest-id partner. Reject the combination
+    // rather than silently ignore the criteria.
+    if (follow.usesNetwork() && !follow.host.empty()) {
+      throw std::runtime_error(
+          "follow.host_eligibility is not supported with a network pool; "
+          "the host is the lowest-id partner. Use a venue pool to constrain "
+          "the host by age or property.");
+    }
+
+    // The three suppression lists name activities and venue types. Reject any
+    // name the world does not know rather than silently ignoring it.
+    for (const auto& a : follow.activity_exceptions) {
+      int idx = world.getActivityIndex(a);
+      if (idx < 0)
+        throw std::runtime_error("follow.activity_exceptions: '" + a +
+                                 "' is not an activity in this world");
+      follow.activity_exception_ids.push_back(static_cast<int16_t>(idx));
+    }
+    for (const auto& a : follow.follower_activity_exceptions) {
+      int idx = world.getActivityIndex(a);
+      if (idx < 0)
+        throw std::runtime_error("follow.follower_activity_exceptions: '" + a +
+                                 "' is not an activity in this world");
+      follow.follower_activity_exception_ids.push_back(
+          static_cast<int16_t>(idx));
+    }
+    for (const auto& m : follow.venue_exceptions) {
+      int idx = world.getVenueTypeIndex(m);
+      if (idx < 0)
+        throw std::runtime_error("follow.venue_exceptions: '" + m +
+                                 "' is not a venue type in this world");
+      follow.venue_exception_type_ids.push_back(static_cast<uint8_t>(idx));
+    }
+
+    // All eight pool x establishment x span combinations are implemented, so
+    // there is nothing left to reject here. The one guard that remains is the
+    // network host_eligibility case above.
+  }
+
   if (!enabled) return;
 
   // Build deterministic name→id mapping from sorted keys

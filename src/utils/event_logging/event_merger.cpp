@@ -25,6 +25,7 @@ void EventMerger::mergeEventFiles(const std::vector<std::string>& input_files,
     mergeVaccinationEvents(out_file, input_files);
     mergeRelationshipEvents(out_file, input_files);
     mergeCoordinatedEncounterEvents(out_file, input_files);
+    mergeFollowEvents(out_file, input_files);
 
     mergePeopleLookup(out_file, input_files);
     mergeVenueLookup(out_file, input_files);
@@ -224,6 +225,24 @@ void EventMerger::mergeCoordinatedEncounterEvents(
   mergeDatasetTemplate<detail::CoordinatedEncounterRecord>(
       out_file, "/events/coordinated_encounters", input_files, type);
   std::cout << "  Merged /events/coordinated_encounters" << std::endl;
+}
+
+void EventMerger::mergeFollowEvents(
+    H5::H5File& out_file, const std::vector<std::string>& input_files) {
+  H5::CompType type(sizeof(detail::FollowRecord));
+  type.insertMember("host", HOFFSET(detail::FollowRecord, host),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("follower", HOFFSET(detail::FollowRecord, follower),
+                    H5::PredType::NATIVE_INT);
+  type.insertMember("time", HOFFSET(detail::FollowRecord, time),
+                    H5::PredType::NATIVE_DOUBLE);
+  type.insertMember("rule_id", HOFFSET(detail::FollowRecord, rule_id),
+                    H5::PredType::NATIVE_UINT8);
+  type.insertMember("slot", HOFFSET(detail::FollowRecord, slot),
+                    H5::PredType::NATIVE_INT);
+  mergeDatasetTemplate<detail::FollowRecord>(out_file, "/events/follows",
+                                             input_files, type);
+  std::cout << "  Merged /events/follows" << std::endl;
 }
 
 }  // namespace june

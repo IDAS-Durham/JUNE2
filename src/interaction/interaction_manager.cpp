@@ -371,6 +371,12 @@ void InteractionManager::filterAndSortActiveLocations(
   active_locations_buffer_.clear();
   active_locations_buffer_.reserve(locations.size());
   for (const auto& loc : locations) {
+    // A line takes its members from the allocator's rider table, not from
+    // here, because one location cannot express a journey across four of
+    // them. Leaving these in would count every rider twice.
+    if (runtime_bin_allocator_ &&
+        runtime_bin_allocator_->isPartialPresenceVenue(loc.venue_id))
+      continue;
     if (loc.venue_id != -1 || loc.encounter_type_id != 255) {
       active_locations_buffer_.push_back(loc);
     }

@@ -48,6 +48,8 @@ class EventLogger {
   void logCoordinatedEncounter(PersonId person_a, PersonId person_b,
                                double time, uint8_t encounter_type_id, int slot,
                                uint64_t group_id);
+  void logFollow(PersonId host, PersonId follower, double time, uint8_t rule_id,
+                 int slot);
 
   // Save all events + lookup tables to HDF5 file (with config-based selective
   // saving)
@@ -80,6 +82,7 @@ class EventLogger {
   size_t getCoordinatedEncounterCount() const {
     return coordinated_encounters_.size();
   }
+  size_t getFollowCount() const { return follows_.size(); }
 
   // Encounter stats per day type (day_type_idx = index into day_type_names)
   void logEncounterStats(int day_type_idx, bool is_actual, size_t count = 1) {
@@ -110,7 +113,8 @@ class EventLogger {
     return infections_.size() + symptom_changes_.size() + deaths_.size() +
            hospital_admissions_.size() + icu_admissions_.size() +
            hospital_discharges_.size() + vaccinations_.size() +
-           relationships_.size() + coordinated_encounters_.size();
+           relationships_.size() + coordinated_encounters_.size() +
+           follows_.size();
   }
 
   // Static method to merge multiple event files into one (Delegated to
@@ -131,6 +135,7 @@ class EventLogger {
   std::vector<VaccinationEvent> vaccinations_;
   std::vector<RelationshipEvent> relationships_;
   std::vector<CoordinatedEncounterEvent> coordinated_encounters_;
+  std::vector<FollowEvent> follows_;
 
   std::vector<size_t> scheduled_encounters_;  // per day type index
   std::vector<size_t> actual_encounters_;     // per day type index
