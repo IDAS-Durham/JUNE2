@@ -2,7 +2,12 @@ import logging
 
 import pandas as pd
 
-from .decode import NO_INFECTOR_ID, decode_registry_column, load_registry
+from .decode import (
+    NO_INFECTOR_ID,
+    UNSET_REGISTRY_INDEX,
+    decode_registry_column,
+    load_registry,
+)
 from .enrich import enrich_with_people, enrich_with_venues
 from .io import load_people_lookup, load_raw_table, load_venues_lookup
 
@@ -13,6 +18,14 @@ DEFAULT_REGISTRY_COLUMNS = {
     "infector_symptom_id": "symptoms",
     "old_symptom_id": "symptoms",
     "new_symptom_id": "symptoms",
+}
+
+# Only encounter_type_id has a real engine-side sentinel (uint8_t default 255,
+# event_logger.h). The symptom_id columns default to 0 ("recovered") — a real
+# registry entry, not a sentinel — so they get no entry here; decode_registry_column
+# then treats every index as ordinary registry data.
+REGISTRY_SENTINELS = {
+    "encounter_type_id": UNSET_REGISTRY_INDEX,
 }
 
 # encounter_type_id's UNSET_REGISTRY_INDEX sentinel means "ordinary venue-level
@@ -78,6 +91,8 @@ def load_enriched_events(
             )
             continue
         decode_kwargs = {}
+        if id_column in REGISTRY_SENTINELS:
+            decode_kwargs["unset_value"] = REGISTRY_SENTINELS[id_column]
         if id_column in UNSET_LABEL_OVERRIDES:
             decode_kwargs["unset_label"] = UNSET_LABEL_OVERRIDES[id_column]
         if id_column == "infector_symptom_id":

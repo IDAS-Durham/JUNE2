@@ -141,6 +141,7 @@ def test_load_enriched_events_matches_manual_chain_on_real_infections():
         manual,
         "encounter_type_id",
         encounter_types,
+        unset_value=255,
         unset_label="regular_non_coordinated_encounter",
     )
     manual = enrich_with_people(manual, load_people_lookup(REAL_EVENTS_FILE))

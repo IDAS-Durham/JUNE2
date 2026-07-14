@@ -143,3 +143,9 @@ defaults the caller can opt out of, not steps the caller assembles.
   for why the raw-table loader is chunked at all) — do not add a bare
   `load_coordinated_encounters()` without first designing the query
   interface it actually needs.
+- The engine also writes an `activities` **Registry** and an `activity_index`
+  column, but that column lives on `/lookups/person_activities`
+  (`PersonActivityRecord`, `event_types.h`), not on any **Raw event table** —
+  this library has no loader for that lookup table yet, so `activities` has
+  no decode path. Same "not built yet" status as `coordinated_encounters`,
+  not a gap in `load_enriched_events`.

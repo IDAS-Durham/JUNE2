@@ -1,8 +1,6 @@
 import h5py
 import pandas as pd
 
-from .sentinels import UNSET_REGISTRY_INDEX
-
 
 def load_registry(path: str, registry_name: str):
     dataset_path = f"metadata/registries/{registry_name}"
@@ -16,7 +14,7 @@ def decode_registry_column(
     df,
     id_column: str,
     registry,
-    unset_value: int = UNSET_REGISTRY_INDEX,
+    unset_value: int | None = None,
     unset_label: str = "unknown",
     no_match_label: str = "not_recorded",
 ):
@@ -25,7 +23,7 @@ def decode_registry_column(
     def decode(index):
         if pd.isna(index):
             return no_match_label
-        if index == unset_value:
+        if unset_value is not None and index == unset_value:
             return unset_label
         try:
             return lookup[index]
