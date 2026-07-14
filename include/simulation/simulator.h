@@ -203,10 +203,13 @@ class Simulator {
   // adds its own hosts and followers to those sets on the way out.
   // rule_id is the rule's index in the follows list, and is what
   // /events/follows records against the follow_rules registry.
+  // cotravel collects (follower, host) pairs whose host is on a line, for the
+  // allocator to seat once every rule has run.
   void processFollowRule(int time_slot_index, int day, uint8_t rule_id,
                          const FollowConfig& fc, FollowRuntime& st,
                          std::unordered_set<PersonId>& committed_hosts,
-                         std::unordered_set<PersonId>& committed_followers);
+                         std::unordered_set<PersonId>& committed_followers,
+                         std::vector<std::pair<PersonId, PersonId>>& cotravel);
 
   // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
   // (symptom transitions / recoveries / deaths) and then decay the venue

@@ -435,13 +435,19 @@ VenueId findPoolVenue(const WorldState& world, const Person& host,
 // host-side exceptions cannot express that: a parent with no primary activity
 // is never at an excepted activity, so without this the parent's venue would
 // overwrite the child's school every time.
+bool venueExcepted(const FollowConfig& fc, uint8_t venue_type) {
+  return std::find(fc.venue_exception_type_ids.begin(),
+                   fc.venue_exception_type_ids.end(),
+                   venue_type) != fc.venue_exception_type_ids.end();
+}
+
 bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
                       uint8_t host_venue_type, int16_t follower_activity) {
   auto listed = [](const auto& ids, auto value) {
     return std::find(ids.begin(), ids.end(), value) != ids.end();
   };
   if (listed(fc.activity_exception_ids, host_activity)) return true;
-  if (listed(fc.venue_exception_type_ids, host_venue_type)) return true;
+  if (venueExcepted(fc, host_venue_type)) return true;
   // -1 means the follower has nowhere of its own to be this slot, so there is
   // nothing for an exception to protect and it follows.
   if (follower_activity >= 0 &&
@@ -753,18 +759,26 @@ void Simulator::injectFollowsIntoSlot(int time_slot_index) {
   // order is fixed on every rank, so the whole resolution is the same at any
   // rank count.
   std::unordered_set<PersonId> committed_hosts, committed_followers;
+  std::vector<std::pair<PersonId, PersonId>> cotravel;
   for (size_t ri = 0; ri < rules.size(); ++ri) {
     const FollowConfig& fc = rules[ri];
     if (!fc.enabled) continue;
     processFollowRule(time_slot_index, day, static_cast<uint8_t>(ri), fc,
-                      follow_state_[ri], committed_hosts, committed_followers);
+                      follow_state_[ri], committed_hosts, committed_followers,
+                      cotravel);
   }
+
+  // Followers bound for a line take over their host's rider entries, so they
+  // board the same carriages at the same time. Done once for all rules, since
+  // it costs one exchange between ranks.
+  if (runtime_bin_allocator_) runtime_bin_allocator_->attachFollowers(cotravel);
 }
 
 void Simulator::processFollowRule(
     int time_slot_index, int day, uint8_t rule_id, const FollowConfig& fc,
     FollowRuntime& st, std::unordered_set<PersonId>& committed_hosts,
-    std::unordered_set<PersonId>& committed_followers) {
+    std::unordered_set<PersonId>& committed_followers,
+    std::vector<std::pair<PersonId, PersonId>>& cotravel) {
   // Network pools may enrol partners in other domains; venue pools are always
   // co-resident, so they need no cross-rank routing or per-slot broadcast.
   bool cross_rank = false;
@@ -932,32 +946,26 @@ void Simulator::processFollowRule(
             .has_value())
       continue;
 
-    // A partial-presence venue (a commute line) bins its riders into carriages
-    // and gives each an effective boarding window, and it does that in step 1
-    // of the slot, before any follower is placed. A follower mirrored onto one
-    // here was never bucketed, so the FOI loop finds no carriage for them and
-    // skips them: aboard for bookkeeping, but neither infecting nor infectable.
-    // Refuse rather than model a ghost rider. Travelling together properly
-    // means inheriting the host's carriage and window, which this does not do.
-    const uint64_t pp_mask =
-        config_.simulation.partial_presence.enabled_venue_type_mask;
-    if (host_venue_type < 64 && ((pp_mask >> host_venue_type) & 1ULL)) {
-      const std::string type_name =
-          host_venue_type < world_.venue_type_names.size()
-              ? world_.venue_type_names[host_venue_type]
-              : std::to_string(static_cast<int>(host_venue_type));
-      throw std::runtime_error(
-          "follow rule '" + fc.name + "': follower " +
-          std::to_string(follower) +
-          " would be placed on partial-presence "
-          "venue " +
-          std::to_string(hl->second.venue) + " (type '" + type_name +
-          "') by following host " + std::to_string(host) +
-          ". Followers on partial-presence venues are not supported: they get "
-          "no carriage or boarding window and would ride with zero force of "
-          "infection. Exclude them with activity_exceptions (e.g. 'commute') "
-          "or venue_exceptions (e.g. '" +
-          type_name + "') on this rule.");
+    // Travelling with the host means riding the host's whole journey, not the
+    // single leg their location happens to name. A journey is all or nothing:
+    // if any leg of it is a venue type this rule excepts, the follower stays on
+    // its own schedule, because a child cannot be dropped at a bus stop and
+    // rejoin two legs later.
+    if (runtime_bin_allocator_ &&
+        runtime_bin_allocator_->isPartialPresenceVenue(hl->second.venue)) {
+      const auto& legs = runtime_bin_allocator_->legsOf(host);
+      bool excepted = false;
+      for (VenueId leg : legs) {
+        // The host's line may belong to another rank, whose venue types this
+        // rank does not hold, so take the type the rider broadcast carried.
+        if (follow_detail::venueExcepted(
+                fc, runtime_bin_allocator_->venueTypeOf(leg))) {
+          excepted = true;
+          break;
+        }
+      }
+      if (excepted) continue;
+      cotravel.emplace_back(follower, host);
     }
 
     // Copy the host's (venue, subset). The host resolved the subset against
