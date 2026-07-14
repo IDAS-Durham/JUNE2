@@ -620,7 +620,8 @@ void InfectionSeeder::infectPerson(Person* person,
       trajectory_key, start_symptom);
 
   if (event_logger_ != nullptr) {
-    event_logger_->logInfection(person->id, -1, INFECTION_SEED_VENUE_ID,
+    event_logger_->logInfection(person->id, kInvalidPersonId,
+                                INFECTION_SEED_VENUE_ID,
                                 current_simulation_time_);
   }
 

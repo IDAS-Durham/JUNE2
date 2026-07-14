@@ -349,8 +349,8 @@ void InteractionManager::applyVenueInfection(
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(susceptible_id, infector_id, actual_venue_id,
                                 current_time, susc_mem.encounter_type_id,
-                                infector_symptom_id, transmission_mode_index,
-                                infection_source);
+                                static_cast<uint8_t>(infector_symptom_id),
+                                transmission_mode_index, infection_source);
   }
 
   if (active_infections != nullptr) {

@@ -756,7 +756,7 @@ struct CoordinatedEncounterDef {
   ActivityMask trigger_mask = 0;        // Bitmask of trigger activity indices
   ActivityMask allowed_venue_mask = 0;  // Bitmask of allowed venue type indices
   int cached_network_idx = -1;          // Resolved network type index
-  uint8_t cached_encounter_type_id = 255;  // Resolved encounter type ID
+  uint8_t cached_encounter_type_id = kUnknownEncounterTypeId;  // Resolved encounter type ID
   int cached_virtual_venue_type_id = 255;  // Resolved virtual venue type ID
 };
 
@@ -845,7 +845,7 @@ struct FollowConfig {
   // Filled in by CoordinatedEncounterConfig::resolve against the world:
   int pool_venue_type_id = -1;
   int network_idx = -1;
-  uint8_t encounter_type_id = 255;
+  uint8_t encounter_type_id = kUnknownEncounterTypeId;
   std::vector<int16_t> activity_exception_ids;
   std::vector<uint8_t> venue_exception_type_ids;
   std::vector<int16_t> follower_activity_exception_ids;
