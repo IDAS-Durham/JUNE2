@@ -300,7 +300,7 @@ void ActivityManager::groupVenuesByType(
     // (falls back to global_venue_type_map for cross-rank). This ensures
     // the same hierarchical selection regardless of MPI partitioning.
     uint8_t v_type_id = world_.getVenueTypeId(v_entry.first);
-    if (v_type_id == 255) {
+    if (v_type_id == kUnknownEncounterTypeId) {
       // Unknown venue type; collect for fallback
       cross_rank_venues_buffer.push_back(v_entry);
       continue;

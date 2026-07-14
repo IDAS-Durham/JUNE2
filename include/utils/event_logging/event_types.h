@@ -7,6 +7,12 @@
 
 namespace june {
 
+// Shared fallback strings for unresolvable/inapplicable HDF5 lookup-table
+// values. Single point of definition so every writer/merger call site stays
+// in sync.
+inline constexpr const char* kCouldNotResolve = "could not resolve";
+inline constexpr const char* kNotApplicable = "not applicable";
+
 // =============================================================================
 // Lightweight Population Record for Denominators
 // =============================================================================

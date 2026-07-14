@@ -43,7 +43,7 @@ std::vector<june::detail::PersonRecord> buildPersonRecords(
     record.age = person.age;
     std::string sex_str = (person.sex == june::Sex::MALE)     ? "male"
                           : (person.sex == june::Sex::FEMALE) ? "female"
-                                                              : "could not resolve";
+                                                              : june::kCouldNotResolve;
     strncpy(record.sex, sex_str.c_str(), 15);
     record.sex[15] = '\0';
     record.geo_unit_id = person.geo_unit_id;
@@ -52,7 +52,7 @@ std::vector<june::detail::PersonRecord> buildPersonRecords(
     std::string sched_type =
         person.schedule_type_id < world.schedule_type_names.size()
             ? world.schedule_type_names[person.schedule_type_id]
-            : "could not resolve";
+            : june::kCouldNotResolve;
     strncpy(record.schedule_type, sched_type.c_str(), 63);
     record.schedule_type[63] = '\0';
     record.num_activities =
@@ -101,11 +101,11 @@ std::vector<std::string> collectPropertyValues(
       else if (std::holds_alternative<double>(val))
         values.push_back(std::to_string(std::get<double>(val)));
       else
-        values.push_back("could not resolve");
+        values.push_back(june::kCouldNotResolve);
     } else if (network_type_id >= 0) {
       auto partners = world.getNetworkPartners(person, network_type_id);
       if (partners.empty()) {
-        values.push_back("not applicable");
+        values.push_back(june::kNotApplicable);
       } else {
         std::string s = "[";
         for (size_t i = 0; i < partners.size(); ++i) {
@@ -116,7 +116,7 @@ std::vector<std::string> collectPropertyValues(
         values.push_back(std::move(s));
       }
     } else {
-      values.push_back("not applicable");
+      values.push_back(june::kNotApplicable);
     }
   }
   return values;
@@ -450,7 +450,7 @@ void EventWriter::writeVenueLookupTable(H5::H5File& file,
                             ? "coordinated_encounter"
                             : (venue.type_id < world.venue_type_names.size()
                                    ? world.venue_type_names[venue.type_id]
-                                   : "could not resolve");
+                                   : june::kCouldNotResolve);
     strncpy(records[i + 1].type, vtype.c_str(), 63);
     records[i + 1].type[63] = '\0';
     records[i + 1].geo_unit_id = venue.geo_unit_id;
