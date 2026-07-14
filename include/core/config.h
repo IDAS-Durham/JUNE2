@@ -757,7 +757,7 @@ struct CoordinatedEncounterDef {
   ActivityMask allowed_venue_mask = 0;  // Bitmask of allowed venue type indices
   int cached_network_idx = -1;          // Resolved network type index
   uint8_t cached_encounter_type_id = kDefaultEncounterTypeId;  // Resolved encounter type ID
-  int cached_virtual_venue_type_id = 255;  // Resolved virtual venue type ID
+  int cached_virtual_venue_type_id = kUnknownVenueTypeId;  // Resolved virtual venue type ID
 };
 
 // Raw row from a frequency-group CSV, resolved for fast per-person lookup.
