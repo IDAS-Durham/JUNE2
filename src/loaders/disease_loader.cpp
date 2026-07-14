@@ -642,6 +642,16 @@ std::vector<SymptomTag> DiseaseLoader::loadSymptomTags(
     const YAML::Node& config) {
   std::vector<SymptomTag> symptom_tags;
   if (!config["symptom_tags"]) return symptom_tags;
+  // Symptom ids are narrowed to uint8_t for event logging and cross-rank
+  // transmission (PendingInfection, InfectionEvent); kNoSymptomId reserves
+  // 255 as the "not applicable" sentinel, so a real id can't reach it.
+  if (config["symptom_tags"].size() >= kNoSymptomId) {
+    throw std::runtime_error(
+        "DiseaseLoader::loadSymptomTags: too many symptom_tags (" +
+        std::to_string(config["symptom_tags"].size()) +
+        "); ids are stored as uint8_t and must stay below " +
+        std::to_string(static_cast<int>(kNoSymptomId)));
+  }
   uint16_t current_id = 0;
   for (const auto& tag_node : config["symptom_tags"]) {
     SymptomTag tag;
