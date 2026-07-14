@@ -808,7 +808,7 @@ class InteractionManager {
       const std::unordered_set<PersonId>* visitor_ids = nullptr,
       std::vector<PendingInfection>* pending_infections = nullptr,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data = nullptr,
-      uint8_t encounter_type_id = 255,
+      uint8_t encounter_type_id = kDefaultEncounterTypeId,
       const CompartmentalModelManager* comp_model = nullptr);
 
   // Return person_ids of susceptibles sorted ascending; the partial-presence
@@ -880,7 +880,7 @@ class InteractionManager {
   // v1 scope (assumed and enforced; throws on violation):
   //   - Physical venue (actual_venue_id >= 0); not a virtual encounter venue.
   //   - No parent venue (transport lines have none in current MAY output).
-  //   - No coordinated encounter participants (encounter_type_id == 255).
+  //   - No coordinated encounter participants (encounter_type_id == kDefaultEncounterTypeId).
   //   - Direct-contact FOI only; no fomite / compartmental uptake on
   //     partial-presence venue types in v1.
   // Violations throw with a descriptive error rather than silently

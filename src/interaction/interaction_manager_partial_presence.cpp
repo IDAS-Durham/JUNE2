@@ -297,7 +297,7 @@ void InteractionManager::validatePartialPresencePreconditions(
   if (!venue)
     throw std::runtime_error("computePartialPresenceLambda: null venue");
   (void)members;
-  if (encounter_type_id != kUnknownEncounterTypeId)
+  if (encounter_type_id != kDefaultEncounterTypeId)
     throw std::runtime_error(
         "computePartialPresenceLambda: coordinated-encounter venues not "
         "supported on partial-presence types in v1");
@@ -377,7 +377,7 @@ void InteractionManager::recordPartialPresenceCandidate(
   cand.infector_id = infector_id;
   cand.infection_time = current_time;
   cand.venue_type_id = venue_type_id;
-  cand.encounter_type_id = kUnknownEncounterTypeId;
+  cand.encounter_type_id = kDefaultEncounterTypeId;
   cand.venue_id = actual_venue_id;
   cand.infector_symptom_id = infector_symptom_id;
   cand.transmission_mode_index = transmission_mode_index;
@@ -409,12 +409,12 @@ int InteractionManager::processPartialPresenceLines(
       auto it = world_.person_index.find(r.pid);
       if (it != world_.person_index.end()) idx = it->second;
       members.push_back(
-          InteractionMember{r.pid, idx, r.subset, kUnknownEncounterTypeId});
+          InteractionMember{r.pid, idx, r.subset, kDefaultEncounterTypeId});
     }
 
     processPartialPresenceVenue(members, venue, vid, current_time, delta_hours,
                                 active_infections, nullptr, nullptr,
-                                visitor_data, kUnknownEncounterTypeId, nullptr);
+                                visitor_data, kDefaultEncounterTypeId, nullptr);
   }
   return 0;  // counted once the winners are resolved
 }
@@ -464,7 +464,7 @@ int InteractionManager::resolvePartialPresenceInfections(
     c.infector_symptom_id = static_cast<uint8_t>(packed[i + 4]);
     c.transmission_mode_index = static_cast<uint8_t>(packed[i + 5]);
     c.infection_time = current_time;
-    c.encounter_type_id = kUnknownEncounterTypeId;
+    c.encounter_type_id = kDefaultEncounterTypeId;
     all.push_back(c);
   }
   if (all.empty()) return 0;
@@ -504,7 +504,7 @@ int InteractionManager::resolvePartialPresenceInfections(
 
     if (event_logger_ != nullptr)
       event_logger_->logInfection(c.person_id, c.infector_id, c.venue_id,
-                                  current_time, kUnknownEncounterTypeId,
+                                  current_time, kDefaultEncounterTypeId,
                                   c.infector_symptom_id,
                                   c.transmission_mode_index,
                                   InfectionSource::Person);

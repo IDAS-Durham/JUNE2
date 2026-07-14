@@ -38,7 +38,8 @@ using SubsetIndex = int32_t;
 // Sentinel constants shared across core types and event logging.
 constexpr PersonId kInvalidPersonId = -1;
 constexpr VenueId kInvalidVenueId = -1;
-constexpr uint8_t kUnknownEncounterTypeId = 255;
+constexpr uint8_t kDefaultEncounterTypeId = 255;  // default (non-coordinated) encounter, not an error
+constexpr uint8_t kUnknownVenueTypeId = 255;  // venue type unresolvable (e.g. cross-rank lookup miss)
 constexpr uint8_t kNoSymptomId = 255;  // "not applicable" — registries stay well under 255 entries
 
 // =============================================================================
@@ -49,7 +50,7 @@ struct PendingInfection {
   PersonId infector_id = kInvalidPersonId;
   double infection_time;
   uint8_t venue_type_id;
-  uint8_t encounter_type_id = kUnknownEncounterTypeId;
+  uint8_t encounter_type_id = kDefaultEncounterTypeId;
   VenueId venue_id;
   int32_t home_array_index = -1;  // For lookup on home rank
   uint8_t infector_symptom_id =
@@ -388,7 +389,7 @@ struct PersonLocation {
   VenueId venue_id = kInvalidVenueId;
   SubsetIndex subset_index = -1;
   int16_t activity_index = -1;      // activity_names index
-  uint8_t encounter_type_id = kUnknownEncounterTypeId;  // encounter_type_names index
+  uint8_t encounter_type_id = kDefaultEncounterTypeId;  // encounter_type_names index
   size_t person_array_index =
       static_cast<size_t>(-1);  // Direct access to world.people[idx]
 };

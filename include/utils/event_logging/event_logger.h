@@ -28,7 +28,7 @@ class EventLogger {
   // Log events
   void logInfection(PersonId person_id, PersonId infector_id, VenueId venue_id,
                     double time,
-                    uint8_t encounter_type_id = kUnknownEncounterTypeId,
+                    uint8_t encounter_type_id = kDefaultEncounterTypeId,
                     uint8_t infector_symptom_id = kNoSymptomId,
                     uint8_t transmission_mode_index = 0,
                     InfectionSource source = InfectionSource::Person);
