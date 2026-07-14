@@ -44,7 +44,10 @@ def test_load_enriched_events_decodes_and_joins_by_default(tmp_path):
 
     enriched = load_enriched_events(path, "events/infections")
 
-    assert list(enriched["encounter_type"]) == ["social_encounters", "unknown"]
+    assert list(enriched["encounter_type"]) == [
+        "social_encounters",
+        "regular_non_coordinated_encounter",
+    ]
     assert list(enriched["person_sex"]) == ["f", "m"]
     assert enriched["venue_type"].iloc[0] == "school"
     assert pd.isna(enriched["venue_type"].iloc[1])
@@ -101,6 +104,31 @@ def test_load_enriched_events_loads_each_registry_once(tmp_path, monkeypatch):
     assert call_counts["symptoms"] == 1
 
 
+def test_load_enriched_events_masks_infector_symptom_when_no_infector(tmp_path):
+    path = tmp_path / "events.h5"
+    with h5py.File(path, "w") as fh:
+        infections = np.array(
+            [(1, -1, -999, 0.5, 255, 0), (2, 1, 10, 1.5, 255, 2)],
+            dtype=[
+                ("person_id", "<i4"),
+                ("infector_id", "<i4"),
+                ("venue_id", "<i4"),
+                ("time", "<f8"),
+                ("encounter_type_id", "u1"),
+                ("infector_symptom_id", "<u2"),
+            ],
+        )
+        fh.create_dataset("events/infections", data=infections)
+        fh.create_dataset(
+            "metadata/registries/symptoms",
+            data=np.array(["recovered", "exposed", "infected"], dtype="S30"),
+        )
+
+    enriched = load_enriched_events(str(path), "events/infections", with_people=False, with_venues=False)
+
+    assert list(enriched["infector_symptom"]) == ["no_infector", "infected"]
+
+
 @requires_real_file
 def test_load_enriched_events_matches_manual_chain_on_real_infections():
     from june_events.decode import decode_registry_column, load_registry
@@ -109,7 +137,12 @@ def test_load_enriched_events_matches_manual_chain_on_real_infections():
 
     manual = load_raw_table(REAL_EVENTS_FILE, "events/infections")
     encounter_types = load_registry(REAL_EVENTS_FILE, "encounter_types")
-    manual["encounter_type"] = decode_registry_column(manual, "encounter_type_id", encounter_types)
+    manual["encounter_type"] = decode_registry_column(
+        manual,
+        "encounter_type_id",
+        encounter_types,
+        unset_label="regular_non_coordinated_encounter",
+    )
     manual = enrich_with_people(manual, load_people_lookup(REAL_EVENTS_FILE))
     manual = enrich_with_venues(manual, load_venues_lookup(REAL_EVENTS_FILE))
 

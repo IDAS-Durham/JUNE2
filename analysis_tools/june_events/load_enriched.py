@@ -1,6 +1,8 @@
 import logging
 
-from .decode import decode_registry_column, load_registry
+import pandas as pd
+
+from .decode import NO_INFECTOR_ID, decode_registry_column, load_registry
 from .enrich import enrich_with_people, enrich_with_venues
 from .io import load_people_lookup, load_raw_table, load_venues_lookup
 
@@ -13,11 +15,32 @@ DEFAULT_REGISTRY_COLUMNS = {
     "new_symptom_id": "symptoms",
 }
 
+# encounter_type_id's UNSET_REGISTRY_INDEX sentinel means "ordinary venue-level
+# force of infection", not a missing value — decode_registry_column's generic
+# "unknown" would understate the majority case.
+UNSET_LABEL_OVERRIDES = {
+    "encounter_type_id": "regular_non_coordinated_encounter",
+}
+
+NO_INFECTOR_LABEL = "no_infector"
+
 
 def _decoded_column_name(id_column: str) -> str:
     if id_column.endswith("_id"):
         return id_column[: -len("_id")]
     return id_column
+
+
+def _mask_infector_symptom_for_no_infector(events):
+    # infector_symptom_id defaults to 0 ("recovered") whenever infector_id is
+    # -1 (seed/fomite/compartmental infections) — the engine has no infector
+    # to read a symptom from. Mask those rows before registry decode so they
+    # don't come back as a fabricated "recovered" infector.
+    if "infector_id" not in events.columns or "infector_symptom_id" not in events.columns:
+        return events
+    events = events.copy()
+    events.loc[events["infector_id"] == NO_INFECTOR_ID, "infector_symptom_id"] = pd.NA
+    return events
 
 
 def load_enriched_events(
@@ -37,6 +60,8 @@ def load_enriched_events(
     if registry_columns is None:
         registry_columns = DEFAULT_REGISTRY_COLUMNS
 
+    events = _mask_infector_symptom_for_no_infector(events)
+
     loaded_registries = {}
     for id_column, registry_name in registry_columns.items():
         if id_column not in events.columns:
@@ -52,8 +77,13 @@ def load_enriched_events(
                 id_column,
             )
             continue
+        decode_kwargs = {}
+        if id_column in UNSET_LABEL_OVERRIDES:
+            decode_kwargs["unset_label"] = UNSET_LABEL_OVERRIDES[id_column]
+        if id_column == "infector_symptom_id":
+            decode_kwargs["no_match_label"] = NO_INFECTOR_LABEL
         events[_decoded_column_name(id_column)] = decode_registry_column(
-            events, id_column, registry
+            events, id_column, registry, **decode_kwargs
         )
 
     if with_people and "person_id" in events.columns:
