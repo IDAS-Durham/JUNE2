@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "activity/coordinated_encounter_types.h"
+#include "activity/runtime_bin_allocator.h"
 #include "core/config.h"
 #include "core/world_state.h"
 #include "domain.h"
@@ -33,7 +34,8 @@ class DomainCommunicator {
   // Exchange visitors across ranks
   void exchangeVisitors(const std::vector<PersonLocation>& locations,
                         const DomainManager& dm, double current_time,
-                        double delta_hours = 0.0);
+                        double delta_hours = 0.0,
+                        const RuntimeBinAllocator* alloc = nullptr);
 
   // Exchange pending infections across ranks. Returns the PendingInfection
   // records that this rank applied (i.e. for which a new local infection was

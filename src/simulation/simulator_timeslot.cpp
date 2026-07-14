@@ -130,6 +130,29 @@ int Simulator::runSlotTransmission(
         &epidemiology_->getActiveInfectionsMutable(), visitor_ids,
         pending_infections, visitor_data_map,
         compartmental_model_manager_.get());
+
+    // Transport lines are handled apart from the venue loop above, because a
+    // rider on several legs cannot be found from the location table. Every
+    // rank walks the lines it owns, then all of them settle the results
+    // together so a rider infected on two legs at once gets one infection.
+    if (runtime_bin_allocator_ && runtime_bin_allocator_->isActive()) {
+      std::vector<VenueId> owned_lines;
+      owned_lines.reserve(runtime_bin_allocator_->ridersByVenue().size());
+      for (const auto& [vid, riders] :
+           runtime_bin_allocator_->ridersByVenue()) {
+        if (domain_mgr_ && !domain_mgr_->getDomain().ownsVenue(vid)) continue;
+        owned_lines.push_back(vid);
+      }
+      std::sort(owned_lines.begin(), owned_lines.end());
+
+      interaction_manager_->processPartialPresenceLines(
+          owned_lines, current_simulation_time_, delta_hours,
+          &epidemiology_->getActiveInfectionsMutable(), visitor_data_map);
+      local_new_infections +=
+          interaction_manager_->resolvePartialPresenceInfections(
+              current_simulation_time_,
+              &epidemiology_->getActiveInfectionsMutable());
+    }
   } catch (const std::exception& e) {
     std::cerr << "[Step 3 Transmission] Fatal error: " << e.what() << std::endl;
     throw;
@@ -169,7 +192,7 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
   try {
     ScopedTimer timer("02_MPI_VisitorExchange");
     domain_mgr_->exchangeVisitors(locations_, current_simulation_time_,
-                                  delta_hours);
+                                  delta_hours, runtime_bin_allocator_.get());
 
     Domain& domain = domain_mgr_->getDomain();
 
@@ -285,6 +308,34 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 
   // Place followers at their host's resolved location for this slot.
   injectFollowsIntoSlot(time_slot_index);
+
+  // Everyone on a line must be a rider of it, and every rider must be on one.
+  // Riding without a rider entry was the old ghost: aboard, but infecting
+  // nobody and catching nothing. Holding an entry while standing somewhere
+  // else is its mirror image, and would crowd a carriage with someone who
+  // left. Both are bugs, so say so rather than quietly modelling a phantom.
+  if (runtime_bin_allocator_ && runtime_bin_allocator_->isActive()) {
+    for (const auto& loc : locations_) {
+      if (loc.person_id < 0) continue;
+      const bool on_line =
+          runtime_bin_allocator_->isPartialPresenceVenue(loc.venue_id);
+      const bool rides = !runtime_bin_allocator_->legsOf(loc.person_id).empty();
+      if (on_line == rides) continue;
+
+      const std::string who = "person " + std::to_string(loc.person_id);
+      if (on_line)
+        throw std::runtime_error(
+            who + " was placed on partial-presence venue " +
+            std::to_string(loc.venue_id) +
+            " but rides no leg of it. Something put them on a line after the "
+            "carriages were dealt without telling the allocator.");
+      throw std::runtime_error(
+          who + " rides a partial-presence venue but was placed at venue " +
+          std::to_string(loc.venue_id) +
+          ". Something moved them off their commute after the carriages were "
+          "dealt, leaving them aboard a line they are no longer on.");
+    }
+  }
 
   // Per-slot venue distribution print (collective Reduce → rank 0 prints).
   printSlotVenueDistribution(world_, locations_, domain_mgr_, rank);

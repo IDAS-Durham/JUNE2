@@ -240,6 +240,25 @@ class InteractionManager {
     runtime_bin_allocator_ = a;
   }
 
+  // The force-of-infection pass for transport lines, run after the ordinary
+  // venue loop. Lines are not in that loop: a line's members come from the
+  // allocator's rider table, since a rider on four legs holds only one
+  // location. Each line records who it would infect, and nothing is applied.
+  //
+  // owned_lines must be the lines this rank owns, in ascending order.
+  int processPartialPresenceLines(
+      const std::vector<VenueId>& owned_lines, double current_time,
+      double delta_hours, std::unordered_set<PersonId>* active_infections,
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
+
+  // Settle the candidates the pass above collected: one infection per rider,
+  // taken from the lowest venue id that drew for them. Collective, and every
+  // rank reaches the same verdict from the same gathered list, so the outcome
+  // does not depend on how the lines were spread across ranks. Returns how many
+  // infections this rank applied to its own residents.
+  int resolvePartialPresenceInfections(
+      double current_time, std::unordered_set<PersonId>* active_infections);
+
   // Per-susceptible accumulated λ + source attribution from a single
   // partial-presence venue. Output of computePartialPresenceLambda; consumed
   // by processPartialPresenceVenue's Bernoulli step. Exposed publicly so
@@ -838,15 +857,19 @@ class InteractionManager {
       uint64_t venue_key);
 
   // Apply a single partial-presence infection: either queue a
-  // PendingInfection for the susceptible's home rank (if visitor susceptible)
-  // or create the Infection in place and log it via event_logger_.
-  void applyPartialPresenceInfection(
-      PersonId susc_id, Person* susc_person, const VisitorInfo* visitor,
-      PersonId infector_id, uint8_t transmission_mode_index,
-      uint16_t infector_symptom_id, double current_time, Venue* venue,
-      uint8_t venue_type_id, VenueId actual_venue_id,
-      std::unordered_set<PersonId>* active_infections,
-      std::vector<PendingInfection>* pending_infections);
+  // Note down that this line would infect this rider, without acting on it.
+  // The winner among a rider's legs is decided later, in
+  // resolvePartialPresenceInfections.
+  void recordPartialPresenceCandidate(PersonId susc_id, PersonId infector_id,
+                                      uint8_t transmission_mode_index,
+                                      uint16_t infector_symptom_id,
+                                      double current_time,
+                                      uint8_t venue_type_id,
+                                      VenueId actual_venue_id);
+
+  // What each line said it would do to its riders this slot, before any of it
+  // is applied. Cleared at the start of every partial-presence pass.
+  std::vector<PendingInfection> pp_candidates_;
 
   // Sibling of processVenueTransmissions for partial-presence venues
   // (transport_line, etc.; anything declared in
