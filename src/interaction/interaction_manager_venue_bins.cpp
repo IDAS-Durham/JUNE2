@@ -441,7 +441,7 @@ void InteractionManager::resolveVenueTypeAndMatrix(
     std::string& venue_type_out, uint8_t& venue_type_id_out,
     const ContactMatrix*& matrix_out) {
   venue_type_out = "unknown";
-  venue_type_id_out = 255;
+  venue_type_id_out = kUnknownVenueTypeId;
   matrix_out = nullptr;
 
   // For VIRTUAL encounters (venue_id < 0), use the encounter type's contact

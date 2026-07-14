@@ -40,7 +40,7 @@ int InteractionManager::processVenueTransmissions(
   }
 
   std::string venue_type;
-  uint8_t venue_type_id = 255;
+  uint8_t venue_type_id = kUnknownVenueTypeId;
   const ContactMatrix* matrix = nullptr;
   resolveVenueTypeAndMatrix(venue, actual_venue_id, encounter_type_id,
                             venue_type, venue_type_id, matrix);

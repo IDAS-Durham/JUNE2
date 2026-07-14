@@ -134,7 +134,7 @@ struct ParentAggregate {
   std::unordered_map<VenueId, std::vector<std::vector<double>>>
       child_inf_by_bin_mode;
   // Cached parent venue metadata (filled at first insertion)
-  uint8_t parent_venue_type_id = 255;
+  uint8_t parent_venue_type_id = kUnknownVenueTypeId;
 };
 
 // =============================================================================
