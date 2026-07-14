@@ -4,12 +4,8 @@ import pytest
 from june_events.decode import decode_registry_column, load_registry
 from june_events.io import load_raw_table
 
-REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
-
-requires_real_file = pytest.mark.skipif(
-    not pytest.importorskip("os").path.exists(REAL_EVENTS_FILE),
-    reason="real simulation_events.h5 fixture not available on this machine",
-)
+from .conftest import REAL_EVENTS_FIXTURE as REAL_EVENTS_FILE
+from .conftest import requires_real_events_fixture as requires_real_file
 
 
 @requires_real_file

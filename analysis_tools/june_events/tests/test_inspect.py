@@ -3,12 +3,8 @@ import pytest
 
 from june_events.inspect import inspect_file
 
-REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
-
-requires_real_file = pytest.mark.skipif(
-    not pytest.importorskip("os").path.exists(REAL_EVENTS_FILE),
-    reason="real simulation_events.h5 fixture not available on this machine",
-)
+from .conftest import REAL_EVENTS_FIXTURE as REAL_EVENTS_FILE
+from .conftest import requires_real_events_fixture as requires_real_file
 
 
 @requires_real_file
@@ -17,8 +13,10 @@ def test_inspect_file_reports_dataset_shape_dtype_and_nbytes():
 
     deaths = next(d for d in summary.datasets if d.path == "events/deaths")
 
-    assert deaths.n_rows == 1910
-    assert deaths.nbytes == 30560
+    with h5py.File(REAL_EVENTS_FILE, "r") as fh:
+        expected_dataset = fh["events/deaths"]
+        assert deaths.n_rows == expected_dataset.shape[0]
+        assert deaths.nbytes == expected_dataset.nbytes
     assert "person_id" in deaths.dtype
 
 
@@ -26,19 +24,11 @@ def test_inspect_file_reports_dataset_shape_dtype_and_nbytes():
 def test_inspect_file_decodes_registries_to_plain_strings():
     summary = inspect_file(REAL_EVENTS_FILE)
 
-    assert summary.registries["symptoms"] == [
-        "recovered",
-        "healthy",
-        "exposed",
-        "asymptomatic",
-        "mild",
-        "severe",
-        "hospitalised",
-        "intensive_care",
-        "dead_home",
-        "dead_hospital",
-        "dead_icu",
-    ]
+    with h5py.File(REAL_EVENTS_FILE, "r") as fh:
+        expected_symptoms = [
+            value.decode() for value in fh["metadata/registries/symptoms"][:]
+        ]
+    assert summary.registries["symptoms"] == expected_symptoms
     assert all(isinstance(name, str) for name in summary.registries["symptoms"])
 
 
@@ -69,7 +59,8 @@ def test_inspect_file_never_reads_event_or_lookup_row_data(monkeypatch):
     encounters = next(
         d for d in summary.datasets if d.path == "events/coordinated_encounters"
     )
-    assert encounters.n_rows == 3001776
+    with h5py.File(REAL_EVENTS_FILE, "r") as fh:
+        assert encounters.n_rows == fh["events/coordinated_encounters"].shape[0]
 
 
 def test_inspect_file_handles_file_missing_optional_tables(tmp_path):

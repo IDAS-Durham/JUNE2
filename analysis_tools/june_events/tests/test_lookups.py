@@ -4,12 +4,8 @@ import pytest
 
 from june_events.io import load_people_lookup, load_venues_lookup
 
-REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
-
-requires_real_file = pytest.mark.skipif(
-    not pytest.importorskip("os").path.exists(REAL_EVENTS_FILE),
-    reason="real simulation_events.h5 fixture not available on this machine",
-)
+from .conftest import REAL_EVENTS_FIXTURE as REAL_EVENTS_FILE
+from .conftest import requires_real_events_fixture as requires_real_file
 
 
 @requires_real_file
@@ -33,7 +29,8 @@ def test_load_people_lookup_merges_properties_by_position():
     people = load_people_lookup(REAL_EVENTS_FILE, include_properties=True)
 
     assert "ethnicity" in people.columns
-    assert len(people) == 439560
+    with h5py.File(REAL_EVENTS_FILE, "r") as fh:
+        assert len(people) == fh["lookups/people"].shape[0]
     assert isinstance(people["ethnicity"].iloc[0], str)
 
 

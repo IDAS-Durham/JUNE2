@@ -19,6 +19,8 @@ memory_bench.log
 *.json
 # Domain decomposition centroids/adjacency are checked-in inputs, not outputs
 !data/domain_decomposition/**
+# Real-data test fixture for june_events
+!analysis_tools/june_events/tests/fixtures/simulation_events_fixture.h5
 worlds/
 .clangd
 tmp/

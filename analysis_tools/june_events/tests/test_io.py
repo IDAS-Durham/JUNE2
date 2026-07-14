@@ -4,24 +4,12 @@ import pytest
 from june_events.inspect import inspect_file
 from june_events.io import load_raw_table
 
-REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
-
-requires_real_file = pytest.mark.skipif(
-    not pytest.importorskip("os").path.exists(REAL_EVENTS_FILE),
-    reason="real simulation_events.h5 fixture not available on this machine",
-)
+from .conftest import REAL_EVENTS_FIXTURE as REAL_EVENTS_FILE
+from .conftest import requires_real_events_fixture as requires_real_file
 
 
 @requires_real_file
-def test_load_raw_table_loads_deaths_matching_inspect_file_row_count():
-    df = load_raw_table(REAL_EVENTS_FILE, "events/deaths")
-
-    assert len(df) == 1910
-    assert list(df.columns) == ["person_id", "venue_id", "time"]
-
-
-@requires_real_file
-@pytest.mark.parametrize("event_type", ["infections", "symptom_changes"])
+@pytest.mark.parametrize("event_type", ["infections", "symptom_changes", "deaths"])
 def test_load_raw_table_matches_inspect_file_row_count_for_other_event_types(event_type):
     summary = inspect_file(REAL_EVENTS_FILE)
     expected = next(

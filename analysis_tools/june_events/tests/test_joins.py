@@ -5,12 +5,8 @@ from june_events.decode import SEED_VENUE_ID
 from june_events.enrich import enrich_with_people, enrich_with_venues
 from june_events.io import load_people_lookup, load_raw_table, load_venues_lookup
 
-REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
-
-requires_real_file = pytest.mark.skipif(
-    not pytest.importorskip("os").path.exists(REAL_EVENTS_FILE),
-    reason="real simulation_events.h5 fixture not available on this machine",
-)
+from .conftest import REAL_EVENTS_FIXTURE as REAL_EVENTS_FILE
+from .conftest import requires_real_events_fixture as requires_real_file
 
 
 def test_enrich_with_venues_attaches_prefixed_venue_columns():

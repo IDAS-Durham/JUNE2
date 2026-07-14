@@ -1,28 +1,31 @@
+import h5py
 import pandas as pd
 import pytest
 
 from june_events.decode import decode_registry_column, load_registry
 
-REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
-
-requires_real_file = pytest.mark.skipif(
-    not pytest.importorskip("os").path.exists(REAL_EVENTS_FILE),
-    reason="real simulation_events.h5 fixture not available on this machine",
-)
+from .conftest import REAL_EVENTS_FIXTURE as REAL_EVENTS_FILE
+from .conftest import requires_real_events_fixture as requires_real_file
 
 
 @requires_real_file
 def test_load_registry_returns_ordered_strings_for_encounter_types():
     registry = load_registry(REAL_EVENTS_FILE, "encounter_types")
 
-    assert registry == ["social_encounters"]
+    with h5py.File(REAL_EVENTS_FILE, "r") as fh:
+        expected = [
+            value.decode() for value in fh["metadata/registries/encounter_types"][:]
+        ]
+    assert registry == expected
 
 
 @requires_real_file
 def test_load_registry_returns_ordered_strings_for_symptoms():
     registry = load_registry(REAL_EVENTS_FILE, "symptoms")
 
-    assert registry[:3] == ["recovered", "healthy", "exposed"]
+    with h5py.File(REAL_EVENTS_FILE, "r") as fh:
+        expected = [value.decode() for value in fh["metadata/registries/symptoms"][:]]
+    assert registry == expected
 
 
 def test_load_registry_returns_none_for_absent_registry(tmp_path):
