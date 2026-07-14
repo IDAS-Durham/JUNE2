@@ -27,6 +27,13 @@ def decode_registry_column(
             return no_match_label
         if index == unset_value:
             return unset_label
-        return lookup[index]
+        try:
+            return lookup[index]
+        except KeyError:
+            raise KeyError(
+                f"index {index!r} in column {id_column!r} not found in registry "
+                f"(has {len(registry)} entries) — likely an incomplete registry "
+                f"from a multi-domain merge"
+            ) from None
 
     return df[id_column].map(decode)

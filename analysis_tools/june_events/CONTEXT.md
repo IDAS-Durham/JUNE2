@@ -24,13 +24,20 @@ _Avoid_: events dataframe (ambiguous with enriched output).
 **Lookup table**:
 A `lookups/*` table (`people`, `venues`, `people_properties/*`,
 `population_summary`) that maps an id (`person_id`, `venue_id`) to static
-metadata about that entity. Loaded by `io/`, joined onto event tables by
-`enrich/`.
+metadata about that entity — one row per id. Loaded by `io/`, joined onto
+event tables by `enrich/`. A duplicate id is treated as corruption, not a
+legitimate multi-row entity: `enrich/` raises on it by default. Callers who
+need to force the merge through anyway (e.g. to inspect corrupt data rather
+than fail outright) can opt out via an explicit parameter — the fan-out is
+never silent.
 `people_properties/*` is a special case: each property (`ethnicity`,
 `comorbidities`, etc.) is its own same-length dataset with no `person_id`
 column of its own — row *i* corresponds to row *i* of `lookups/people` by
 construction (both written from the same ordered iteration in the engine's
-event writer), not by an id join.
+event writer), not by an id join. Unlike a duplicate-id in a joined
+**Lookup table**, a length mismatch here has no legitimate reading and
+nothing meaningful to force through — `io/` raises unconditionally, no
+escape hatch.
 
 **Registry**:
 An ordered list of strings under `metadata/registries/*` (e.g.
@@ -57,7 +64,13 @@ per field. Distinct from **No-match value**: a `255` in the file is a
 recorded fact ("this event has no venue-side encounter type"); a `NaN` from
 an upstream **Enrichment** means the join found nothing to report — the file
 never asserted anything. `decode_registry_column` labels these separately
-(`unset_label` vs `no_match_label`) rather than collapsing them.
+(`unset_label` vs `no_match_label`) rather than collapsing them. A third
+case — an index present in the column but absent from the loaded registry —
+is neither: it is not a **Sentinel value** (the engine did assert something)
+and not a **No-match value** (no **Enrichment** was involved). It signals a
+genuinely incomplete registry, e.g. a multi-domain merge that only copied
+`metadata/` from one input file. `decode_registry_column` raises rather than
+silently labelling it, naming the id_column/registry/offending index.
 
 **No-match value**:
 A `NaN` in a registry-indexed column caused by an upstream **Enrichment**

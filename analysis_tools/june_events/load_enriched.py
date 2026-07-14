@@ -37,10 +37,13 @@ def load_enriched_events(
     if registry_columns is None:
         registry_columns = DEFAULT_REGISTRY_COLUMNS
 
+    loaded_registries = {}
     for id_column, registry_name in registry_columns.items():
         if id_column not in events.columns:
             continue
-        registry = load_registry(path, registry_name)
+        if registry_name not in loaded_registries:
+            loaded_registries[registry_name] = load_registry(path, registry_name)
+        registry = loaded_registries[registry_name]
         if registry is None:
             logger.warning(
                 "registry %r not found in %r, skipping decode of %r",

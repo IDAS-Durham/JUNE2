@@ -66,6 +66,41 @@ def test_load_enriched_events_returns_none_for_missing_dataset(tmp_path):
     assert load_enriched_events(path, "events/deaths") is None
 
 
+def test_load_enriched_events_loads_each_registry_once(tmp_path, monkeypatch):
+    path = tmp_path / "events.h5"
+    with h5py.File(path, "w") as fh:
+        symptom_changes = np.array(
+            [(1, 0.5, 0, 1), (2, 1.5, 1, 2)],
+            dtype=[
+                ("person_id", "<i4"),
+                ("time", "<f8"),
+                ("old_symptom_id", "u1"),
+                ("new_symptom_id", "u1"),
+            ],
+        )
+        fh.create_dataset("events/symptom_changes", data=symptom_changes)
+        fh.create_dataset(
+            "metadata/registries/symptoms",
+            data=np.array(["healthy", "exposed", "infected"], dtype="S30"),
+        )
+
+    import june_events.load_enriched as load_enriched_module
+
+    call_counts = {}
+    original_load_registry = load_enriched_module.load_registry
+
+    def counting_load_registry(path, registry_name):
+        call_counts[registry_name] = call_counts.get(registry_name, 0) + 1
+        return original_load_registry(path, registry_name)
+
+    monkeypatch.setattr(load_enriched_module, "load_registry", counting_load_registry)
+
+    registry_columns = {"old_symptom_id": "symptoms", "new_symptom_id": "symptoms"}
+    load_enriched_events(str(path), "events/symptom_changes", registry_columns=registry_columns)
+
+    assert call_counts["symptoms"] == 1
+
+
 @requires_real_file
 def test_load_enriched_events_matches_manual_chain_on_real_infections():
     from june_events.decode import decode_registry_column, load_registry

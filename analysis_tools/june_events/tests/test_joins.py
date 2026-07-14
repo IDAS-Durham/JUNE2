@@ -51,6 +51,23 @@ def test_enrich_with_people_does_not_mutate_inputs():
     assert list(people_lookup.columns) == ["person_id", "sex"]
 
 
+def test_enrich_with_venues_raises_on_duplicate_lookup_ids():
+    event_df = pd.DataFrame({"venue_id": [1], "time": [0.1]})
+    venues_lookup = pd.DataFrame({"venue_id": [1, 1], "type": ["school", "hospital"]})
+
+    with pytest.raises(ValueError, match="duplicate"):
+        enrich_with_venues(event_df, venues_lookup)
+
+
+def test_enrich_with_venues_forces_through_duplicate_lookup_ids_when_allowed():
+    event_df = pd.DataFrame({"venue_id": [1], "time": [0.1]})
+    venues_lookup = pd.DataFrame({"venue_id": [1, 1], "type": ["school", "hospital"]})
+
+    enriched = enrich_with_venues(event_df, venues_lookup, allow_duplicate_ids=True)
+
+    assert len(enriched) == 2
+
+
 @requires_real_file
 def test_enrich_with_venues_labels_real_seed_infections_via_synthetic_venue_row():
     infections = load_raw_table(REAL_EVENTS_FILE, "events/infections")

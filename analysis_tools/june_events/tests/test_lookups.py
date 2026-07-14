@@ -48,3 +48,16 @@ def test_load_people_lookup_handles_file_missing_properties_group(tmp_path):
     people = load_people_lookup(str(path), include_properties=True)
 
     assert list(people.columns) == ["person_id", "age"]
+
+
+def test_load_people_lookup_raises_when_property_length_mismatches_people(tmp_path):
+    path = tmp_path / "minimal_simulation_events.h5"
+    dtype = [("person_id", "<i4"), ("age", "<f8")]
+    with h5py.File(path, "w") as fh:
+        fh.create_dataset(
+            "lookups/people", data=np.array([(1, 30.0), (2, 40.0)], dtype=dtype)
+        )
+        fh.create_dataset("lookups/people_properties/ethnicity", data=np.array(["a"], dtype="S1"))
+
+    with pytest.raises(ValueError, match="ethnicity"):
+        load_people_lookup(str(path), include_properties=True)

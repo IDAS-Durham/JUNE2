@@ -1,6 +1,7 @@
+import pandas as pd
 import pytest
 
-from june_events.decode import load_registry
+from june_events.decode import decode_registry_column, load_registry
 
 REAL_EVENTS_FILE = "/home/gavin/Documents/Modern_Day/Xiying_Project/simulation_events.h5"
 
@@ -34,3 +35,10 @@ def test_load_registry_returns_none_for_absent_registry(tmp_path):
     result = load_registry(str(minimal_path), "encounter_types")
 
     assert result is None
+
+
+def test_decode_registry_column_raises_for_index_outside_registry():
+    df = pd.DataFrame({"symptom_id": [0, 5]})
+
+    with pytest.raises(KeyError, match="symptom_id"):
+        decode_registry_column(df, "symptom_id", ["healthy", "exposed"])

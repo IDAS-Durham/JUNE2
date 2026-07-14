@@ -33,6 +33,12 @@ def load_people_lookup(path: str, include_properties: bool = True):
         with h5py.File(path, "r") as fh:
             if _PEOPLE_PROPERTIES_GROUP in fh:
                 for property_name, dataset in fh[_PEOPLE_PROPERTIES_GROUP].items():
+                    if len(dataset) != len(people):
+                        raise ValueError(
+                            f"people_properties/{property_name} has {len(dataset)} "
+                            f"rows, but lookups/people has {len(people)} — these "
+                            f"must be aligned by construction"
+                        )
                     people[property_name] = [_decode_value(v) for v in dataset[:]]
 
     return people
