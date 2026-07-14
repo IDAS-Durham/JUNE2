@@ -622,7 +622,8 @@ void InfectionSeeder::infectPerson(Person* person,
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(person->id, kInvalidPersonId,
                                 INFECTION_SEED_VENUE_ID,
-                                current_simulation_time_);
+                                current_simulation_time_, kUnknownEncounterTypeId,
+                                kNoSymptomId);  // no infector for seeds
   }
 
   // Per-seed audit: id, sex, age at t=seed.

@@ -460,7 +460,7 @@ int InteractionManager::resolvePartialPresenceInfections(
     c.venue_id = static_cast<VenueId>(packed[i + 1]);
     c.infector_id = static_cast<PersonId>(packed[i + 2]);
     c.venue_type_id = static_cast<uint8_t>(packed[i + 3]);
-    c.infector_symptom_id = static_cast<uint16_t>(packed[i + 4]);
+    c.infector_symptom_id = static_cast<uint8_t>(packed[i + 4]);
     c.transmission_mode_index = static_cast<uint8_t>(packed[i + 5]);
     c.infection_time = current_time;
     c.encounter_type_id = 255;
