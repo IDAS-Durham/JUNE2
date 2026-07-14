@@ -34,6 +34,8 @@ class EventMerger {
       H5::H5File& out_file, const std::vector<std::string>& input_files);
   static void mergeCoordinatedEncounterEvents(
       H5::H5File& out_file, const std::vector<std::string>& input_files);
+  static void mergeFollowEvents(H5::H5File& out_file,
+                                const std::vector<std::string>& input_files);
 
   static void mergePeopleLookup(H5::H5File& out_file,
                                 const std::vector<std::string>& input_files);

@@ -13,6 +13,11 @@ For each (wN, rN) pair:
           per dataset, modulo coordinated_encounters.group_id
           (documented rank-stamped field).
 
+A dataset that carries no rows in any of the three runs cannot be compared, so
+it is reported rather than passed over. If the config says the dataset is being
+written, that silence is a failure: the gate would otherwise report PASS while
+quietly checking one dataset fewer than you think.
+
 Usage:
   checkpoint_determinism_check.py --bin BUILD/disease_sim \
       --config configs/config_2021/simulation.yaml \
@@ -90,8 +95,29 @@ def keyset(arr, drop=()):
     )
 
 
-def equal(baseline, b, c):
-    keys = set(baseline) | set(b) | set(c)
+def required_datasets(config_path):
+    """Datasets this config promises to write, so their absence means the gate
+    lost coverage rather than the run being legitimately quiet.
+
+    A run always infects someone, so `infections` is always required: with no
+    infection rows the whole comparison is vacuous. `coordinated_encounters` is
+    only written when output.save_coordinated_encounters is on, which is off by
+    default, so we ask the config rather than assume.
+    """
+    req = {"infections"}
+    with open(config_path) as fh:
+        text = fh.read()
+    m = re.search(r"(?m)^\s*save_coordinated_encounters:\s*(true|false)\b", text)
+    if m and m.group(1) == "true":
+        req.add("coordinated_encounters")
+    return req
+
+
+def equal(baseline, b, c, required=()):
+    # Union in `required` too: a dataset missing from every file is absent from
+    # all three dicts, so iterating only over what's present is exactly how it
+    # would go unnoticed.
+    keys = set(baseline) | set(b) | set(c) | set(required)
     ok = True
     for k in sorted(keys):
         drop = ("group_id",) if k == "coordinated_encounters" else ()
@@ -99,6 +125,12 @@ def equal(baseline, b, c):
         B = b.get(k, np.empty(0))
         C = c.get(k, np.empty(0))
         if A.size == 0 and B.size == 0 and C.size == 0:
+            if k in required:
+                print(f"    {k:24s} ABSENT from every run, but the config says "
+                      f"it is written: the gate is not checking it")
+                ok = False
+            else:
+                print(f"    {k:24s} no rows in any run, nothing to compare")
             continue
         good = sorted(keyset(B, drop) + keyset(C, drop)) == keyset(A, drop)
         ok &= good
@@ -118,6 +150,11 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--matrix", default="1:1,2:2,1:2,2:1")
     ap.add_argument("--mpirun", default="mpirun")
+    ap.add_argument("--require", default="",
+                    help="comma-separated datasets that must carry rows, on "
+                         "top of the ones the config already implies. Use it "
+                         "for datasets whose switch lives in a sub-config the "
+                         "gate cannot see, e.g. follows (per-rule log:).")
     a = ap.parse_args()
 
     if not (os.path.exists(a.bin) and os.path.exists(a.world)
@@ -148,6 +185,11 @@ def main():
         return 1
     base = events(os.path.join(runs, "base", "simulation_events.h5"))
 
+    required = required_datasets(a.config)
+    required |= {d for d in a.require.split(",") if d}
+    print(f"[required] datasets that must carry rows: "
+          f"{', '.join(sorted(required))}")
+
     overall = True
     for pair in a.matrix.split(","):
         wN, rN = (int(x) for x in pair.split(":"))
@@ -163,7 +205,7 @@ def main():
             continue
         b = events(os.path.join(runs, bid, "simulation_events.h5"))
         c = events(os.path.join(runs, cid, "simulation_events.h5"))
-        good = equal(base, b, c)
+        good = equal(base, b, c, required)
         print(f"  => {'PASS' if good else 'FAIL'}  (write@np{wN} "
               f"resume@np{rN})")
         overall &= good

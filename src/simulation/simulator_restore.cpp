@@ -56,7 +56,10 @@ std::vector<std::string> readStrs(H5::H5File& f, const std::string& n) {
 void overlayShardManagerState(
     H5::H5File& f, const WorldState& world,
     std::unordered_map<PersonId, double>& lpt_map,
-    std::unordered_map<PersonId, FrozenPersonState>& frozen_accum) {
+    std::unordered_map<PersonId, FrozenPersonState>& frozen_accum,
+    const std::vector<std::string>& follow_names,
+    std::vector<std::unordered_map<PersonId, PersonId>>& follow_accum,
+    std::vector<std::unordered_set<PersonId>>& active_host_accum) {
   const auto I32 = H5::PredType::NATIVE_INT32;
   const auto U8 = H5::PredType::NATIVE_UINT8;
   const auto F64 = H5::PredType::NATIVE_DOUBLE;
@@ -83,6 +86,24 @@ void overlayShardManagerState(
     st.pin_venue_id = fzv[i];
     st.pin_subset_index = fzs[i];
     frozen_accum[fzp[i]] = st;
+  }
+
+  // Follows: keep a relationship if THIS rank owns the follower, and a
+  // tried-host if it owns the host. Each stochastic rule has its own named
+  // subgroup; a criteria rule wrote none and rebuilds itself. Guarded so
+  // checkpoints predating the follow feature still restore.
+  if (H5Lexists(f.getId(), "/follow", H5P_DEFAULT) > 0) {
+    for (size_t ri = 0; ri < follow_names.size(); ++ri) {
+      const std::string g = "/follow/" + follow_names[ri];
+      if (H5Lexists(f.getId(), g.c_str(), H5P_DEFAULT) <= 0) continue;
+      auto ff = readVec<int32_t>(f, g + "/follower_id", I32);
+      auto fh = readVec<int32_t>(f, g + "/host_id", I32);
+      for (size_t i = 0; i < ff.size(); ++i)
+        if (world.getPerson(ff[i])) follow_accum[ri][ff[i]] = fh[i];
+      auto ah = readVec<int32_t>(f, g + "/active_host_id", I32);
+      for (int32_t h : ah)
+        if (world.getPerson(h)) active_host_accum[ri].insert(h);
+    }
   }
 }
 
@@ -347,9 +368,17 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
 
   restoreCheckpointStateFile(cp);
 
-  // frozen_states_ + lpt are per-rank: accumulated from the shards below.
+  // frozen_states_ + lpt + follows are per-rank: accumulated from the shards.
+  // Follows accumulate one entry per rule, matched to its shard by name.
+  const auto& follow_rules = config_.coordinated_encounters.follows;
+  std::vector<std::string> follow_names;
+  for (const auto& r : follow_rules) follow_names.push_back(r.name);
   std::unordered_map<PersonId, double> lpt_map;
   std::unordered_map<PersonId, FrozenPersonState> frozen_accum;
+  std::vector<std::unordered_map<PersonId, PersonId>> follow_accum(
+      follow_rules.size());
+  std::vector<std::unordered_set<PersonId>> active_host_accum(
+      follow_rules.size());
 
   // ---- delta shards: overlay onto this rank's owned world_ by global id ----
   YAML::Node si = YAML::LoadFile((cp / "shard_index.yaml").string());
@@ -364,12 +393,21 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     n_inf += overlayShardInfection(f, world_, disease_.get());
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
     n_fom += overlayShardFomite(f, world_);
-    overlayShardManagerState(f, world_, lpt_map, frozen_accum);
+    overlayShardManagerState(f, world_, lpt_map, frozen_accum, follow_names,
+                             follow_accum, active_host_accum);
     overlayShardCalendarEvents(f, world_, ce_snap);
   }
   calendar_event_manager_.restore(std::move(ce_snap));
 
   if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
+  // Rebuild per-rule runtime state from the accumulated shards. A criteria rule
+  // has empty accumulators and derives itself on the first slot after resume;
+  // its follow_day stays -1 so that rebuild fires.
+  follow_state_.assign(follow_rules.size(), FollowRuntime{});
+  for (size_t ri = 0; ri < follow_rules.size(); ++ri) {
+    follow_state_[ri].follower_host = std::move(follow_accum[ri]);
+    follow_state_[ri].active_hosts = std::move(active_host_accum[ri]);
+  }
 
   // ---- rebuild derived caches; set resume point ----
   if (epidemiology_) epidemiology_->restoreAfterCheckpoint(lpt_map);

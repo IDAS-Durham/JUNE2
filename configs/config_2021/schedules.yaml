@@ -12,6 +12,24 @@ default_schedule_type: "has_primary_activity"
 schedule_types:
 
   # -------------------------------------------------------------------------
+  # OPTIONAL travel hop (needed for the follow feature to fire; see
+  # coordinated_encounters.yaml). To enable: (1) uncomment travel_trip below,
+  # (2) add a hop_on_activity to a slot that can select "leisure", e.g. put
+  #        hop_on_activity:
+  #          leisure: travel_trip
+  #     inside the has_primary_activity weekday "evening" slot. When a person
+  #     then selects leisure there, they hop onto travel_trip (a 3-slot trip:
+  #     evening out, overnight away, morning back) and auto-return. Their
+  #     followers travel with them for those slots.
+  #
+  # travel_trip:
+  #   is_temporary: true
+  #   flat_slots:
+  #     - { name: "trip_evening",   start: "18:00", end: "21:00", allowed_activities: ["leisure"] }
+  #     - { name: "trip_overnight", start: "21:00", end: "08:00", allowed_activities: ["residence"] }
+  #     - { name: "trip_morning",   start: "08:00", end: "09:00", allowed_activities: ["residence"] }
+
+  # -------------------------------------------------------------------------
   # Non-worker - People with no primary activity (job/school)
   # -------------------------------------------------------------------------
   no_primary_activity:

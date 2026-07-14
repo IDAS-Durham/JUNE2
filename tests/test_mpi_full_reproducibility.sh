@@ -25,8 +25,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build}"
 DAYS="${DAYS:-10}"
-CONFIG="configs/config_2021/simulation.yaml"
-WORLD="worlds/world_2021.h5"
+CONFIG="${CONFIG:-configs/config_2021/simulation.yaml}"
+WORLD="${WORLD:-worlds/world_2021.h5}"
 # Space-separated list of rank counts to compare. Must include 1 as the
 # reference.
 NPS="${NPS:-1 2 3}"
@@ -170,6 +170,7 @@ PYEOF
 DATASETS=(
   "dataset:/events/relationships"
   "dataset:/events/coordinated_encounters|fields=person_a,person_b,time,encounter_type_id,slot"
+  "dataset:/events/follows"
   "dataset:/events/infections"
 )
 # NOTE: /lookups/profile_assignments is NOT diffed here — the multi-rank
