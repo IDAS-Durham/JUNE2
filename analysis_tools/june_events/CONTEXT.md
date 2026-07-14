@@ -53,7 +53,18 @@ Translating a registry-indexed column (e.g. `encounter_type_id`) into its
 string values via the matching `metadata/registries/*` list, mapping the
 sentinel to a fixed placeholder (e.g. `"unknown"`). Handled generically by
 `decode/`, parameterised by column, registry, and sentinel — not one function
-per field.
+per field. Distinct from **No-match value**: a `255` in the file is a
+recorded fact ("this event has no venue-side encounter type"); a `NaN` from
+an upstream **Enrichment** means the join found nothing to report — the file
+never asserted anything. `decode_registry_column` labels these separately
+(`unset_label` vs `no_match_label`) rather than collapsing them.
+
+**No-match value**:
+A `NaN` in a registry-indexed column caused by an upstream **Enrichment**
+(e.g. `enrich_with_state_at_time` when an id had no prior state logged
+before `time`) rather than a value written by the engine. Not a **Sentinel
+value** — the file itself never stores `NaN` in these columns; it only
+appears after a join.
 
 **Enrichment**:
 Joining a raw event table against one or more lookup tables (by `person_id`,
@@ -75,6 +86,15 @@ The one file per subfolder (`io/__init__.py`, `decode/__init__.py`, etc.)
 that all calls from outside the subfolder must go through. Internal files
 within a subfolder are free to be restructured as long as the seam's
 signatures hold.
+
+**Enriched event table**:
+The output of `load_enriched_events()`: one **Raw event table** with its
+known **Registry** columns decoded and `people`/`venues` **Lookup tables**
+joined on, in one call. Lives at top level (`june_events/load_enriched.py`),
+not inside `io/`, `decode/`, or `enrich/`, because it orchestrates all three
+rather than belonging to one. Distinct from a manually chained
+**Enrichment** in that its registry-column mapping and join flags are fixed
+defaults the caller can opt out of, not steps the caller assembles.
 
 ## Relationships
 

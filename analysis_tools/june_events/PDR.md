@@ -39,11 +39,16 @@ schema (registries, venue types, which optional tables exist).
 
 ## Package layout
 
+`__init__.py` re-exports each subpackage's `__all__`, so callers can
+`from june_events import load_raw_table, decode_registry_column, ...`
+without knowing which seam a function lives under.
+
 ```
 analysis_tools/june_events/
   __init__.py
   CONTEXT.md
   PDR.md
+  load_enriched.py         # seam: load_enriched_events
   io/
     __init__.py        # seam: load_raw_table, load_people_lookup, load_venues_lookup
     raw_tables.py
@@ -98,7 +103,11 @@ def decode_registry_column(
     registry: list[str],
     unset_value: int = UNSET_REGISTRY_INDEX,
     unset_label: str = "unknown",
+    no_match_label: str = "not_recorded",
 ) -> pd.Series
+    # NaN (from an upstream Enrichment join, e.g. enrich_with_state_at_time
+    # with no prior state) is distinct from unset_value: NaN -> no_match_label,
+    # unset_value -> unset_label
 ```
 
 `enrich/joins.py`
@@ -151,6 +160,48 @@ class FileSummary:
 `inspect/scan.py`
 ```python
 def inspect_file(path: str) -> FileSummary
+```
+
+`load_enriched.py`
+```python
+DEFAULT_REGISTRY_COLUMNS = {
+    "encounter_type_id": "encounter_types",
+    "infector_symptom_id": "symptoms",
+    "old_symptom_id": "symptoms",
+    "new_symptom_id": "symptoms",
+}
+
+def load_enriched_events(
+    path: str,
+    dataset_path: str,                 # e.g. "events/infections"
+    *,
+    with_people: bool = True,
+    with_venues: bool = True,
+    registry_columns: dict[str, str] | None = None,  # id_column -> registry_name
+    people_prefix: str = "person_",
+    venues_prefix: str = "venue_",
+) -> Optional[pd.DataFrame]:
+    """One-call load + decode + enrich for notebooks that don't need to
+    care about file size (see io.load_raw_table's chunk_threshold_bytes
+    for the underlying cutoff). Orchestrates io/decode/enrich; not a seam
+    of any one of them.
+
+    Order: load_raw_table -> decode each registry_columns entry present
+    in the table (skipped with a warning if the file lacks that registry;
+    decoded value written to a new column, id_column's "_id" suffix
+    stripped, original id column untouched) -> enrich_with_people if
+    with_people and "person_id" present -> enrich_with_venues if
+    with_venues and "venue_id" present.
+
+    registry_columns defaults to DEFAULT_REGISTRY_COLUMNS. Does not
+    include enrich_with_state_at_time (needs a second event table the
+    caller must choose and load themselves) or transmission_mode_index
+    (no matching metadata/registries/* entry exists in any inspected
+    file).
+
+    None + logged warning if dataset_path absent, matching
+    load_raw_table.
+    """
 ```
 
 ## Data model notes (from inspecting 5 real runs, 2026-07-10)
