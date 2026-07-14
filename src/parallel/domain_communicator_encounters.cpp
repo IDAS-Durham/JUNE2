@@ -20,7 +20,19 @@ namespace {
 using june::domain_comm_detail::packField;
 using june::domain_comm_detail::unpackField;
 
-constexpr int PROPOSAL_WIRE_SIZE = 33;  // 4*8+1
+// Derived from the packed fields' own types (not a hand-maintained literal)
+// so a struct field-type change changes this constant automatically instead
+// of silently desyncing pack/unpack.
+constexpr int PROPOSAL_WIRE_SIZE =
+    sizeof(decltype(june::EncounterProposal::encounter_id)) +
+    sizeof(decltype(june::EncounterProposal::host_id)) +
+    sizeof(decltype(june::EncounterProposal::host_rank)) +
+    sizeof(decltype(june::EncounterProposal::invitee_id)) +
+    sizeof(decltype(june::EncounterProposal::venue_id)) +
+    sizeof(decltype(june::EncounterProposal::venue_owner_rank)) +
+    sizeof(decltype(june::EncounterProposal::venue_type_id)) +
+    sizeof(decltype(june::EncounterProposal::slot)) +
+    sizeof(decltype(june::EncounterProposal::encounter_type_id));
 
 char* packProposal(char* ptr, const june::EncounterProposal& p) {
   ptr = packField(ptr, p.encounter_id);
@@ -48,7 +60,18 @@ const char* unpackProposal(const char* ptr, june::EncounterProposal& p) {
   return ptr;
 }
 
-constexpr int REPLY_WIRE_SIZE = 26;  // 4*6+1+1
+// Derived from the packed fields' own types, plus the manual status_byte
+// transcode below (ReplyStatus is an enum, not memcpy-safe on its own, so it
+// is deliberately narrowed to a fixed uint8_t rather than decltype'd).
+constexpr int REPLY_WIRE_SIZE =
+    sizeof(decltype(june::EncounterReply::encounter_id)) +
+    sizeof(decltype(june::EncounterReply::host_id)) +
+    sizeof(decltype(june::EncounterReply::invitee_id)) +
+    sizeof(decltype(june::EncounterReply::venue_id)) +
+    sizeof(decltype(june::EncounterReply::venue_type_id)) +
+    sizeof(decltype(june::EncounterReply::slot)) +
+    sizeof(decltype(june::EncounterReply::encounter_type_id)) +
+    sizeof(uint8_t);  // status_byte
 
 char* packReply(char* ptr, const june::EncounterReply& r) {
   ptr = packField(ptr, r.encounter_id);
@@ -436,10 +459,18 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
   MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
                MPI_COMM_WORLD);
 
-  // Wire layout per record (25 bytes): person_id(4) + infector_id(4) +
-  // infection_time(8) + venue_type_id(1) + encounter_type_id(1) +
-  // venue_id(4) + infector_symptom_id(2) + transmission_mode_index(1).
-  const int INFECTION_SIZE = 25;
+  // Derived from the packed fields' own types (not a hand-maintained
+  // literal) so a struct field-type change changes this constant
+  // automatically instead of silently desyncing pack/unpack.
+  const int INFECTION_SIZE =
+      sizeof(decltype(PendingInfection::person_id)) +
+      sizeof(decltype(PendingInfection::infector_id)) +
+      sizeof(decltype(PendingInfection::infection_time)) +
+      sizeof(decltype(PendingInfection::venue_type_id)) +
+      sizeof(decltype(PendingInfection::encounter_type_id)) +
+      sizeof(decltype(PendingInfection::venue_id)) +
+      sizeof(decltype(PendingInfection::infector_symptom_id)) +
+      sizeof(decltype(PendingInfection::transmission_mode_index));
   std::vector<int> sd, rd;
   int stotal, rtotal;
   mpi_utils::computeByteDisplacements(send_counts, INFECTION_SIZE, sd, stotal);
@@ -481,14 +512,15 @@ std::vector<PendingInfection> DomainCommunicator::unpackAndApplyIncoming(
     if (r == rank_) continue;
     const char* ptr = rbuf.data() + rd[r];
     for (int i = 0; i < recv_counts[r]; ++i) {
-      PersonId pid;
-      PersonId infector_id;
-      double t;
-      uint8_t v_type;
-      uint8_t enc_type_id;
-      VenueId v_id;
-      uint16_t infector_symptom_id = 0;
-      uint8_t transmission_mode_index = 0;
+      decltype(PendingInfection::person_id) pid;
+      decltype(PendingInfection::infector_id) infector_id;
+      decltype(PendingInfection::infection_time) t;
+      decltype(PendingInfection::venue_type_id) v_type;
+      decltype(PendingInfection::encounter_type_id) enc_type_id;
+      decltype(PendingInfection::venue_id) v_id;
+      decltype(PendingInfection::infector_symptom_id) infector_symptom_id = 0;
+      decltype(PendingInfection::transmission_mode_index)
+          transmission_mode_index = 0;
       ptr = unpackField(ptr, pid);
       ptr = unpackField(ptr, infector_id);
       ptr = unpackField(ptr, t);
@@ -528,7 +560,7 @@ void DomainCommunicator::routePendingByHomeRank(
 
 std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
     PersonId pid, PersonId infector_id, double t, uint8_t v_type,
-    uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
+    uint8_t enc_type_id, VenueId v_id, uint8_t infector_symptom_id,
     uint8_t transmission_mode_index) {
   Person* person = world_.getPerson(pid);
   if (!person || person->infection || !domain_.ownsPerson(pid) || !disease_) {
