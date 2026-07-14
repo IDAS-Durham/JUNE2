@@ -245,11 +245,11 @@ InteractionManager::buildPartialPresenceCarriages(
     // means the two disagree. Skipping here is what used to put people on a
     // line with no force of infection in either direction, so it throws.
     if (carriage == RuntimeBinAllocator::kNoBin || carriage >= num_bins)
-      throw std::runtime_error(
-          "partial-presence venue " + std::to_string(actual_venue_id) +
-          ": rider " + std::to_string(m.id) + " has no carriage (got " +
-          std::to_string(static_cast<int>(carriage)) + " of " +
-          std::to_string(num_bins) + ")");
+      throw std::runtime_error("partial-presence venue " +
+                               std::to_string(actual_venue_id) + ": rider " +
+                               std::to_string(m.id) + " has no carriage (got " +
+                               std::to_string(static_cast<int>(carriage)) +
+                               " of " + std::to_string(num_bins) + ")");
 
     Person* person = nullptr;
     const VisitorInfo* visitor = nullptr;
@@ -395,9 +395,9 @@ int InteractionManager::processPartialPresenceLines(
   for (VenueId vid : owned_lines) {
     Venue* venue = world_.getVenue(vid);
     if (!venue)
-      throw std::runtime_error(
-          "partial-presence pass: rank owns line " + std::to_string(vid) +
-          " but the venue is not in its world");
+      throw std::runtime_error("partial-presence pass: rank owns line " +
+                               std::to_string(vid) +
+                               " but the venue is not in its world");
 
     const auto& riders = runtime_bin_allocator_->ridersByVenue().at(vid);
     members.clear();
@@ -481,8 +481,8 @@ int InteractionManager::resolvePartialPresenceInfections(
     last = c.person_id;
 
     Person* p = world_.getPerson(c.person_id);
-    if (!p) continue;              // someone else's resident; their rank applies
-    if (p->infection) continue;    // already infected, e.g. seeded this slot
+    if (!p) continue;            // someone else's resident; their rank applies
+    if (p->infection) continue;  // already infected, e.g. seeded this slot
     if (disease_ == nullptr) continue;
 
     float severity_factor = 1.0f;
@@ -493,10 +493,9 @@ int InteractionManager::resolvePartialPresenceInfections(
     if (c.venue_type_id < world_.venue_type_names.size())
       venue_type_name = world_.venue_type_names[c.venue_type_id];
 
-    const uint64_t seed =
-        mix_seed(base_seed_, c.person_id,
-                 static_cast<uint64_t>(current_time * 1000),
-                 static_cast<uint64_t>(c.venue_id));
+    const uint64_t seed = mix_seed(base_seed_, c.person_id,
+                                   static_cast<uint64_t>(current_time * 1000),
+                                   static_cast<uint64_t>(c.venue_id));
     p->infection = std::make_unique<Infection>(
         disease_, current_time, p, static_cast<unsigned int>(seed), &world_,
         venue_type_name, c.venue_id, severity_factor, c.infector_symptom_id, "",

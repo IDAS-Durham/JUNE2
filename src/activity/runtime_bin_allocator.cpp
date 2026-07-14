@@ -193,7 +193,8 @@ void RuntimeBinAllocator::allocateForSlot(
     local_packed.push_back(static_cast<int32_t>(lg.venue_id));
     local_packed.push_back(static_cast<int32_t>(lg.person_id));
     local_packed.push_back(static_cast<int32_t>(lg.subset));
-    local_packed.push_back(static_cast<int32_t>(world_.getVenueTypeId(lg.venue_id)));
+    local_packed.push_back(
+        static_cast<int32_t>(world_.getVenueTypeId(lg.venue_id)));
     local_packed.push_back(eb_bits);
     local_packed.push_back(ea_bits);
     local_packed.push_back(fp_bits);
@@ -368,8 +369,7 @@ void RuntimeBinAllocator::reindexRiders() {
   for (auto& [vid, riders] : riders_by_venue_)
     std::sort(riders.begin(), riders.end(),
               [](const Rider& a, const Rider& b) { return a.pid < b.pid; });
-  for (auto& [pid, legs] : legs_by_person_)
-    std::sort(legs.begin(), legs.end());
+  for (auto& [pid, legs] : legs_by_person_) std::sort(legs.begin(), legs.end());
 }
 
 void RuntimeBinAllocator::attachFollowers(
@@ -425,8 +425,8 @@ void RuntimeBinAllocator::attachFollowers(
 
     // Give up the follower's own journey before taking the host's.
     for (VenueId own : legsOf(follower)) {
-      const uint64_t key = (static_cast<uint64_t>(own) << 32) |
-                           static_cast<uint64_t>(follower);
+      const uint64_t key =
+          (static_cast<uint64_t>(own) << 32) | static_cast<uint64_t>(follower);
       bin_by_vid_pid_.erase(key);
       windows_by_vid_pid_.erase(key);
       f_presence_by_vid_pid_.erase(key);

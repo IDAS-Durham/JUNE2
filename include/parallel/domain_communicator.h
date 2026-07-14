@@ -11,8 +11,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "activity/runtime_bin_allocator.h"
 #include "activity/coordinated_encounter_types.h"
+#include "activity/runtime_bin_allocator.h"
 #include "core/config.h"
 #include "core/world_state.h"
 #include "domain.h"

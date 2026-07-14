@@ -138,7 +138,8 @@ int Simulator::runSlotTransmission(
     if (runtime_bin_allocator_ && runtime_bin_allocator_->isActive()) {
       std::vector<VenueId> owned_lines;
       owned_lines.reserve(runtime_bin_allocator_->ridersByVenue().size());
-      for (const auto& [vid, riders] : runtime_bin_allocator_->ridersByVenue()) {
+      for (const auto& [vid, riders] :
+           runtime_bin_allocator_->ridersByVenue()) {
         if (domain_mgr_ && !domain_mgr_->getDomain().ownsVenue(vid)) continue;
         owned_lines.push_back(vid);
       }
