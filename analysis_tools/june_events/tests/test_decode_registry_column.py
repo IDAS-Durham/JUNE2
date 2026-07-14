@@ -1,3 +1,4 @@
+import pandas as pd
 import pytest
 
 from june_events.decode import decode_registry_column, load_registry
@@ -31,3 +32,11 @@ def test_decode_registry_column_maps_known_index_to_registry_string():
 
     known_rows = infections["encounter_type_id"] == 0
     assert (decoded[known_rows] == "social_encounters").all()
+
+
+def test_decode_registry_column_maps_nan_to_no_match_label():
+    df = pd.DataFrame({"symptom_id": [0.0, 1.0, float("nan"), 255.0]})
+
+    decoded = decode_registry_column(df, "symptom_id", ["recovered", "healthy"])
+
+    assert list(decoded) == ["recovered", "healthy", "not_recorded", "unknown"]

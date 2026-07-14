@@ -1,4 +1,5 @@
 import h5py
+import pandas as pd
 
 from .sentinels import UNSET_REGISTRY_INDEX
 
@@ -17,8 +18,15 @@ def decode_registry_column(
     registry,
     unset_value: int = UNSET_REGISTRY_INDEX,
     unset_label: str = "unknown",
+    no_match_label: str = "not_recorded",
 ):
     lookup = {index: label for index, label in enumerate(registry)}
-    return df[id_column].map(
-        lambda index: unset_label if index == unset_value else lookup[index]
-    )
+
+    def decode(index):
+        if pd.isna(index):
+            return no_match_label
+        if index == unset_value:
+            return unset_label
+        return lookup[index]
+
+    return df[id_column].map(decode)
