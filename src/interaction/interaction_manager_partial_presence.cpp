@@ -13,6 +13,12 @@
 #include "utils/event_logging/event_types.h"
 #include "utils/random.h"
 
+#ifdef USE_MPI
+#include <mpi.h>
+
+#include "parallel/mpi_utils.h"
+#endif
+
 namespace june {
 
 // Routing gate called from processVenueTransmissions (venue.cpp). Returns a
@@ -235,14 +241,25 @@ InteractionManager::buildPartialPresenceCarriages(
   for (const auto& m : members) {
     const uint16_t carriage =
         runtime_bin_allocator_->getBinIndex(actual_venue_id, m.id);
+    // Members come from the rider table, so a missing or out-of-range carriage
+    // means the two disagree. Skipping here is what used to put people on a
+    // line with no force of infection in either direction, so it throws.
     if (carriage == RuntimeBinAllocator::kNoBin || carriage >= num_bins)
-      continue;
+      throw std::runtime_error(
+          "partial-presence venue " + std::to_string(actual_venue_id) +
+          ": rider " + std::to_string(m.id) + " has no carriage (got " +
+          std::to_string(static_cast<int>(carriage)) + " of " +
+          std::to_string(num_bins) + ")");
 
     Person* person = nullptr;
     const VisitorInfo* visitor = nullptr;
     if (!resolvePersonAndVisitor(m.id, m.array_index, visitor_data, person,
                                  visitor)) {
-      continue;
+      throw std::runtime_error(
+          "partial-presence venue " + std::to_string(actual_venue_id) +
+          ": rider " + std::to_string(m.id) +
+          " is neither a local person nor a visitor on this rank. The visitor "
+          "exchange should have shipped every rider of a line this rank owns.");
     }
 
     // Window + presence cap from the allocator's global broadcast: identical
@@ -279,18 +296,7 @@ void InteractionManager::validatePartialPresencePreconditions(
         "computePartialPresenceLambda: virtual encounter venues not supported");
   if (!venue)
     throw std::runtime_error("computePartialPresenceLambda: null venue");
-  // Every member, not just the group's representative. A venue group is keyed
-  // on venue_id alone, so a single rider carrying an encounter type (a follower
-  // trailing its host onto a line, say) sits anywhere in the group: checking
-  // only the first would make this fire or not depending on sort order.
-  for (const auto& m : members) {
-    if (m.encounter_type_id != 255)
-      throw std::runtime_error(
-          "computePartialPresenceLambda: coordinated-encounter participants "
-          "not supported on partial-presence types in v1 (person " +
-          std::to_string(m.id) + ", encounter_type_id " +
-          std::to_string(static_cast<int>(m.encounter_type_id)) + ")");
-  }
+  (void)members;
   if (encounter_type_id != 255)
     throw std::runtime_error(
         "computePartialPresenceLambda: coordinated-encounter venues not "
@@ -357,60 +363,154 @@ InteractionManager::computePartialPresenceLambda(
   return result;
 }
 
-void InteractionManager::applyPartialPresenceInfection(
-    PersonId susc_id, Person* susc_person, const VisitorInfo* visitor,
-    PersonId infector_id, uint8_t transmission_mode_index,
-    uint16_t infector_symptom_id, double current_time, Venue* venue,
-    uint8_t venue_type_id, VenueId actual_venue_id,
-    std::unordered_set<PersonId>* active_infections,
-    std::vector<PendingInfection>* pending_infections) {
-  const bool is_visitor_susc = (visitor != nullptr);
-  const uint64_t venue_key = static_cast<uint64_t>(actual_venue_id);
+void InteractionManager::recordPartialPresenceCandidate(
+    PersonId susc_id, PersonId infector_id, uint8_t transmission_mode_index,
+    uint16_t infector_symptom_id, double current_time, uint8_t venue_type_id,
+    VenueId actual_venue_id) {
+  // Nothing is applied here. A rider is susceptible on every leg of their
+  // journey at once, and the legs can be owned by different ranks, so infecting
+  // them the moment one leg says so would let the surviving leg depend on the
+  // order the venues happened to be visited in. Each leg records what it would
+  // do; resolvePartialPresenceInfections then picks one winner per person.
+  PendingInfection cand;
+  cand.person_id = susc_id;
+  cand.infector_id = infector_id;
+  cand.infection_time = current_time;
+  cand.venue_type_id = venue_type_id;
+  cand.encounter_type_id = 255;
+  cand.venue_id = actual_venue_id;
+  cand.infector_symptom_id = infector_symptom_id;
+  cand.transmission_mode_index = transmission_mode_index;
+  pp_candidates_.push_back(cand);
+}
 
-  if (is_visitor_susc && pending_infections != nullptr) {
-    PendingInfection pending;
-    pending.person_id = susc_id;
-    pending.infector_id = infector_id;
-    pending.infection_time = current_time;
-    pending.venue_type_id = venue_type_id;
-    pending.encounter_type_id = 255;
-    pending.venue_id = actual_venue_id;
-    pending.infector_symptom_id = infector_symptom_id;
-    pending.transmission_mode_index = transmission_mode_index;
-    if (visitor) pending.home_array_index = visitor->home_array_index;
-    pending_infections->push_back(pending);
-    return;
+int InteractionManager::processPartialPresenceLines(
+    const std::vector<VenueId>& owned_lines, double current_time,
+    double delta_hours, std::unordered_set<PersonId>* active_infections,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
+  pp_candidates_.clear();
+  if (!runtime_bin_allocator_ || owned_lines.empty()) return 0;
+
+  std::vector<InteractionMember> members;
+  for (VenueId vid : owned_lines) {
+    Venue* venue = world_.getVenue(vid);
+    if (!venue)
+      throw std::runtime_error(
+          "partial-presence pass: rank owns line " + std::to_string(vid) +
+          " but the venue is not in its world");
+
+    const auto& riders = runtime_bin_allocator_->ridersByVenue().at(vid);
+    members.clear();
+    members.reserve(riders.size());
+    for (const auto& r : riders) {
+      // array_index is a local hint; a rider from another rank is resolved
+      // through visitor_data instead, and resolvePersonAndVisitor tries both.
+      size_t idx = static_cast<size_t>(-1);
+      auto it = world_.person_index.find(r.pid);
+      if (it != world_.person_index.end()) idx = it->second;
+      members.push_back(InteractionMember{r.pid, idx, r.subset, 255});
+    }
+
+    processPartialPresenceVenue(members, venue, vid, current_time, delta_hours,
+                                active_infections, nullptr, nullptr,
+                                visitor_data, 255, nullptr);
   }
-  if (!(susc_person && !susc_person->infection && disease_ != nullptr)) return;
+  return 0;  // counted once the winners are resolved
+}
 
-  float severity_factor = 1.0f;
-  auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
-  if (gu) severity_factor = gu->severity_factor;
-
-  std::string venue_type_name;
-  if (venue_type_id < world_.venue_type_names.size())
-    venue_type_name = world_.venue_type_names[venue_type_id];
-
-  uint64_t infection_seed =
-      mix_seed(base_seed_, susc_id, static_cast<uint64_t>(current_time * 1000),
-               venue_key);
-  susc_person->infection = std::make_unique<Infection>(
-      disease_, current_time, susc_person,
-      static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
-      actual_venue_id, severity_factor, infector_symptom_id, "", "",
-      transmission_mode_index);
-
-  if (event_logger_ != nullptr) {
-    event_logger_->logInfection(
-        susc_id, infector_id, actual_venue_id, current_time,
-        /*encounter_type_id*/ 255, infector_symptom_id, transmission_mode_index,
-        InfectionSource::Person);
+int InteractionManager::resolvePartialPresenceInfections(
+    double current_time, std::unordered_set<PersonId>* active_infections) {
+  // Legs of one journey can be owned by different ranks, so a rider's
+  // candidates are scattered. Gather them all, then every rank sorts the same
+  // list and reaches the same verdict; each applies only the people it owns.
+  std::vector<int32_t> packed;
+  packed.reserve(pp_candidates_.size() * 6);
+  for (const auto& c : pp_candidates_) {
+    packed.push_back(static_cast<int32_t>(c.person_id));
+    packed.push_back(static_cast<int32_t>(c.venue_id));
+    packed.push_back(static_cast<int32_t>(c.infector_id));
+    packed.push_back(static_cast<int32_t>(c.venue_type_id));
+    packed.push_back(static_cast<int32_t>(c.infector_symptom_id));
+    packed.push_back(static_cast<int32_t>(c.transmission_mode_index));
   }
 
-  if (active_infections != nullptr) active_infections->insert(susc_id);
-  (void)venue;  // venue param kept for parity with processVenueTransmissions
-                // call shape; only used to feed transmission_factor in the
-                // caller's regional-risk multiply.
+#ifdef USE_MPI
+  int world_size = 1;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+  if (world_size > 1) {
+    int local_count = static_cast<int>(packed.size());
+    std::vector<int> counts(world_size);
+    MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
+                  MPI_COMM_WORLD);
+    std::vector<int> displs;
+    int total = 0;
+    mpi_utils::computeDisplacements(counts, displs, total);
+    std::vector<int32_t> global(total, 0);
+    MPI_Allgatherv(packed.data(), local_count, MPI_INT, global.data(),
+                   counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
+    packed.swap(global);
+  }
+#endif
+
+  std::vector<PendingInfection> all;
+  all.reserve(packed.size() / 6);
+  for (size_t i = 0; i + 5 < packed.size(); i += 6) {
+    PendingInfection c;
+    c.person_id = static_cast<PersonId>(packed[i]);
+    c.venue_id = static_cast<VenueId>(packed[i + 1]);
+    c.infector_id = static_cast<PersonId>(packed[i + 2]);
+    c.venue_type_id = static_cast<uint8_t>(packed[i + 3]);
+    c.infector_symptom_id = static_cast<uint16_t>(packed[i + 4]);
+    c.transmission_mode_index = static_cast<uint8_t>(packed[i + 5]);
+    c.infection_time = current_time;
+    c.encounter_type_id = 255;
+    all.push_back(c);
+  }
+  if (all.empty()) return 0;
+
+  std::sort(all.begin(), all.end(),
+            [](const PendingInfection& a, const PendingInfection& b) {
+              if (a.person_id != b.person_id) return a.person_id < b.person_id;
+              return a.venue_id < b.venue_id;
+            });
+
+  int applied = 0;
+  PersonId last = -1;
+  for (const auto& c : all) {
+    if (c.person_id == last) continue;  // a lower venue id already took them
+    last = c.person_id;
+
+    Person* p = world_.getPerson(c.person_id);
+    if (!p) continue;              // someone else's resident; their rank applies
+    if (p->infection) continue;    // already infected, e.g. seeded this slot
+    if (disease_ == nullptr) continue;
+
+    float severity_factor = 1.0f;
+    if (auto* gu = world_.getGeoUnit(p->geo_unit_id))
+      severity_factor = gu->severity_factor;
+
+    std::string venue_type_name;
+    if (c.venue_type_id < world_.venue_type_names.size())
+      venue_type_name = world_.venue_type_names[c.venue_type_id];
+
+    const uint64_t seed =
+        mix_seed(base_seed_, c.person_id,
+                 static_cast<uint64_t>(current_time * 1000),
+                 static_cast<uint64_t>(c.venue_id));
+    p->infection = std::make_unique<Infection>(
+        disease_, current_time, p, static_cast<unsigned int>(seed), &world_,
+        venue_type_name, c.venue_id, severity_factor, c.infector_symptom_id, "",
+        "", c.transmission_mode_index);
+
+    if (event_logger_ != nullptr)
+      event_logger_->logInfection(c.person_id, c.infector_id, c.venue_id,
+                                  current_time, 255, c.infector_symptom_id,
+                                  c.transmission_mode_index,
+                                  InfectionSource::Person);
+    if (active_infections != nullptr) active_infections->insert(c.person_id);
+    applied++;
+  }
+  return applied;
 }
 
 std::pair<int, PersonId> InteractionManager::sampleInfectorFromAccumSources(
@@ -507,10 +607,11 @@ bool InteractionManager::processOnePartialSusceptible(
       resolveInfectorSymptomId(infector_id, current_time, visitor_data);
 
   const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
-  applyPartialPresenceInfection(
-      susc_id, susc_person, visitor, infector_id, transmission_mode_index,
-      infector_symptom_id, current_time, venue, venue_type_id, actual_venue_id,
-      active_infections, pending_infections);
+  recordPartialPresenceCandidate(susc_id, infector_id, transmission_mode_index,
+                                 infector_symptom_id, current_time,
+                                 venue_type_id, actual_venue_id);
+  (void)active_infections;
+  (void)pending_infections;
   return true;
 }
 

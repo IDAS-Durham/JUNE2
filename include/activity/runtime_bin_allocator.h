@@ -20,10 +20,10 @@ struct TimeSlot;
 // allocateForSlot a one-test no-op so non-commute scenarios pay zero cost.
 //
 // Multi-presence: a rider with N legs of a single activity (e.g. a 3-leg
-// train commute) is placed in N bins, one per leg. Bin assignments are
-// keyed on flat activity_venue index (the same index used by
-// WorldState::getMembershipField), so a person is uniquely identified per
-// leg without a 2D person×leg array.
+// train commute) is placed in N bins, one per leg, and is a member of all N
+// lines. The rider table this builds IS a line's membership: a person holds a
+// single PersonLocation, which cannot name four lines at once, so the FOI reads
+// its passengers from here instead.
 //
 // Bucketing is config-driven and capacity-free: per slot, the number of
 // bins for a venue emerges as max(1, ceil(N_global_riders /
@@ -33,13 +33,24 @@ struct TimeSlot;
 // and bit-identical assignments are computed on every rank for the same
 // rider without exchanging bin indices.
 //
-// MPI: one Allgatherv per slot collects (venue_id, person_id) pairs across
-// ranks for partial-presence venues (with one pair per (person, leg) for
-// multi-leg riders). Bucketing is then a pure function of (seed,
-// slot_minutes, venue_id, person_id, num_bins) on every rank.
+// MPI: one Allgatherv per slot collects every (rider, leg) across ranks, along
+// with its subset, venue type, window and presence factor. The venue type has
+// to travel with the leg because a rank only holds types for venues in its own
+// halo. Bucketing is then a pure function of (seed, slot_minutes, venue_id,
+// person_id, num_bins) on every rank.
 class RuntimeBinAllocator {
  public:
   static constexpr uint16_t kNoBin = UINT16_MAX;
+
+  // One person on one line for one slot. A commuter with four legs is four
+  // Riders, one per line. Lines take their membership from these rather than
+  // from the location table, because a person holds a single location but can
+  // ride several lines at once.
+  struct Rider {
+    PersonId pid;
+    SubsetIndex subset;
+    uint16_t bin;
+  };
 
   RuntimeBinAllocator(const WorldState& world, const Config& config);
 
@@ -65,19 +76,8 @@ class RuntimeBinAllocator {
                        double delta_hours,
                        const std::vector<PersonLocation>& locations);
 
-  // Runtime bin index assigned to a specific (person, leg), keyed by the
-  // flat activity_venue index (same key as
-  // WorldState::getMembershipField). Returns kNoBin if the leg isn't on a
-  // partial-presence venue this slot.
-  uint16_t getBinIndex(uint32_t av_idx) const {
-    auto it = bin_by_av_idx_.find(av_idx);
-    return it == bin_by_av_idx_.end() ? kNoBin : it->second;
-  }
-
-  // Runtime bin index for a specific (venue, person). Same value as the
-  // av_idx-keyed lookup above, but for callers (e.g. the FOI loop) that
-  // don't have the flat activity_venue index in hand. Returns kNoBin if
-  // the (venue, person) pair wasn't bucketed this slot.
+  // Runtime bin index for a specific (venue, person). Returns kNoBin if the
+  // pair wasn't bucketed this slot.
   uint16_t getBinIndex(VenueId venue_id, PersonId person_id) const {
     const uint64_t key = (static_cast<uint64_t>(venue_id) << 32) |
                          static_cast<uint64_t>(person_id);
@@ -125,11 +125,48 @@ class RuntimeBinAllocator {
     return it == f_presence_by_vid_pid_.end() ? 1.0f : it->second;
   }
 
+  // Who rides each line this slot. The same on every rank, and it is what the
+  // FOI walks when it builds a line's carriages.
+  const std::unordered_map<VenueId, std::vector<Rider>>& ridersByVenue() const {
+    return riders_by_venue_;
+  }
+
+  // The lines one person rides this slot, in ascending venue order. Empty for
+  // someone who rides none.
+  const std::vector<VenueId>& legsOf(PersonId pid) const {
+    static const std::vector<VenueId> kNone;
+    auto it = legs_by_person_.find(pid);
+    return it == legs_by_person_.end() ? kNone : it->second;
+  }
+
+  // Seat each follower beside its host. The follower takes over the host's
+  // rider entries, so it rides every leg of the host's journey, in the host's
+  // carriage, with the host's window and presence factor. Legs of its own are
+  // given up, since it travels with the host instead of on its own route.
+  //
+  // The pairs are exchanged across ranks before anything is applied, so every
+  // rank works from the same list in the same order and the tables stay
+  // bit-identical. A host that rides no line is an error: follow would have
+  // placed someone on a venue the allocator never saw.
+  void attachFollowers(const std::vector<std::pair<PersonId, PersonId>>& pairs);
+
   // True iff the SimulationConfig declares any partial-presence venue types
   // that are actually present in this world.
   bool isActive() const { return venue_type_mask_ != 0; }
 
+  // True iff the venue's type is declared partial-presence.
+  bool isPartialPresenceVenue(VenueId venue_id) const;
+
+  // The venue's type, taken from the rider broadcast when someone rides it and
+  // from the world otherwise. Ranks only hold types for venues in their halo,
+  // so asking the world directly about another rank's line gives the wrong
+  // answer.
+  uint8_t venueTypeOf(VenueId venue_id) const;
+
  private:
+  // Rebuilds legs_by_person_ and the per-venue rider lists from the
+  // (venue, person) maps, keeping both in a canonical order.
+  void reindexRiders();
   const WorldState& world_;
   const Config& config_;
 
@@ -137,14 +174,7 @@ class RuntimeBinAllocator {
   // SimulationConfig::partial_presence::enabled_venue_type_mask at ctor.
   uint64_t venue_type_mask_ = 0;
 
-  // Sparse map: flat activity_venue index → bin index for the current
-  // slot. Cleared at the top of each call; size is bounded by the number
-  // of (rider, leg) pairs on partial-presence venues this slot.
-  std::unordered_map<uint32_t, uint16_t> bin_by_av_idx_;
-
-  // Global (venue, person) → bin map, identical on every rank. Same data
-  // as bin_by_av_idx_ but keyed for callers that don't have the flat
-  // av_idx (the FOI loop only carries InteractionMember = {id, ...}).
+  // Global (venue, person) → bin map, identical on every rank.
   // Key layout: (uint64_t(venue_id) << 32) | uint64_t(person_id).
   std::unordered_map<uint64_t, uint16_t> bin_by_vid_pid_;
 
@@ -162,6 +192,20 @@ class RuntimeBinAllocator {
   // The same f_p is replicated for each of a multi-leg rider's (venue, person)
   // keys (f_p is a rider-level property, not a per-venue one).
   std::unordered_map<uint64_t, float> f_presence_by_vid_pid_;
+
+  // Global (venue, person) → the subset the rider occupies on that line, so a
+  // line's members can be binned into its contact matrix without consulting
+  // the location table.
+  std::unordered_map<uint64_t, SubsetIndex> subset_by_vid_pid_;
+
+  // The membership view of the maps above: who is on each line, and which
+  // lines each person is on. Derived, and global like the rest.
+  std::unordered_map<VenueId, std::vector<Rider>> riders_by_venue_;
+  std::unordered_map<PersonId, std::vector<VenueId>> legs_by_person_;
+
+  // Venue type of every line someone rides, as broadcast with its riders. The
+  // world's own type map only covers this rank's halo.
+  std::unordered_map<VenueId, uint8_t> venue_type_by_vid_;
 };
 
 }  // namespace june

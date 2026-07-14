@@ -214,6 +214,20 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
     return *specified;
   }
 
+  // A journey is not a choice between lines. Someone with a three-leg commute
+  // rides all three, so drawing one of them at random would be picking a leg,
+  // not a venue. Name the first leg and leave it there: the lines take their
+  // passengers from the rider table, so this only has to be stable and the same
+  // on every rank.
+  const uint64_t pp_mask =
+      config_.simulation.partial_presence.enabled_venue_type_mask;
+  if (pp_mask != 0) {
+    for (const auto& [venue_id, subset_idx] : venues) {
+      const uint8_t vt = world_.getVenueTypeId(venue_id);
+      if (vt < 64 && ((pp_mask >> vt) & 1ULL)) return {venue_id, subset_idx};
+    }
+  }
+
   // Per-person deterministic RNG for MPI reproducibility
   SplitMix64 rng(mix_seed(base_seed_, person.id, activity_idx, time_key));
 

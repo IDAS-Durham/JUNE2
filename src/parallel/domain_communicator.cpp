@@ -151,7 +151,7 @@ DomainCommunicator::DomainCommunicator(WorldState& world, const Config& config,
 
 void DomainCommunicator::exchangeVisitors(
     const std::vector<PersonLocation>& locations, const DomainManager& dm,
-    double current_time, double delta_hours) {
+    double current_time, double delta_hours, const RuntimeBinAllocator* alloc) {
   domain_.clearVisitors();
   std::vector<std::vector<Domain::VisitorData>> outgoing(num_ranks_);
   std::vector<int> send_counts(num_ranks_, 0);
@@ -163,9 +163,19 @@ void DomainCommunicator::exchangeVisitors(
   const int num_modes =
       (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
 
+  auto send = [&](const PersonLocation& loc, Person& person, int target_rank) {
+    outgoing[target_rank].push_back(buildVisitorPayload(
+        loc, person, rank_, current_time, delta_hours, num_modes, disease_));
+    send_counts[target_rank]++;
+  };
+
   for (const auto& loc : locations) {
     if (loc.venue_id == -1) continue;
     if (!domain_.ownsPerson(loc.person_id)) continue;
+    // A rider's lines are shipped below, one per leg. Their location names
+    // only one of those legs, so sending on it would leave the other legs
+    // short of a passenger they are carrying.
+    if (alloc && alloc->isPartialPresenceVenue(loc.venue_id)) continue;
     if (domain_.ownsVenue(loc.venue_id)) continue;
 
     int target_rank = dm.getVenueRank(loc.venue_id);
@@ -179,9 +189,31 @@ void DomainCommunicator::exchangeVisitors(
     Person* person = world_.getPerson(loc.person_id);
     if (!person) continue;
 
-    outgoing[target_rank].push_back(buildVisitorPayload(
-        loc, *person, rank_, current_time, delta_hours, num_modes, disease_));
-    send_counts[target_rank]++;
+    send(loc, *person, target_rank);
+  }
+
+  // One visitor record per (rider, leg): a commuter changing trains three
+  // times is carried by three lines, and each line's owner needs their disease
+  // state to work out who they infected on board.
+  if (alloc) {
+    for (const auto& [vid, riders] : alloc->ridersByVenue()) {
+      if (domain_.ownsVenue(vid)) continue;
+      const int target_rank = dm.getVenueRank(vid);
+      if (target_rank == -1 || target_rank == rank_) continue;
+
+      for (const auto& r : riders) {
+        if (!domain_.ownsPerson(r.pid)) continue;
+        Person* person = world_.getPerson(r.pid);
+        if (!person) continue;
+        auto it = world_.person_index.find(r.pid);
+        if (it == world_.person_index.end()) continue;
+
+        PersonLocation leg = locations[it->second];
+        leg.venue_id = vid;
+        leg.subset_index = r.subset;
+        send(leg, *person, target_rank);
+      }
+    }
   }
 
   dispatchVisitorExchange(outgoing, send_counts);
