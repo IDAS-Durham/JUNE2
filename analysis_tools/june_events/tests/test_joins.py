@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from june_events.decode.sentinels import SEED_VENUE_ID
+from june_events.decode import SEED_VENUE_ID
 from june_events.enrich import enrich_with_people, enrich_with_venues
 from june_events.io import load_people_lookup, load_raw_table, load_venues_lookup
 
