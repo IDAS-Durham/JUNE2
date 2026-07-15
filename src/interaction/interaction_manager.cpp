@@ -377,7 +377,8 @@ void InteractionManager::filterAndSortActiveLocations(
     if (runtime_bin_allocator_ &&
         runtime_bin_allocator_->isPartialPresenceVenue(loc.venue_id))
       continue;
-    if (loc.venue_id != -1 || loc.encounter_type_id != 255) {
+    if (loc.venue_id != -1 ||
+        loc.encounter_type_id != kDefaultEncounterTypeId) {
       active_locations_buffer_.push_back(loc);
     }
   }
@@ -499,7 +500,7 @@ int InteractionManager::processOneVenueGroup(
   Venue* venue = world_.getVenue(first.venue_id);
 
   // Skip if person has no venue AND no encounter type
-  if (!venue && first.encounter_type_id == 255) return 0;
+  if (!venue && first.encounter_type_id == kDefaultEncounterTypeId) return 0;
 
   logCoordinatedEncounterParticipants(group_start, group_end, visitor_ids);
 
@@ -578,7 +579,7 @@ double InteractionManager::lookupContactsForBinPair(
 uint16_t InteractionManager::resolveInfectorSymptomId(
     PersonId infector_id, double current_time,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
-  if (infector_id < 0) return 0;
+  if (infector_id < 0) return kNoSymptomId;
   Person* infp = world_.getPerson(infector_id);
   if (infp && infp->infection) {
     return infp->infection->getTrajectory().getCurrentSymptomId(current_time);
@@ -587,7 +588,7 @@ uint16_t InteractionManager::resolveInfectorSymptomId(
     auto vit = visitor_data->find(infector_id);
     if (vit != visitor_data->end()) return vit->second.symptom_id;
   }
-  return 0;
+  return kNoSymptomId;
 }
 
 }  // namespace june

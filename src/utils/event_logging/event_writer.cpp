@@ -158,7 +158,7 @@ void EventWriter::writeInfectionEvents(H5::H5File& file,
                     H5::PredType::NATIVE_UINT8);
   type.insertMember("infector_symptom_id",
                     HOFFSET(InfectionEvent, infector_symptom_id),
-                    H5::PredType::NATIVE_UINT16);
+                    H5::PredType::NATIVE_UINT8);
   type.insertMember("source", HOFFSET(InfectionEvent, source),
                     H5::PredType::NATIVE_UINT8);
   writeDatasetTemplate(file, "/events/infections", logger.infections_, type,
@@ -189,10 +189,10 @@ void EventWriter::writeSymptomChangeEvents(H5::H5File& file,
                     H5::PredType::NATIVE_DOUBLE);
   type.insertMember("old_symptom_id",
                     HOFFSET(detail::SymptomChangeRecord, old_symptom_id),
-                    H5::PredType::NATIVE_UINT16);
+                    H5::PredType::NATIVE_UINT8);
   type.insertMember("new_symptom_id",
                     HOFFSET(detail::SymptomChangeRecord, new_symptom_id),
-                    H5::PredType::NATIVE_UINT16);
+                    H5::PredType::NATIVE_UINT8);
   writeDatasetTemplate(file, "/events/symptom_changes", records, type,
                        compression_level);
 }

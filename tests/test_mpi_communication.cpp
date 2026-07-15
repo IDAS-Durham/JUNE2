@@ -329,6 +329,124 @@ TEST_CASE("receivePendingInfections: transmission mode index is preserved") {
   }
 }
 
+// ---------------------------------------------------------------------------
+// TEST 7: Multi-record batch to the same destination rank (wire-format
+// regression — see mission mpi_pending_infection_wire_format_desync)
+// ---------------------------------------------------------------------------
+TEST_CASE(
+    "receivePendingInfections: two records to the same destination rank "
+    "round-trip independently") {
+  TwoRankFixture f;
+  REQUIRE(f.size == 2);
+
+  constexpr PersonId PERSON_R0_SECOND = 2;
+
+  // Rank 0 gains a second local resident so it can send two visitors to
+  // rank 1's venue in the same round, forcing receivePendingInfections to
+  // pack two PendingInfection records into one destination slot.
+  if (f.rank == 0) {
+    Person& p2 = f.world.people.emplace_back();
+    p2.id = PERSON_R0_SECOND;
+    p2.age = 30.0f;
+    p2.sex = Sex::MALE;
+    p2.geo_unit_id = f.rank;
+    f.world.buildIndices();
+
+    Domain& domain = f.dm->getDomain();
+    domain.resident_ids.push_back(PERSON_R0_SECOND);
+    domain.resident_set.insert(PERSON_R0_SECOND);
+  }
+
+  TransmissionParams tp;
+  tp.mode = InfectiousnessMode::STAGE_DRIVEN;
+  std::vector<SymptomTag> stags = {{"healthy", -1, 0}, {"mild", 1, 1}};
+  TrajectoryDefinition td;
+  td.selection_key = "general";
+  td.stages.push_back({"mild", {"constant", {{"value", 100.0}}}});
+  Disease disease("Plague2", stags, {}, {td}, {}, tp);
+  f.dm->setDisease(&disease);
+
+  // Step 1: rank 0's two people (0 and 2) visit rank 1's venue.
+  std::vector<PersonLocation> locations;
+  if (f.rank == 0) {
+    PersonLocation loc0;
+    loc0.person_id = 0;
+    loc0.venue_id = TwoRankFixture::VENUE_R1;
+    loc0.subset_index = 0;
+    loc0.activity_index = 1;
+    locations.push_back(loc0);
+
+    PersonLocation loc2;
+    loc2.person_id = PERSON_R0_SECOND;
+    loc2.venue_id = TwoRankFixture::VENUE_R1;
+    loc2.subset_index = 0;
+    loc2.activity_index = 1;
+    locations.push_back(loc2);
+  }
+  f.dm->exchangeVisitors(locations, 0.0);
+
+  if (f.rank == 1) {
+    REQUIRE(f.dm->getDomain().incoming_visitors.size() == 2);
+  }
+
+  // Step 2: rank 1 reports two distinct infections, both destined for
+  // rank 0, in one receivePendingInfections round.
+  std::vector<PendingInfection> pending;
+  if (f.rank == 1) {
+    PendingInfection pi0;
+    pi0.person_id = 0;
+    pi0.infector_id = 100;
+    pi0.infection_time = 0.5;
+    pi0.venue_type_id = 0;
+    pi0.encounter_type_id = 0;
+    pi0.venue_id = TwoRankFixture::VENUE_R1;
+    pi0.infector_symptom_id = 1;
+    pi0.transmission_mode_index = 0;
+    pending.push_back(pi0);
+
+    PendingInfection pi2;
+    pi2.person_id = PERSON_R0_SECOND;
+    pi2.infector_id = 200;
+    pi2.infection_time = 1.5;
+    pi2.venue_type_id = 0;
+    pi2.encounter_type_id = 1;
+    pi2.venue_id = TwoRankFixture::VENUE_R1;
+    pi2.infector_symptom_id = 2;
+    pi2.transmission_mode_index = 1;
+    pending.push_back(pi2);
+  }
+
+  auto applied = f.dm->receivePendingInfections(pending);
+
+  // Step 3: rank 0 must see both records with fields intact and
+  // independent of each other — a wire-format desync corrupts the second
+  // record with bytes borrowed from the first.
+  if (f.rank == 0) {
+    REQUIRE(applied.size() == 2);
+
+    const PendingInfection* a0 = nullptr;
+    const PendingInfection* a2 = nullptr;
+    for (const auto& a : applied) {
+      if (a.person_id == 0) a0 = &a;
+      if (a.person_id == PERSON_R0_SECOND) a2 = &a;
+    }
+    REQUIRE(a0 != nullptr);
+    REQUIRE(a2 != nullptr);
+
+    CHECK(a0->infector_id == 100);
+    CHECK(a0->infection_time == doctest::Approx(0.5));
+    CHECK(a0->encounter_type_id == 0);
+    CHECK(a0->infector_symptom_id == 1);
+    CHECK(a0->transmission_mode_index == 0);
+
+    CHECK(a2->infector_id == 200);
+    CHECK(a2->infection_time == doctest::Approx(1.5));
+    CHECK(a2->encounter_type_id == 1);
+    CHECK(a2->infector_symptom_id == 2);
+    CHECK(a2->transmission_mode_index == 1);
+  }
+}
+
 #endif  // USE_MPI
 
 // ---------------------------------------------------------------------------

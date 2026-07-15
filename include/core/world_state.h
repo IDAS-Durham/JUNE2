@@ -208,7 +208,7 @@ class WorldState {
     const Venue* v = getVenue(id);
     if (v) return v->type_id;
     auto it = global_venue_type_map.find(id);
-    return (it != global_venue_type_map.end()) ? it->second : 255;
+    return (it != global_venue_type_map.end()) ? it->second : kUnknownVenueTypeId;
   }
 
   // Geographic index: geo_unit_id -> indices of people in this unit AND all its

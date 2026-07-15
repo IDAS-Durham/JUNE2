@@ -35,19 +35,26 @@ using ActivityMask = __uint128_t;
 using GeoUnitId = int32_t;
 using SubsetIndex = int32_t;
 
+// Sentinel constants shared across core types and event logging.
+constexpr PersonId kInvalidPersonId = -1;
+constexpr VenueId kInvalidVenueId = -1;
+constexpr uint8_t kDefaultEncounterTypeId = 255;  // default (non-coordinated) encounter, not an error
+constexpr uint8_t kUnknownVenueTypeId = 255;  // venue type unresolvable (e.g. cross-rank lookup miss)
+constexpr uint8_t kNoSymptomId = 255;  // "not applicable" — registries stay well under 255 entries
+
 // =============================================================================
 // PendingInfection - Tracks infections that should be created later
 // =============================================================================
 struct PendingInfection {
   PersonId person_id;
-  PersonId infector_id = -1;
+  PersonId infector_id = kInvalidPersonId;
   double infection_time;
   uint8_t venue_type_id;
-  uint8_t encounter_type_id = 255;
+  uint8_t encounter_type_id = kDefaultEncounterTypeId;
   VenueId venue_id;
   int32_t home_array_index = -1;  // For lookup on home rank
-  uint16_t infector_symptom_id =
-      0;  // Symptom ID of the infector at time of transmission
+  uint8_t infector_symptom_id =
+      kNoSymptomId;  // Symptom ID of the infector at time of transmission
   uint8_t transmission_mode_index = 0;  // Transmission mode index
 };
 
@@ -378,11 +385,11 @@ struct ActivityEntry {
 // PersonLocation - Tracks where a person is at current simulation time
 // =============================================================================
 struct PersonLocation {
-  PersonId person_id = -1;
-  VenueId venue_id = -1;
+  PersonId person_id = kInvalidPersonId;
+  VenueId venue_id = kInvalidVenueId;
   SubsetIndex subset_index = -1;
   int16_t activity_index = -1;      // activity_names index
-  uint8_t encounter_type_id = 255;  // encounter_type_names index
+  uint8_t encounter_type_id = kDefaultEncounterTypeId;  // encounter_type_names index
   size_t person_array_index =
       static_cast<size_t>(-1);  // Direct access to world.people[idx]
 };

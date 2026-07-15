@@ -101,7 +101,7 @@ class DomainCommunicator {
   // disease loaded).
   std::optional<PendingInfection> applyOnePendingInfection(
       PersonId pid, PersonId infector_id, double t, uint8_t v_type,
-      uint8_t enc_type_id, VenueId v_id, uint16_t infector_symptom_id,
+      uint8_t enc_type_id, VenueId v_id, uint8_t infector_symptom_id,
       uint8_t transmission_mode_index);
 
   WorldState& world_;
