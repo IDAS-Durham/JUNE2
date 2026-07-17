@@ -59,9 +59,10 @@ EpiSlotStats Epidemiology::updateInfectionStates(
         const std::string& symptom = disease_->getSymptomName(symptom_id);
 
         if (event_logger_) {
-          event_logger_->logSymptomChange(pid, current_venue_id,
-                                          transition_time, previous_symptom_id,
-                                          symptom_id);
+          event_logger_->logSymptomChange(
+              pid, current_venue_id, transition_time,
+              static_cast<uint8_t>(previous_symptom_id),
+              static_cast<uint8_t>(symptom_id));
         }
         total_transitions_processed++;
 

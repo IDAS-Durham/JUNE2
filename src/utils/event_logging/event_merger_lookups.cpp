@@ -534,7 +534,7 @@ void mergeOnePeopleProperty(const std::string& key,
   H5::CompType id_only_type(sizeof(int));
   id_only_type.insertMember("person_id", 0, H5::PredType::NATIVE_INT);
 
-  std::vector<std::string> merged_props(total_unique, "unknown");
+  std::vector<std::string> merged_props(total_unique, kCouldNotResolve);
   for (const auto& f : input_files) {
     readPropertyValuesFromFile(f, key, id_only_type, id_to_merged_idx,
                                merged_props);

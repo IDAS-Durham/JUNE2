@@ -7,6 +7,12 @@
 
 namespace june {
 
+// Shared fallback strings for unresolvable/inapplicable HDF5 lookup-table
+// values. Single point of definition so every writer/merger call site stays
+// in sync.
+inline constexpr const char* kCouldNotResolve = "unresolved";
+inline constexpr const char* kNotApplicable = "not applicable";
+
 // =============================================================================
 // Lightweight Population Record for Denominators
 // =============================================================================
@@ -35,7 +41,7 @@ struct InfectionEvent {
   double time;
   uint8_t encounter_type_id;
   uint8_t transmission_mode_index;
-  uint16_t infector_symptom_id;
+  uint8_t infector_symptom_id;
   InfectionSource source;
   uint8_t reserved = 0;
 };
@@ -44,8 +50,8 @@ struct SymptomChangeEvent {
   PersonId person_id;
   VenueId venue_id;
   double time;
-  uint16_t old_symptom_id;
-  uint16_t new_symptom_id;
+  uint8_t old_symptom_id;
+  uint8_t new_symptom_id;
 };
 
 struct DeathEvent {
@@ -123,8 +129,8 @@ struct SymptomChangeRecord {
   int person_id;
   int venue_id;
   double time;
-  uint16_t old_symptom_id;
-  uint16_t new_symptom_id;
+  uint8_t old_symptom_id;
+  uint8_t new_symptom_id;
 };
 
 struct HospitalAdmissionRecord {

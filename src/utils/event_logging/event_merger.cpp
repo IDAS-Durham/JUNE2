@@ -76,7 +76,7 @@ void EventMerger::mergeInfectionEvents(
                     H5::PredType::NATIVE_UINT8);
   type.insertMember("infector_symptom_id",
                     HOFFSET(InfectionEvent, infector_symptom_id),
-                    H5::PredType::NATIVE_UINT16);
+                    H5::PredType::NATIVE_UINT8);
   type.insertMember("source", HOFFSET(InfectionEvent, source),
                     H5::PredType::NATIVE_UINT8);
   mergeDatasetTemplate<InfectionEvent>(out_file, "/events/infections",
@@ -95,10 +95,10 @@ void EventMerger::mergeSymptomChangeEvents(
                     H5::PredType::NATIVE_DOUBLE);
   type.insertMember("old_symptom_id",
                     HOFFSET(detail::SymptomChangeRecord, old_symptom_id),
-                    H5::PredType::NATIVE_UINT16);
+                    H5::PredType::NATIVE_UINT8);
   type.insertMember("new_symptom_id",
                     HOFFSET(detail::SymptomChangeRecord, new_symptom_id),
-                    H5::PredType::NATIVE_UINT16);
+                    H5::PredType::NATIVE_UINT8);
   mergeDatasetTemplate<detail::SymptomChangeRecord>(
       out_file, "/events/symptom_changes", input_files, type);
 }

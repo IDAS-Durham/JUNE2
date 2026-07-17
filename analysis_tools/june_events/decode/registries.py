@@ -1,0 +1,37 @@
+import h5py
+import pandas as pd
+
+
+def load_registry(path: str, registry_name: str):
+    dataset_path = f"metadata/registries/{registry_name}"
+    with h5py.File(path, "r") as fh:
+        if dataset_path not in fh:
+            return None
+        return [value.decode() for value in fh[dataset_path][:]]
+
+
+def decode_registry_column(
+    df,
+    id_column: str,
+    registry,
+    unset_value: int | None = None,
+    unset_label: str = "unknown",
+    no_match_label: str = "not_recorded",
+):
+    lookup = {index: label for index, label in enumerate(registry)}
+
+    def decode(index):
+        if pd.isna(index):
+            return no_match_label
+        if unset_value is not None and index == unset_value:
+            return unset_label
+        try:
+            return lookup[index]
+        except KeyError:
+            raise KeyError(
+                f"index {index!r} in column {id_column!r} not found in registry "
+                f"(has {len(registry)} entries) — likely an incomplete registry "
+                f"from a multi-domain merge"
+            ) from None
+
+    return df[id_column].map(decode)
