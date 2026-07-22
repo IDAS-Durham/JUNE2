@@ -249,9 +249,6 @@ void parseContactMatrixScalars(const YAML::Node& root,
   if (root["default_beta"]) {
     config.default_beta = root["default_beta"].as<double>();
   }
-  if (root["default_contacts"]) {
-    config.default_contacts = root["default_contacts"].as<double>();
-  }
   if (root["default_proportion_physical"]) {
     config.default_proportion_physical =
         root["default_proportion_physical"].as<double>();

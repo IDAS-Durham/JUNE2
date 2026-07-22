@@ -573,7 +573,11 @@ double InteractionManager::lookupContactsForBinPair(
       inf_bin < static_cast<int>(fallback_matrix->contacts[susc_bin].size())) {
     return fallback_matrix->getContacts(susc_bin, inf_bin);
   }
-  return contact_matrices_.default_contacts;
+  // TODO(step 3): fail loudly here instead — reaching this point means
+  // both mode_matrix and fallback_matrix (which already route through
+  // ContactMatrixConfig::getMatrix's full default-matrix fallback chain)
+  // were null/out-of-bounds, which load-time validation should prevent.
+  return 0.0;
 }
 
 uint16_t InteractionManager::resolveInfectorSymptomId(

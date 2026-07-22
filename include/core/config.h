@@ -447,7 +447,6 @@ struct ContactMatrixConfig {
 
   // Default values
   double default_beta = 0.05;
-  double default_contacts = 2.0;
   double default_proportion_physical = 0.1;
   double default_characteristic_time = 24.0;
   double alpha_physical = 1.0;
@@ -461,8 +460,14 @@ struct ContactMatrixConfig {
   // Ordered mode names. Single-mode configs use {"default"}.
   std::vector<std::string> mode_names;
 
-  // default_matrix: fallback for (venue, mode) pairs with no explicit entry.
+  // default_matrix: flat fallback for (venue, mode) pairs with no explicit
+  // entry, used when default_contacts_matrix has no `modes:` block.
   std::optional<ContactMatrix> default_matrix;
+
+  // default_mode_matrices[mode_name] → ContactMatrix: per-mode fallback,
+  // used when default_contacts_matrix has a `modes:` block.
+  std::optional<std::unordered_map<std::string, ContactMatrix>>
+      default_mode_matrices;
 
   // mode_matrices[venue_type][mode_name] → ContactMatrix
   std::unordered_map<std::string,
@@ -506,7 +511,8 @@ struct ContactMatrixConfig {
   int numModes() const { return static_cast<int>(mode_names.size()); }
 
   /// Get the matrix for (venue_type_id, mode_index).
-  /// Falls back to the single-mode matrix, then to default_matrix.
+  /// Falls back to the single-mode matrix, then to the mode-aware default
+  /// (default_mode_matrices_by_id), then to the flat default_matrix.
   /// Returns nullptr only if no matrix is available at all.
   const ContactMatrix* getMatrix(uint8_t venue_type_id, int mode_index) const {
     if (venue_type_id < mode_matrices_by_id.size() &&
@@ -517,7 +523,12 @@ struct ContactMatrixConfig {
     // Fall back to the flat single-mode matrix
     const ContactMatrix* flat = getMatrix(venue_type_id);
     if (flat) return flat;
-    // Fall back to default_matrix
+    // Fall back to the per-mode default
+    if (mode_index >= 0 && mode_index < (int)default_mode_matrices_by_id.size() &&
+        default_mode_matrices_by_id[mode_index] != nullptr) {
+      return default_mode_matrices_by_id[mode_index];
+    }
+    // Fall back to the flat default_matrix
     return default_matrix.has_value() ? &default_matrix.value() : nullptr;
   }
 
@@ -560,6 +571,9 @@ struct ContactMatrixConfig {
   std::vector<const ContactMatrix*> matrices_by_id;
   // [venue_type_id][mode_index] → ContactMatrix* (may be nullptr if absent)
   std::vector<std::vector<const ContactMatrix*>> mode_matrices_by_id;
+  // [mode_index] → ContactMatrix* for the per-mode default (may be nullptr
+  // if default_mode_matrices is unset or missing that mode)
+  std::vector<const ContactMatrix*> default_mode_matrices_by_id;
   // [encounter_type_id] → ContactMatrix* for virtual encounters (may be
   // nullptr if absent). Indexed by encounter_type_id, not venue_type_id.
   std::vector<const ContactMatrix*> virtual_matrices_by_encounter_id;

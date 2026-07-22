@@ -446,6 +446,40 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
     }
   }
 
+  // Resolve bins for the default fallback matrix/matrices, mirroring the
+  // per-venue treatment above so a lookup that falls all the way through to
+  // a default doesn't see unresolved (-1/empty) bin fields.
+  if (default_matrix.has_value()) {
+    auto& cm = default_matrix.value();
+    cm.male_bin = cm.findBinIndex("male");
+    cm.female_bin = cm.findBinIndex("female");
+    cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
+    for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
+      cm.bin_by_subset_type[st] = cm.findBinIndex(world.subset_type_names[st]);
+    }
+    resolveAgeToBin(cm);
+  }
+
+  if (default_mode_matrices.has_value() && !mode_names.empty()) {
+    int n_modes = static_cast<int>(mode_names.size());
+    default_mode_matrices_by_id.assign(n_modes, nullptr);
+    for (int m = 0; m < n_modes; ++m) {
+      auto it = default_mode_matrices->find(mode_names[m]);
+      if (it != default_mode_matrices->end()) {
+        default_mode_matrices_by_id[m] = &it->second;
+        auto& cm = it->second;
+        cm.male_bin = cm.findBinIndex("male");
+        cm.female_bin = cm.findBinIndex("female");
+        cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
+        for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
+          cm.bin_by_subset_type[st] =
+              cm.findBinIndex(world.subset_type_names[st]);
+        }
+        resolveAgeToBin(cm);
+      }
+    }
+  }
+
   // Populate encounter-id-indexed virtual-encounter matrix arrays.
   // Virtual encounter matrices (e.g. "group_sex", "romantic_encounter")
   // are stored under string keys in `matrices` / `mode_matrices` but don't

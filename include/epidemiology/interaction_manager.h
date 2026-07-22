@@ -402,9 +402,11 @@ class InteractionManager {
 
   // Return the contacts entry for (susc_bin, inf_bin), preferring
   // mode_matrix->contacts[][] when in bounds, falling back to
-  // fallback_matrix->getContacts(...), else contact_matrices_.default_contacts.
-  // Encapsulates the per-(mode, bin-pair) lookup with the same three-step
-  // fallback chain used in both the main FOI loop and partial-presence.
+  // fallback_matrix->getContacts(...). Both matrices already route through
+  // ContactMatrixConfig::getMatrix's default-matrix fallback chain, so this
+  // is a last-resort bounds guard, not a semantic fallback.
+  // Encapsulates the per-(mode, bin-pair) lookup used in both the main FOI
+  // loop and partial-presence.
   double lookupContactsForBinPair(const ContactMatrix* mode_matrix,
                                   const ContactMatrix* fallback_matrix,
                                   int susc_bin, int inf_bin) const;
