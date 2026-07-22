@@ -559,6 +559,15 @@ struct ContactMatrixConfig {
 
   void resolve(const WorldState& world);
 
+  /// Rebuilds default_mode_matrices_by_id keyed to the disease's own mode
+  /// order, so the per-mode default fallback is reachable regardless of
+  /// what (or whether) contact_matrices.mode_names declared. Throws if a
+  /// disease mode has neither a default_mode_matrices entry nor a flat
+  /// default_matrix to fall back on.
+  void finalizeDefaultModeMatrices(
+      const WorldState& world,
+      const std::vector<std::string>& disease_mode_names);
+
  private:
   /// Shared tail of the (venue|encounter, mode) fallback chain: given the
   /// caller's already-resolved flat matrix for this id (or nullptr), fall

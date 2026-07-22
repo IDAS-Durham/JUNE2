@@ -339,6 +339,62 @@ void SimulationConfig::resolve(const WorldState& world) {
   }
 }
 
+namespace {
+
+// Fills in male_bin/female_bin/bin_by_subset_type/age_to_bin for one matrix
+// against a resolved WorldState. Shared by ContactMatrixConfig::resolve()
+// and ContactMatrixConfig::finalizeDefaultModeMatrices() so both paths keep
+// matrices reachable only via the default fallback correctly bin-resolved.
+void resolveContactMatrixBins(ContactMatrix& matrix, const WorldState& world) {
+  std::fill(std::begin(matrix.age_to_bin), std::end(matrix.age_to_bin), -1);
+  matrix.has_age_bins = false;
+  for (size_t b = 0; b < matrix.bins.size(); ++b) {
+    const std::string& bin_name = matrix.bins[b];
+    int min_age = -1, max_age = -1;
+    if (!bin_name.empty()) {
+      if (bin_name.back() == '+') {
+        try {
+          min_age = std::stoi(bin_name.substr(0, bin_name.size() - 1));
+          max_age = 99;
+        } catch (...) {
+        }
+      } else {
+        size_t sep_pos = bin_name.find_first_of("-,");
+        if (sep_pos != std::string::npos) {
+          try {
+            size_t start_pos = (bin_name[0] == '[') ? 1 : 0;
+            min_age =
+                std::stoi(bin_name.substr(start_pos, sep_pos - start_pos));
+            size_t end_pos = bin_name.find(']', sep_pos + 1);
+            if (end_pos == std::string::npos) end_pos = bin_name.size();
+            max_age = std::stoi(
+                bin_name.substr(sep_pos + 1, end_pos - sep_pos - 1));
+          } catch (...) {
+            min_age = -1;
+            max_age = -1;
+          }
+        }
+      }
+    }
+    if (min_age >= 0 && max_age >= min_age) {
+      matrix.has_age_bins = true;
+      for (int a = std::max(0, min_age); a <= std::min(99, max_age); ++a) {
+        if (matrix.age_to_bin[a] < 0) {
+          matrix.age_to_bin[a] = static_cast<int>(b);
+        }
+      }
+    }
+  }
+  matrix.male_bin = matrix.findBinIndex("male");
+  matrix.female_bin = matrix.findBinIndex("female");
+  matrix.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
+  for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
+    matrix.bin_by_subset_type[st] = matrix.findBinIndex(world.subset_type_names[st]);
+  }
+}
+
+}  // namespace
+
 void ContactMatrixConfig::resolve(const WorldState& world) {
   const auto& venue_names = world.venue_type_names;
   betas_by_id.assign(venue_names.size(), default_beta);
@@ -502,6 +558,40 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
       virtual_mode_matrices_by_encounter_id[eid][m] = &it->second;
       resolve_matrix_bins(it->second);
     }
+  }
+}
+
+void ContactMatrixConfig::finalizeDefaultModeMatrices(
+    const WorldState& world,
+    const std::vector<std::string>& disease_mode_names) {
+  default_mode_matrices_by_id.assign(disease_mode_names.size(), nullptr);
+
+  std::vector<std::string> missing_modes;
+  for (size_t m = 0; m < disease_mode_names.size(); ++m) {
+    const std::string& mode_name = disease_mode_names[m];
+    if (default_mode_matrices.has_value()) {
+      auto it = default_mode_matrices->find(mode_name);
+      if (it != default_mode_matrices->end()) {
+        default_mode_matrices_by_id[m] = &it->second;
+        resolveContactMatrixBins(it->second, world);
+        continue;
+      }
+    }
+    if (!default_matrix.has_value()) {
+      missing_modes.push_back(mode_name);
+    }
+  }
+
+  if (!missing_modes.empty()) {
+    std::string missing_list;
+    for (size_t i = 0; i < missing_modes.size(); ++i) {
+      if (i) missing_list += ", ";
+      missing_list += missing_modes[i];
+    }
+    throw std::runtime_error(
+        "default_contacts_matrix has no entry for disease mode(s): " +
+        missing_list +
+        " (and no flat default_matrix to fall back on).");
   }
 }
 

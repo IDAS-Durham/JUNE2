@@ -332,7 +332,7 @@ void printStartupAudit(const Disease& disease,
 // Implementation
 // =============================================================================
 
-Simulator::Simulator(WorldState& world, const Config& config,
+Simulator::Simulator(WorldState& world, Config& config,
                      DomainManager* domain_mgr,
                      const std::string& infection_seeds_file,
                      const std::string& output_filename)
@@ -391,6 +391,19 @@ Simulator::Simulator(WorldState& world, const Config& config,
   }
 
   world_.symptom_names = disease_->getSymptomNames();
+
+  // Rebuild the default per-mode contact matrix lookup against the disease's
+  // own mode list, so a missing default is caught here (loud, fatal) rather
+  // than surfacing later as a runtime lookup failure. Independent of whether
+  // contact_matrices.mode_names ended up empty.
+  {
+    std::vector<std::string> disease_mode_names;
+    for (const auto& mode : disease_->getTransmissionParams().modes) {
+      disease_mode_names.push_back(mode.name);
+    }
+    config_.contact_matrices.finalizeDefaultModeMatrices(world_,
+                                                          disease_mode_names);
+  }
 
   // Initialize fomite state on venues before epidemiology
   initFomiteState();

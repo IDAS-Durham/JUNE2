@@ -179,6 +179,47 @@ TEST_CASE("ConfigLoader - default_contacts_matrix modes: form") {
   }
 }
 
+TEST_CASE("ContactMatrixConfig::finalizeDefaultModeMatrices") {
+  SUBCASE("per-mode default reachable when contact_matrices declares no modes") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices_empty_mode_names_default.yaml");
+    REQUIRE(cm.mode_names.empty());
+    REQUIRE(cm.default_mode_matrices.has_value());
+
+    WorldState world;
+    world.venue_type_names = {"household", "gym"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    cm.finalizeDefaultModeMatrices(world, {"respiratory", "physical_contact"});
+
+    uint8_t gym_id = world.getVenueTypeIndex("gym");
+    const ContactMatrix* respiratory_default = cm.getMatrix(gym_id, 0);
+    REQUIRE(respiratory_default != nullptr);
+    // raw=0.004, beta=1.5 -> effective=0.006
+    CHECK(respiratory_default->contacts[0][0] == doctest::Approx(0.006));
+
+    const ContactMatrix* physical_contact_default = cm.getMatrix(gym_id, 1);
+    REQUIRE(physical_contact_default != nullptr);
+    CHECK(physical_contact_default->contacts[0][0] == doctest::Approx(0.006));
+  }
+
+  SUBCASE("disease mode absent from default matrix and no flat fallback throws") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices_empty_mode_names_default.yaml");
+
+    WorldState world;
+    world.venue_type_names = {"household", "gym"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    CHECK_THROWS_AS(
+        cm.finalizeDefaultModeMatrices(
+            world, {"respiratory", "physical_contact", "fomite"}),
+        std::runtime_error);
+  }
+}
+
 TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
   SUBCASE("both paths present") {
     std::string yaml_path = "tmp_sim_cal_events.yaml";
