@@ -1,5 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <filesystem>
+#include <iostream>
+#include <sstream>
 
 #include "core/world_state.h"
 #include "doctest.h"
@@ -217,6 +219,77 @@ TEST_CASE("ContactMatrixConfig::finalizeDefaultModeMatrices") {
         cm.finalizeDefaultModeMatrices(
             world, {"respiratory", "physical_contact", "fomite"}),
         std::runtime_error);
+  }
+}
+
+TEST_CASE("ContactMatrixConfig::finalizeDiseaseModeAlignment") {
+  SUBCASE("matrices matched by name even when mode order differs from disease") {
+    // Fixture declares hospital's modes as physical_contact, respiratory (in
+    // that order) -> cm.mode_names == ["physical_contact", "respiratory"].
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices_reversed_modes.yaml");
+    REQUIRE(cm.mode_names.size() == 2);
+    CHECK(cm.mode_names[0] == "physical_contact");
+    CHECK(cm.mode_names[1] == "respiratory");
+
+    WorldState world;
+    world.venue_type_names = {"hospital"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    // Disease declares the opposite order: respiratory=0, physical_contact=1.
+    cm.finalizeDiseaseModeAlignment({"respiratory", "physical_contact"});
+
+    uint8_t hospital_id = world.getVenueTypeIndex("hospital");
+    const ContactMatrix* disease_mode0 = cm.getMatrix(hospital_id, 0);
+    const ContactMatrix* disease_mode1 = cm.getMatrix(hospital_id, 1);
+    REQUIRE(disease_mode0 != nullptr);
+    REQUIRE(disease_mode1 != nullptr);
+    // respiratory: raw 1.5, beta 2.0 -> 3.0
+    CHECK(disease_mode0->contacts[0][0] == doctest::Approx(3.0));
+    // physical_contact: no beta -> unchanged
+    CHECK(disease_mode1->contacts[0][0] == doctest::Approx(0.5));
+  }
+
+  SUBCASE("disease mode absent from contact_matrices falls back to default") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices.yaml");  // mode_names: [respiratory, physical_contact]
+
+    // "school" has no entry at all in the fixture (no flat matrix, no
+    // per-mode matrix), so its flat fallback is nullptr and the lookup must
+    // reach the true default_contacts_matrix — unlike a venue with an
+    // existing entry, where the pre-existing "first mode as flat fallback"
+    // backward-compat behaviour (config_loader.cpp) would intercept first.
+    WorldState world;
+    world.venue_type_names = {"school"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    // "fomite" has no dedicated entry anywhere in the fixture.
+    cm.finalizeDiseaseModeAlignment({"respiratory", "fomite"});
+
+    uint8_t school_id = world.getVenueTypeIndex("school");
+    const ContactMatrix* fomite_matrix = cm.getMatrix(school_id, 1);
+    REQUIRE(fomite_matrix != nullptr);
+    // Falls through to the flat default_contacts_matrix: raw 0.004, beta 1.5.
+    CHECK(fomite_matrix->contacts[0][0] == doctest::Approx(0.006));
+  }
+
+  SUBCASE("orphaned contact-matrix mode name warns but does not throw") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices.yaml");  // mode_names: [respiratory, physical_contact]
+
+    WorldState world;
+    world.venue_type_names = {"hospital"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    std::ostringstream captured;
+    std::streambuf* old_cerr = std::cerr.rdbuf(captured.rdbuf());
+    CHECK_NOTHROW(cm.finalizeDiseaseModeAlignment({"respiratory"}));
+    std::cerr.rdbuf(old_cerr);
+
+    CHECK(captured.str().find("physical_contact") != std::string::npos);
   }
 }
 

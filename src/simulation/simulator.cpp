@@ -403,6 +403,10 @@ Simulator::Simulator(WorldState& world, Config& config,
     }
     config_.contact_matrices.finalizeDefaultModeMatrices(world_,
                                                           disease_mode_names);
+    // Reconcile ContactMatrixConfig's own mode order (derived from
+    // contact_matrices.yaml) against the disease's mode order, so per-venue
+    // matrix lookups are matched by name rather than by list position.
+    config_.contact_matrices.finalizeDiseaseModeAlignment(disease_mode_names);
   }
 
   // Initialize fomite state on venues before epidemiology

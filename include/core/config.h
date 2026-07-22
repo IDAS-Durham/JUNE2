@@ -515,10 +515,11 @@ struct ContactMatrixConfig {
   /// (default_mode_matrices_by_id), then to the flat default_matrix.
   /// Returns nullptr only if no matrix is available at all.
   const ContactMatrix* getMatrix(uint8_t venue_type_id, int mode_index) const {
-    if (venue_type_id < mode_matrices_by_id.size() &&
-        mode_index < (int)mode_matrices_by_id[venue_type_id].size() &&
-        mode_matrices_by_id[venue_type_id][mode_index] != nullptr) {
-      return mode_matrices_by_id[venue_type_id][mode_index];
+    int translated = translateModeIndex(mode_index);
+    if (translated >= 0 && venue_type_id < mode_matrices_by_id.size() &&
+        translated < (int)mode_matrices_by_id[venue_type_id].size() &&
+        mode_matrices_by_id[venue_type_id][translated] != nullptr) {
+      return mode_matrices_by_id[venue_type_id][translated];
     }
     return applyDefaultChain(getMatrix(venue_type_id), mode_index);
   }
@@ -545,14 +546,16 @@ struct ContactMatrixConfig {
   /// the same default_contacts_matrix a physical venue would.
   const ContactMatrix* getVirtualMatrix(uint8_t encounter_type_id,
                                         int mode_index) const {
-    if (encounter_type_id < virtual_mode_matrices_by_encounter_id.size() &&
-        mode_index <
+    int translated = translateModeIndex(mode_index);
+    if (translated >= 0 &&
+        encounter_type_id < virtual_mode_matrices_by_encounter_id.size() &&
+        translated <
             (int)virtual_mode_matrices_by_encounter_id[encounter_type_id]
                 .size() &&
-        virtual_mode_matrices_by_encounter_id[encounter_type_id][mode_index] !=
+        virtual_mode_matrices_by_encounter_id[encounter_type_id][translated] !=
             nullptr) {
       return virtual_mode_matrices_by_encounter_id[encounter_type_id]
-                                                  [mode_index];
+                                                  [translated];
     }
     return applyDefaultChain(getVirtualMatrix(encounter_type_id), mode_index);
   }
@@ -566,6 +569,15 @@ struct ContactMatrixConfig {
   /// default_matrix to fall back on.
   void finalizeDefaultModeMatrices(
       const WorldState& world,
+      const std::vector<std::string>& disease_mode_names);
+
+  /// Builds the disease-mode-index -> contact-matrix-mode-index translation
+  /// used by getMatrix()/getVirtualMatrix() below, matching by name rather
+  /// than by the two files' independently-derived list orders. A disease
+  /// mode with no matching entry in mode_names translates to -1 (falls
+  /// through to the default chain). A contact_matrices.yaml mode with no
+  /// matching disease mode is orphaned: warns via stderr, ignored.
+  void finalizeDiseaseModeAlignment(
       const std::vector<std::string>& disease_mode_names);
 
  private:
@@ -582,6 +594,19 @@ struct ContactMatrixConfig {
     return default_matrix.has_value() ? &default_matrix.value() : nullptr;
   }
 
+  /// Translates a disease-mode index to this config's own mode_names index
+  /// via mode_index_translation_ (built by finalizeDiseaseModeAlignment).
+  /// Empty translation (finalizeDiseaseModeAlignment not yet called) means
+  /// identity: mode_index is used as-is, preserving positional behaviour for
+  /// callers/tests that bypass the finalize step.
+  int translateModeIndex(int mode_index) const {
+    if (mode_index_translation_.empty()) return mode_index;
+    if (mode_index < 0 || mode_index >= (int)mode_index_translation_.size()) {
+      return -1;
+    }
+    return mode_index_translation_[mode_index];
+  }
+
   std::vector<double> betas_by_id;
   std::vector<const ContactMatrix*> matrices_by_id;
   // [venue_type_id][mode_index] → ContactMatrix* (may be nullptr if absent)
@@ -595,6 +620,10 @@ struct ContactMatrixConfig {
   // [encounter_type_id][mode_index] → ContactMatrix* for virtual encounters.
   std::vector<std::vector<const ContactMatrix*>>
       virtual_mode_matrices_by_encounter_id;
+  // [disease_mode_index] -> this config's own mode_names index, or -1 if the
+  // disease mode has no dedicated contact-matrix entry. Empty until
+  // finalizeDiseaseModeAlignment() runs, meaning "treat as identity".
+  std::vector<int> mode_index_translation_;
 };
 
 // =============================================================================

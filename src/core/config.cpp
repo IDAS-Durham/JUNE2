@@ -547,6 +547,30 @@ void ContactMatrixConfig::finalizeDefaultModeMatrices(
   }
 }
 
+void ContactMatrixConfig::finalizeDiseaseModeAlignment(
+    const std::vector<std::string>& disease_mode_names) {
+  mode_index_translation_.assign(disease_mode_names.size(), -1);
+  std::vector<bool> mode_names_referenced(mode_names.size(), false);
+
+  for (size_t d = 0; d < disease_mode_names.size(); ++d) {
+    for (size_t m = 0; m < mode_names.size(); ++m) {
+      if (mode_names[m] == disease_mode_names[d]) {
+        mode_index_translation_[d] = (int)m;
+        mode_names_referenced[m] = true;
+        break;
+      }
+    }
+  }
+
+  for (size_t m = 0; m < mode_names.size(); ++m) {
+    if (!mode_names_referenced[m]) {
+      std::cerr << "Warning: contact_matrices.yaml mode '" << mode_names[m]
+                << "' does not match any disease transmission mode; ignoring."
+                << std::endl;
+    }
+  }
+}
+
 void PreferenceProfile::resolve(const WorldState& world) {
   for (auto& crit : selection_criteria) {
     crit.resolve(world);

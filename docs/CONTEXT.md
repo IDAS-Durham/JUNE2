@@ -110,11 +110,13 @@ A named channel of contact-based transmission (e.g. `respiratory`,
 `physical_contact`) with its own beta, bins, and contacts matrix per venue
 type. Declared by the disease's `transmission_params.modes` list.
 `ContactMatrixConfig::mode_names` is a separate, independently-derived list
-(populated from `contact_matrices.yaml` venue `modes:` blocks) — the two are
-assumed to align by index at the runtime lookup, but this is currently
-unvalidated and unreconciled; see the deferred-work note in
-`mission_mode_index_positional_alignment.md`. A config with one mode uses the
-name `"default"`.
+(populated from `contact_matrices.yaml` venue `modes:` blocks) — the two lists
+may declare the same mode names in different orders. Reconciled by name (not
+list position) via `ContactMatrixConfig::finalizeDiseaseModeAlignment`, called
+once at `Simulator` construction alongside `finalizeDefaultModeMatrices`. A
+disease mode absent from `contact_matrices.yaml` falls back to the Default
+Contact Matrix; a `contact_matrices.yaml` mode absent from the disease is
+orphaned (warns, ignored). A config with one mode uses the name `"default"`.
 _Avoid_: channel, transmission type.
 
 **Default Contact Matrix**:

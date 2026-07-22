@@ -206,7 +206,8 @@ struct TransmissionParams {
   NaturalImmunityParams natural_immunity;
 
   // Ordered transmission modes. Single-mode configs have one entry named
-  // "default". Index matches ContactMatrixConfig::mode_names.
+  // "default". Matched to ContactMatrixConfig::mode_names by name, not by
+  // index, via ContactMatrixConfig::finalizeDiseaseModeAlignment.
   // Replaces the former parallel vectors: mode_names,
   // mode_susceptibility_multipliers, is_fomite_mode,
   // is_compartmental_uptake_mode, is_compartmental_deposition_mode,
