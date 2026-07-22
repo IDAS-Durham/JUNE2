@@ -604,12 +604,43 @@ ContactMatrixConfig ConfigLoader::loadContactMatrices(
 
   parseContactMatrixScalars(root, config);
 
-  if (root["default_contacts_matrix"]) {
-    config.default_matrix = parseContactMatrix(root["default_contacts_matrix"]);
-  }
-
   if (root["contact_matrices"]) {
     parseContactMatricesList(root["contact_matrices"], config);
+  }
+
+  if (!root["default_contacts_matrix"]) {
+    throw std::runtime_error(
+        "Contact matrix config '" + filename +
+        "' is missing required key 'default_contacts_matrix'.");
+  }
+  const auto& default_node = root["default_contacts_matrix"];
+
+  if (default_node["modes"]) {
+    std::unordered_map<std::string, ContactMatrix> mode_matrices;
+    for (const auto& mode_kv : default_node["modes"]) {
+      mode_matrices[mode_kv.first.as<std::string>()] =
+          parseContactMatrix(mode_kv.second);
+    }
+
+    std::vector<std::string> missing_modes;
+    for (const auto& mode_name : config.mode_names) {
+      if (!mode_matrices.count(mode_name)) missing_modes.push_back(mode_name);
+    }
+    if (!missing_modes.empty()) {
+      std::string missing_list;
+      for (size_t i = 0; i < missing_modes.size(); ++i) {
+        if (i) missing_list += ", ";
+        missing_list += missing_modes[i];
+      }
+      throw std::runtime_error(
+          "Contact matrix config '" + filename +
+          "': 'default_contacts_matrix' is missing mode(s) [" + missing_list +
+          "] present in 'contact_matrices'.");
+    }
+
+    config.default_mode_matrices = std::move(mode_matrices);
+  } else {
+    config.default_matrix = parseContactMatrix(default_node);
   }
 
   return config;

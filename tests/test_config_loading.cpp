@@ -134,6 +134,51 @@ TEST_CASE("ContactMatrix beta scales contacts at load time") {
   }
 }
 
+TEST_CASE("ConfigLoader - default_contacts_matrix modes: form") {
+  SUBCASE("modes-format default loads per-mode, covering every disease mode") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices_modes_default.yaml");
+
+    REQUIRE(cm.default_mode_matrices.has_value());
+    REQUIRE(cm.default_mode_matrices->count("respiratory") > 0);
+    REQUIRE(cm.default_mode_matrices->count("physical_contact") > 0);
+    // raw=0.004, beta=1.5 -> effective=0.006
+    CHECK(cm.default_mode_matrices->at("respiratory").contacts[0][0] ==
+          doctest::Approx(0.006));
+    // no beta -> unchanged
+    CHECK(cm.default_mode_matrices->at("physical_contact").contacts[0][0] ==
+          doctest::Approx(0.006));
+
+    WorldState world;
+    world.venue_type_names = {"hospital", "gym"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    uint8_t gym_id = world.getVenueTypeIndex("gym");
+    int respiratory_idx = -1;
+    for (size_t mode = 0; mode < cm.mode_names.size(); ++mode) {
+      if (cm.mode_names[mode] == "respiratory") respiratory_idx = (int)mode;
+    }
+    REQUIRE(respiratory_idx >= 0);
+    const ContactMatrix* fallback = cm.getMatrix(gym_id, respiratory_idx);
+    REQUIRE(fallback != nullptr);
+    CHECK(fallback->contacts[0][0] == doctest::Approx(0.006));
+  }
+
+  SUBCASE("missing default_contacts_matrix throws") {
+    CHECK_THROWS_AS(ConfigLoader::loadContactMatrices(
+                        "tests/configs/contact_matrices_missing_default.yaml"),
+                    std::runtime_error);
+  }
+
+  SUBCASE("per-mode default missing a disease mode throws") {
+    CHECK_THROWS_AS(
+        ConfigLoader::loadContactMatrices(
+            "tests/configs/contact_matrices_default_missing_mode.yaml"),
+        std::runtime_error);
+  }
+}
+
 TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
   SUBCASE("both paths present") {
     std::string yaml_path = "tmp_sim_cal_events.yaml";
