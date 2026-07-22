@@ -520,16 +520,7 @@ struct ContactMatrixConfig {
         mode_matrices_by_id[venue_type_id][mode_index] != nullptr) {
       return mode_matrices_by_id[venue_type_id][mode_index];
     }
-    // Fall back to the flat single-mode matrix
-    const ContactMatrix* flat = getMatrix(venue_type_id);
-    if (flat) return flat;
-    // Fall back to the per-mode default
-    if (mode_index >= 0 && mode_index < (int)default_mode_matrices_by_id.size() &&
-        default_mode_matrices_by_id[mode_index] != nullptr) {
-      return default_mode_matrices_by_id[mode_index];
-    }
-    // Fall back to the flat default_matrix
-    return default_matrix.has_value() ? &default_matrix.value() : nullptr;
+    return applyDefaultChain(getMatrix(venue_type_id), mode_index);
   }
 
   /// Virtual-encounter matrix lookup, keyed by encounter_type_id.
@@ -547,6 +538,11 @@ struct ContactMatrixConfig {
     return nullptr;
   }
 
+  /// Falls back to the flat virtual matrix, then — same as getMatrix — to
+  /// the mode-aware default (default_mode_matrices_by_id), then to the flat
+  /// default_matrix. There is no separate default for virtual encounters:
+  /// an encounter type with no matching virtual_contact_matrix entry uses
+  /// the same default_contacts_matrix a physical venue would.
   const ContactMatrix* getVirtualMatrix(uint8_t encounter_type_id,
                                         int mode_index) const {
     if (encounter_type_id < virtual_mode_matrices_by_encounter_id.size() &&
@@ -558,15 +554,25 @@ struct ContactMatrixConfig {
       return virtual_mode_matrices_by_encounter_id[encounter_type_id]
                                                   [mode_index];
     }
-    // Fall back to the flat virtual matrix (note: for multi-mode virtual
-    // matrices this only holds the first listed mode. Useful for bin
-    // layout but not for transmission rates).
-    return getVirtualMatrix(encounter_type_id);
+    return applyDefaultChain(getVirtualMatrix(encounter_type_id), mode_index);
   }
 
   void resolve(const WorldState& world);
 
  private:
+  /// Shared tail of the (venue|encounter, mode) fallback chain: given the
+  /// caller's already-resolved flat matrix for this id (or nullptr), fall
+  /// back to the mode-aware default, then the flat default_matrix.
+  const ContactMatrix* applyDefaultChain(const ContactMatrix* flat,
+                                         int mode_index) const {
+    if (flat) return flat;
+    if (mode_index >= 0 && mode_index < (int)default_mode_matrices_by_id.size() &&
+        default_mode_matrices_by_id[mode_index] != nullptr) {
+      return default_mode_matrices_by_id[mode_index];
+    }
+    return default_matrix.has_value() ? &default_matrix.value() : nullptr;
+  }
+
   std::vector<double> betas_by_id;
   std::vector<const ContactMatrix*> matrices_by_id;
   // [venue_type_id][mode_index] → ContactMatrix* (may be nullptr if absent)

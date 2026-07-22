@@ -226,3 +226,31 @@ TEST_CASE(
 
   CHECK(infections > 30);
 }
+
+TEST_CASE(
+    "ContactMatrixConfig - Virtual Encounter Falls Back To Default Contact "
+    "Matrix") {
+  // An encounter type declared in the world but never given a
+  // virtual_contact_matrix entry (missing config, typo'd name, ...) must
+  // resolve to default_contacts_matrix, mirroring getMatrix's behaviour for
+  // physical venues. Before the fix, getVirtualMatrix never consulted the
+  // default chain, so this configuration produced a null matrix and
+  // lookupContactsForBinPair threw at first use.
+  ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+      "tests/configs/romantic_regression.yaml");
+
+  WorldState world;
+  world.venue_type_names = {"office"};
+  // encounter_type_id 0 has no entry in cm.virtual_matrix_names below —
+  // the exact "missing/typo'd config" scenario from the mission.
+  world.encounter_type_names = {"unconfigured_encounter"};
+  world.buildIndices();
+
+  cm.resolve(world);
+
+  const ContactMatrix* fallback = cm.getVirtualMatrix(0, 0);
+  REQUIRE(fallback != nullptr);
+  REQUIRE(!fallback->contacts.empty());
+  REQUIRE(!fallback->contacts[0].empty());
+  CHECK(fallback->contacts[0][0] == doctest::Approx(1.0));
+}
