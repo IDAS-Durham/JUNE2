@@ -63,7 +63,6 @@ contact_matrices:
         - - 0.041685188448709345
           - 0.041685188448709345
           - 0.10838148996664429
-default_contacts: 1.0
 default_contacts_matrix:
   bins:
   - all

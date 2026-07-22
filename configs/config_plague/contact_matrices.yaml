@@ -16,8 +16,6 @@ default_contacts_matrix:
   bins: ["all"]
   contacts: [[1.0]]
 
-default_contacts: 1.0
-
 # ── Per-venue, per-mode matrices ──────────────────────────────────────────────
 contact_matrices:
 
