@@ -549,6 +549,17 @@ void ContactMatrixConfig::finalizeDefaultModeMatrices(
 
 void ContactMatrixConfig::finalizeDiseaseModeAlignment(
     const std::vector<std::string>& disease_mode_names) {
+  std::unordered_set<std::string> seen_disease_mode_names;
+  for (const auto& name : disease_mode_names) {
+    if (!seen_disease_mode_names.insert(name).second) {
+      throw std::runtime_error(
+          "disease transmission_params.modes has duplicate mode name '" +
+          name +
+          "'; contact-matrix alignment requires unique mode names.");
+    }
+  }
+
+  disease_mode_alignment_finalized_ = true;
   mode_index_translation_.assign(disease_mode_names.size(), -1);
   std::vector<bool> mode_names_referenced(mode_names.size(), false);
 

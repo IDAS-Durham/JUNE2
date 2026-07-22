@@ -596,11 +596,13 @@ struct ContactMatrixConfig {
 
   /// Translates a disease-mode index to this config's own mode_names index
   /// via mode_index_translation_ (built by finalizeDiseaseModeAlignment).
-  /// Empty translation (finalizeDiseaseModeAlignment not yet called) means
-  /// identity: mode_index is used as-is, preserving positional behaviour for
-  /// callers/tests that bypass the finalize step.
+  /// Before finalizeDiseaseModeAlignment runs, mode_index is used as-is
+  /// (identity), preserving positional behaviour for callers/tests that
+  /// bypass the finalize step. disease_mode_alignment_finalized_ (not
+  /// vector emptiness) is the sentinel, so "finalized with zero disease
+  /// modes" is distinguishable from "never finalized".
   int translateModeIndex(int mode_index) const {
-    if (mode_index_translation_.empty()) return mode_index;
+    if (!disease_mode_alignment_finalized_) return mode_index;
     if (mode_index < 0 || mode_index >= (int)mode_index_translation_.size()) {
       return -1;
     }
@@ -621,9 +623,13 @@ struct ContactMatrixConfig {
   std::vector<std::vector<const ContactMatrix*>>
       virtual_mode_matrices_by_encounter_id;
   // [disease_mode_index] -> this config's own mode_names index, or -1 if the
-  // disease mode has no dedicated contact-matrix entry. Empty until
-  // finalizeDiseaseModeAlignment() runs, meaning "treat as identity".
+  // disease mode has no dedicated contact-matrix entry. Only meaningful once
+  // disease_mode_alignment_finalized_ is true.
   std::vector<int> mode_index_translation_;
+  // Set by finalizeDiseaseModeAlignment(); distinguishes "not yet finalized"
+  // (translateModeIndex falls back to identity) from "finalized with zero
+  // disease modes" (mode_index_translation_ is legitimately empty).
+  bool disease_mode_alignment_finalized_ = false;
 };
 
 // =============================================================================

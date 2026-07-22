@@ -291,6 +291,43 @@ TEST_CASE("ContactMatrixConfig::finalizeDiseaseModeAlignment") {
 
     CHECK(captured.str().find("physical_contact") != std::string::npos);
   }
+
+  SUBCASE("duplicate disease mode names throw instead of aliasing") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices.yaml");  // mode_names: [respiratory, physical_contact]
+
+    WorldState world;
+    world.venue_type_names = {"hospital"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    CHECK_THROWS_AS(
+        cm.finalizeDiseaseModeAlignment({"respiratory", "respiratory"}),
+        std::runtime_error);
+  }
+
+  SUBCASE("zero disease modes finalizes to always-fall-through, not identity") {
+    ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
+        "tests/configs/contact_matrices.yaml");  // mode_names: [respiratory, physical_contact]
+
+    WorldState world;
+    world.venue_type_names = {"hospital"};
+    world.buildIndices();
+    cm.resolve(world);
+
+    // Before finalize: mode_index_translation_ is empty too, but this must
+    // read as raw positional passthrough, not "zero disease modes".
+    uint8_t hospital_id = world.getVenueTypeIndex("hospital");
+    REQUIRE(cm.getMatrix(hospital_id, 0) != nullptr);
+
+    // A genuinely empty disease-mode list must finalize to "no dedicated
+    // mode matrix reachable for any index" rather than reverting to the
+    // pre-finalize identity passthrough (both states have an empty
+    // mode_index_translation_, so the distinguishing flag is what's tested).
+    cm.finalizeDiseaseModeAlignment({});
+    CHECK(cm.getMatrix(hospital_id, 0) ==
+          cm.getMatrix(hospital_id, /*mode_index=*/-1));
+  }
 }
 
 TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {

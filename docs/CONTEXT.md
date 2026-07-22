@@ -117,6 +117,9 @@ once at `Simulator` construction alongside `finalizeDefaultModeMatrices`. A
 disease mode absent from `contact_matrices.yaml` falls back to the Default
 Contact Matrix; a `contact_matrices.yaml` mode absent from the disease is
 orphaned (warns, ignored). A config with one mode uses the name `"default"`.
+Disease mode names must be unique — `finalizeDiseaseModeAlignment` throws
+`std::runtime_error` on a duplicate, since the name-matching reconciliation
+would otherwise alias two disease modes onto the same contact matrix.
 _Avoid_: channel, transmission type.
 
 **Default Contact Matrix**:
