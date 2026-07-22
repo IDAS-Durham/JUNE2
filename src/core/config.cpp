@@ -394,25 +394,31 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
     }
   };
 
+  // Track which matrices we've already bin-resolved so we don't redo the
+  // work when several venue/mode/default entries (or virtual encounter
+  // types) alias onto the same matrix (e.g. ooe_encounter,
+  // romantic_encounters, cohabiting_encounters all point at
+  // "romantic_encounter").
+  std::unordered_set<const ContactMatrix*> bin_resolved;
+
+  auto resolve_matrix_bins = [&](ContactMatrix& cm) {
+    if (!bin_resolved.insert(&cm).second) return;
+    cm.male_bin = cm.findBinIndex("male");
+    cm.female_bin = cm.findBinIndex("female");
+    cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
+    for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
+      cm.bin_by_subset_type[st] = cm.findBinIndex(world.subset_type_names[st]);
+    }
+    resolveAgeToBin(cm);
+  };
+
   for (auto& [name, matrix] : matrices) {
     int idx = world.getVenueTypeIndex(name);
     if (idx >= 0 && idx < (int)matrices_by_id.size()) {
       matrices_by_id[idx] = &matrix;
     }
 
-    // Pre-resolve bin lookups for this matrix
-    matrix.male_bin = matrix.findBinIndex("male");
-    matrix.female_bin = matrix.findBinIndex("female");
-
-    // Pre-resolve subset_type -> bin mapping
-    matrix.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
-    for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
-      matrix.bin_by_subset_type[st] =
-          matrix.findBinIndex(world.subset_type_names[st]);
-    }
-
-    // Pre-resolve age -> bin index lookup table
-    resolveAgeToBin(matrix);
+    resolve_matrix_bins(matrix);
   }
 
   // Populate mode_matrices_by_id for per-mode contact matrix lookups.
@@ -431,16 +437,7 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
         auto it = mode_map.find(mode_names[m]);
         if (it != mode_map.end()) {
           mode_matrices_by_id[venue_idx][m] = &it->second;
-          // Pre-resolve bin lookups for mode matrices too
-          auto& cm = it->second;
-          cm.male_bin = cm.findBinIndex("male");
-          cm.female_bin = cm.findBinIndex("female");
-          cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
-          for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
-            cm.bin_by_subset_type[st] =
-                cm.findBinIndex(world.subset_type_names[st]);
-          }
-          resolveAgeToBin(cm);
+          resolve_matrix_bins(it->second);
         }
       }
     }
@@ -450,14 +447,7 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
   // per-venue treatment above so a lookup that falls all the way through to
   // a default doesn't see unresolved (-1/empty) bin fields.
   if (default_matrix.has_value()) {
-    auto& cm = default_matrix.value();
-    cm.male_bin = cm.findBinIndex("male");
-    cm.female_bin = cm.findBinIndex("female");
-    cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
-    for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
-      cm.bin_by_subset_type[st] = cm.findBinIndex(world.subset_type_names[st]);
-    }
-    resolveAgeToBin(cm);
+    resolve_matrix_bins(default_matrix.value());
   }
 
   if (default_mode_matrices.has_value() && !mode_names.empty()) {
@@ -467,15 +457,7 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
       auto it = default_mode_matrices->find(mode_names[m]);
       if (it != default_mode_matrices->end()) {
         default_mode_matrices_by_id[m] = &it->second;
-        auto& cm = it->second;
-        cm.male_bin = cm.findBinIndex("male");
-        cm.female_bin = cm.findBinIndex("female");
-        cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
-        for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
-          cm.bin_by_subset_type[st] =
-              cm.findBinIndex(world.subset_type_names[st]);
-        }
-        resolveAgeToBin(cm);
+        resolve_matrix_bins(it->second);
       }
     }
   }
@@ -500,23 +482,6 @@ void ContactMatrixConfig::resolve(const WorldState& world) {
   } else {
     virtual_mode_matrices_by_encounter_id.clear();
   }
-
-  // Track which matrices we've already bin-resolved so we don't redo the
-  // work when several virtual encounter types alias onto the same matrix
-  // (e.g. ooe_encounter, romantic_encounters, cohabiting_encounters all
-  // point at "romantic_encounter").
-  std::unordered_set<const ContactMatrix*> bin_resolved;
-
-  auto resolve_matrix_bins = [&](ContactMatrix& cm) {
-    if (!bin_resolved.insert(&cm).second) return;
-    cm.male_bin = cm.findBinIndex("male");
-    cm.female_bin = cm.findBinIndex("female");
-    cm.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
-    for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
-      cm.bin_by_subset_type[st] = cm.findBinIndex(world.subset_type_names[st]);
-    }
-    resolveAgeToBin(cm);
-  };
 
   for (const auto& [eid, matrix_name] : virtual_matrix_names) {
     if (static_cast<size_t>(eid) >= n_enc_types) continue;
