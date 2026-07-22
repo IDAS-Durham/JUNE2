@@ -83,7 +83,10 @@ TEST_CASE("Transmission determinism: same seed, shuffled input order") {
 
   Disease disease = makeTestDisease();
   ContactMatrixConfig cm;
-  cm.default_contacts = 0.1;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.1}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim_cfg;
   sim_cfg.random_seed = 42;
 

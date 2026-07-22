@@ -387,7 +387,10 @@ TEST_CASE("No Stale Bin Data Across Venues With Different Bin Counts") {
   // --- Contact matrix for "school": 3 age-based bins with high contacts ---
   ContactMatrixConfig cm_config;
   cm_config.default_beta = 1.0;
-  cm_config.default_contacts = 10.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{10.0}};
+  cm_config.default_matrix = default_contact_matrix;
 
   ContactMatrix school_matrix;
   school_matrix.bins = {"0-30", "31-60", "61+"};

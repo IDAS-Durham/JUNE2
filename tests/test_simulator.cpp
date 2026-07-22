@@ -119,7 +119,10 @@ TEST_CASE("Simulator run() multi-day smoke test") {
   config.schedule.day_type_names = {"workday", "rest_day"};
   config.schedule.day_type_cycle = {"workday", "workday", "workday", "workday", "workday", "rest_day", "rest_day"};
 
-  config.contact_matrices.default_contacts = 0.2;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.2}};
+  config.contact_matrices.default_matrix = default_contact_matrix;
 
   // Resolve schedule indices (maps string-keyed slots to indexed lookups)
   config.schedule.resolveSlots(world);

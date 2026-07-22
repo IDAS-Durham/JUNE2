@@ -67,10 +67,6 @@ TEST_CASE("ConfigLoader - Contact Matrix Config from YAML") {
   ContactMatrixConfig cm =
       ConfigLoader::loadContactMatrices("tests/configs/contact_matrices.yaml");
 
-  SUBCASE("default_contacts is loaded") {
-    CHECK(cm.default_contacts == doctest::Approx(2.0));
-  }
-
   SUBCASE("Venue matrices are loaded") {
     REQUIRE(cm.matrices.count("household") > 0);
     const auto& hh = cm.matrices.at("household");

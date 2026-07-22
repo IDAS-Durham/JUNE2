@@ -631,7 +631,10 @@ TEST_CASE("F1: Trajectory-driven transmission occurs") {
   Disease disease = makeTrajectoryDrivenDisease(5.0, 2.0, 1.0, 0.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;  // High contacts for near-certain transmission
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;  // High contacts for near-certain transmission
   cm.default_beta = 1.0;        // Neutralize beta dampening for this test
   cm.default_characteristic_time = 1.0;  // Match delta_hours for unit scaling
   SimulationConfig sim;
@@ -657,7 +660,10 @@ TEST_CASE("F2: Stage-driven transmission occurs") {
   Disease disease = makeStageDrivenDisease(curve, 10.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;  // High contacts for near-certain transmission
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;  // High contacts for near-certain transmission
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -680,7 +686,10 @@ TEST_CASE("F3: Zero infectiousness prevents transmission") {
   Disease disease = makeStageDrivenDisease(zero_curve, 10.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -703,7 +712,10 @@ TEST_CASE("F4: Immune person resists infection") {
   Disease disease = makeStageDrivenDisease(curve, 10.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -742,7 +754,10 @@ TEST_CASE("F5: Higher infectiousness yields higher infection probability") {
       Disease disease = makeStageDrivenDisease(high_curve, 10.0);
 
       ContactMatrixConfig cm;
-      cm.default_contacts = 1.0;
+      ContactMatrix default_contact_matrix;
+      default_contact_matrix.bins = {"all"};
+      default_contact_matrix.contacts = {{1.0}};
+      cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       ParallelConfig par;
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -766,7 +781,10 @@ TEST_CASE("F5: Higher infectiousness yields higher infection probability") {
       Disease disease = makeStageDrivenDisease(low_curve, 10.0);
 
       ContactMatrixConfig cm;
-      cm.default_contacts = 1.0;
+      ContactMatrix default_contact_matrix;
+      default_contact_matrix.bins = {"all"};
+      default_contact_matrix.contacts = {{1.0}};
+      cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       ParallelConfig par;
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -828,7 +846,10 @@ TEST_CASE(
   Disease disease = makeStageDrivenDisease(curve, 10.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -854,7 +875,10 @@ TEST_CASE("G4: Empty venue returns zero infections") {
   Disease disease = makeStageDrivenDisease(curve, 10.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -873,7 +897,10 @@ TEST_CASE("G5: Single person at venue, no self-infection") {
   Disease disease = makeStageDrivenDisease(curve, 10.0);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
@@ -901,7 +928,10 @@ static int runTransmission(WorldState& world, Disease& disease,
                            double delta, double contacts = 1.0,
                            unsigned int seed = 0) {
   ContactMatrixConfig cm;
-  cm.default_contacts = contacts;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{contacts}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   sim.random_seed = seed;
   ParallelConfig par;
@@ -988,7 +1018,10 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
       auto curve = std::make_shared<ConstantCurve>(1.0);
       Disease disease = makeStageDrivenDisease(curve, 10.0);
       ContactMatrixConfig cm;
-      cm.default_contacts = 1.0;
+      ContactMatrix default_contact_matrix;
+      default_contact_matrix.bins = {"all"};
+      default_contact_matrix.contacts = {{1.0}};
+      cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       sim.random_seed = trial * 100;
       ParallelConfig par;
@@ -1008,7 +1041,10 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
       auto curve = std::make_shared<ConstantCurve>(1.0);
       Disease disease = makeStageDrivenDisease(curve, 10.0);
       ContactMatrixConfig cm;
-      cm.default_contacts = 1.0;
+      ContactMatrix default_contact_matrix;
+      default_contact_matrix.bins = {"all"};
+      default_contact_matrix.contacts = {{1.0}};
+      cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       sim.random_seed = trial * 100;
       ParallelConfig par;
@@ -1061,7 +1097,10 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
       Disease disease("Low", stags, {}, {td}, {}, tp);
       ContactMatrixConfig cm;
-      cm.default_contacts = 1.0;
+      ContactMatrix default_contact_matrix;
+      default_contact_matrix.bins = {"all"};
+      default_contact_matrix.contacts = {{1.0}};
+      cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       sim.random_seed = trial * 200;
       ParallelConfig par;
@@ -1098,7 +1137,10 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
       Disease disease("High", stags, {}, {td}, {}, tp);
       ContactMatrixConfig cm;
-      cm.default_contacts = 1.0;
+      ContactMatrix default_contact_matrix;
+      default_contact_matrix.bins = {"all"};
+      default_contact_matrix.contacts = {{1.0}};
+      cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       sim.random_seed = trial * 200;
       ParallelConfig par;
