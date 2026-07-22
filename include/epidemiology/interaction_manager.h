@@ -404,7 +404,9 @@ class InteractionManager {
   // mode_matrix->contacts[][] when in bounds, falling back to
   // fallback_matrix->getContacts(...). Both matrices already route through
   // ContactMatrixConfig::getMatrix's default-matrix fallback chain, so this
-  // is a last-resort bounds guard, not a semantic fallback.
+  // is a last-resort bounds guard, not a semantic fallback. Throws if both
+  // are null/out-of-bounds — that indicates mismatched bins, a real bug,
+  // not a case to silently paper over with a made-up contact rate.
   // Encapsulates the per-(mode, bin-pair) lookup used in both the main FOI
   // loop and partial-presence.
   double lookupContactsForBinPair(const ContactMatrix* mode_matrix,
