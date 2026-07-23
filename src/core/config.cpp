@@ -368,8 +368,8 @@ void resolveContactMatrixBins(ContactMatrix& matrix, const WorldState& world) {
                 std::stoi(bin_name.substr(start_pos, sep_pos - start_pos));
             size_t end_pos = bin_name.find(']', sep_pos + 1);
             if (end_pos == std::string::npos) end_pos = bin_name.size();
-            max_age = std::stoi(
-                bin_name.substr(sep_pos + 1, end_pos - sep_pos - 1));
+            max_age =
+                std::stoi(bin_name.substr(sep_pos + 1, end_pos - sep_pos - 1));
           } catch (...) {
             min_age = -1;
             max_age = -1;
@@ -390,7 +390,8 @@ void resolveContactMatrixBins(ContactMatrix& matrix, const WorldState& world) {
   matrix.female_bin = matrix.findBinIndex("female");
   matrix.bin_by_subset_type.assign(world.subset_type_names.size(), -1);
   for (size_t st = 0; st < world.subset_type_names.size(); ++st) {
-    matrix.bin_by_subset_type[st] = matrix.findBinIndex(world.subset_type_names[st]);
+    matrix.bin_by_subset_type[st] =
+        matrix.findBinIndex(world.subset_type_names[st]);
   }
 }
 
@@ -542,8 +543,7 @@ void ContactMatrixConfig::finalizeDefaultModeMatrices(
     }
     throw std::runtime_error(
         "default_contacts_matrix has no entry for disease mode(s): " +
-        missing_list +
-        " (and no flat default_matrix to fall back on).");
+        missing_list + " (and no flat default_matrix to fall back on).");
   }
 }
 
@@ -553,8 +553,7 @@ void ContactMatrixConfig::finalizeDiseaseModeAlignment(
   for (const auto& name : disease_mode_names) {
     if (!seen_disease_mode_names.insert(name).second) {
       throw std::runtime_error(
-          "disease transmission_params.modes has duplicate mode name '" +
-          name +
+          "disease transmission_params.modes has duplicate mode name '" + name +
           "'; contact-matrix alignment requires unique mode names.");
     }
   }
