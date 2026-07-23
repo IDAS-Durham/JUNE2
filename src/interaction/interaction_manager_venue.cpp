@@ -487,10 +487,10 @@ void InteractionManager::appendFomiteSources(
   for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
     if (lambda_fomite_by_mode[local_fm] <= 0.0) continue;
     int fomite_mode_idx = fomite_modes[local_fm].mode_index;
-    double mode_susc_mult =
-        (fomite_mode_idx < (int)trans_params.modes.size())
-            ? trans_params.modes[fomite_mode_idx].mode_transmissibility_multiplier
-            : 1.0;
+    double mode_susc_mult = (fomite_mode_idx < (int)trans_params.modes.size())
+                                ? trans_params.modes[fomite_mode_idx]
+                                      .mode_transmissibility_multiplier
+                                : 1.0;
     double weighted = lambda_fomite_by_mode[local_fm] * mode_susc_mult;
     total_lambda_eff += weighted;
     sources_buffer_.push_back(SourceEntry{fomite_mode_idx, -1});
