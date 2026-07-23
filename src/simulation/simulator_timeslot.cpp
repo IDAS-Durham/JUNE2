@@ -140,7 +140,9 @@ int Simulator::runSlotTransmission(
       owned_lines.reserve(runtime_bin_allocator_->ridersByVenue().size());
       for (const auto& [vid, riders] :
            runtime_bin_allocator_->ridersByVenue()) {
+#ifdef USE_MPI
         if (domain_mgr_ && !domain_mgr_->getDomain().ownsVenue(vid)) continue;
+#endif
         owned_lines.push_back(vid);
       }
       std::sort(owned_lines.begin(), owned_lines.end());
