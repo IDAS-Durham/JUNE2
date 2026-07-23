@@ -173,7 +173,7 @@ enum class TransmissionModeType {
 struct TransmissionMode {
   std::string name;
   TransmissionModeType type = TransmissionModeType::Standard;
-  double susceptibility_multiplier = 1.0;
+  double mode_transmissibility_multiplier = 1.0;
   // Per-symptom infectiousness curves for STAGE_DRIVEN Standard modes.
   // Empty for Fomite, CompartmentalUptake, CompartmentalDeposition modes.
   std::vector<std::shared_ptr<InfectiousnessCurve>> symptom_curves;
@@ -209,7 +209,7 @@ struct TransmissionParams {
   // "default". Matched to ContactMatrixConfig::mode_names by name, not by
   // index, via ContactMatrixConfig::finalizeDiseaseModeAlignment.
   // Replaces the former parallel vectors: mode_names,
-  // mode_susceptibility_multipliers, is_fomite_mode,
+  // mode_transmissibility_multipliers, is_fomite_mode,
   // is_compartmental_uptake_mode, is_compartmental_deposition_mode,
   // fomite_configs, compartmental_uptake_configs,
   // compartmental_deposition_configs, and mode_symptom_curves.

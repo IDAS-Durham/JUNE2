@@ -162,7 +162,7 @@ void printDiseaseAudit(const Disease& disease,
   }
   std::cout << "    modes (" << tp.modes.size() << "):";
   for (const auto& tmode : tp.modes) {
-    std::cout << "  " << tmode.name << "=" << tmode.susceptibility_multiplier;
+    std::cout << "  " << tmode.name << "=" << tmode.mode_transmissibility_multiplier;
   }
   std::cout << std::endl;
 

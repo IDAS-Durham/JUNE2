@@ -107,14 +107,14 @@ static Disease makeMultiModeStageDrivenDisease() {
   {
     TransmissionMode m;
     m.name = "respiratory";
-    m.susceptibility_multiplier = 1.0;
+    m.mode_transmissibility_multiplier = 1.0;
     m.symptom_curves = {nullptr, curve_resp};
     tp.modes.push_back(std::move(m));
   }
   {
     TransmissionMode m;
     m.name = "animal_bite";
-    m.susceptibility_multiplier = 0.5;
+    m.mode_transmissibility_multiplier = 0.5;
     m.symptom_curves = {nullptr, curve_bite};
     tp.modes.push_back(std::move(m));
   }
@@ -591,8 +591,8 @@ TEST_CASE("E2: Susceptibility multipliers stored correctly") {
   const auto& tp = disease.getTransmissionParams();
 
   REQUIRE(tp.modes.size() == 2);
-  CHECK(tp.modes[0].susceptibility_multiplier == doctest::Approx(1.0));
-  CHECK(tp.modes[1].susceptibility_multiplier == doctest::Approx(0.5));
+  CHECK(tp.modes[0].mode_transmissibility_multiplier == doctest::Approx(1.0));
+  CHECK(tp.modes[1].mode_transmissibility_multiplier == doctest::Approx(0.5));
 }
 
 TEST_CASE("E3: Out-of-range mode_index falls back to mode 0") {
@@ -918,8 +918,8 @@ TEST_CASE("G5: Single person at venue, no self-infection") {
 // H. Plague-like Multi-Mode Transmission Regression Tests
 //    These tests verify the FoI formula matches the original
 //    Bubonic_and_pneumonic branch:
-//      lambda = delta_hours * C / N * I * susceptibility_multiplier
-//    and that susceptibility_multipliers are correctly applied per mode.
+//      lambda = delta_hours * C / N * I * mode_transmissibility_multiplier
+//    and that mode_transmissibility_multipliers are correctly applied per mode.
 // =============================================================================
 
 // Helper to run processTransmissions with a fresh InteractionManager
@@ -963,14 +963,14 @@ static Disease makePlagueLikeDisease() {
   {
     TransmissionMode m;
     m.name = "animal_bite";
-    m.susceptibility_multiplier = 0.08;
+    m.mode_transmissibility_multiplier = 0.08;
     m.symptom_curves = bite_curves;
     tp.modes.push_back(std::move(m));
   }
   {
     TransmissionMode m;
     m.name = "respiratory";
-    m.susceptibility_multiplier = 0.12;
+    m.mode_transmissibility_multiplier = 0.12;
     m.symptom_curves = resp_curves;
     tp.modes.push_back(std::move(m));
   }
@@ -1065,7 +1065,7 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
 }
 
 TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
-  // Verifies mode_susceptibility_multipliers are applied. The original
+  // Verifies mode_transmissibility_multipliers are applied. The original
   // Bubonic_and_pneumonic used 0.08 for animal_bite. During the port these
   // were changed to 1.0, removing mode-specific dampening.
   int infections_low = 0;
@@ -1073,7 +1073,7 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
   const int N = 500;
 
   for (int trial = 0; trial < N; ++trial) {
-    // Low susceptibility_multiplier (original plague: 0.08)
+    // Low mode_transmissibility_multiplier (original plague: 0.08)
     GlobalRNG::seed(trial * 200);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
@@ -1085,7 +1085,7 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       {
         TransmissionMode m;
         m.name = "animal_bite";
-        m.susceptibility_multiplier = 0.08;
+        m.mode_transmissibility_multiplier = 0.08;
         m.symptom_curves = {nullptr, curve};
         tp.modes.push_back(std::move(m));
       }
@@ -1113,7 +1113,7 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       if (world.people[1].infection) infections_low++;
     }
 
-    // High susceptibility_multiplier (incorrectly ported: 1.0)
+    // High mode_transmissibility_multiplier (incorrectly ported: 1.0)
     GlobalRNG::seed(trial * 200);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
@@ -1125,7 +1125,7 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       {
         TransmissionMode m;
         m.name = "animal_bite";
-        m.susceptibility_multiplier = 1.0;
+        m.mode_transmissibility_multiplier = 1.0;
         m.symptom_curves = {nullptr, curve};
         tp.modes.push_back(std::move(m));
       }

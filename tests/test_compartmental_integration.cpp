@@ -33,7 +33,7 @@ static Disease makeIntegrationDisease(double susc_mult = 1.5,
   TransmissionMode uptake_mode;
   uptake_mode.name = "comp_uptake";
   uptake_mode.type = TransmissionModeType::CompartmentalUptake;
-  uptake_mode.susceptibility_multiplier = susc_mult;
+  uptake_mode.mode_transmissibility_multiplier = susc_mult;
   uptake_mode.symptom_curves = {nullptr, nullptr};
   CompartmentalUptakeConfig ucfg;
   ucfg.mode_index = 0;

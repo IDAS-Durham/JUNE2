@@ -40,7 +40,7 @@ static Disease makeDiseaseWithFomite(double deposition_rate = 1.0,
   TransmissionMode fomite_mode;
   fomite_mode.name = "fomite_env";
   fomite_mode.type = TransmissionModeType::Fomite;
-  fomite_mode.susceptibility_multiplier = fomite_susc_mult;
+  fomite_mode.mode_transmissibility_multiplier = fomite_susc_mult;
   fomite_mode.symptom_curves = {nullptr, nullptr};
 
   FomiteConfig fcfg;

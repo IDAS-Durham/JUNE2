@@ -99,7 +99,7 @@ void InteractionManager::accumulatePartialLambdaContributions(
           contact_matrices_.getMatrix(venue_type_id, mode);
       double mode_susc_mult =
           (mode < static_cast<int>(trans_params.modes.size()))
-              ? trans_params.modes[mode].susceptibility_multiplier
+              ? trans_params.modes[mode].mode_transmissibility_multiplier
               : 1.0;
 
       for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
