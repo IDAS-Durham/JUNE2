@@ -162,7 +162,8 @@ void printDiseaseAudit(const Disease& disease,
   }
   std::cout << "    modes (" << tp.modes.size() << "):";
   for (const auto& tmode : tp.modes) {
-    std::cout << "  " << tmode.name << "=" << tmode.susceptibility_multiplier;
+    std::cout << "  " << tmode.name << "="
+              << tmode.mode_transmissibility_multiplier;
   }
   std::cout << std::endl;
 
@@ -332,7 +333,7 @@ void printStartupAudit(const Disease& disease,
 // Implementation
 // =============================================================================
 
-Simulator::Simulator(WorldState& world, const Config& config,
+Simulator::Simulator(WorldState& world, Config& config,
                      DomainManager* domain_mgr,
                      const std::string& infection_seeds_file,
                      const std::string& output_filename)
@@ -391,6 +392,23 @@ Simulator::Simulator(WorldState& world, const Config& config,
   }
 
   world_.symptom_names = disease_->getSymptomNames();
+
+  // Rebuild the default per-mode contact matrix lookup against the disease's
+  // own mode list, so a missing default is caught here (loud, fatal) rather
+  // than surfacing later as a runtime lookup failure. Independent of whether
+  // contact_matrices.mode_names ended up empty.
+  {
+    std::vector<std::string> disease_mode_names;
+    for (const auto& mode : disease_->getTransmissionParams().modes) {
+      disease_mode_names.push_back(mode.name);
+    }
+    config_.contact_matrices.finalizeDefaultModeMatrices(world_,
+                                                         disease_mode_names);
+    // Reconcile ContactMatrixConfig's own mode order (derived from
+    // contact_matrices.yaml) against the disease's mode order, so per-venue
+    // matrix lookups are matched by name rather than by list position.
+    config_.contact_matrices.finalizeDiseaseModeAlignment(disease_mode_names);
+  }
 
   // Initialize fomite state on venues before epidemiology
   initFomiteState();

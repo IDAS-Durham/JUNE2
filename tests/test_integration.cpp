@@ -71,7 +71,10 @@ struct TestFixture {
     // Contact matrix: tuned so omega = contacts * delta / bin_size gives
     // distinguishable infection rates for vaccinated vs unvaccinated.
     // With contacts=0.15, delta=8h, I=1.0, bin_size=1: omega ≈ 1.2
-    cm.default_contacts = 0.15;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{0.15}};
+    cm.default_matrix = default_contact_matrix;
     cm.default_characteristic_time = 1.0;
   }
 
@@ -140,7 +143,10 @@ TEST_CASE("Integration: Vaccine reduces transmission probability") {
 
   // Use moderate contacts so unvaccinated rate is high but not 100%
   // omega = 0.15 * 8 / 1 = 1.2 → prob ≈ 0.70
-  fix.cm.default_contacts = 0.15;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.15}};
+  fix.cm.default_matrix = default_contact_matrix;
 
   Disease disease = fix.makeDisease();
 
@@ -345,7 +351,10 @@ TEST_CASE(
     "Integration: Full infection lifecycle — seed, transmit, recover, "
     "reinfect") {
   TestFixture fix;
-  fix.cm.default_contacts = 0.15;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.15}};
+  fix.cm.default_matrix = default_contact_matrix;
 
   // Use a trajectory that recovers in 5 days
   fix.trajectories.clear();
@@ -374,7 +383,10 @@ TEST_CASE(
     InteractionManager im(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                           &disease, nullptr);
     // Run with high enough contacts to guarantee infection
-    fix.cm.default_contacts = 100.0;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{100.0}};
+    fix.cm.default_matrix = default_contact_matrix;
     InteractionManager im_high(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                                &disease, nullptr);
     im_high.processTransmissions(locs, 1.0, 8.0, nullptr);
@@ -401,7 +413,10 @@ TEST_CASE(
   CHECK(susc_after_recovery < 0.1);  // ~5% susceptibility
 
   // Measure reinfection rate with moderate contacts
-  fix.cm.default_contacts = 0.15;
+  ContactMatrix reinfection_contact_matrix;
+  reinfection_contact_matrix.bins = {"all"};
+  reinfection_contact_matrix.contacts = {{0.15}};
+  fix.cm.default_matrix = reinfection_contact_matrix;
   int reinfections = 0;
   int trials = 500;
   for (int trial = 0; trial < trials; ++trial) {

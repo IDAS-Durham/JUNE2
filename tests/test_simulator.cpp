@@ -27,6 +27,13 @@ TEST_CASE("Simulator Initialization") {
   st.slots_by_day_type["workday"].push_back(slot);
   config.schedule.schedule_types.push_back(st);
 
+  // Flat default contact matrix so every disease mode has somewhere to
+  // fall back to (finalizeDefaultModeMatrices requires this).
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.2}};
+  config.contact_matrices.default_matrix = default_contact_matrix;
+
   // Initialise Simulator
   Simulator sim(world, config, nullptr, "configs/config_2021/infection_seeds.yaml",
                 "test_sim.h5");
@@ -119,7 +126,10 @@ TEST_CASE("Simulator run() multi-day smoke test") {
   config.schedule.day_type_names = {"workday", "rest_day"};
   config.schedule.day_type_cycle = {"workday", "workday", "workday", "workday", "workday", "rest_day", "rest_day"};
 
-  config.contact_matrices.default_contacts = 0.2;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.2}};
+  config.contact_matrices.default_matrix = default_contact_matrix;
 
   // Resolve schedule indices (maps string-keyed slots to indexed lookups)
   config.schedule.resolveSlots(world);

@@ -35,7 +35,7 @@ static Disease makeDiseaseWithCompartmentalUptake(double susc_mult = 1.5) {
   TransmissionMode uptake;
   uptake.name = "comp_uptake";
   uptake.type = TransmissionModeType::CompartmentalUptake;
-  uptake.susceptibility_multiplier = susc_mult;
+  uptake.mode_transmissibility_multiplier = susc_mult;
   uptake.symptom_curves = {nullptr, nullptr};
   CompartmentalUptakeConfig ucfg;
   ucfg.mode_index = 1;
