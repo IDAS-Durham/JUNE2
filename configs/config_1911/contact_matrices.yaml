@@ -34,7 +34,7 @@
 #     contacts split per mode: C_resp = C*(1-p), C_phys = C*p
 #
 # disease.yaml's transmission.modes block declares both modes with
-# susceptibility_multiplier 1.0 each (alpha is folded into beta_phys here).
+# mode_transmissibility_multiplier 1.0 each (alpha is folded into beta_phys here).
 #
 default_contacts_matrix:
   modes:

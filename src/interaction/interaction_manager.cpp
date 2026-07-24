@@ -56,6 +56,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <numeric>
+#include <stdexcept>
 
 #include "activity/presence_window.h"
 #include "activity/runtime_bin_allocator.h"
@@ -573,7 +574,15 @@ double InteractionManager::lookupContactsForBinPair(
       inf_bin < static_cast<int>(fallback_matrix->contacts[susc_bin].size())) {
     return fallback_matrix->getContacts(susc_bin, inf_bin);
   }
-  return contact_matrices_.default_contacts;
+  // Both mode_matrix and fallback_matrix already route through
+  // ContactMatrixConfig's full default-matrix fallback chain (getMatrix or
+  // getVirtualMatrix), so reaching here means both were null or
+  // out-of-bounds for (susc_bin, inf_bin) — a real bug (mismatched bins),
+  // not a case to paper over.
+  throw std::runtime_error(
+      "lookupContactsForBinPair: no contact matrix entry for (susc_bin=" +
+      std::to_string(susc_bin) + ", inf_bin=" + std::to_string(inf_bin) +
+      "); mode_matrix and fallback_matrix both null/out-of-bounds.");
 }
 
 uint16_t InteractionManager::resolveInfectorSymptomId(

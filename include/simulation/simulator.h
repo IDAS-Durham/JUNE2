@@ -46,7 +46,7 @@ class DomainManager;
 class Simulator {
  public:
   Simulator(
-      WorldState& world, const Config& config,
+      WorldState& world, Config& config,
       DomainManager* domain_mgr = nullptr,
       const std::string& infection_seeds_file = "config/infection_seeds.yaml",
       const std::string& output_filename = "simulation_events.h5");
@@ -74,7 +74,7 @@ class Simulator {
 
  private:
   WorldState& world_;
-  const Config& config_;
+  Config& config_;
   DomainManager*
       domain_mgr_;  // Optional: nullptr for serial mode, set for parallel mode
 

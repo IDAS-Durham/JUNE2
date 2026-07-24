@@ -374,7 +374,7 @@ void InteractionManager::appendDirectContactSources(
             : contact_matrices_.getMatrix(venue_type_id, m);
     double mode_susc_mult =
         (m < (int)trans_params.modes.size())
-            ? trans_params.modes[m].susceptibility_multiplier
+            ? trans_params.modes[m].mode_transmissibility_multiplier
             : 1.0;
 
     for (int inf_bin = 0; inf_bin < num_bins_needed; ++inf_bin) {
@@ -460,7 +460,7 @@ void InteractionManager::appendSiblingMixingSources(
 
     double mode_susc_mult =
         (m < (int)trans_params.modes.size())
-            ? trans_params.modes[m].susceptibility_multiplier
+            ? trans_params.modes[m].mode_transmissibility_multiplier
             : 1.0;
     double omega = contacts / sibling_size;
     double weighted = omega * sibling_inf * mode_susc_mult;
@@ -487,10 +487,10 @@ void InteractionManager::appendFomiteSources(
   for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
     if (lambda_fomite_by_mode[local_fm] <= 0.0) continue;
     int fomite_mode_idx = fomite_modes[local_fm].mode_index;
-    double mode_susc_mult =
-        (fomite_mode_idx < (int)trans_params.modes.size())
-            ? trans_params.modes[fomite_mode_idx].susceptibility_multiplier
-            : 1.0;
+    double mode_susc_mult = (fomite_mode_idx < (int)trans_params.modes.size())
+                                ? trans_params.modes[fomite_mode_idx]
+                                      .mode_transmissibility_multiplier
+                                : 1.0;
     double weighted = lambda_fomite_by_mode[local_fm] * mode_susc_mult;
     total_lambda_eff += weighted;
     sources_buffer_.push_back(SourceEntry{fomite_mode_idx, -1});
@@ -514,7 +514,7 @@ void InteractionManager::appendCompUptakeSources(
   for (int mode_idx : comp_uptake_modes) {
     double mode_susc_mult =
         (mode_idx < (int)trans_params.modes.size())
-            ? trans_params.modes[mode_idx].susceptibility_multiplier
+            ? trans_params.modes[mode_idx].mode_transmissibility_multiplier
             : 1.0;
     double weighted = node_output * mode_susc_mult;
     if (weighted <= 0.0) continue;

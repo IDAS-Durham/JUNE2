@@ -184,7 +184,10 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
     };
 
     ContactMatrixConfig cm;
-    cm.default_contacts = 100.0;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{100.0}};
+    cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
@@ -254,7 +257,10 @@ TEST_CASE("H2: Trajectory-driven visitor infects local susceptible") {
                                         {f.rank, f.rank, -1, 0, 255, 0}};
 
     ContactMatrixConfig cm;
-    cm.default_contacts = 100.0;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{100.0}};
+    cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
@@ -336,7 +342,10 @@ TEST_CASE("H3: Local infector infects visitor, pending routed back") {
     };
 
     ContactMatrixConfig cm;
-    cm.default_contacts = 100.0;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{100.0}};
+    cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
@@ -553,7 +562,10 @@ TEST_CASE("H6: Immune visitor resists cross-rank infection") {
                                         {f.rank, f.rank, -1, 0, 255, 0}};
 
     ContactMatrixConfig cm;
-    cm.default_contacts = 100.0;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{100.0}};
+    cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);

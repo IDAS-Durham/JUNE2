@@ -72,7 +72,10 @@ TEST_CASE("FoI: Single infectious person, single susceptible, single mode") {
   double contacts = 0.3;
   double delta_hours = 4.0;
   ContactMatrixConfig cm;
-  cm.default_contacts = contacts;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{contacts}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim_cfg;
   ParallelConfig parallel_config;
 
@@ -164,7 +167,10 @@ TEST_CASE("FoI: Zero susceptibility means zero infections") {
   world.people[1].immunity.natural_waning_rate = 0.0;
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;  // Very high contacts
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;  // Very high contacts
   SimulationConfig sim_cfg;
   ParallelConfig parallel_config;
 
@@ -222,7 +228,10 @@ TEST_CASE("FoI: Higher contacts produce higher infection rate") {
                     trans);
 
     ContactMatrixConfig cm;
-    cm.default_contacts = contacts;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{contacts}};
+    cm.default_matrix = default_contact_matrix;
     SimulationConfig sim_cfg;
     ParallelConfig parallel_config;
 
@@ -293,7 +302,10 @@ TEST_CASE("FoI: No infectious people means no infections") {
                   trans);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim_cfg;
   ParallelConfig parallel_config;
   InteractionManager im(world, cm, sim_cfg, parallel_config, &disease, nullptr);
@@ -335,7 +347,10 @@ TEST_CASE("FoI: Empty venue produces no infections") {
                   trans);
 
   ContactMatrixConfig cm;
-  cm.default_contacts = 100.0;
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{100.0}};
+  cm.default_matrix = default_contact_matrix;
   SimulationConfig sim_cfg;
   ParallelConfig parallel_config;
   InteractionManager im(world, cm, sim_cfg, parallel_config, &disease, nullptr);

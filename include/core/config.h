@@ -447,7 +447,6 @@ struct ContactMatrixConfig {
 
   // Default values
   double default_beta = 0.05;
-  double default_contacts = 2.0;
   double default_proportion_physical = 0.1;
   double default_characteristic_time = 24.0;
   double alpha_physical = 1.0;
@@ -461,8 +460,14 @@ struct ContactMatrixConfig {
   // Ordered mode names. Single-mode configs use {"default"}.
   std::vector<std::string> mode_names;
 
-  // default_matrix: fallback for (venue, mode) pairs with no explicit entry.
+  // default_matrix: flat fallback for (venue, mode) pairs with no explicit
+  // entry, used when default_contacts_matrix has no `modes:` block.
   std::optional<ContactMatrix> default_matrix;
+
+  // default_mode_matrices[mode_name] → ContactMatrix: per-mode fallback,
+  // used when default_contacts_matrix has a `modes:` block.
+  std::optional<std::unordered_map<std::string, ContactMatrix>>
+      default_mode_matrices;
 
   // mode_matrices[venue_type][mode_name] → ContactMatrix
   std::unordered_map<std::string,
@@ -506,19 +511,17 @@ struct ContactMatrixConfig {
   int numModes() const { return static_cast<int>(mode_names.size()); }
 
   /// Get the matrix for (venue_type_id, mode_index).
-  /// Falls back to the single-mode matrix, then to default_matrix.
+  /// Falls back to the single-mode matrix, then to the mode-aware default
+  /// (default_mode_matrices_by_id), then to the flat default_matrix.
   /// Returns nullptr only if no matrix is available at all.
   const ContactMatrix* getMatrix(uint8_t venue_type_id, int mode_index) const {
-    if (venue_type_id < mode_matrices_by_id.size() &&
-        mode_index < (int)mode_matrices_by_id[venue_type_id].size() &&
-        mode_matrices_by_id[venue_type_id][mode_index] != nullptr) {
-      return mode_matrices_by_id[venue_type_id][mode_index];
+    int translated = translateModeIndex(mode_index);
+    if (translated >= 0 && venue_type_id < mode_matrices_by_id.size() &&
+        translated < (int)mode_matrices_by_id[venue_type_id].size() &&
+        mode_matrices_by_id[venue_type_id][translated] != nullptr) {
+      return mode_matrices_by_id[venue_type_id][translated];
     }
-    // Fall back to the flat single-mode matrix
-    const ContactMatrix* flat = getMatrix(venue_type_id);
-    if (flat) return flat;
-    // Fall back to default_matrix
-    return default_matrix.has_value() ? &default_matrix.value() : nullptr;
+    return applyDefaultChain(getMatrix(venue_type_id), mode_index);
   }
 
   /// Virtual-encounter matrix lookup, keyed by encounter_type_id.
@@ -536,36 +539,97 @@ struct ContactMatrixConfig {
     return nullptr;
   }
 
+  /// Falls back to the flat virtual matrix, then — same as getMatrix — to
+  /// the mode-aware default (default_mode_matrices_by_id), then to the flat
+  /// default_matrix. There is no separate default for virtual encounters:
+  /// an encounter type with no matching virtual_contact_matrix entry uses
+  /// the same default_contacts_matrix a physical venue would.
   const ContactMatrix* getVirtualMatrix(uint8_t encounter_type_id,
                                         int mode_index) const {
-    if (encounter_type_id < virtual_mode_matrices_by_encounter_id.size() &&
-        mode_index <
+    int translated = translateModeIndex(mode_index);
+    if (translated >= 0 &&
+        encounter_type_id < virtual_mode_matrices_by_encounter_id.size() &&
+        translated <
             (int)virtual_mode_matrices_by_encounter_id[encounter_type_id]
                 .size() &&
-        virtual_mode_matrices_by_encounter_id[encounter_type_id][mode_index] !=
+        virtual_mode_matrices_by_encounter_id[encounter_type_id][translated] !=
             nullptr) {
       return virtual_mode_matrices_by_encounter_id[encounter_type_id]
-                                                  [mode_index];
+                                                  [translated];
     }
-    // Fall back to the flat virtual matrix (note: for multi-mode virtual
-    // matrices this only holds the first listed mode. Useful for bin
-    // layout but not for transmission rates).
-    return getVirtualMatrix(encounter_type_id);
+    return applyDefaultChain(getVirtualMatrix(encounter_type_id), mode_index);
   }
 
   void resolve(const WorldState& world);
 
+  /// Rebuilds default_mode_matrices_by_id keyed to the disease's own mode
+  /// order, so the per-mode default fallback is reachable regardless of
+  /// what (or whether) contact_matrices.mode_names declared. Throws if a
+  /// disease mode has neither a default_mode_matrices entry nor a flat
+  /// default_matrix to fall back on.
+  void finalizeDefaultModeMatrices(
+      const WorldState& world,
+      const std::vector<std::string>& disease_mode_names);
+
+  /// Builds the disease-mode-index -> contact-matrix-mode-index translation
+  /// used by getMatrix()/getVirtualMatrix() below, matching by name rather
+  /// than by the two files' independently-derived list orders. A disease
+  /// mode with no matching entry in mode_names translates to -1 (falls
+  /// through to the default chain). A contact_matrices.yaml mode with no
+  /// matching disease mode is orphaned: warns via stderr, ignored.
+  void finalizeDiseaseModeAlignment(
+      const std::vector<std::string>& disease_mode_names);
+
  private:
+  /// Shared tail of the (venue|encounter, mode) fallback chain: given the
+  /// caller's already-resolved flat matrix for this id (or nullptr), fall
+  /// back to the mode-aware default, then the flat default_matrix.
+  const ContactMatrix* applyDefaultChain(const ContactMatrix* flat,
+                                         int mode_index) const {
+    if (flat) return flat;
+    if (mode_index >= 0 && mode_index < (int)default_mode_matrices_by_id.size() &&
+        default_mode_matrices_by_id[mode_index] != nullptr) {
+      return default_mode_matrices_by_id[mode_index];
+    }
+    return default_matrix.has_value() ? &default_matrix.value() : nullptr;
+  }
+
+  /// Translates a disease-mode index to this config's own mode_names index
+  /// via mode_index_translation_ (built by finalizeDiseaseModeAlignment).
+  /// Before finalizeDiseaseModeAlignment runs, mode_index is used as-is
+  /// (identity), preserving positional behaviour for callers/tests that
+  /// bypass the finalize step. disease_mode_alignment_finalized_ (not
+  /// vector emptiness) is the sentinel, so "finalized with zero disease
+  /// modes" is distinguishable from "never finalized".
+  int translateModeIndex(int mode_index) const {
+    if (!disease_mode_alignment_finalized_) return mode_index;
+    if (mode_index < 0 || mode_index >= (int)mode_index_translation_.size()) {
+      return -1;
+    }
+    return mode_index_translation_[mode_index];
+  }
+
   std::vector<double> betas_by_id;
   std::vector<const ContactMatrix*> matrices_by_id;
   // [venue_type_id][mode_index] → ContactMatrix* (may be nullptr if absent)
   std::vector<std::vector<const ContactMatrix*>> mode_matrices_by_id;
+  // [mode_index] → ContactMatrix* for the per-mode default (may be nullptr
+  // if default_mode_matrices is unset or missing that mode)
+  std::vector<const ContactMatrix*> default_mode_matrices_by_id;
   // [encounter_type_id] → ContactMatrix* for virtual encounters (may be
   // nullptr if absent). Indexed by encounter_type_id, not venue_type_id.
   std::vector<const ContactMatrix*> virtual_matrices_by_encounter_id;
   // [encounter_type_id][mode_index] → ContactMatrix* for virtual encounters.
   std::vector<std::vector<const ContactMatrix*>>
       virtual_mode_matrices_by_encounter_id;
+  // [disease_mode_index] -> this config's own mode_names index, or -1 if the
+  // disease mode has no dedicated contact-matrix entry. Only meaningful once
+  // disease_mode_alignment_finalized_ is true.
+  std::vector<int> mode_index_translation_;
+  // Set by finalizeDiseaseModeAlignment(); distinguishes "not yet finalized"
+  // (translateModeIndex falls back to identity) from "finalized with zero
+  // disease modes" (mode_index_translation_ is legitimately empty).
+  bool disease_mode_alignment_finalized_ = false;
 };
 
 // =============================================================================

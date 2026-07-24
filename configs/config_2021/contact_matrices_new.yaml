@@ -18,7 +18,7 @@
 # Force-of-infection identity (exact equivalence to old formula):
 #   (beta_resp*C_resp + beta_phys*C_phys) * I*dt/N  ==  C*beta/Tc*(1+(a-1)*p) * I*dt/N
 #
-# mode_susceptibility_multipliers: [1.0, 1.0] (disease.yaml) — alpha in beta_phys
+# mode_transmissibility_multipliers: [1.0, 1.0] (disease.yaml) — alpha in beta_phys
 #
 default_contacts_matrix:
   modes:
