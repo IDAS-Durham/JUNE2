@@ -376,8 +376,8 @@ class InteractionManager {
   // ranks. Returns one bucket per carriage; some may be empty.
   std::vector<std::vector<CarriageMember>> buildPartialPresenceCarriages(
       const std::vector<InteractionMember>& members, Venue* venue,
-      VenueId actual_venue_id, const ContactMatrix* matrix, int num_bins_needed,
-      uint16_t num_bins,
+      VenueId actual_venue_id, const ContactMatrix& bin_structure,
+      int num_bins_needed, uint16_t num_bins,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
   // Collect the carriage's raw {eff_board, eff_alight} offsets as event times,
@@ -401,31 +401,26 @@ class InteractionManager {
       std::vector<std::vector<const CarriageMember*>>& susc_by_bin) const;
 
   // Return the contacts entry for (susc_bin, inf_bin), preferring
-  // mode_matrix->contacts[][] when in bounds, falling back to
-  // fallback_matrix->getContacts(...). Both matrices already route through
-  // ContactMatrixConfig's default-matrix fallback chain (getMatrix for
-  // physical venues, getVirtualMatrix for virtual encounters — both end at
-  // default_contacts_matrix), so this is a last-resort bounds guard, not a
-  // semantic fallback. Throws if both are null/out-of-bounds — that
-  // indicates mismatched bins, a real bug, not a case to silently paper
-  // over with a made-up contact rate.
-  // Encapsulates the per-(mode, bin-pair) lookup used in both the main FOI
-  // loop and partial-presence.
-  double lookupContactsForBinPair(const ContactMatrix* mode_matrix,
-                                  const ContactMatrix* fallback_matrix,
-                                  int susc_bin, int inf_bin) const;
+  // The per-(mode, bin-pair) contacts lookup used by both the main FOI loop
+  // and partial-presence. The matrix is whatever getMatrix/getVirtualMatrix
+  // resolved for this (type, mode), which is always a complete matrix, so an
+  // out-of-range bin pair is a real bug (loops sized off the wrong thing) and
+  // throws rather than inventing a contact rate.
+  double lookupContactsForBinPair(const ContactMatrix& matrix, int susc_bin,
+                                  int inf_bin) const;
 
   // For one (carriage, sub-interval), iterate (susc_bin, mode, inf_bin) over
   // pre-classified sub_bins + susc_by_bin and accumulate per-susceptible λ
   // contributions into susc_lambda and per-(susc, source) attribution
   // AccumSources into susc_sources. Pure FOI-math step; no infection writes,
-  // no RNG. mode_matrix lookup, default-contacts fallback, and the
-  // own-bin minus-one adjustment match the main-loop semantics.
+  // no RNG. The mode-matrix lookup and the own-bin minus-one adjustment
+  // match the main-loop semantics.
   void accumulatePartialLambdaContributions(
       const std::vector<PartialPresenceSubBin>& sub_bins,
       const std::vector<std::vector<const CarriageMember*>>& susc_by_bin,
-      uint8_t venue_type_id, const ContactMatrix* matrix, int num_bins_needed,
-      int num_modes, const TransmissionParams& trans_params,
+      uint8_t venue_type_id, const ContactMatrix& bin_structure,
+      int num_bins_needed, int num_modes,
+      const TransmissionParams& trans_params,
       PartialPresenceLambdaResult& result) const;
 
   // Walk the sub-intervals of one carriage, classifying members and
@@ -435,7 +430,7 @@ class InteractionManager {
                              float slot_duration_min, double current_time,
                              double delta_hours, int num_modes,
                              int num_bins_needed, uint8_t venue_type_id,
-                             const ContactMatrix* matrix,
+                             const ContactMatrix& bin_structure,
                              const TransmissionParams& trans_params,
                              std::vector<PartialPresenceSubBin>& sub_bins,
                              PartialPresenceLambdaResult& result) const;
@@ -563,7 +558,6 @@ class InteractionManager {
                                   int num_modes, bool is_virtual_encounter,
                                   uint8_t encounter_type_id,
                                   uint8_t venue_type_id,
-                                  const ContactMatrix* matrix,
                                   const TransmissionParams& trans_params,
                                   double& total_lambda_eff);
 
@@ -661,7 +655,7 @@ class InteractionManager {
   // step. Returns the per-fomite-mode lambda vector.
   std::vector<double> binMembersAndPrepareBuffers(
       const std::vector<InteractionMember>& members, Venue* venue,
-      const ContactMatrix* matrix, int num_bins_needed, int num_modes,
+      const ContactMatrix& bin_structure, int num_bins_needed, int num_modes,
       int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
       const std::vector<int>& n_sub_per_mode, double current_time,
       double delta_hours, uint8_t encounter_type_id,
@@ -676,8 +670,8 @@ class InteractionManager {
   int processOneSuscBin(
       int susc_bin, int num_bins_needed, int num_modes, int num_fomite_modes,
       bool is_virtual_encounter, uint8_t encounter_type_id,
-      uint8_t venue_type_id, const ContactMatrix* matrix, Venue* venue,
-      VenueId actual_venue_id, const std::vector<FomiteModeRef>& fomite_modes,
+      uint8_t venue_type_id, Venue* venue, VenueId actual_venue_id,
+      const std::vector<FomiteModeRef>& fomite_modes,
       const std::vector<int>& comp_uptake_modes,
       const std::vector<double>& lambda_fomite_by_mode,
       const TransmissionParams& trans_params, const ParentAggregate* parent_agg,
@@ -731,8 +725,8 @@ class InteractionManager {
   // DEBUG_TRANSMISSION line if the clamp fired.
   int resolveMemberBinIndex(const InteractionMember& member,
                             const Person* person, Venue* venue,
-                            const ContactMatrix* matrix, int num_bins_needed,
-                            uint8_t encounter_type_id,
+                            const ContactMatrix& bin_structure,
+                            int num_bins_needed, uint8_t encounter_type_id,
                             const std::string& venue_type,
                             uint8_t venue_type_id);
 
@@ -742,7 +736,7 @@ class InteractionManager {
   // fomite deposition, or susceptible.
   void binOneMember(
       const InteractionMember& member, Venue* venue,
-      const ContactMatrix* matrix, int num_bins_needed, int num_modes,
+      const ContactMatrix& bin_structure, int num_bins_needed, int num_modes,
       int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
       const std::vector<int>& n_sub_per_mode, double current_time,
       double delta_hours, uint8_t encounter_type_id,
@@ -886,7 +880,8 @@ class InteractionManager {
   // v1 scope (assumed and enforced; throws on violation):
   //   - Physical venue (actual_venue_id >= 0); not a virtual encounter venue.
   //   - No parent venue (transport lines have none in current MAY output).
-  //   - No coordinated encounter participants (encounter_type_id == kDefaultEncounterTypeId).
+  //   - No coordinated encounter participants (encounter_type_id ==
+  //   kDefaultEncounterTypeId).
   //   - Direct-contact FOI only; no fomite / compartmental uptake on
   //     partial-presence venue types in v1.
   // Violations throw with a descriptive error rather than silently

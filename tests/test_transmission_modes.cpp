@@ -634,12 +634,15 @@ TEST_CASE("F1: Trajectory-driven transmission occurs") {
   ContactMatrix default_contact_matrix;
   default_contact_matrix.bins = {"all"};
   default_contact_matrix.contacts = {{100.0}};
-  cm.default_matrix = default_contact_matrix;  // High contacts for near-certain transmission
-  cm.default_beta = 1.0;        // Neutralize beta dampening for this test
+  cm.default_matrix =
+      default_contact_matrix;  // High contacts for near-certain transmission
+  cm.default_beta = 1.0;       // Neutralize beta dampening for this test
   cm.default_characteristic_time = 1.0;  // Match delta_hours for unit scaling
   SimulationConfig sim;
   sim.random_seed = 123;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   world.people[0].infection = std::make_unique<Infection>(
@@ -663,9 +666,12 @@ TEST_CASE("F2: Stage-driven transmission occurs") {
   ContactMatrix default_contact_matrix;
   default_contact_matrix.bins = {"all"};
   default_contact_matrix.contacts = {{100.0}};
-  cm.default_matrix = default_contact_matrix;  // High contacts for near-certain transmission
+  cm.default_matrix =
+      default_contact_matrix;  // High contacts for near-certain transmission
   SimulationConfig sim;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   world.people[0].infection = std::make_unique<Infection>(
@@ -692,6 +698,8 @@ TEST_CASE("F3: Zero infectiousness prevents transmission") {
   cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   world.people[0].infection = std::make_unique<Infection>(
@@ -718,6 +726,8 @@ TEST_CASE("F4: Immune person resists infection") {
   cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   world.people[0].infection = std::make_unique<Infection>(
@@ -760,6 +770,8 @@ TEST_CASE("F5: Higher infectiousness yields higher infection probability") {
       cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       ParallelConfig par;
+      cm.allow_default_matrix = true;
+      finalizeContactMatrices(cm, world, disease);
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
       world.people[0].infection = std::make_unique<Infection>(
@@ -787,6 +799,8 @@ TEST_CASE("F5: Higher infectiousness yields higher infection probability") {
       cm.default_matrix = default_contact_matrix;
       SimulationConfig sim;
       ParallelConfig par;
+      cm.allow_default_matrix = true;
+      finalizeContactMatrices(cm, world, disease);
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
       world.people[0].infection = std::make_unique<Infection>(
@@ -852,6 +866,8 @@ TEST_CASE(
   cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   // Both people infected
@@ -881,6 +897,8 @@ TEST_CASE("G4: Empty venue returns zero infections") {
   cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   // Empty locations
@@ -903,6 +921,8 @@ TEST_CASE("G5: Single person at venue, no self-infection") {
   cm.default_matrix = default_contact_matrix;
   SimulationConfig sim;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
 
   world.people[0].infection = std::make_unique<Infection>(
@@ -935,6 +955,8 @@ static int runTransmission(WorldState& world, Disease& disease,
   SimulationConfig sim;
   sim.random_seed = seed;
   ParallelConfig par;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim, par, &disease, nullptr);
   return im.processTransmissions(locs, time, delta, nullptr);
 }
@@ -1025,6 +1047,8 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
       SimulationConfig sim;
       sim.random_seed = trial * 100;
       ParallelConfig par;
+      cm.allow_default_matrix = true;
+      finalizeContactMatrices(cm, world, disease);
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
       world.people[0].infection = std::make_unique<Infection>(
           &disease, 0.0, &world.people[0], trial, nullptr, "office", 0);
@@ -1048,6 +1072,8 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
       SimulationConfig sim;
       sim.random_seed = trial * 100;
       ParallelConfig par;
+      cm.allow_default_matrix = true;
+      finalizeContactMatrices(cm, world, disease);
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
       world.people[0].infection = std::make_unique<Infection>(
           &disease, 0.0, &world.people[0], trial, nullptr, "office", 0);
@@ -1104,6 +1130,8 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       SimulationConfig sim;
       sim.random_seed = trial * 200;
       ParallelConfig par;
+      cm.allow_default_matrix = true;
+      finalizeContactMatrices(cm, world, disease);
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
       world.people[0].infection = std::make_unique<Infection>(
           &disease, 0.0, &world.people[0], trial, nullptr, "office", 0);
@@ -1144,6 +1172,8 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
       SimulationConfig sim;
       sim.random_seed = trial * 200;
       ParallelConfig par;
+      cm.allow_default_matrix = true;
+      finalizeContactMatrices(cm, world, disease);
       InteractionManager im(world, cm, sim, par, &disease, nullptr);
       world.people[0].infection = std::make_unique<Infection>(
           &disease, 0.0, &world.people[0], trial, nullptr, "office", 0);
