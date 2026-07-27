@@ -37,10 +37,14 @@ static Disease makeTestDisease() {
 }
 
 // Run a transmission pass and return the set of newly infected person IDs
-static std::vector<PersonId> runTransmission(
-    WorldState& world, Disease& disease, std::vector<PersonLocation>& locs,
-    const ContactMatrixConfig& cm, const SimulationConfig& sim_cfg) {
+static std::vector<PersonId> runTransmission(WorldState& world,
+                                             Disease& disease,
+                                             std::vector<PersonLocation>& locs,
+                                             ContactMatrixConfig& cm,
+                                             const SimulationConfig& sim_cfg) {
   ParallelConfig parallel_config;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, world, disease);
   InteractionManager im(world, cm, sim_cfg, parallel_config, &disease, nullptr);
   im.processTransmissions(locs, 5.0, 8.0, nullptr);
 

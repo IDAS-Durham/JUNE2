@@ -24,6 +24,7 @@
 #include "epidemiology/interaction_manager.h"
 #include "parallel/domain.h"
 #include "parallel/domain_manager.h"
+#include "test_utils.h"
 
 using namespace june;
 
@@ -190,6 +191,8 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
     cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
+    cm.allow_default_matrix = true;
+    finalizeContactMatrices(cm, f.world, disease);
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
 
     std::vector<PendingInfection> pending;
@@ -263,6 +266,8 @@ TEST_CASE("H2: Trajectory-driven visitor infects local susceptible") {
     cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
+    cm.allow_default_matrix = true;
+    finalizeContactMatrices(cm, f.world, disease);
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
 
     std::vector<PendingInfection> pending;
@@ -348,6 +353,8 @@ TEST_CASE("H3: Local infector infects visitor, pending routed back") {
     cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
+    cm.allow_default_matrix = true;
+    finalizeContactMatrices(cm, f.world, disease);
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
 
     im.processTransmissions(locs, 0.0, 1.0, nullptr, &visitor_ids, &pending,
@@ -568,6 +575,8 @@ TEST_CASE("H6: Immune visitor resists cross-rank infection") {
     cm.default_matrix = default_contact_matrix;
     SimulationConfig sim;
     ParallelConfig par;
+    cm.allow_default_matrix = true;
+    finalizeContactMatrices(cm, f.world, disease);
     InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
 
     im.processTransmissions(locs, 0.0, 1.0, nullptr, &visitor_ids, &pending,

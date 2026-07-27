@@ -408,6 +408,11 @@ Simulator::Simulator(WorldState& world, Config& config,
     // contact_matrices.yaml) against the disease's mode order, so per-venue
     // matrix lookups are matched by name rather than by list position.
     config_.contact_matrices.finalizeDiseaseModeAlignment(disease_mode_names);
+    // Resolve every (type, mode) the world can present, so transmission reads
+    // a complete table instead of walking a fallback chain per lookup, and a
+    // scenario leaning on the scenario-wide default says so here.
+    config_.contact_matrices.finalizeResolvedMatrices(world_,
+                                                      disease_mode_names);
   }
 
   // Initialize fomite state on venues before epidemiology

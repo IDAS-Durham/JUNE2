@@ -10,6 +10,7 @@
 #include "epidemiology/epidemiology.h"
 #include "epidemiology/interaction_manager.h"
 #include "epidemiology/vaccine.h"
+#include "test_utils.h"
 
 using namespace june;
 
@@ -58,7 +59,6 @@ struct TestFixture {
     auto constant_curve = std::make_shared<ConstantCurve>(1.0);
     trans.stage_curves["mild"] = constant_curve;
     trans.symptom_id_curves = {nullptr, constant_curve};
-
 
     symptom_tags = {{"healthy", -1, 0}, {"mild", 1, 1}};
 
@@ -123,6 +123,8 @@ double measureInfectionRate(TestFixture& fix, Disease& disease, int N = 500) {
     }
 
     ParallelConfig parallel_config;
+    fix.cm.allow_default_matrix = true;
+    finalizeContactMatrices(fix.cm, fix.world);
     InteractionManager im(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                           &disease, nullptr);
     im.processTransmissions(locs, 5.0, 8.0, nullptr);
@@ -361,8 +363,9 @@ TEST_CASE(
   TrajectoryDefinition td;
   td.selection_key = "general";
   td.severity = 1.0;
-  td.stages.push_back({"mild", {"constant", {{"value", 5.0}}}});    // 5 days mild
-  td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});  // recover
+  td.stages.push_back({"mild", {"constant", {{"value", 5.0}}}});  // 5 days mild
+  td.stages.push_back(
+      {"healthy", {"constant", {{"value", 100.0}}}});  // recover
   fix.trajectories.push_back(td);
 
   // Mark "healthy" as recovered stage
@@ -380,6 +383,8 @@ TEST_CASE(
   {
     auto locs = fix.makeColocatedLocations();
     ParallelConfig parallel_config;
+    fix.cm.allow_default_matrix = true;
+    finalizeContactMatrices(fix.cm, fix.world);
     InteractionManager im(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                           &disease, nullptr);
     // Run with high enough contacts to guarantee infection
@@ -387,6 +392,8 @@ TEST_CASE(
     default_contact_matrix.bins = {"all"};
     default_contact_matrix.contacts = {{100.0}};
     fix.cm.default_matrix = default_contact_matrix;
+    fix.cm.allow_default_matrix = true;
+    finalizeContactMatrices(fix.cm, fix.world);
     InteractionManager im_high(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                                &disease, nullptr);
     im_high.processTransmissions(locs, 1.0, 8.0, nullptr);
@@ -397,7 +404,8 @@ TEST_CASE(
   Epidemiology epi(fix.world, &disease);
   epi.trackInfection(1);
   std::vector<PersonLocation> empty_locs;
-  epi.updateInfectionStates(10.0, empty_locs);  // At t=10, person 1 should be recovered
+  epi.updateInfectionStates(
+      10.0, empty_locs);  // At t=10, person 1 should be recovered
 
   // Verify recovery
   CHECK(fix.world.people[1].infection == nullptr);
@@ -421,12 +429,14 @@ TEST_CASE(
   int trials = 500;
   for (int trial = 0; trial < trials; ++trial) {
     fix.world.people[1].infection.reset();
-    fix.world.people[0].infection = std::make_unique<Infection>(
-        &disease, 11.0, &fix.world.people[0], 200 + trial, nullptr, "office",
-        0);
+    fix.world.people[0].infection =
+        std::make_unique<Infection>(&disease, 11.0, &fix.world.people[0],
+                                    200 + trial, nullptr, "office", 0);
 
     auto locs = fix.makeColocatedLocations();
     ParallelConfig parallel_config;
+    fix.cm.allow_default_matrix = true;
+    finalizeContactMatrices(fix.cm, fix.world);
     InteractionManager im(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                           &disease, nullptr);
     im.processTransmissions(locs, 12.0, 8.0, nullptr);
@@ -499,6 +509,8 @@ TEST_CASE(
   }
 
   ParallelConfig parallel_config;
+  fix.cm.allow_default_matrix = true;
+  finalizeContactMatrices(fix.cm, fix.world);
   InteractionManager im(fix.world, fix.cm, fix.sim_cfg, parallel_config,
                         &disease, &logger);
 
