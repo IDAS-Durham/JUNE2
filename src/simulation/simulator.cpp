@@ -3,7 +3,7 @@
 // live in sibling simulator_*.cpp files (declared in simulation/simulator.h).
 #include "simulation/simulator.h"
 
-#include "activity/runtime_bin_allocator.h"
+#include "activity/runtime_group_allocator.h"
 #ifdef USE_MPI
 #include "parallel/domain_manager.h"
 #endif
@@ -341,8 +341,8 @@ Simulator::Simulator(WorldState& world, Config& config,
       config_(config),
       domain_mgr_(domain_mgr),
       activity_manager_(world, config),
-      runtime_bin_allocator_(
-          std::make_unique<RuntimeBinAllocator>(world, config)),
+      runtime_group_allocator_(
+          std::make_unique<RuntimeGroupAllocator>(world, config)),
       current_day_num_(0),
       current_simulation_time_(0.0) {
   // GlobalRNG is seeded in main.cpp before any components are created
@@ -443,9 +443,10 @@ Simulator::Simulator(WorldState& world, Config& config,
   interaction_manager_ = std::make_unique<InteractionManager>(
       world_, config_.contact_matrices, config_.simulation, config_.parallel,
       disease_.get(), &event_logger_);
-  // Wire the runtime bin allocator so processPartialPresenceVenue can
-  // consult carriage assignments. Allocator already constructed above.
-  interaction_manager_->setRuntimeBinAllocator(runtime_bin_allocator_.get());
+  // Wire the runtime group allocator so processPartialPresenceVenue can
+  // consult runtime group assignments. Allocator already constructed above.
+  interaction_manager_->setRuntimeGroupAllocator(
+      runtime_group_allocator_.get());
 
   // Initialize coordinated encounter manager
   const int rank = getRank();

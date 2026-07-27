@@ -164,7 +164,8 @@ DomainCommunicator::DomainCommunicator(WorldState& world, const Config& config,
 
 void DomainCommunicator::exchangeVisitors(
     const std::vector<PersonLocation>& locations, const DomainManager& dm,
-    double current_time, double delta_hours, const RuntimeBinAllocator* alloc) {
+    double current_time, double delta_hours,
+    const RuntimeGroupAllocator* alloc) {
   domain_.clearVisitors();
   std::vector<std::vector<Domain::VisitorData>> outgoing(num_ranks_);
   std::vector<int> send_counts(num_ranks_, 0);
