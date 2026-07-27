@@ -174,7 +174,7 @@ inline VenueId addPartialPresenceVenue(WorldState& world, uint8_t type_id) {
 // in `legs` gets one ActivityMeta with venue_count = number of their legs.
 // All legs become entries in activity_venues; per-leg t_board_min /
 // t_alight_min are written into membership_field_values (the side-table
-// the RuntimeBinAllocator consults).
+// the RuntimeGroupAllocator consults).
 //
 // Pre-condition: each referenced person has activity_meta_count == 0 on entry
 // (helper is for fresh persons; reusing it on the same person would break

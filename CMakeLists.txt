@@ -140,7 +140,7 @@ set(JUNE_CORE_SOURCES
     src/core/world_state.cpp
     src/activity/coordinated_encounter_manager.cpp
     src/activity/coordinated_encounter_manager_stats.cpp
-    src/activity/runtime_bin_allocator.cpp
+    src/activity/runtime_group_allocator.cpp
     src/activity/presence_window.cpp
     src/utils/event_logging/event_logger.cpp
     src/utils/filtering.cpp
