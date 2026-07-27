@@ -59,7 +59,7 @@
 #include <stdexcept>
 
 #include "activity/presence_window.h"
-#include "activity/runtime_bin_allocator.h"
+#include "activity/runtime_group_allocator.h"
 #include "simulation/compartmental_model_manager.h"
 #include "utils/deterministic_rng.h"
 #include "utils/event_logging/event_types.h"
@@ -385,8 +385,8 @@ void InteractionManager::filterAndSortActiveLocations(
     // A line takes its members from the allocator's rider table, not from
     // here, because one location cannot express a journey across four of
     // them. Leaving these in would count every rider twice.
-    if (runtime_bin_allocator_ &&
-        runtime_bin_allocator_->isPartialPresenceVenue(loc.venue_id))
+    if (runtime_group_allocator_ &&
+        runtime_group_allocator_->isPartialPresenceVenue(loc.venue_id))
       continue;
     if (loc.venue_id != -1 ||
         loc.encounter_type_id != kDefaultEncounterTypeId) {

@@ -3,7 +3,7 @@
 #include <memory>
 #include <vector>
 
-#include "activity/runtime_bin_allocator.h"
+#include "activity/runtime_group_allocator.h"
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
@@ -18,7 +18,7 @@
 
 using namespace june;
 
-// The RuntimeBinAllocator calls MPI_Comm_size during allocateForSlot when
+// The RuntimeGroupAllocator calls MPI_Comm_size during allocateForSlot when
 // the build has USE_MPI defined, even with a single process. Initialise MPI
 // here so a serial doctest run doesn't abort.
 int main(int argc, char** argv) {
@@ -196,10 +196,10 @@ TEST_CASE(
                                   /*seed=*/7, &world, "route_line", line);
 
   // Allocator + interaction manager wiring.
-  RuntimeBinAllocator allocator(world, config);
+  RuntimeGroupAllocator allocator(world, config);
   InteractionManager im(world, cm, sim_cfg, parallel_config, disease.get(),
                         nullptr);
-  im.setRuntimeBinAllocator(&allocator);
+  im.setRuntimeGroupAllocator(&allocator);
 
   // Drive allocator for this slot.
   std::vector<PersonLocation> locs =
@@ -210,9 +210,9 @@ TEST_CASE(
                             /*current_simulation_time=*/0.0, delta_hours, locs);
 
   // Sanity: both riders bucketed, single bin.
-  REQUIRE(allocator.getNumBins(line) == 1);
-  REQUIRE(allocator.getBinIndex(line, 0) == 0);
-  REQUIRE(allocator.getBinIndex(line, 1) == 0);
+  REQUIRE(allocator.getNumGroups(line) == 1);
+  REQUIRE(allocator.getGroupIndex(line, 0) == 0);
+  REQUIRE(allocator.getGroupIndex(line, 1) == 0);
 
   // Build the InteractionMember list (one per location, both on `line`).
   std::vector<InteractionMember> members;
@@ -299,10 +299,10 @@ TEST_CASE("partial-presence FOI: bin isolation yields zero cross-bin lambda") {
       std::make_unique<Infection>(disease.get(), 0.0, &world.people[0],
                                   /*seed=*/7, &world, "route_line", line);
 
-  RuntimeBinAllocator allocator(world, config);
+  RuntimeGroupAllocator allocator(world, config);
   InteractionManager im(world, cm, sim_cfg, parallel_config, disease.get(),
                         nullptr);
-  im.setRuntimeBinAllocator(&allocator);
+  im.setRuntimeGroupAllocator(&allocator);
 
   std::vector<PersonLocation> locs =
       makePartialPresenceLocations(world, /*activity_index=*/0);
@@ -312,9 +312,9 @@ TEST_CASE("partial-presence FOI: bin isolation yields zero cross-bin lambda") {
 
   // tgs=1, 2 riders → 2 bins, one rider in each. Different bins is the
   // load-bearing invariant for this test; assert it explicitly.
-  REQUIRE(allocator.getNumBins(line) == 2);
-  const uint16_t bin_a = allocator.getBinIndex(line, 0);
-  const uint16_t bin_b = allocator.getBinIndex(line, 1);
+  REQUIRE(allocator.getNumGroups(line) == 2);
+  const uint16_t bin_a = allocator.getGroupIndex(line, 0);
+  const uint16_t bin_b = allocator.getGroupIndex(line, 1);
   REQUIRE(bin_a != bin_b);
 
   std::vector<InteractionMember> members;
@@ -421,11 +421,11 @@ TEST_CASE(
     // Simulator wires it conditionally).
     cm.allow_default_matrix = true;
     finalizeContactMatrices(cm, world, *disease);
-    RuntimeBinAllocator allocator(world, config);
+    RuntimeGroupAllocator allocator(world, config);
     InteractionManager im(world, cm, sim_cfg, parallel_config, disease.get(),
                           nullptr);
     if (declare_unrelated_partial_presence) {
-      im.setRuntimeBinAllocator(&allocator);
+      im.setRuntimeGroupAllocator(&allocator);
       TimeSlot slot;
       allocator.allocateForSlot(0, 0, slot, /*current_time=*/0.0,
                                 /*delta_hours=*/4.0, /*locations=*/{});
@@ -520,10 +520,10 @@ TEST_CASE(
         std::make_unique<Infection>(disease.get(), 0.0, &world.people[0],
                                     /*seed=*/7, &world, "route_line", line);
 
-    RuntimeBinAllocator allocator(world, config);
+    RuntimeGroupAllocator allocator(world, config);
     InteractionManager im(world, cm, sim_cfg, parallel_config, disease.get(),
                           nullptr);
-    im.setRuntimeBinAllocator(&allocator);
+    im.setRuntimeGroupAllocator(&allocator);
 
     std::vector<PersonLocation> locs =
         makePartialPresenceLocations(world, /*activity_index=*/0);
@@ -532,7 +532,7 @@ TEST_CASE(
     allocator.allocateForSlot(/*time_slot_index=*/0, /*day_type_idx=*/0, slot,
                               /*current_simulation_time=*/0.0, delta_hours,
                               locs);
-    REQUIRE(allocator.getNumBins(line) == 1);
+    REQUIRE(allocator.getNumGroups(line) == 1);
 
     std::vector<InteractionMember> members;
     for (const auto& l : locs) {

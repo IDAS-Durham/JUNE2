@@ -736,14 +736,14 @@ struct SimulationConfig {
     }
   } checkpoint;
 
-  // Partial-presence venues: at each slot, the RuntimeBinAllocator buckets
-  // riders of these venue types into ephemeral runtime bins (e.g. carriages
+  // Partial-presence venues: at each slot, the RuntimeGroupAllocator buckets
+  // riders of these venue types into ephemeral runtime groups (e.g. carriages
   // of a train_line) and the FOI loop drives sub-interval transmission from
   // each rider's per-membership (t_board_min, t_alight_min).
   //
   // Number of bins is emergent, derived at slot time from the global rider
   // count and the per-venue-type `target_group_size`. There is no hard
-  // capacity; bins differ in size by at most 1 (round-robin deal). Empty
+  // capacity; groups differ in size by at most 1 (round-robin deal). Empty
   // map (default) = feature inactive, zero hot-path overhead.
   struct PartialPresenceConfig {
     // YAML-declared: type name → target group size.
