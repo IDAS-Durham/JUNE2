@@ -51,7 +51,7 @@ std::optional<int> InteractionManager::dispatchPartialPresenceIfApplicable(
 void InteractionManager::accumulateOneCarriage(
     const std::vector<CarriageMember>& car, float slot_duration_min,
     double current_time, double delta_hours, int num_modes, int num_bins_needed,
-    uint8_t venue_type_id, const ContactMatrix* matrix,
+    uint8_t venue_type_id, const ContactMatrix& bin_structure,
     const TransmissionParams& trans_params,
     std::vector<PartialPresenceSubBin>& sub_bins,
     PartialPresenceLambdaResult& result) const {
@@ -76,16 +76,16 @@ void InteractionManager::accumulateOneCarriage(
                                  num_modes, sub_bins, susc_by_bin);
 
     accumulatePartialLambdaContributions(sub_bins, susc_by_bin, venue_type_id,
-                                         matrix, num_bins_needed, num_modes,
-                                         trans_params, result);
+                                         bin_structure, num_bins_needed,
+                                         num_modes, trans_params, result);
   }
 }
 
 void InteractionManager::accumulatePartialLambdaContributions(
     const std::vector<PartialPresenceSubBin>& sub_bins,
     const std::vector<std::vector<const CarriageMember*>>& susc_by_bin,
-    uint8_t venue_type_id, const ContactMatrix* matrix, int num_bins_needed,
-    int num_modes, const TransmissionParams& trans_params,
+    uint8_t venue_type_id, const ContactMatrix& bin_structure,
+    int num_bins_needed, int num_modes, const TransmissionParams& trans_params,
     PartialPresenceLambdaResult& result) const {
   using AccumSource = PartialPresenceAccumSource;
   auto& susc_lambda = result.susc_lambda;
@@ -95,7 +95,7 @@ void InteractionManager::accumulatePartialLambdaContributions(
     if (susc_by_bin[susc_bin].empty()) continue;
 
     for (int mode = 0; mode < num_modes; ++mode) {
-      const ContactMatrix* mode_matrix =
+      const ContactMatrix& mode_matrix =
           contact_matrices_.getMatrix(venue_type_id, mode);
       double mode_susc_mult =
           (mode < static_cast<int>(trans_params.modes.size()))
@@ -107,7 +107,7 @@ void InteractionManager::accumulatePartialLambdaContributions(
         if (!(total_inf > 0.0)) continue;
 
         double contacts =
-            lookupContactsForBinPair(mode_matrix, matrix, susc_bin, inf_bin);
+            lookupContactsForBinPair(mode_matrix, susc_bin, inf_bin);
         if (!(contacts > 0.0)) continue;
 
         int bin_size = sub_bins[inf_bin].total_size;
@@ -233,8 +233,8 @@ std::vector<float> InteractionManager::collectSubIntervalEventTimes(
 std::vector<std::vector<CarriageMember>>
 InteractionManager::buildPartialPresenceCarriages(
     const std::vector<InteractionMember>& members, Venue* venue,
-    VenueId actual_venue_id, const ContactMatrix* matrix, int num_bins_needed,
-    uint16_t num_bins,
+    VenueId actual_venue_id, const ContactMatrix& bin_structure,
+    int num_bins_needed, uint16_t num_bins,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
   std::vector<std::vector<CarriageMember>> carriages(num_bins);
 
@@ -270,7 +270,7 @@ InteractionManager::buildPartialPresenceCarriages(
         runtime_bin_allocator_->getPresenceFactor(actual_venue_id, m.id);
 
     int matrix_bin = computeBinIndexForMatrix(person, venue, m.subset_index,
-                                              matrix, num_bins_needed);
+                                              &bin_structure, num_bins_needed);
     if (matrix_bin < 0 || matrix_bin >= num_bins_needed) matrix_bin = 0;
 
     carriages[carriage].push_back(CarriageMember{
@@ -323,13 +323,10 @@ InteractionManager::computePartialPresenceLambda(
                                        encounter_type_id);
 
   const uint8_t venue_type_id = venue->type_id;
-  const ContactMatrix* matrix = contact_matrices_.getMatrix(venue_type_id);
-  if (!matrix)
-    throw std::runtime_error(
-        "computePartialPresenceLambda: no contact matrix for venue_type_id=" +
-        std::to_string(static_cast<int>(venue_type_id)));
+  const ContactMatrix& bin_structure =
+      contact_matrices_.getBinStructure(venue_type_id);
   const int num_bins_needed =
-      std::max(1, static_cast<int>(matrix->bins.size()));
+      std::max(1, static_cast<int>(bin_structure.bins.size()));
 
   int num_modes = disease_->numModes();
   if (num_modes == 0) num_modes = 1;
@@ -346,8 +343,9 @@ InteractionManager::computePartialPresenceLambda(
   if (num_bins == 0) return result;
 
   std::vector<std::vector<CarriageMember>> carriages =
-      buildPartialPresenceCarriages(members, venue, actual_venue_id, matrix,
-                                    num_bins_needed, num_bins, visitor_data);
+      buildPartialPresenceCarriages(members, venue, actual_venue_id,
+                                    bin_structure, num_bins_needed, num_bins,
+                                    visitor_data);
 
   // Per-bin scratch reused across sub-intervals (cleared per sub-interval).
   std::vector<PartialPresenceSubBin> sub_bins(num_bins_needed);
@@ -356,8 +354,8 @@ InteractionManager::computePartialPresenceLambda(
     const auto& car = carriages[c];
     if (car.empty()) continue;
     accumulateOneCarriage(car, slot_duration_min, current_time, delta_hours,
-                          num_modes, num_bins_needed, venue_type_id, matrix,
-                          trans_params, sub_bins, result);
+                          num_modes, num_bins_needed, venue_type_id,
+                          bin_structure, trans_params, sub_bins, result);
   }
 
   return result;
