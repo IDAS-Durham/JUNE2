@@ -641,8 +641,8 @@ int main(int argc, char* argv[]) {
                                                         e.getDetailMsg());
       }
     } else {
-      std::cerr << "[Rank " << rank << "] FATAL: HDF5 error: "
-                << e.getCDetailMsg() << std::endl;
+      std::cerr << "[Rank " << rank
+                << "] FATAL: HDF5 error: " << e.getCDetailMsg() << std::endl;
     }
 #ifdef USE_MPI
     MPI_Abort(MPI_COMM_WORLD, 1);

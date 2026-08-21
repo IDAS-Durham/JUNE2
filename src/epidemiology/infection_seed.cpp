@@ -22,9 +22,9 @@ namespace june {
 namespace {
 
 // How a report should name one budget: the labels of the target groups it draws
-// from, joined where a scalar budget spans several. Empty when the seed keeps no
-// labels — bulk CSV seeds build a criteria profile per row and have none to keep
-// — and the report falls back to the budget index alone.
+// from, joined where a scalar budget spans several. Empty when the seed keeps
+// no labels — bulk CSV seeds build a criteria profile per row and have none to
+// keep — and the report falls back to the budget index alone.
 std::string budgetLabel(const SeedBudget& budget,
                         const std::vector<SeedTargetGroup>& target_groups) {
   std::string label;
@@ -641,13 +641,13 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
          ++budget_index) {
       if (selection.filled_per_budget[budget_index] <
           unit.targets[budget_index]) {
-        seed_shortfalls_.push_back(
-            {seed.name, seed.structured_config.geo_level, unit.unit_id,
-             budget_index, unit.budget_labels[budget_index],
-             unit.targets[budget_index],
-             selection.filled_per_budget[budget_index],
-             selection.lost_per_budget[budget_index],
-             /*lost_to_earlier_declared=*/false});
+        seed_shortfalls_.push_back({seed.name, seed.structured_config.geo_level,
+                                    unit.unit_id, budget_index,
+                                    unit.budget_labels[budget_index],
+                                    unit.targets[budget_index],
+                                    selection.filled_per_budget[budget_index],
+                                    selection.lost_per_budget[budget_index],
+                                    /*lost_to_earlier_declared=*/false});
       }
     }
     for (const auto& assignment : selection.chosen) {
@@ -679,7 +679,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     std::string unit_id;
     std::vector<int> targets;  // cases per budget, after seed strength
     std::vector<std::string> budget_labels;  // for reports only, may be empty
-    uint32_t first_slot = 0;   // targets.size() + 1 slots, 0 = no budget
+    uint32_t first_slot = 0;  // targets.size() + 1 slots, 0 = no budget
   };
   struct LocalMember {
     Person* person = nullptr;

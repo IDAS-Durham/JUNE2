@@ -796,8 +796,8 @@ void Simulator::applyInfectionSeeds(const std::string& current_datetime) {
   // so rank 0 emits the block alone: one report per seeding step, not one per
   // rank, and no collective to reach it.
   if (getRank() == 0) {
-    std::string shortfall_report = formatSeedShortfallReport(
-        infection_seeder_->getSeedShortfalls());
+    std::string shortfall_report =
+        formatSeedShortfallReport(infection_seeder_->getSeedShortfalls());
     if (!shortfall_report.empty()) std::cout << shortfall_report << std::flush;
   }
 
