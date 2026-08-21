@@ -40,9 +40,11 @@ if [[ ! -x "$BINARY" ]]; then
   echo "FAIL: binary not found at $BINARY"
   exit 1
 fi
+# The world file is not committed, so CI has no way to run this. Skip (ctest
+# SKIP_RETURN_CODE 77) rather than fail, matching test_checkpoint_determinism.
 if [[ ! -f "${PROJECT_DIR}/${WORLD}" ]]; then
-  echo "FAIL: world not found at ${PROJECT_DIR}/${WORLD}"
-  exit 1
+  echo "SKIP: world not found at ${PROJECT_DIR}/${WORLD}"
+  exit 77
 fi
 
 cd "$PROJECT_DIR"

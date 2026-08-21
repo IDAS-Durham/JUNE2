@@ -374,7 +374,7 @@ if(BUILD_TESTING)
                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
       set_tests_properties(test_mpi_full_reproducibility PROPERTIES
                            ENVIRONMENT "BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR};DAYS=5"
-                           TIMEOUT 600)
+                           SKIP_RETURN_CODE 77 TIMEOUT 600)
 
       # The same end-to-end diff, seeded structurally above the partition
       # level (an exact seed in an LGU and in an XLGU, MGU being where
@@ -386,7 +386,7 @@ if(BUILD_TESTING)
                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
       set_tests_properties(test_mpi_structured_seed_reproducibility PROPERTIES
                            ENVIRONMENT "BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR};DAYS=3;SEEDS=configs/config_2021/infection_seeds_structured.yaml"
-                           TIMEOUT 600)
+                           SKIP_RETURN_CODE 77 TIMEOUT 600)
 
       # Checkpoint/restart determinism gate: a checkpoint leg + resume leg
       # must be set-identical to an uninterrupted baseline across a
