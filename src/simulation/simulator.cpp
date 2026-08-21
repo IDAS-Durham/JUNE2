@@ -497,6 +497,9 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Set policy manager in activity manager
   activity_manager_.setPolicyManager(policy_manager_.get());
 
+  // Recovery and death end any policy freeze the person is under
+  epidemiology_->setPolicyManager(policy_manager_.get());
+
   // Precompute which policies apply to each person (based on selection
   // criteria) This must be done AFTER schedules are assigned (person properties
   // are set)
@@ -532,8 +535,8 @@ Simulator::Simulator(WorldState& world, Config& config,
         world_, calendar_event_manager_.hostingGeoUnits());
   }
   // global_venue_geo_unit_map / global_venues_by_type_name exist only to build
-  // OTF pools (now precomputed), so free them. The halo-sized type_map used for
-  // cross-rank FOI lookups stays.
+  // OTF pools (now precomputed), so free them. The all-venue type_map used for
+  // cross-rank type lookups stays.
   world_.dropGlobalVenueMaps();
 
   // Initialize events filename based on rank
