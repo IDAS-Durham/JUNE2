@@ -42,9 +42,8 @@ std::vector<EncounterEligibility> computeLocalEligibility(
     // discriminator is the instance's own venue id, which cannot miss a
     // lookup (docs/adr/0010).
     const SlotVenueType slot_venue_type =
-        isVirtualVenue(enc.venue_id)
-            ? SlotVenueType::absent()
-            : SlotVenueType::known(enc.venue_type_id);
+        isVirtualVenue(enc.venue_id) ? SlotVenueType::absent()
+                                     : SlotVenueType::known(enc.venue_type_id);
 
     std::vector<size_t> eligible_indices;
     for (PersonId pid : enc.participants) {

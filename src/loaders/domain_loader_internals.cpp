@@ -634,10 +634,10 @@ void fillGlobalVenueMaps(WorldState& world,
         " geo_units=" + std::to_string(venue_geo_unit_ids.size()) + ")");
 
   // All three structures cover every Venue in the world. The type index is kept
-  // for the whole run (see dropGlobalVenueMaps): a rank must be able to name the
-  // type of a Venue it does not own, or kUnknownVenueTypeId means both "no such
-  // Venue" and "not decomposed onto me". The geo/by-type maps are only needed
-  // until the OTF allocator has precomputed its pools, then freed.
+  // for the whole run (see dropGlobalVenueMaps): a rank must be able to name
+  // the type of a Venue it does not own, or kUnknownVenueTypeId means both "no
+  // such Venue" and "not decomposed onto me". The geo/by-type maps are only
+  // needed until the OTF allocator has precomputed its pools, then freed.
   //
   // Types go in a VenueId-indexed vector, 1 B/entry against ~40 B/entry hashed.
   // Density is not assumed — a hole costs one byte and already answers

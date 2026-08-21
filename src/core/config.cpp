@@ -997,8 +997,7 @@ void CoordinatedEncounterConfig::resolve(
           std::to_string(world.encounter_type_names.size()) +
           " names and is capped at 255");
     }
-    enc.cached_encounter_type_id =
-        static_cast<uint8_t>(encounter_type_index);
+    enc.cached_encounter_type_id = static_cast<uint8_t>(encounter_type_index);
     enc.trigger_mask =
         computeActivityMaskFromNames(enc.trigger_slots, world.activity_names);
 

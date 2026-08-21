@@ -167,8 +167,9 @@ void WorldState::dropGlobalVenueMaps() {
             << global_venue_geo_unit_map.size()
             << " by_type_name_venue_entries=" << by_type_venues
             << " (all-venue type index kept, entries="
-            << venue_type_by_id.size() << " bytes="
-            << venue_type_by_id.capacity() * sizeof(uint8_t) << ")\n";
+            << venue_type_by_id.size()
+            << " bytes=" << venue_type_by_id.capacity() * sizeof(uint8_t)
+            << ")\n";
   std::unordered_map<VenueId, GeoUnitId>().swap(global_venue_geo_unit_map);
   std::unordered_map<std::string, std::vector<VenueId>>().swap(
       global_venues_by_type_name);

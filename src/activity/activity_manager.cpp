@@ -272,11 +272,10 @@ void ActivityManager::assignSingleSlotForLivePerson(
   locations[i].person_array_index = i;
 
   // Check for policy overrides (symptom-based, lockdowns, etc.)
-  if (applyPolicyOverride(locations[i], const_cast<Person&>(person),
-                          scheduled_activity_index, locations[i].venue_id,
-                          locations[i].subset_index,
-                          SlotVenueType::fromVenue(locations[i].venue_id),
-                          -1)) {
+  if (applyPolicyOverride(
+          locations[i], const_cast<Person&>(person), scheduled_activity_index,
+          locations[i].venue_id, locations[i].subset_index,
+          SlotVenueType::fromVenue(locations[i].venue_id), -1)) {
     locations[i].person_id = person.id;
     locations[i].person_array_index = i;
   }

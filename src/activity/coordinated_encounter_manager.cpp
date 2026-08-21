@@ -375,10 +375,9 @@ void CoordinatedEncounterManager::emitProposals(
   // kUnknownVenueTypeId, so this is reachable, not defensive. Checked once
   // per encounter — the venue does not vary across the invitees.
   if (!occupiesNoVenue(venue.id) && venue.type_id == kUnknownVenueTypeId)
-    throw std::runtime_error(
-        "coordinated encounters: physical venue " + std::to_string(venue.id) +
-        " for encounter '" + enc_def.name +
-        "' has an unresolvable venue type");
+    throw std::runtime_error("coordinated encounters: physical venue " +
+                             std::to_string(venue.id) + " for encounter '" +
+                             enc_def.name + "' has an unresolvable venue type");
 
   int num_partners = static_cast<int>(eligible_partners.size());
 

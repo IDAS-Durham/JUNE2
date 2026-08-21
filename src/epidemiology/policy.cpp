@@ -241,11 +241,10 @@ std::optional<PersonLocation> PolicyManager::getOverride(
   return std::nullopt;
 }
 
-bool PolicyManager::suppressesParticipation(const Person& person,
-                                            int16_t activity_index,
-                                            const SlotVenueType& slot_venue_type,
-                                            double current_time,
-                                            const Person* partner) const {
+bool PolicyManager::suppressesParticipation(
+    const Person& person, int16_t activity_index,
+    const SlotVenueType& slot_venue_type, double current_time,
+    const Person* partner) const {
   // A frozen Person is pinned at the venue the freeze anchored them to, so they
   // are not at the encounter's venue or the host's venue whatever those are.
   // Answered ahead of the loops: there is no meaningful venue-gate question to
