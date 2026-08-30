@@ -348,8 +348,8 @@ CoordinatedEncounterManager::selectVenue(const Person& person,
     return {-1, 255, false};
   }
 
-  std::uniform_int_distribution<int> v_dist(0, possible_venues.size() - 1);
-  auto selection = possible_venues[v_dist(gen)];
+  const auto index = bounded(gen, possible_venues.size());
+  auto selection = possible_venues[static_cast<size_t>(index)];
   return {selection.first, selection.second, true};
 }
 
@@ -392,7 +392,7 @@ void CoordinatedEncounterManager::emitProposals(
   std::sort(eligible_partners.begin(), eligible_partners.end());
 
   // Shuffle and pick
-  std::shuffle(eligible_partners.begin(), eligible_partners.end(), gen);
+  shuffle_det(eligible_partners.begin(), eligible_partners.end(), gen);
   int invited = 0;
 
   for (PersonId partner_id : eligible_partners) {
@@ -540,7 +540,7 @@ void CoordinatedEncounterManager::proposeForOnePersonOneEncounter(
       sampleTypeBudget(enc_def, static_cast<int>(valid_slots.size()), gen);
   if (type_budget == 0) return;
 
-  std::shuffle(valid_slots.begin(), valid_slots.end(), gen);
+  shuffle_det(valid_slots.begin(), valid_slots.end(), gen);
 
   int proposals_made = 0;
   for (int slot_idx : valid_slots) {
