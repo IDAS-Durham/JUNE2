@@ -442,8 +442,8 @@ if(BUILD_TESTING)
                  COMMAND ${JUNE_VENV_PYTHON}
                          ${CMAKE_SOURCE_DIR}/tests/checkpoint_determinism_check.py
                          --bin ${CMAKE_CURRENT_BINARY_DIR}/disease_sim
-                         --config configs/config_1911/simulation.yaml
-                         --world worlds/1911_durham_world.h5
+                         --config configs/config_2021/simulation.yaml
+                         --world worlds/world_2021.h5
                          --days 4 --ckpt-day 2
                          --matrix 1:1,2:2,2:1
                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
