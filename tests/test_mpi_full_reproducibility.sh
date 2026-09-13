@@ -86,7 +86,7 @@ for NP in $NPS; do
   mpirun -np "$NP" --oversubscribe "$BINARY" \
     --config "$TMP/simulation.yaml" \
     --world "$WORLD" \
-    "${SEEDS_ARG[@]}" \
+    ${SEEDS_ARG[@]+"${SEEDS_ARG[@]}"} \
     --runs-dir "$TMP/runs" \
     --run-id "$RUN_ID" \
     > "$TMP/log_np${NP}.txt" 2>&1 || {
@@ -251,6 +251,15 @@ for NP in $NPS; do
   grep "\[INFECTION SEED\] Seeded" "$TMP/log_np${NP}.txt" \
     | awk '{print $4}' > "$TMP/seeded_np${NP}.txt"
 done
+# Two empty files compare equal, so a run that seeds nobody would pass the
+# check below without comparing anything. Every config this harness runs
+# seeds someone; if the reference run did not, that is the failure.
+if [[ ! -s "$TMP/seeded_np${REF_NP}.txt" ]]; then
+  echo "FAIL: np=${REF_NP} logged no '[INFECTION SEED] Seeded' lines, so the"
+  echo "      seeded-count comparison would pass without comparing anything"
+  CLEAN_ON_EXIT=0
+  FAIL=1
+fi
 for NP in $NPS; do
   [[ "$NP" == "$REF_NP" ]] && continue
   if ! diff -q "$TMP/seeded_np${REF_NP}.txt" "$TMP/seeded_np${NP}.txt" > /dev/null; then
