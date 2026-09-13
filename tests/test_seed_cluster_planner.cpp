@@ -100,8 +100,8 @@ TEST_CASE("Planner: offers sharing a key are one household, however split") {
 TEST_CASE("Planner: a later-declared budget loses its member to an earlier one") {
   // One household, one matched member, and they match both budgets. The member
   // takes budget 0 because it is declared first, so budget 1 ends short with
-  // nobody left to take — the declaration-order bias ADR 0011 rejects for the
-  // exact path, still in force here and now counted rather than hidden.
+  // nobody left to take — the declaration-order bias the exact path
+  // rejects, still in force here and now counted rather than hidden.
   const std::vector<SeedOffer> offers = {{0x30ULL, 1, 1}, {0x30ULL, 1, 2}};
 
   ClusterPlan plan = planClusteredSeed({offers}, {1, 1});

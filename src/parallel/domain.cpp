@@ -103,7 +103,7 @@ void Domain::checkResidencesAreLocal() const {
   // reaches the terminal.
   message << offenders
           << " resident(s) whose residence venue sits in another geo unit. A "
-             "household must be held whole by one rank (ADR 0012): the "
+             "household must be held whole by one rank: the "
              "partition assigns a person by their geo unit and a venue by "
              "its own, so a household split across geo units is torn across "
              "ranks.";

@@ -164,7 +164,7 @@ TEST_CASE(
 TEST_CASE(
     "Selector: a narrower budget losing its only candidate is short by "
     "contest, not by population") {
-  // ADR 0011's nested bands. Budget 0 is "0-17" and accepts only the child;
+  // Nested bands. Budget 0 is "0-17" and accepts only the child;
   // budget 1 is "0-64" and accepts both. The child keys best against budget 1,
   // takes it, and budget 0 has nobody to fall through to — while the
   // assignment child->0, adult->1 would have filled both. The greedy outcome

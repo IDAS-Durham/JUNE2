@@ -489,7 +489,7 @@ TEST_CASE("Domain: a residence venue and its occupants share a geo unit") {
 
   // No collectives here: every rank builds the same world and checks it alone,
   // so the result does not depend on the rank count. That is the point of
-  // testing geo units rather than ownership (ADR 0012) -- an ownership test
+  // testing geo units rather than ownership -- an ownership test
   // would pass vacuously at np=1.
   SUBCASE("a household inside the owned geo unit passes") {
     WorldState world = buildResidenceWorld(false);
@@ -511,7 +511,7 @@ TEST_CASE("Domain: a residence venue and its occupants share a geo unit") {
     } catch (const std::runtime_error& error) {
       const std::string message = error.what();
       CHECK(message.find("person 2") != std::string::npos);
-      CHECK(message.find("ADR 0012") != std::string::npos);
+      CHECK(message.find("held whole by one rank") != std::string::npos);
     }
   }
 }

@@ -84,7 +84,7 @@ TEST_CASE("Shortfall report: two short budgets of one unit are told apart") {
 }
 
 TEST_CASE("Shortfall report: a contested budget does not blame the population") {
-  // The nested-band miss of ADR 0011: "0-17" asked for one case and the only
+  // The nested-band miss: "0-17" asked for one case and the only
   // child went to "0-64". Reporting the gap alone used to read as nobody
   // eligible, which was the one thing it was not.
   std::vector<SeedShortfall> shortfalls = {

@@ -611,7 +611,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
       // possible winner while the exchanged message stays proportional to the
       // budgets, not to the population — the cap is what holds that under
       // nested groups, where every candidate of the narrow band overlaps the
-      // wide one. See ADR 0011.
+      // wide one.
       std::vector<SeedOffer>& offers = offers_per_budget[budget_index];
       const size_t depth =
           seedOfferDepth(unit.targets, overlapping_per_budget, budget_index);
@@ -753,7 +753,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
 
       LocalHousehold& household = households[residence[0].first];
       // One rank holds the whole household: a residence venue and its
-      // occupants share a geo unit, checked in Domain (ADR 0012).
+      // occupants share a geo unit, checked in Domain.
       household.key = mix_seed(event_base, unit_hash,
                                static_cast<uint64_t>(residence[0].first));
       LocalMember member{person, {}};
@@ -786,7 +786,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     // once a budget has seen total_target members eligible for it, a household
     // below cannot take a case against that budget without the fill having
     // already completed above it. Exact because the rank sorting a household
-    // sees all of it, which Domain checks and ADR 0012 records.
+    // sees all of it, which Domain checks.
     std::vector<int> eligible_seen(unit.targets.size(), 0);
     auto fillCannotReachFurther = [&]() {
       for (size_t budget_index = 0; budget_index < unit.targets.size();

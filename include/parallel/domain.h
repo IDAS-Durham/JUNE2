@@ -138,7 +138,7 @@ class Domain {
  private:
   // A residence venue and its occupants share a geo unit, so a household is
   // held whole by one rank. The partition assumes it, and clustered seeding's
-  // local density truncation is exact only under it. See ADR 0012. Throws
+  // local density truncation is exact only under it. Throws
   // naming the offenders rather than running on a world that breaks it.
   void checkResidencesAreLocal() const;
 };

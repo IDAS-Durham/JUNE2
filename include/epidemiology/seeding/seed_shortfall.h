@@ -17,7 +17,7 @@ namespace june {
 // eligible anywhere rather than nobody on this rank. Reporting only the total
 // used to attribute the whole gap to the second cause, so a run that
 // under-seeded because two budgets contested the same people explained itself
-// with a population that was never short. See ADR 0011.
+// with a population that was never short.
 //
 // `lost` may exceed the gap: a budget asking for one case can lose ten
 // contested people. Only min(lost, requested - placed) of it could have gone
@@ -36,7 +36,7 @@ struct SeedShortfall {
   int lost = 0;
   // The clustered path resolves a contest by declaration order rather than by
   // key, so a budget there loses people specifically to an earlier-declared
-  // budget (ADR 0013). Same count, a different and worse reason, named as such.
+  // budget. Same count, a different and worse reason, named as such.
   bool lost_to_earlier_declared = false;
 };
 
