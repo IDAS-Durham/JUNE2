@@ -110,8 +110,11 @@ struct OutcomeRates {
                  const std::string& outcome,
                  const InfectionContext& ctx = {}) const;
 
-  // Resolve property-name strings to integer codes after WorldState is built.
-  void resolve(const WorldState& world);
+  // Resolve every row's filters against the world, throwing on anything the
+  // world cannot answer. An outcome table is reference data, so a row may name
+  // a geographical unit this world does not contain; those names are returned,
+  // one line each, for the caller to report, and match nobody.
+  std::vector<std::string> resolve(const WorldState& world);
 };
 
 // =============================================================================
@@ -257,7 +260,9 @@ class Disease {
   bool isInfectiousStage(const std::string& symptom_name) const;
 
   // Resolve outcome rate criteria after WorldState is built.
-  void resolve(const WorldState& world) { outcome_rates_.resolve(world); }
+  std::vector<std::string> resolve(const WorldState& world) {
+    return outcome_rates_.resolve(world);
+  }
 
   // Fast lookup
   uint16_t getSymptomId(const std::string& name) const;

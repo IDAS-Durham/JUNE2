@@ -45,7 +45,25 @@ struct SelectionCriterion {
   // block in the error message.
   void resolveOrThrow(const WorldState& world, const std::string& context);
 
+  // True for the property paths whose `value` is a geographical unit name (or
+  // a list of them) rather than a number: `geo_unit.<LEVEL>` and nothing else.
+  // Lexical, so config loaders can ask before a world exists. Kept beside the
+  // path dispatch in resolve() so the two cannot drift.
+  static bool comparesAgainstUnitNames(const std::string& property_path);
+
+  // Reference tables can name geographical units a given world does not have,
+  // e.g. a national table run on a regional world. With this set, a
+  // geo_unit.<LEVEL> name found at no level at all is recorded instead of being
+  // a resolve error, and matches nobody. A name that exists at a different
+  // level is still an error: that is a misspelt level, not a missing place.
+  bool allow_absent_geo_units = false;
+  const std::vector<std::string>& absentGeoUnitNames() const {
+    return absent_geo_unit_names;
+  }
+
  private:
+  mutable std::vector<std::string> absent_geo_unit_names;
+
   enum class PropertyType {
     UNKNOWN,
     AGE,
@@ -59,7 +77,30 @@ struct SelectionCriterion {
     PARTNER_IN_NETWORK,
     // is_alive: convenience for `!person.is_dead`. Path: "is_alive".
     IS_ALIVE,
+    // geo_unit.<LEVEL>: the person's ancestor geographical unit at a named
+    // level, compared by unit name. Path: "geo_unit.XLGU".
+    GEO_ANCESTOR,
   };
+
+  // Ancestor-geography membership, one entry per geographical unit, built
+  // once at resolve time so evaluate is a single array read: 0 = under some
+  // other unit, 1 = under a target unit, 2 = no ancestor at this level
+  // (absent — false whichever way the criterion is written).
+  mutable std::vector<uint8_t> geo_ancestor_mask;
+  // Empty when the mask is keyed by geo_unit_id directly (ids dense enough to
+  // make that cheap). Otherwise holds the world's unit ids in sorted order and
+  // the mask is keyed by position in it, found by binary search. Both forms are
+  // self-contained: evaluate answers from the criterion alone, never from a
+  // WorldState it may not have been handed.
+  mutable std::vector<GeoUnitId> geo_mask_unit_ids;
+  // Recorded rather than thrown: evaluate resolves lazily and must not throw
+  // from the hot path, so resolveOrThrow is what turns this into an error.
+  mutable std::string geo_resolve_error;
+
+  void buildGeoAncestorMask(const WorldState& world) const;
+  // Position of `id` in geo_ancestor_mask, or geo_ancestor_mask.size() when the
+  // mask has no entry for it.
+  size_t geoMaskSlot(GeoUnitId id) const;
   mutable PropertyType cached_type = PropertyType::UNKNOWN;
   mutable std::string cached_activity_name;  // (also reused for facet name)
   mutable std::string cached_sub_property;   // (also reused for facet field)
@@ -224,7 +265,8 @@ struct ScheduleType {
 
   void resolve(const WorldState& world) {
     for (auto& criterion : selection_criteria) {
-      criterion.resolve(world);
+      criterion.resolveOrThrow(world,
+                               "schedule type '" + name + "' selection");
     }
     // force_hybrid_mask is resolved in ScheduleConfig::resolveSlots (defined
     // in config.cpp where WorldState is complete).
@@ -352,7 +394,8 @@ struct VaccinationCampaignConfig {
 
   void resolve(const WorldState& world) {
     for (auto& crit : selection_criteria) {
-      crit.resolve(world);
+      crit.resolveOrThrow(world,
+                          "vaccination campaign '" + name + "' selection");
     }
   }
 };

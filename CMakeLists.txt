@@ -147,6 +147,7 @@ set(JUNE_CORE_SOURCES
     src/utils/filtered_csv.cpp
     src/utils/event_logging/event_writer.cpp
     src/utils/event_logging/event_writer_lookups.cpp
+    src/utils/mpi_logging.cpp
     src/utils/event_logging/event_merger.cpp
     src/utils/event_logging/event_merger_lookups.cpp
     src/epidemiology/epidemiology.cpp
@@ -294,6 +295,7 @@ if(BUILD_TESTING)
   add_june_test(test_domain_communicator_detail "tests/test_domain_communicator_detail.cpp")
   add_june_test(test_run_dir "tests/test_run_dir.cpp")
   add_june_test(test_world_state "tests/test_world_state.cpp")
+  add_june_test(test_selection_criterion_geography "tests/test_selection_criterion_geography.cpp")
   add_june_test(test_domain_loader_internals "tests/test_domain_loader_internals.cpp")
   add_june_test(test_infection "tests/test_infection.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_transmission_lookups "tests/test_transmission_lookups.cpp")
@@ -341,6 +343,7 @@ if(BUILD_TESTING)
   endif()
   add_june_test(test_transmission_modes "tests/test_transmission_modes.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_deterministic_rng "tests/test_deterministic_rng.cpp")
+  add_june_test(test_infection_seeder "tests/test_infection_seeder.cpp")
   add_june_test(test_transmission_determinism "tests/test_transmission_determinism.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_presence_window "tests/test_presence_window.cpp")
