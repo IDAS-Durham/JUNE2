@@ -52,7 +52,7 @@ struct SeedTargetGroup {
 
   void resolve(const WorldState& world) {
     for (auto& c : criteria) {
-      c.resolve(world);
+      c.resolveOrThrow(world, "infection seed target group");
     }
   }
 };
@@ -129,7 +129,8 @@ struct InfectionSeedConfig {
   void resolve(const WorldState& world) {
     for (auto& seed : seeds) {
       for (auto& filter : seed.attribute_filters) {
-        filter.resolve(world);
+        filter.resolveOrThrow(
+            world, "infection seed '" + seed.name + "' attribute filter");
       }
       for (auto& group : seed.structured_config.target_groups) {
         group.resolve(world);

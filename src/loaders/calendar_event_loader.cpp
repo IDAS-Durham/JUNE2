@@ -69,6 +69,9 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       event.compliance_rate = std::stof(get("compliance_rate"));
       event.category = get("category");
       event.attendee_filters = row.criteria;
+      for (SelectionCriterion& c : event.attendee_filters) {
+        c.resolveOrThrow(world, "attendee filter");
+      }
     } catch (const std::exception& parse_error) {
       throw std::runtime_error(source_name + ":" + std::to_string(row_number) +
                                ": " + parse_error.what());

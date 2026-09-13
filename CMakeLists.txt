@@ -98,7 +98,12 @@ endif()
 # ==============================================================================
 # Profiling options - Use gperftools (Google CPU Profiler)
 # ==============================================================================
-option(ENABLE_PROFILING "Enable CPU profiling with gperftools" ON)
+# AUTO (the default) profiles when gperftools is found and warns when it is
+# not. ON is a request: without gperftools the configure step fails, because a
+# build that silently cannot profile is not what was asked for. OFF skips it.
+set(ENABLE_PROFILING AUTO CACHE STRING
+    "CPU profiling with gperftools: AUTO, ON or OFF")
+set_property(CACHE ENABLE_PROFILING PROPERTY STRINGS AUTO ON OFF)
 
 # Find gperftools
 if(ENABLE_PROFILING)
@@ -111,12 +116,44 @@ if(ENABLE_PROFILING)
   endif()
 
   find_library(PROFILER_LIBRARY profiler ${GPERFTOOLS_HINTS})
-  if(PROFILER_LIBRARY)
+
+  # The header search needs its own hint. Only the library was hinted before,
+  # which works on macOS because Homebrew's include prefix is searched by
+  # default, but fails on any HPC install in a non-standard prefix: the build
+  # links fine and then main.cpp cannot find gperftools/profiler.h.
+  if(GPERFTOOLS_DIR)
+    set(GPERFTOOLS_INC_HINTS HINTS ${GPERFTOOLS_DIR}/include)
+  elseif(DEFINED ENV{GPERFTOOLS_DIR})
+    set(GPERFTOOLS_INC_HINTS HINTS $ENV{GPERFTOOLS_DIR}/include)
+  elseif(APPLE)
+    set(GPERFTOOLS_INC_HINTS HINTS /opt/homebrew/include)
+  endif()
+  find_path(PROFILER_INCLUDE_DIR gperftools/profiler.h ${GPERFTOOLS_INC_HINTS})
+
+  if(PROFILER_LIBRARY AND PROFILER_INCLUDE_DIR)
     message(STATUS "gperftools found: ${PROFILER_LIBRARY}")
+    message(STATUS "gperftools headers: ${PROFILER_INCLUDE_DIR}")
     add_definitions(-DUSE_GPERFTOOLS)
     set(GPERFTOOLS_FOUND TRUE)
   else()
-    message(WARNING "gperftools not found. Install with: brew install gperftools")
+    if(PROFILER_LIBRARY)
+      string(CONCAT GPERFTOOLS_MISSING
+          "the gperftools library was found at ${PROFILER_LIBRARY} but "
+          "gperftools/profiler.h was not; set GPERFTOOLS_DIR to a prefix "
+          "containing both lib and include")
+    else()
+      string(CONCAT GPERFTOOLS_MISSING
+          "gperftools was not found (brew install gperftools, or set "
+          "GPERFTOOLS_DIR)")
+    endif()
+    if(ENABLE_PROFILING STREQUAL "AUTO")
+      message(WARNING "${GPERFTOOLS_MISSING}. Building without profiling.")
+    else()
+      message(FATAL_ERROR
+        "ENABLE_PROFILING=${ENABLE_PROFILING} asks for profiling, but "
+        "${GPERFTOOLS_MISSING}. Fix that, or configure with "
+        "-DENABLE_PROFILING=AUTO or -DENABLE_PROFILING=OFF.")
+    endif()
     set(GPERFTOOLS_FOUND FALSE)
   endif()
 endif()
@@ -150,6 +187,7 @@ set(JUNE_CORE_SOURCES
     src/utils/filtered_csv.cpp
     src/utils/event_logging/event_writer.cpp
     src/utils/event_logging/event_writer_lookups.cpp
+    src/utils/mpi_logging.cpp
     src/utils/event_logging/event_merger.cpp
     src/utils/event_logging/event_merger_lookups.cpp
     src/epidemiology/epidemiology.cpp
@@ -246,6 +284,9 @@ endif()
 if(GPERFTOOLS_FOUND)
   target_link_libraries(june_core PRIVATE ${PROFILER_LIBRARY})
   target_compile_definitions(june_core PRIVATE USE_GPERFTOOLS)
+  # PUBLIC: main.cpp includes gperftools/profiler.h directly, so the include
+  # path has to propagate to disease_sim, not just to june_core.
+  target_include_directories(june_core PUBLIC ${PROFILER_INCLUDE_DIR})
 endif()
 
 # ==============================================================================
@@ -298,6 +339,7 @@ if(BUILD_TESTING)
   add_june_test(test_domain_communicator_detail "tests/test_domain_communicator_detail.cpp")
   add_june_test(test_run_dir "tests/test_run_dir.cpp")
   add_june_test(test_world_state "tests/test_world_state.cpp")
+  add_june_test(test_selection_criterion_geography "tests/test_selection_criterion_geography.cpp")
   add_june_test(test_domain_loader_internals "tests/test_domain_loader_internals.cpp")
   add_june_test(test_infection "tests/test_infection.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_transmission_lookups "tests/test_transmission_lookups.cpp")

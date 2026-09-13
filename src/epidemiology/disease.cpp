@@ -31,12 +31,19 @@ double OutcomeRates::getRate(const Person& person, const WorldState* world,
   return 0.0;
 }
 
-void OutcomeRates::resolve(const WorldState& world) {
-  for (auto& row : rows) {
-    for (auto& c : row.criteria) {
-      c.resolve(world);
+std::vector<std::string> OutcomeRates::resolve(const WorldState& world) {
+  std::vector<std::string> absent;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    for (auto& c : rows[i].criteria) {
+      c.allow_absent_geo_units = true;
+      c.resolveOrThrow(world, "disease outcome rates row " + std::to_string(i));
+      for (const std::string& name : c.absentGeoUnitNames()) {
+        absent.push_back("row " + std::to_string(i) +
+                         ": no geographical unit named '" + name + "'");
+      }
     }
   }
+  return absent;
 }
 
 // =============================================================================
