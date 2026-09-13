@@ -540,8 +540,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
   std::vector<SeedOffer> local_offers;
   std::unordered_map<PersonId, Person*> local_candidates;
 
-  const uint64_t event_base =
-      mix_seed(base_seed_, hash_name(seed.name));
+  const uint64_t event_base = mix_seed(base_seed_, hash_name(seed.name));
 
   for (const auto& unit_case : seed.structured_config.unit_cases) {
     ExactUnit unit;
@@ -716,8 +715,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     size_t matched = 0;
   };
 
-  const uint64_t event_base =
-      mix_seed(base_seed_, hash_name(seed.name));
+  const uint64_t event_base = mix_seed(base_seed_, hash_name(seed.name));
 
   std::vector<ClusterUnit> units;
   std::vector<uint32_t> unit_of_slot;
