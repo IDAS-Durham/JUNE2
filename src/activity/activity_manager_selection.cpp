@@ -202,8 +202,8 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
                             : mix_seed(base_seed_, person.id, activity_idx,
                                        static_cast<uint64_t>(logical_day));
         SplitMix64 rng(seed);
-        std::uniform_int_distribution<size_t> dist(0, pool.size() - 1);
-        return {pool[dist(rng)], 0};
+        const auto index = bounded(rng, pool.size());
+        return {pool[static_cast<size_t>(index)], 0};
       }
     }
     return {-1, -1};
@@ -238,9 +238,8 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
   if (venue_type_ids_buffer.empty()) {
     // No local venues found – fall back to cross-rank venues if any
     if (!cross_rank_venues_buffer.empty()) {
-      std::uniform_int_distribution<size_t> dist(
-          0, cross_rank_venues_buffer.size() - 1);
-      return cross_rank_venues_buffer[dist(rng)];
+      const auto index = bounded(rng, cross_rank_venues_buffer.size());
+      return cross_rank_venues_buffer[static_cast<size_t>(index)];
     }
     return {-1, -1};
   }
@@ -250,9 +249,8 @@ std::pair<VenueId, SubsetIndex> ActivityManager::selectVenue(
 
   // 3. Select a specific venue within that category
   const auto& filtered_venues = venues_by_id_buffer[chosen_type_id];
-  std::uniform_int_distribution<size_t> venue_dist(0,
-                                                   filtered_venues.size() - 1);
-  return filtered_venues[venue_dist(rng)];
+  const auto index = bounded(rng, filtered_venues.size());
+  return filtered_venues[static_cast<size_t>(index)];
 }
 
 std::optional<std::pair<VenueId, SubsetIndex>>

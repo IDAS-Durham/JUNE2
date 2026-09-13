@@ -458,7 +458,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
   // MPI-reproducible seeding: each person gets a per-person deterministic
   // decision based on their ID. This ensures the same person is always
   // seeded regardless of which rank owns them or the local population size.
-  uint64_t seed_name_hash = std::hash<std::string>{}(seed.name);
+  uint64_t seed_name_hash = hash_name(seed.name);
   uint64_t time_bits = static_cast<uint64_t>(current_simulation_time_ * 1000);
 
   for (auto& person : world_.people) {
@@ -516,7 +516,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
   std::unordered_map<PersonId, Person*> local_candidates;
 
   const uint64_t event_base =
-      mix_seed(base_seed_, std::hash<std::string>{}(seed.name));
+      mix_seed(base_seed_, hash_name(seed.name));
 
   for (const auto& unit_case : seed.structured_config.unit_cases) {
     ExactUnit unit;
@@ -535,7 +535,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
     units.push_back(unit);
     if (total_target <= 0) continue;
 
-    const uint64_t unit_hash = std::hash<std::string>{}(unit_case.unit_id);
+    const uint64_t unit_hash = hash_name(unit_case.unit_id);
     // One pass over the unit: the event's filters are evaluated once per
     // person, and each candidate's budgets are known together, which is what
     // makes the overlap below countable.
@@ -692,7 +692,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
   };
 
   const uint64_t event_base =
-      mix_seed(base_seed_, std::hash<std::string>{}(seed.name));
+      mix_seed(base_seed_, hash_name(seed.name));
 
   std::vector<ClusterUnit> units;
   std::vector<uint32_t> unit_of_slot;
@@ -716,7 +716,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     units.push_back(unit);
     if (total_target <= 0) continue;
 
-    const uint64_t unit_hash = std::hash<std::string>{}(unit_case.unit_id);
+    const uint64_t unit_hash = hash_name(unit_case.unit_id);
     std::map<VenueId, LocalHousehold> households;
     for (Person* person : world_.getPeopleInUnit(
              seed.structured_config.geo_level, unit_case.unit_id)) {
