@@ -1116,17 +1116,16 @@ void CoordinatedEncounterConfig::resolve(
 
   if (!enabled) return;
 
-  // Build the name→id mapping from both flat and mode-specific matrices.
-  // Mode-specific entries are valid matrix names for virtual encounters too.
+  // Build the name→id mapping over every name a virtual encounter can point
+  // at: flat matrices and per-mode matrices, which are keyed by the same kind
+  // of name (mode_matrices[name][mode]) and only split further by mode.
   {
     contact_matrices.matrix_name_to_id.clear();
     std::vector<std::string> sorted_names;
     for (auto& [name, _] : contact_matrices.matrices)
       sorted_names.push_back(name);
-    for (auto& [venue_name, mode_map] : contact_matrices.mode_matrices) {
-      (void)venue_name;
-      for (auto& [mode_name, _] : mode_map) sorted_names.push_back(mode_name);
-    }
+    for (auto& [name, _] : contact_matrices.mode_matrices)
+      sorted_names.push_back(name);
     std::sort(sorted_names.begin(), sorted_names.end());
     sorted_names.erase(std::unique(sorted_names.begin(), sorted_names.end()),
                        sorted_names.end());
@@ -1191,13 +1190,19 @@ void CoordinatedEncounterConfig::resolve(
     // Network resolution: looked up from the static network registry.
     enc.cached_network_idx = world.getNetworkTypeIndex(enc.network);
 
-    // Virtual venue type ID: use deterministic sorted registry
+    // Virtual venue type ID: use deterministic sorted registry. A name that
+    // matches no matrix is a config error; keeping whatever id was there
+    // would send this encounter's proposals to another encounter type.
     if (enc.is_virtual && !enc.virtual_contact_matrix.empty()) {
       auto id_it =
           contact_matrices.matrix_name_to_id.find(enc.virtual_contact_matrix);
-      if (id_it != contact_matrices.matrix_name_to_id.end()) {
-        enc.cached_virtual_venue_type_id = id_it->second;
+      if (id_it == contact_matrices.matrix_name_to_id.end()) {
+        throw std::runtime_error("coordinated encounter '" + enc.name +
+                                 "': virtual_contact_matrix '" +
+                                 enc.virtual_contact_matrix +
+                                 "' names no contact matrix");
       }
+      enc.cached_virtual_venue_type_id = id_it->second;
     }
   }
 }

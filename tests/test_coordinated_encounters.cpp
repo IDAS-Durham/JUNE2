@@ -645,8 +645,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "2a2. mode-only virtual contact matrix resolves "
-    "[Regression PR25]") {
+    "2a2. a virtual encounter whose contact matrix exists only per mode "
+    "resolves to that matrix's id") {
   auto tw = buildEncounterWorld(
       2, 0, "pub", "friendships", "romantic_encounters", true,
       "romantic_encounter", {"leisure"},
@@ -659,13 +659,17 @@ TEST_CASE(
   tw.config.contact_matrices
       .mode_matrices["romantic_encounter"]["physical_contact"] =
       ContactMatrix();
+  // The world builder already resolved once against a flat matrix of this
+  // name. Clear what that left behind so the id below can only come from
+  // resolving the per-mode matrix.
+  for (auto& enc : tw.config.coordinated_encounters.encounters)
+    enc.cached_virtual_venue_type_id = kUnknownVenueTypeId;
   tw.config.resolve(tw.world);
 
   const auto& def = tw.config.coordinated_encounters.encounters.front();
-  INFO("mode-only virtual matrix index: " << def.cached_virtual_venue_type_id);
-  INFO("matrix-name index contains romantic_encounter: "
-       << (tw.config.contact_matrices.matrix_name_to_id.count(
-               "romantic_encounter") != 0));
+  const auto& ids = tw.config.contact_matrices.matrix_name_to_id;
+  REQUIRE(ids.count("romantic_encounter") == 1);
+  CHECK(def.cached_virtual_venue_type_id == ids.at("romantic_encounter"));
   REQUIRE(def.cached_virtual_venue_type_id != kUnknownVenueTypeId);
 
   CoordinatedEncounterManager cem(tw.world, tw.config, 0);
@@ -685,6 +689,27 @@ TEST_CASE(
   CHECK(std::count_if(replies.begin(), replies.end(), [](const auto& reply) {
           return reply.status == ReplyStatus::ACCEPTED;
         }) > 0);
+}
+
+TEST_CASE(
+    "2a3. a virtual encounter naming no contact matrix is a config error") {
+  auto tw = buildEncounterWorld(
+      2, 0, "pub", "friendships", "romantic_encounters", true,
+      "romantic_encounter", {"leisure"},
+      InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 1}, 1.0, 1.0);
+  tw.config.contact_matrices.matrices.erase("romantic_encounter");
+  tw.config.contact_matrices.mode_matrices.erase("romantic_encounter");
+
+  bool threw = false;
+  try {
+    tw.config.resolve(tw.world);
+  } catch (const std::runtime_error& error) {
+    threw = true;
+    const std::string message = error.what();
+    CHECK(message.find("virtual_contact_matrix") != std::string::npos);
+    CHECK(message.find("romantic_encounter") != std::string::npos);
+  }
+  CHECK(threw);
 }
 
 TEST_CASE(
