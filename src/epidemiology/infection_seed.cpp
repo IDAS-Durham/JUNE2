@@ -404,7 +404,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
   // MPI-reproducible seeding: each person gets a per-person deterministic
   // decision based on their ID. This ensures the same person is always
   // seeded regardless of which rank owns them or the local population size.
-  uint64_t seed_name_hash = std::hash<std::string>{}(seed.name);
+  uint64_t seed_name_hash = hash_name(seed.name);
   uint64_t time_bits = static_cast<uint64_t>(current_simulation_time_ * 1000);
 
   for (auto& person : world_.people) {
@@ -473,11 +473,11 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
       }
 
       size_t start_idx = infected_ids.size();
-      uint64_t unit_hash = std::hash<std::string>{}(unit_case.unit_id);
+      uint64_t unit_hash = hash_name(unit_case.unit_id);
       SplitMix64 exact_rng(mix_seed(base_seed_, unit_hash, g_idx, 0xE4AC7));
       std::sort(candidates.begin(), candidates.end(),
                 [](const Person* a, const Person* b) { return a->id < b->id; });
-      std::shuffle(candidates.begin(), candidates.end(), exact_rng);
+      shuffle_det(candidates.begin(), candidates.end(), exact_rng);
       for (int i = 0; i < num_cases && i < (int)candidates.size(); ++i) {
         infectPerson(candidates[i], seed.trajectory_key, seed.start_symptom);
         if (candidates[i]->infection != nullptr) {
@@ -549,11 +549,13 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
         pool.push_back({hh_id, score / std::sqrt((double)members.size())});
     }
 
-    uint64_t cluster_unit_hash = std::hash<std::string>{}(unit_case.unit_id);
+    uint64_t cluster_unit_hash = hash_name(unit_case.unit_id);
     SplitMix64 cluster_rng(mix_seed(base_seed_, cluster_unit_hash, 0xC1057E8));
-    std::shuffle(pool.begin(), pool.end(), cluster_rng);
-    std::sort(pool.begin(), pool.end(),
-              [](const auto& a, const auto& b) { return a.second > b.second; });
+    shuffle_det(pool.begin(), pool.end(), cluster_rng);
+    // Stable, so households with equal scores keep their shuffled order.
+    std::stable_sort(
+        pool.begin(), pool.end(),
+        [](const auto& a, const auto& b) { return a.second > b.second; });
 
     // Per-unit clustered seed message removed; global count reported by
     // Simulator
