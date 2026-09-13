@@ -38,11 +38,11 @@ int householdSize(int h) {
 }
 
 // One geographical unit "U1" with 70 households, people numbered in household
-// order. With a single target group that matches everyone a household scores
-// size / sqrt(size), so the pool is three tied blocks: four households at 2,
-// fifty-nine at sqrt(2), seven at 1. The middle block is far larger than the
-// insertion-sort cutoff of any standard library, so an unstable sort would
-// reorder it.
+// order. With a single target group that matches everyone, a household's
+// density is matched^2 / size = size, so the ranking is three tied blocks: four
+// households at 4, fifty-nine at 2, seven at 1. Only the household key can
+// order a block, and the middle one is far larger than any standard library's
+// insertion-sort cutoff, so a comparator that left ties undecided would show.
 WorldState makeHouseholdWorld() {
   WorldState world;
   world.activity_names = {"residence"};
@@ -89,7 +89,10 @@ InfectionSeedConfig clusteredConfig(int cases) {
   seed.date_time = "2024-01-01 08:00";
   seed.structured_config.geo_level = "MGU";
   seed.structured_config.target_groups = {SeedTargetGroup{}};
-  seed.structured_config.unit_cases = {{"U1", {cases}}};
+  SeedBudget budget;
+  budget.cases = cases;
+  budget.eligible_target_groups = {0};
+  seed.structured_config.unit_cases = {{"U1", {budget}}};
 
   InfectionSeedConfig config;
   config.seeds.push_back(seed);
@@ -99,8 +102,7 @@ InfectionSeedConfig clusteredConfig(int cases) {
 }  // namespace
 
 TEST_CASE(
-    "Clustered seeding ranks tied households in their portable shuffled "
-    "order") {
+    "Clustered seeding breaks density ties by the portable household key") {
   WorldState world = makeHouseholdWorld();
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, clusteredConfig(26), nullptr, 12345);
@@ -108,13 +110,14 @@ TEST_CASE(
   const std::vector<PersonId> infected =
       seeder.seedInfections("2024-01-01 08:00", 0.0);
 
-  // Worked out independently of this code: FNV-1a of "U1" and the run seed
-  // key a SplitMix64, Fisher-Yates from the back reorders the households, and
-  // a stable ranking by score keeps that order within each tie. All four
-  // size-4 households come first, then the first five size-2 households of the
-  // shuffle. An unstable sort, or any change to the shuffle, moves these.
+  // Worked out independently of this code: FNV-1a of the seed name and of "U1"
+  // key each household through mix_seed, denser households go first, equal
+  // density falls back to the key, and members fill in person-id order. All
+  // four size-4 households come first, then the first five size-2 households
+  // by key. A comparator that let ties fall where the sort left them, or any
+  // change to the key, moves these.
   const std::vector<PersonId> expected = {
-      113, 114, 115, 116, 44, 45,  46,  47, 78, 79, 80, 81, 9,
-      10,  11,  12,  0,   1,  128, 129, 42, 43, 69, 70, 82, 83};
+      9,  10, 11, 12,  44,  45, 46, 47, 113, 114, 115, 116, 78,
+      79, 80, 81, 120, 121, 94, 95, 86, 87,  23,  24,  105, 106};
   CHECK(infected == expected);
 }

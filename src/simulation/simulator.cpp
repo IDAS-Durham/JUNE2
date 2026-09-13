@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "epidemiology/seeding/seed_shortfall.h"
 #include "loaders/calendar_event_loader.h"
 #include "loaders/catchment_rule_loader.h"
 #include "utils/event_logging/event_writer.h"
@@ -76,7 +77,7 @@ void printSeedAudit(const InfectionSeedConfig& seed_config) {
                 << s.structured_config.target_groups.size() << std::endl;
       for (const auto& uc : s.structured_config.unit_cases) {
         int total = 0;
-        for (int n : uc.cases_per_target_group) total += n;
+        for (const auto& budget : uc.budgets) total += budget.cases;
         std::cout << "        unit=" << uc.unit_id << "  cases=" << total
                   << std::endl;
       }
@@ -434,6 +435,13 @@ Simulator::Simulator(WorldState& world, Config& config,
   infection_seeder_ = std::make_unique<InfectionSeeder>(
       world_, disease_.get(), seed_config, &event_logger_,
       config_.simulation.random_seed);
+#ifdef USE_MPI
+  // A structured seed's count is global, so its candidates are pooled across
+  // ranks before the winners are chosen.
+  if (domain_mgr_) {
+    infection_seeder_->setOfferExchange(&seed_offer_exchange_);
+  }
+#endif
 
   if (getRank() == 0) {
     printStartupAudit(*disease_, config_.simulation.disease_file, seed_config);
@@ -798,6 +806,15 @@ void Simulator::applyInfectionSeeds(const std::string& current_datetime) {
                   MPI_COMM_WORLD);
   }
 #endif
+
+  // Every rank derives the same shortfall records from the same pooled offers,
+  // so rank 0 emits the block alone: one report per seeding step, not one per
+  // rank, and no collective to reach it.
+  if (getRank() == 0) {
+    std::string shortfall_report =
+        formatSeedShortfallReport(infection_seeder_->getSeedShortfalls());
+    if (!shortfall_report.empty()) std::cout << shortfall_report << std::flush;
+  }
 
   if (global_count > 0) {
     if (getRank() == 0) {
