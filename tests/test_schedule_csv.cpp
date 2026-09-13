@@ -230,6 +230,16 @@ TEST_CASE("ScheduleCSV - probabilities > 1.02 throw at load time") {
   CHECK_THROWS(cfg.resolveCSV(world));
 }
 
+TEST_CASE("ScheduleCSV - a filter the world cannot answer throws at load time") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  ScheduleConfig cfg = makeConfig({"worker", "retired"});
+  cfg.csv_path = writeCSV(
+      "filter.properties.no_such_property,schedule.worker,schedule.retired\n"
+      "x,0.5,0.5\n");
+
+  CHECK_THROWS_AS(cfg.resolveCSV(world), std::runtime_error);
+}
+
 TEST_CASE("ScheduleCSV - unknown schedule name throws at load time") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
   ScheduleConfig cfg = makeConfig({"worker", "retired"});

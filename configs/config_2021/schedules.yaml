@@ -1,7 +1,7 @@
 # Schedule Configuration - With Aligned Boundaries
 # All schedule types share the SAME time slot boundaries
 
-day_type_cycle: [weekday, weekday, weekday, weekday, weekday, weekend, weekend]  # Mon-Fri, Sat-Sun
+day_type_cycle: [weekend, weekend, weekday, weekday, weekday, weekday, weekday]  # Sat-Sun, Mon-Fri; start_date 2020-02-01 is a Saturday
 
 default_schedule_type: "has_primary_activity"
 

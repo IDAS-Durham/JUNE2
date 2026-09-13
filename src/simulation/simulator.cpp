@@ -456,6 +456,21 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Resolve infection seed selection criteria against the loaded world.
   infection_seeder_->resolveConfig(world_);
 
+  // Outcome tables are otherwise resolved lazily on first use, where a filter
+  // the world cannot answer would just never match. Resolve them now so that
+  // is an error, and report, rather than refuse, units the table names that
+  // this world does not have.
+  const std::vector<std::string> absent_units = disease_->resolve(world_);
+  if (rank == 0 && !absent_units.empty()) {
+    std::cout << "[outcome rates] " << absent_units.size()
+              << " filter value(s) name geographical units this world does "
+                 "not have; they match nobody here:"
+              << std::endl;
+    for (const std::string& line : absent_units) {
+      std::cout << "  " << line << std::endl;
+    }
+  }
+
   // Initialize vaccination manager
   vaccination_manager_ =
       std::make_unique<VaccinationManager>(world_, config_, &event_logger_);
@@ -496,6 +511,9 @@ Simulator::Simulator(WorldState& world, Config& config,
 
   // Set policy manager in activity manager
   activity_manager_.setPolicyManager(policy_manager_.get());
+
+  // Recovery and death end any policy freeze the person is under
+  epidemiology_->setPolicyManager(policy_manager_.get());
 
   // Precompute which policies apply to each person (based on selection
   // criteria) This must be done AFTER schedules are assigned (person properties
