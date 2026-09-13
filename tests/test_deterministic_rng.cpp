@@ -132,6 +132,81 @@ TEST_CASE("SplitMix64: works with std::shuffle") {
   CHECK(a == b);  // Same seed → same shuffle
 }
 
+TEST_CASE("Portable bounded draws stay within bounds") {
+  SplitMix64 rng(mix_seed(42, 600));
+  for (uint64_t n : {0ULL, 1ULL, 2ULL, 3ULL, 17ULL, 1000ULL}) {
+    for (int i = 0; i < 1000; ++i) {
+      CHECK(bounded(rng, n) < (n == 0 ? 1 : n));
+    }
+  }
+}
+
+TEST_CASE("Portable shuffle is repeatable") {
+  std::vector<int> a = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+  std::vector<int> b = a;
+  SplitMix64 rng1(mix_seed(42, 601));
+  SplitMix64 rng2(mix_seed(42, 601));
+
+  shuffle_det(a.begin(), a.end(), rng1);
+  shuffle_det(b.begin(), b.end(), rng2);
+
+  CHECK(a == b);
+  std::sort(a.begin(), a.end());
+  CHECK(a == std::vector<int>({0, 1, 2, 3, 4, 5, 6, 7, 8, 9}));
+}
+
+// The values below are fixed by the algorithms, not by the standard library,
+// so every build must produce exactly these. They were worked out
+// independently of this code. Linux (libstdc++) and macOS (libc++) CI both
+// running these is the check that the two builds agree.
+
+TEST_CASE("hash_name matches the published FNV-1a 64-bit values") {
+  CHECK(hash_name(std::string("")) == 0xCBF29CE484222325ULL);
+  CHECK(hash_name(std::string("a")) == 0xAF63DC4C8601EC8CULL);
+  CHECK(hash_name(std::string("foobar")) == 0x85944171F73967E8ULL);
+  CHECK(hash_name(std::string("E02001234")) == 0x36D2A217FB8894B2ULL);
+}
+
+TEST_CASE("bounded draws a fixed sequence, rejections included") {
+  // n = 2^63 + 1 rejects almost half of all raw draws, so this sequence also
+  // pins down how many raw draws each rejection consumes.
+  const uint64_t half = (1ULL << 63) + 1;
+  const std::vector<uint64_t> ns = {1,    2,    3,    7,    10,   1000,
+                                    half, half, half, half, half, half,
+                                    half, half, 6,    6};
+  const std::vector<uint64_t> expected = {0,
+                                          0,
+                                          0,
+                                          5,
+                                          0,
+                                          363,
+                                          6217189988962137646ULL,
+                                          2262534019502804546ULL,
+                                          7959005890829367068ULL,
+                                          8850488307750713623ULL,
+                                          3405751836678233477ULL,
+                                          7014104804809742358ULL,
+                                          7224149396417083062ULL,
+                                          6938261716188683755ULL,
+                                          3,
+                                          2};
+  SplitMix64 rng(12345);
+  std::vector<uint64_t> drawn;
+  for (uint64_t n : ns) drawn.push_back(bounded(rng, n));
+  CHECK(drawn == expected);
+}
+
+TEST_CASE("shuffle_det produces a fixed permutation") {
+  std::vector<int> v(40);
+  for (int i = 0; i < 40; ++i) v[i] = i;
+  SplitMix64 rng(mix_seed(42, 601));
+  shuffle_det(v.begin(), v.end(), rng);
+  CHECK(v == std::vector<int>({24, 14, 19, 30, 27, 10, 39, 9,  5,  35,
+                               12, 37, 34, 17, 7,  29, 3,  21, 36, 25,
+                               2,  15, 28, 18, 31, 22, 0,  11, 23, 8,
+                               20, 33, 1,  4,  38, 32, 13, 26, 6,  16}));
+}
+
 TEST_CASE("make_rng convenience function") {
   auto rng1 = make_rng(42, 100, 200);
   auto rng2 = make_rng(42, 100, 200);
