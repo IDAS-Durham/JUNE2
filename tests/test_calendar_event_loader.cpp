@@ -119,6 +119,20 @@ TEST_CASE("loader throws on an unknown schedule_name") {
       std::runtime_error);
 }
 
+TEST_CASE("loader throws on an attendee filter the world cannot answer") {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+  std::string csv =
+      "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
+      "catchment_rule_id,duration_days,compliance_rate,category,"
+      "filter.properties.no_such_property\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,fair,x\n";
+  std::istringstream input(csv);
+  CHECK_THROWS_AS(
+      CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv"),
+      std::runtime_error);
+}
+
 TEST_CASE("loader throws on a malformed row (missing required columns)") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
   world.schedule_type_names = {"Fair_day_trip"};
