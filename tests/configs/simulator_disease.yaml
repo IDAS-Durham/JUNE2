@@ -1,0 +1,132 @@
+# Disease for the Simulator tests. It has no outcome-rates table: each
+# trajectory carries a fixed selection probability instead, so these tests do
+# not depend on what the production tables filter on.
+disease:
+  name: test_disease
+  settings:
+    fatality_stage:
+      - name: dead_home
+    recovered_stage:
+      - name: recovered
+    hospitalised_stage:
+      - name: hospitalised
+  symptom_tags:
+    - name: recovered
+      value: -2
+    - name: healthy
+      value: -1
+    - name: exposed
+      value: 0
+    - name: asymptomatic
+      value: 1
+    - name: mild
+      value: 2
+    - name: hospitalised
+      value: 3
+    - name: dead_home
+      value: 4
+
+  trajectories:
+    - description: "exposed => asymptomatic => recovered"
+      selection_key: asymptomatic
+      probability: 0.5
+      severity: 0.0
+      infectiousness_factor: 0.5
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: constant
+            value: 2.0
+        - symptom_tag: asymptomatic
+          completion_time:
+            type: constant
+            value: 5.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+    - description: "exposed => mild => recovered"
+      selection_key: mild
+      probability: 0.4
+      severity: 0.2
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: constant
+            value: 2.0
+        - symptom_tag: mild
+          completion_time:
+            type: constant
+            value: 5.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+    - description: "exposed => mild => hospitalised => recovered"
+      selection_key: hospital
+      probability: 0.08
+      severity: 0.7
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: constant
+            value: 2.0
+        - symptom_tag: mild
+          completion_time:
+            type: constant
+            value: 2.0
+        - symptom_tag: hospitalised
+          completion_time:
+            type: constant
+            value: 5.0
+        - symptom_tag: recovered
+          completion_time:
+            type: constant
+            value: 0.0
+    - description: "exposed => mild => dead at home"
+      selection_key: home_ifr
+      probability: 0.02
+      severity: 1.0
+      stages:
+        - symptom_tag: exposed
+          completion_time:
+            type: constant
+            value: 2.0
+        - symptom_tag: mild
+          completion_time:
+            type: constant
+            value: 3.0
+        - symptom_tag: dead_home
+          completion_time:
+            type: constant
+            value: 0.0
+
+  transmission:
+    mode: Trajectory-Driven
+    type: gamma
+    max_infectiousness:
+      type: lognormal
+      s: 0.5
+      loc: 0.0
+      scale: 1
+    shape:
+      type: normal
+      loc: 1.56
+      scale: 0.08
+    rate:
+      type: normal
+      loc: 0.53
+      scale: 0.03
+    shift:
+      type: normal
+      loc: -2.12
+      scale: 0.1
+    modes:
+    - name: respiratory
+      mode_transmissibility_multiplier: 1.0
+    - name: physical_contact
+      mode_transmissibility_multiplier: 1.0
+
+  immunity:
+    level: 0.95
+    waning_rate: 0.001

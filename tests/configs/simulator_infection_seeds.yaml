@@ -1,0 +1,12 @@
+# Seeds for the Simulator tests: one uniform seed on the tests' own start
+# date, so a short run actually infects someone.
+global_parameters:
+  default_seed_strength: 1.0
+  base_cases_per_capita: 0.1
+
+infection_seeds:
+  - name: "test_seeding"
+    type: "uniform"
+    date: "2020-01-01 08:00"
+    parameters:
+      cases_per_capita_multiplier: 2.0
