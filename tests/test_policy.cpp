@@ -853,8 +853,8 @@ TEST_CASE("ActiveWindow - half-open in both directions") {
   CHECK_FALSE(window.contains(10.0));
 }
 
-TEST_CASE("ActiveWindow - the no-end sentinel never closes") {
-  ActiveWindow window{5.0, -1.0};
+TEST_CASE("ActiveWindow - an empty end never closes") {
+  ActiveWindow window{5.0, std::nullopt};
 
   CHECK_FALSE(window.contains(4.99));
   CHECK(window.contains(5.0));
@@ -1118,14 +1118,15 @@ TEST_CASE("Window loading - a symptom policy reads the same four keys") {
         "2020-02-01");
 
     CHECK(window.start_time == doctest::Approx(40.0));
-    CHECK(window.end_time == doctest::Approx(100.0));
+    REQUIRE(window.end_time.has_value());
+    CHECK(*window.end_time == doctest::Approx(100.0));
   }
 
   SUBCASE("declaring neither is in force for the whole run") {
     ActiveWindow window = loadSymptomWindow("", "2020-02-01");
 
     CHECK(window.start_time == doctest::Approx(0.0));
-    CHECK(window.end_time == doctest::Approx(-1.0));
+    CHECK_FALSE(window.end_time.has_value());
   }
 }
 
@@ -1137,38 +1138,62 @@ TEST_CASE("Window loading - dates convert against the simulation start date") {
 
   // February 2020 has 29 days, so 12 March is day 40.
   CHECK(window.start_time == doctest::Approx(40.0));
-  CHECK(window.end_time == doctest::Approx(100.0));
+  REQUIRE(window.end_time.has_value());
+  CHECK(*window.end_time == doctest::Approx(100.0));
 }
 
-TEST_CASE("Window loading - numeric keys are the fallback, not the winner") {
-  SUBCASE("used when the date keys are absent") {
+TEST_CASE("Window loading - each bound is stated exactly one way") {
+  SUBCASE("numeric keys work when the date keys are absent") {
     ActiveWindow window = loadTemporalWindow(
         "      start_time: 7.0\n"
         "      end_time: 21.0\n",
         "2020-02-01");
 
     CHECK(window.start_time == doctest::Approx(7.0));
-    CHECK(window.end_time == doctest::Approx(21.0));
+    REQUIRE(window.end_time.has_value());
+    CHECK(*window.end_time == doctest::Approx(21.0));
   }
 
-  SUBCASE("ignored when the date keys are present") {
-    ActiveWindow window = loadTemporalWindow(
-        "      start_date: \"2020-03-12\"\n"
-        "      start_time: 7.0\n"
-        "      end_date: \"2020-05-11\"\n"
-        "      end_time: 21.0\n",
-        "2020-02-01");
-
-    CHECK(window.start_time == doctest::Approx(40.0));
-    CHECK(window.end_time == doctest::Approx(100.0));
+  SUBCASE("a date and a number for the same bound is an error") {
+    CHECK_THROWS_AS(loadTemporalWindow("      start_date: \"2020-03-12\"\n"
+                                       "      start_time: 7.0\n",
+                                       "2020-02-01"),
+                    std::runtime_error);
+    CHECK_THROWS_AS(loadTemporalWindow("      end_date: \"2020-05-11\"\n"
+                                       "      end_time: 21.0\n",
+                                       "2020-02-01"),
+                    std::runtime_error);
   }
 
   SUBCASE("declaring neither is in force for the whole run") {
     ActiveWindow window = loadTemporalWindow("", "2020-02-01");
 
     CHECK(window.start_time == doctest::Approx(0.0));
-    CHECK(window.end_time == doctest::Approx(-1.0));
+    CHECK_FALSE(window.end_time.has_value());
   }
+}
+
+TEST_CASE("Window loading - an end the day before the run starts is a real day") {
+  // 31 January is day -1 against a 1 February start. It used to collide with
+  // the "no end" marker and leave the policy in force for the whole run.
+  ActiveWindow window =
+      loadTemporalWindow("      end_date: \"2020-01-31\"\n", "2020-02-01");
+
+  REQUIRE(window.end_time.has_value());
+  CHECK(*window.end_time == doctest::Approx(-1.0));
+  CHECK_FALSE(window.contains(0.0));
+  CHECK_FALSE(window.contains(30.0));
+}
+
+TEST_CASE("Window loading - a window that ends before it starts is an error") {
+  CHECK_THROWS_AS(loadTemporalWindow("      start_date: \"2020-03-12\"\n"
+                                     "      end_date: \"2020-03-01\"\n",
+                                     "2020-02-01"),
+                  std::runtime_error);
+  CHECK_THROWS_AS(loadTemporalWindow("      start_time: 10.0\n"
+                                     "      end_time: 10.0\n",
+                                     "2020-02-01"),
+                  std::runtime_error);
 }
 
 TEST_CASE("Adjacent symptom windows never both hold the same slot") {
@@ -1237,7 +1262,7 @@ TEST_CASE("Successive symptom windows tighten to the new rate, not past it") {
 
   SymptomPolicy second_instruction = makeFreezePolicy({}, 0.8);
   second_instruction.name = "second_instruction";
-  second_instruction.window = ActiveWindow{10.0, -1.0};
+  second_instruction.window = ActiveWindow{10.0, std::nullopt};
   policy_manager.addSymptomPolicy(second_instruction);
 
   policy_manager.resolveAll(disease);

@@ -207,8 +207,22 @@ inline PolicyAction PolicyLoader::loadPolicyAction(const YAML::Node& node) {
 inline ActiveWindow PolicyLoader::loadActiveWindow(
     const YAML::Node& node, const std::string& simulation_start_date) {
   ActiveWindow window;
+  const std::string policy_name =
+      node["name"] ? node["name"].as<std::string>() : std::string("<unnamed>");
 
-  // Start: a date wins over a raw offset; declaring neither starts immediately.
+  // One way to state each bound. With both, one would quietly win and the
+  // other would be dead config.
+  if (node["start_date"] && node["start_time"]) {
+    throw std::runtime_error("policy '" + policy_name +
+                             "' declares both start_date and start_time; "
+                             "give one");
+  }
+  if (node["end_date"] && node["end_time"]) {
+    throw std::runtime_error("policy '" + policy_name +
+                             "' declares both end_date and end_time; give one");
+  }
+
+  // Start: declaring neither starts immediately.
   if (node["start_date"]) {
     std::tm sim_start_tm = parseDate(simulation_start_date);
     std::tm policy_start_tm = parseDate(node["start_date"].as<std::string>());
@@ -227,6 +241,18 @@ inline ActiveWindow PolicyLoader::loadActiveWindow(
         static_cast<double>(daysBetween(sim_start_tm, policy_end_tm));
   } else if (node["end_time"]) {
     window.end_time = node["end_time"].as<double>();
+  }
+
+  // An end with no stated start is fine even if it falls before the run: the
+  // policy is simply never in force. An end at or before a stated start is a
+  // window nobody can be in, which is a config mistake.
+  const bool start_stated = node["start_date"] || node["start_time"];
+  if (start_stated && window.end_time &&
+      *window.end_time <= window.start_time) {
+    throw std::runtime_error(
+        "policy '" + policy_name + "' ends on day " +
+        std::to_string(*window.end_time) + ", at or before its start on day " +
+        std::to_string(window.start_time));
   }
 
   return window;

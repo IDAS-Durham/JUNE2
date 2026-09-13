@@ -344,13 +344,15 @@ struct PolicyAction {
 // NOT in force. This mirrors the simulation's own window (`day < total_days_`,
 // simulator.cpp), so an end_date of 2020-03-12 means "through 11 March" and
 // adjacent windows abut exactly, with no slot where both are active.
+// No end is an empty end_time, not a magic value: any number, -1 included, is
+// a real day (an end_date one day before the simulation starts is day -1).
 struct ActiveWindow {
-  double start_time = 0.0;  // days from simulation start
-  double end_time = -1.0;   // -1 = no end
+  double start_time = 0.0;              // days from simulation start
+  std::optional<double> end_time;       // empty = no end
 
   bool contains(double current_time) const {
     if (current_time < start_time) return false;
-    if (end_time != -1.0 && current_time >= end_time) return false;
+    if (end_time && current_time >= *end_time) return false;
     return true;
   }
 };
