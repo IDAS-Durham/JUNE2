@@ -143,6 +143,7 @@ void SelectionCriterion::resolve(const WorldState& world) {
 
 void SelectionCriterion::buildGeoAncestorMask(const WorldState& world) const {
   const std::string& level_name = cached_sub_property;
+  absent_geo_unit_names.clear();
 
   auto level_it = std::find(world.geo_level_names.begin(),
                             world.geo_level_names.end(), level_name);
@@ -183,6 +184,11 @@ void SelectionCriterion::buildGeoAncestorMask(const WorldState& world) const {
                  unit.level_id < world.geo_level_names.size()) {
         level_of_other_match = world.geo_level_names[unit.level_id];
       }
+    }
+    if (matches.empty() && level_of_other_match.empty() &&
+        allow_absent_geo_units) {
+      absent_geo_unit_names.push_back(target_name);
+      continue;
     }
     if (matches.empty()) {
       geo_resolve_error = "no geographical unit named '" + target_name +
@@ -1116,6 +1122,25 @@ void CoordinatedEncounterConfig::resolve(
 
   if (!enabled) return;
 
+  // Frequency-group CSVs are read before the world exists, so their filter
+  // rows are checked here. Sorted, so the first error reported is the same
+  // on every build.
+  {
+    std::vector<std::string> group_names;
+    for (const auto& [name, _] : frequency_groups) group_names.push_back(name);
+    std::sort(group_names.begin(), group_names.end());
+    for (const std::string& name : group_names) {
+      int row_num = 0;
+      for (FrequencyRow& row : frequency_groups.at(name).rows) {
+        ++row_num;
+        for (SelectionCriterion& c : row.criteria) {
+          c.resolveOrThrow(world, "frequency_group '" + name + "' row " +
+                                      std::to_string(row_num));
+        }
+      }
+    }
+  }
+
   // Build the name→id mapping over every name a virtual encounter can point
   // at: flat matrices and per-mode matrices, which are keyed by the same kind
   // of name (mode_matrices[name][mode]) and only split further by mode.
@@ -1269,6 +1294,10 @@ void ScheduleConfig::resolveCSV(const WorldState& world) {
     ++row_num;
     ScheduleAssignmentRow row;
     row.criteria = r.criteria;
+    for (SelectionCriterion& c : row.criteria) {
+      c.resolveOrThrow(world, "schedule CSV '" + csv_path + "' row " +
+                                  std::to_string(row_num));
+    }
 
     // Geo filter: resolve (geo_level, geo_unit) → "in" criterion over SGU ids
     std::string geo_level_val = get(r, "geo_level");

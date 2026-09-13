@@ -51,7 +51,19 @@ struct SelectionCriterion {
   // path dispatch in resolve() so the two cannot drift.
   static bool comparesAgainstUnitNames(const std::string& property_path);
 
+  // Reference tables can name geographical units a given world does not have,
+  // e.g. a national table run on a regional world. With this set, a
+  // geo_unit.<LEVEL> name found at no level at all is recorded instead of being
+  // a resolve error, and matches nobody. A name that exists at a different
+  // level is still an error: that is a misspelt level, not a missing place.
+  bool allow_absent_geo_units = false;
+  const std::vector<std::string>& absentGeoUnitNames() const {
+    return absent_geo_unit_names;
+  }
+
  private:
+  mutable std::vector<std::string> absent_geo_unit_names;
+
   enum class PropertyType {
     UNKNOWN,
     AGE,

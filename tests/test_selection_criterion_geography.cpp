@@ -9,6 +9,8 @@
 
 #include "core/config.h"
 #include "core/world_state.h"
+#include "epidemiology/disease.h"
+#include "epidemiology/infection_seed.h"
 #include "doctest.h"
 #include "loaders/config_loader_detail.h"
 #include "loaders/policy_loader.h"
@@ -66,7 +68,102 @@ static std::string resolveCapturingStderr(SelectionCriterion& criterion,
   return captured.str();
 }
 
+static SelectionCriterion xlguCriterion(const std::string& op,
+                                        PropertyValue value) {
+  SelectionCriterion criterion;
+  criterion.property_path = "geo_unit.XLGU";
+  criterion.operator_type = op;
+  criterion.value = std::move(value);
+  return criterion;
+}
+
 }  // namespace
+
+TEST_CASE("a unit name found at no level is an error unless absent units are allowed") {
+  WorldState world = buildNationWorld();
+
+  SUBCASE("not allowed: resolving throws") {
+    SelectionCriterion criterion = xlguCriterion("==", std::string("Atlantis"));
+    CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"), std::runtime_error);
+  }
+
+  SUBCASE("allowed: recorded, and matches nobody") {
+    SelectionCriterion criterion = xlguCriterion("==", std::string("Atlantis"));
+    criterion.allow_absent_geo_units = true;
+    CHECK_NOTHROW(criterion.resolveOrThrow(world, "test"));
+    CHECK(criterion.absentGeoUnitNames() == std::vector<std::string>{"Atlantis"});
+    for (const Person& person : world.people) {
+      CHECK_FALSE(criterion.evaluate(person, &world));
+    }
+  }
+
+  SUBCASE("allowed: the names that do exist still select") {
+    SelectionCriterion criterion =
+        xlguCriterion("in", std::vector<std::string>{"Atlantis", "Wales"});
+    criterion.allow_absent_geo_units = true;
+    criterion.resolveOrThrow(world, "test");
+    CHECK(criterion.absentGeoUnitNames() == std::vector<std::string>{"Atlantis"});
+    CHECK_FALSE(criterion.evaluate(world.people[0], &world));
+    CHECK(criterion.evaluate(world.people[2], &world));
+  }
+}
+
+TEST_CASE("a unit name at a different level is an error even when absent units are allowed") {
+  WorldState world = buildNationWorld();
+  // S00000001 exists, but at SGU: that is a misspelt level, not a missing place.
+  SelectionCriterion criterion = xlguCriterion("==", std::string("S00000001"));
+  criterion.allow_absent_geo_units = true;
+  CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"), std::runtime_error);
+}
+
+TEST_CASE("an outcome table reports rows naming units the world lacks, and those rows match nobody") {
+  WorldState world = buildNationWorld();
+
+  OutcomeRates rates;
+  OutcomeRow elsewhere;
+  elsewhere.criteria = {xlguCriterion("==", std::string("Atlantis"))};
+  elsewhere.probabilities = {{"mild", 0.9}};
+  OutcomeRow everyone;
+  everyone.probabilities = {{"mild", 0.4}};
+  rates.rows = {elsewhere, everyone};
+
+  const std::vector<std::string> absent = rates.resolve(world);
+  REQUIRE(absent.size() == 1);
+  CHECK(absent[0].find("row 0") != std::string::npos);
+  CHECK(absent[0].find("Atlantis") != std::string::npos);
+
+  // First match wins, so a row that matched anyone would give 0.9.
+  CHECK(rates.getRate(world.people[0], &world, "mild") == doctest::Approx(0.4));
+}
+
+TEST_CASE("an outcome table row the world cannot answer is an error") {
+  WorldState world = buildNationWorld();
+  SelectionCriterion unknown;
+  unknown.property_path = "properties.no_such_property";
+  unknown.operator_type = "==";
+  unknown.value = std::string("x");
+
+  OutcomeRates rates;
+  OutcomeRow row;
+  row.criteria = {unknown};
+  rates.rows = {row};
+  CHECK_THROWS_AS(rates.resolve(world), std::runtime_error);
+}
+
+TEST_CASE("an infection seed attribute filter the world cannot answer is an error") {
+  WorldState world = buildNationWorld();
+  SelectionCriterion unknown;
+  unknown.property_path = "properties.no_such_property";
+  unknown.operator_type = "==";
+  unknown.value = std::string("x");
+
+  InfectionSeedEvent seed;
+  seed.name = "seed_with_bad_filter";
+  seed.attribute_filters = {unknown};
+  InfectionSeedConfig config;
+  config.seeds = {seed};
+  CHECK_THROWS_AS(config.resolve(world), std::runtime_error);
+}
 
 TEST_CASE("geo_unit.<LEVEL> == name selects people under that ancestor") {
   WorldState world = buildNationWorld();

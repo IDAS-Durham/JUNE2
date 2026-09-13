@@ -3133,6 +3133,23 @@ static void installFrequencyGroup(EncounterTestWorld& tw,
   tw.config.coordinated_encounters.frequency_groups[group_name] = fg;
 }
 
+TEST_CASE("freq_group — a row filter the world cannot answer is a config error") {
+  auto tw = buildEncounterWorld(
+      2, 0, "pub", "friendships", "romantic_encounters", true,
+      "romantic_encounter", {"leisure"},
+      InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 1}, 1.0, 1.0);
+  installFrequencyGroup(tw, "G", 1.0);
+
+  SelectionCriterion unknown;
+  unknown.property_path = "properties.no_such_property";
+  unknown.operator_type = "==";
+  unknown.value = std::string("x");
+  tw.config.coordinated_encounters.frequency_groups["G"].rows[0].criteria = {
+      unknown};
+
+  CHECK_THROWS_AS(tw.config.resolve(tw.world), std::runtime_error);
+}
+
 TEST_CASE(
     "freq_group — two encounter types sharing one group cap at ONE proposal "
     "per person per day") {
