@@ -357,3 +357,66 @@ TEST_CASE("bulk CSV seeds each criteria set its own count") {
   CHECK(children == 10);
   CHECK(elders == 4);
 }
+
+// =============================================================================
+// Case counts and seed strength are numbers of people: whole, zero or more
+// =============================================================================
+
+TEST_CASE("a negative case count is refused at load") {
+  CHECK_THROWS_AS(loadYaml(R"(
+infection_seeds:
+  - name: "negative"
+    type: "exact"
+    date: "2020-02-01 08:00"
+    geo_level: "MGU"
+    parameters:
+      age_groups: ["0-17", "18-64"]
+      units:
+        "U1": [5, -2]
+)"),
+                  std::runtime_error);
+}
+
+TEST_CASE("a fractional case count is refused at load, not truncated") {
+  CHECK_THROWS_AS(loadYaml(R"(
+infection_seeds:
+  - name: "fractional"
+    type: "exact"
+    date: "2020-02-01 08:00"
+    geo_level: "MGU"
+    parameters:
+      units:
+        "U1": 2.7
+)"),
+                  std::runtime_error);
+}
+
+TEST_CASE("a negative seed strength is refused at load") {
+  CHECK_THROWS_AS(loadYaml(R"(
+infection_seeds:
+  - name: "weakened"
+    type: "exact"
+    date: "2020-02-01 08:00"
+    geo_level: "MGU"
+    parameters:
+      seed_strength: -1.0
+      units:
+        "U1": 5
+)"),
+                  std::runtime_error);
+}
+
+TEST_CASE("a zero case count is a valid, empty budget") {
+  auto config = loadYaml(R"(
+infection_seeds:
+  - name: "empty"
+    type: "exact"
+    date: "2020-02-01 08:00"
+    geo_level: "MGU"
+    parameters:
+      units:
+        "U1": 0
+)");
+  REQUIRE(config.seeds.size() == 1);
+  CHECK(config.seeds[0].structured_config.unit_cases[0].budgets[0].cases == 0);
+}

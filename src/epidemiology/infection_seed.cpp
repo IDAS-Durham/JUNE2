@@ -304,6 +304,13 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
           auto params = seed_node["parameters"];
           seed.seed_strength = params["seed_strength"].as<double>(
               config.global_params.default_seed_strength);
+          // A negative strength turns every budget negative, which undercuts
+          // the offer depth the exact and clustered paths rely on.
+          if (!std::isfinite(seed.seed_strength) || seed.seed_strength < 0.0) {
+            throw std::runtime_error(
+                "Infection seed '" + seed.name + "': seed_strength " +
+                std::to_string(seed.seed_strength) + " must be zero or more");
+          }
 
           if (params["attribute_filters"]) {
             auto filters = params["attribute_filters"];
@@ -350,6 +357,24 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
                     seed.structured_config.target_groups.size();
                 UnitCases uc;
                 uc.unit_id = entry.first.as<std::string>();
+                // A count is a number of people: whole, and zero or more. A
+                // fraction used to be truncated without a word, and a negative
+                // count shrinks the depth every rank offers to, so the winners
+                // could depend on the rank count.
+                auto parseCases = [&](const YAML::Node& node) {
+                  const double raw = node.as<double>();
+                  if (!std::isfinite(raw) || raw < 0.0 ||
+                      raw != std::floor(raw) ||
+                      raw > static_cast<double>(
+                                std::numeric_limits<int>::max())) {
+                    throw std::runtime_error(
+                        "Infection seed '" + seed.name + "', unit '" +
+                        uc.unit_id + "': case count '" +
+                        node.as<std::string>() +
+                        "' must be a whole number, zero or more");
+                  }
+                  return static_cast<int>(raw);
+                };
                 if (entry.second.IsSequence()) {
                   // A per-group list: each declared group gets its own budget.
                   if (entry.second.size() != group_count) {
@@ -363,7 +388,7 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
                   size_t group_index = 0;
                   for (const auto& cases : entry.second) {
                     SeedBudget budget;
-                    budget.cases = static_cast<int>(cases.as<double>());
+                    budget.cases = parseCases(cases);
                     budget.eligible_target_groups = {group_index++};
                     uc.budgets.push_back(budget);
                   }
@@ -371,7 +396,7 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
                   // A scalar: one budget, drawn from anyone matching any
                   // declared group (or from anyone, if none are declared).
                   SeedBudget budget;
-                  budget.cases = static_cast<int>(entry.second.as<double>());
+                  budget.cases = parseCases(entry.second);
                   budget.eligible_target_groups.resize(group_count);
                   std::iota(budget.eligible_target_groups.begin(),
                             budget.eligible_target_groups.end(), size_t{0});
