@@ -12,7 +12,7 @@ TEST_CASE("Simulator Initialization") {
   Config config;
   config.simulation.start_date = "2020-01-01";
   config.simulation.end_date = "2020-01-02";  // 1 day simulation
-  config.simulation.disease_file = "configs/config_2021/disease.yaml";
+  config.simulation.disease_file = "tests/configs/simulator_disease.yaml";
 
   // Minimal valid config setup for Simulator
   TimeSlot slot;
@@ -38,7 +38,7 @@ TEST_CASE("Simulator Initialization") {
 
   // Initialise Simulator
   Simulator sim(world, config, nullptr,
-                "configs/config_2021/infection_seeds.yaml", "test_sim.h5");
+                "tests/configs/simulator_infection_seeds.yaml", "test_sim.h5");
 
   CHECK(sim.getEventLogger() != nullptr);
 }
@@ -106,7 +106,7 @@ TEST_CASE("Simulator run() multi-day smoke test") {
   Config config;
   config.simulation.start_date = "2020-01-01";
   config.simulation.end_date = "2020-01-04";  // 3 day simulation
-  config.simulation.disease_file = "configs/config_2021/disease.yaml";
+  config.simulation.disease_file = "tests/configs/simulator_disease.yaml";
   config.simulation.random_seed = 12345;
 
   // Schedule: single slot per day, everyone does primary_activity
@@ -141,7 +141,7 @@ TEST_CASE("Simulator run() multi-day smoke test") {
 
   // Build and run simulator
   Simulator sim(world, config, nullptr,
-                "configs/config_2021/infection_seeds.yaml", "test_sim_run.h5");
+                "tests/configs/simulator_infection_seeds.yaml", "test_sim_run.h5");
 
   // This is the critical test: run() should not crash
   REQUIRE_NOTHROW(sim.run());
