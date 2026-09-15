@@ -29,7 +29,7 @@ disease:
       value: 5
 
   outcome_rates_csv:
-    file: ../../data/infection_outcome_rates_spanishflu_mapped.csv
+    file: ../../data/infection_outcome_rates_spanishflu.csv
     age_column_index: 0
     populations:
       gp:

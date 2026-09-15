@@ -35,7 +35,8 @@ class DiseaseLoader {
                                                  const std::string& yaml_path);
   static void loadNaturalImmunity(const YAML::Node& config,
                                   TransmissionParams& transmission);
-  static void validateOutcomeRowSums(const OutcomeRates& outcome_rates);
+  static void validateOutcomeRowSums(const OutcomeRates& outcome_rates,
+                                     const YAML::Node& config);
 
   static void parseDepositionStages(
       const YAML::Node& mode_node,
