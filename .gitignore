@@ -13,6 +13,7 @@ outputs/
 *.csv
 !data/infection_outcome_rates_covid19.csv
 !data/infection_outcome_rates_plague.csv
+!data/infection_outcome_rates_spanishflu.csv
 memory_bench.log
 *.stdout
 .vscode/

@@ -531,25 +531,96 @@ void DiseaseLoader::loadNaturalImmunity(const YAML::Node& config,
                                    : 0.001;
 }
 
-void DiseaseLoader::validateOutcomeRowSums(const OutcomeRates& outcome_rates) {
+void DiseaseLoader::validateOutcomeRowSums(const OutcomeRates& outcome_rates,
+                                           const YAML::Node& config) {
+  std::vector<std::string> populations;
+  std::vector<std::string> sexes;
+  std::vector<std::string> outcomes;
+
+  const YAML::Node& csv_node = config["outcome_rates_csv"];
+  if (csv_node && csv_node.IsMap()) {
+    if (csv_node["populations"] && csv_node["populations"].IsMap()) {
+      for (const auto& population : csv_node["populations"]) {
+        populations.push_back(population.first.as<std::string>());
+      }
+    }
+    if (csv_node["sexes"] && csv_node["sexes"].IsSequence()) {
+      for (const auto& sex : csv_node["sexes"]) {
+        sexes.push_back(sex.as<std::string>());
+      }
+    }
+    if (csv_node["outcomes"] && csv_node["outcomes"].IsMap()) {
+      for (const auto& outcome : csv_node["outcomes"]) {
+        outcomes.push_back(outcome.first.as<std::string>());
+      }
+    }
+  }
+
+  // The declared population/outcome/sex names describe the wide column
+  // convention: <population>_<outcome>_<sex>. Only select this path when at
+  // least one declared wide column is present, so configs whose tables use
+  // filter.* columns retain the legacy per-row validation.
+  bool wide_layout = false;
+  if (!populations.empty() && !sexes.empty() && !outcomes.empty()) {
+    for (const auto& population : populations) {
+      for (const auto& sex : sexes) {
+        for (const auto& outcome : outcomes) {
+          const std::string column = population + "_" + outcome + "_" + sex;
+          for (const auto& row : outcome_rates.rows) {
+            if (row.probabilities.count(column) > 0) {
+              wide_layout = true;
+              break;
+            }
+          }
+          if (wide_layout) break;
+        }
+        if (wide_layout) break;
+      }
+      if (wide_layout) break;
+    }
+  }
+
   for (size_t row_i = 0; row_i < outcome_rates.rows.size(); ++row_i) {
-    double row_sum = 0.0;
-    for (const auto& [key, prob] : outcome_rates.rows[row_i].probabilities) {
-      row_sum += prob;
+    const auto& probabilities = outcome_rates.rows[row_i].probabilities;
+    if (wide_layout) {
+      for (const auto& population : populations) {
+        for (const auto& sex : sexes) {
+          double group_sum = 0.0;
+          bool has_value = false;
+          for (const auto& outcome : outcomes) {
+            const std::string column = population + "_" + outcome + "_" + sex;
+            auto it = probabilities.find(column);
+            if (it != probabilities.end()) {
+              group_sum += it->second;
+              has_value = true;
+            }
+          }
+          if (!has_value || std::abs(group_sum - 1.0) > 0.01) {
+            throw std::runtime_error(
+                "Outcome rates row " + std::to_string(row_i) + " group '" +
+                population + "/" + sex + "' sums to " +
+                std::to_string(group_sum) +
+                ", expected 1.0. Outcome columns are a probability "
+                "distribution over trajectories and must sum to 1.");
+          }
+        }
+      }
+    } else {
+      double row_sum = 0.0;
+      for (const auto& [key, prob] : probabilities) row_sum += prob;
+      if (!probabilities.empty() && std::abs(row_sum - 1.0) > 0.01) {
+        // Throws rather than warns: this fired on 5 of 40 rows of the old
+        // covid19 table (worst sum 1.326) and the warning was printed and
+        // ignored for the life of that file. A row that does not sum to 1 is
+        // not a table the trajectory walk can sample from.
+        throw std::runtime_error(
+            "Outcome rates row " + std::to_string(row_i) + " sums to " +
+            std::to_string(row_sum) +
+            ", expected 1.0. Outcome columns are a "
+            "probability distribution over trajectories and must sum to 1.");
+      }
     }
-    if (!outcome_rates.rows[row_i].probabilities.empty() &&
-        std::abs(row_sum - 1.0) > 0.01) {
-      // Throws rather than warns: this fired on 5 of 40 rows of the old
-      // covid19 table (worst sum 1.326) and the warning was printed and
-      // ignored for the life of that file. A row that does not sum to 1 is
-      // not a table the trajectory walk can sample from.
-      throw std::runtime_error(
-          "Outcome rates row " + std::to_string(row_i) + " sums to " +
-          std::to_string(row_sum) +
-          ", expected 1.0. Outcome columns are a "
-          "probability distribution over trajectories and must sum to 1.");
-    }
-    for (const auto& [key, prob] : outcome_rates.rows[row_i].probabilities) {
+    for (const auto& [key, prob] : probabilities) {
       // Second net, not the first one: a negative rate can hide inside a row
       // that still sums to 1.
       if (prob < 0.0) {
@@ -716,7 +787,7 @@ Disease DiseaseLoader::loadFromYAML(const std::string& yaml_path,
     loadTransmission(config, transmission, symptom_tags, verbose);
 
     loadNaturalImmunity(config, transmission);
-    validateOutcomeRowSums(outcome_rates);
+    validateOutcomeRowSums(outcome_rates, config);
 
     if (static_cast<int>(transmission.modes.size()) > VisitorInfo::MAX_MODES) {
       throw std::runtime_error(
