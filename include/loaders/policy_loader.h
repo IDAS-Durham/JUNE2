@@ -8,6 +8,7 @@
 
 #include "core/config.h"
 #include "epidemiology/policy.h"
+#include "epidemiology/transmission_modifiers.h"
 #include "loaders/selection_criterion_value.h"
 #include "utils/time_utils.h"
 
@@ -28,6 +29,8 @@ class PolicyLoader {
   // Load a policy action
   static PolicyAction loadPolicyAction(const YAML::Node& node);
 
+  static bool hasExplicitLocationAction(const YAML::Node& node);
+
   // Load the four date-range keys shared by every policy kind that carries an
   // ActiveWindow: start_date > start_time > 0.0, end_date > end_time > no end.
   static ActiveWindow loadActiveWindow(const YAML::Node& node,
@@ -36,12 +39,20 @@ class PolicyLoader {
   // Load symptom policies
   static void loadSymptomPolicies(PolicyManager& policy_manager,
                                   const YAML::Node& node,
-                                  const std::string& simulation_start_date);
+                                  const std::string& simulation_start_date,
+                                  const std::string& policies_filename);
 
   // Load temporal policies (lockdowns, etc.)
   static void loadTemporalPolicies(PolicyManager& policy_manager,
                                    const YAML::Node& node,
-                                   const std::string& simulation_start_date);
+                                   const std::string& simulation_start_date,
+                                   const std::string& policies_filename);
+
+  static void loadTransmissionEffects(
+      PolicyManager& policy_manager, const std::string& csv_path,
+      TransmissionPolicyKind policy_kind, uint16_t policy_index,
+      double compliance_rate, const std::string& policy_name,
+      const std::string& policies_filename);
 };
 
 // =============================================================================
@@ -64,13 +75,13 @@ inline void PolicyLoader::loadPolicies(
     // Load symptom-based policies
     if (policies["symptom_policies"]) {
       loadSymptomPolicies(policy_manager, policies["symptom_policies"],
-                          simulation_start_date);
+                          simulation_start_date, filename);
     }
 
     // Load temporal policies
     if (policies["temporal_policies"]) {
       loadTemporalPolicies(policy_manager, policies["temporal_policies"],
-                           simulation_start_date);
+                           simulation_start_date, filename);
     }
 
   } catch (const YAML::Exception& e) {
@@ -204,6 +215,12 @@ inline PolicyAction PolicyLoader::loadPolicyAction(const YAML::Node& node) {
   return action;
 }
 
+inline bool PolicyLoader::hasExplicitLocationAction(const YAML::Node& node) {
+  return node["override_activities"] || node["override_venue_types"] ||
+         node["exempt_venue_types"] || node["replacement"] ||
+         node["replacement_schedule"] || node["exempt"];
+}
+
 inline ActiveWindow PolicyLoader::loadActiveWindow(
     const YAML::Node& node, const std::string& simulation_start_date) {
   ActiveWindow window;
@@ -260,7 +277,8 @@ inline ActiveWindow PolicyLoader::loadActiveWindow(
 
 inline void PolicyLoader::loadSymptomPolicies(
     PolicyManager& policy_manager, const YAML::Node& node,
-    const std::string& simulation_start_date) {
+    const std::string& simulation_start_date,
+    const std::string& policies_filename) {
   if (!node.IsSequence()) {
     throw std::runtime_error("symptom_policies must be a list");
   }
@@ -287,6 +305,17 @@ inline void PolicyLoader::loadSymptomPolicies(
     // Action
     policy.action = loadPolicyAction(policy_node);
 
+    if (policy_node["transmission_effects_file"]) {
+      if (!hasExplicitLocationAction(policy_node))
+        policy.action.has_location_override = false;
+      loadTransmissionEffects(
+          policy_manager,
+          policy_node["transmission_effects_file"].as<std::string>(),
+          TransmissionPolicyKind::Symptom,
+          static_cast<uint16_t>(policy_manager.getSymptomPolicyCount()),
+          policy.action.compliance_rate, policy.name, policies_filename);
+    }
+
     // Follow-up policy (optional)
     if (policy_node["follow_up_policy"]) {
       policy.follow_up_policy_name =
@@ -310,7 +339,8 @@ inline void PolicyLoader::loadSymptomPolicies(
 
 inline void PolicyLoader::loadTemporalPolicies(
     PolicyManager& policy_manager, const YAML::Node& node,
-    const std::string& simulation_start_date) {
+    const std::string& simulation_start_date,
+    const std::string& policies_filename) {
   if (!node.IsSequence()) {
     throw std::runtime_error("temporal_policies must be a list");
   }
@@ -328,6 +358,17 @@ inline void PolicyLoader::loadTemporalPolicies(
 
     // Action
     policy.action = loadPolicyAction(policy_node);
+
+    if (policy_node["transmission_effects_file"]) {
+      if (!hasExplicitLocationAction(policy_node))
+        policy.action.has_location_override = false;
+      loadTransmissionEffects(
+          policy_manager,
+          policy_node["transmission_effects_file"].as<std::string>(),
+          TransmissionPolicyKind::Temporal,
+          static_cast<uint16_t>(policy_manager.getTemporalPolicyCount()),
+          policy.action.compliance_rate, policy.name, policies_filename);
+    }
 
     // Selection criteria (optional)
     if (policy_node["applies_to"]) {

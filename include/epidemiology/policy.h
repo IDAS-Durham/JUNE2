@@ -8,12 +8,15 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
+#include "epidemiology/transmission_modifiers.h"
 #include "utils/deterministic_rng.h"
 #include "utils/random.h"
 
@@ -139,6 +142,8 @@ class SlotVenueType {
 };
 
 struct PolicyAction {
+  // False for a transmission-only policy: no implicit residence replacement.
+  bool has_location_override = true;
   // Activities to override (empty = override all activities with "*")
   std::unordered_set<std::string> override_activities;
   uint64_t override_activity_mask = 0;  // BITMASK: support up to 64 activities
@@ -518,6 +523,30 @@ class PolicyManager {
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);
   void addTemporalPolicy(const TemporalPolicy& policy);
+  void addTransmissionEffect(PolicyTransmissionEffect effect) {
+    transmission_effects_.push_back(std::move(effect));
+  }
+
+  void initializeTransmissionModifiers(const Disease& disease,
+                                       double current_time);
+  void refreshTransmissionModifiers(
+      double current_time,
+      const std::unordered_set<PersonId>& active_infections);
+  double personModifier(const Person& person, size_t mode,
+                        TransmissionEffectChannel channel) const {
+    if (!transmission_modifiers_initialized_) return 1.0;
+    return transmission_modifier_table_.get(person.transmission_modifier_set_id,
+                                            mode, channel);
+  }
+  double venueModifier(const Venue* venue, size_t mode,
+                       TransmissionEffectChannel channel) const {
+    if (!venue || !transmission_modifiers_initialized_) return 1.0;
+    return transmission_modifier_table_.get(venue->transmission_modifier_set_id,
+                                            mode, channel);
+  }
+  const TransmissionModifierTable& transmissionModifierTable() const {
+    return transmission_modifier_table_;
+  }
 
   // Get all policies (for inspection/debugging)
   const std::vector<SymptomPolicy>& getSymptomPolicies() const {
@@ -586,6 +615,8 @@ class PolicyManager {
   void clear() {
     symptom_policies_.clear();
     temporal_policies_.clear();
+    transmission_effects_.clear();
+    transmission_modifiers_initialized_ = false;
   }
 
   // Statistics
@@ -603,6 +634,7 @@ class PolicyManager {
 
     for (auto& p : symptom_policies_) p.resolve(world_, disease);
     for (auto& p : temporal_policies_) p.resolve(world_);
+    resolveTransmissionEffects(disease);
 
     // Resolve follow-up policy indices
     for (auto& p : symptom_policies_) {
@@ -623,6 +655,18 @@ class PolicyManager {
 
   std::vector<SymptomPolicy> symptom_policies_;
   std::vector<TemporalPolicy> temporal_policies_;
+  std::vector<PolicyTransmissionEffect> transmission_effects_;
+  TransmissionModifierTable transmission_modifier_table_;
+  bool transmission_modifiers_initialized_ = false;
+  size_t transmission_mode_count_ = 0;
+  uint64_t last_policy_window_bits_ = 0;
+  std::unordered_map<PersonId, uint16_t> last_symptom_ids_;
+
+  void resolveTransmissionEffects(const Disease& disease);
+  uint64_t policyWindowBits(double current_time) const;
+  void rebuildTransmissionModifiers(double current_time);
+  void rebuildPersonTransmissionModifier(Person& person, double current_time);
+  void rebuildVenueTransmissionModifier(Venue& venue, double current_time);
 
   // Sparse map: persons currently frozen by a policy-triggered schedule hop.
   // Only populated for the small minority of persons who are both travelling
@@ -688,6 +732,7 @@ class PolicyManager {
                      int16_t activity_index,
                      SlotVenueTypeResolver&& resolve_slot_venue_type,
                      const Person* partner) const {
+    if (!action.has_location_override) return false;
     action.throwIfVenueGateUnresolved();
 
     if (!action.shouldOverride(activity_index)) return false;

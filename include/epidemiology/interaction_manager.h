@@ -12,6 +12,7 @@
 #include "core/world_state.h"
 #include "disease.h"
 #include "policy.h"
+#include "transmission_modifiers.h"
 #include "utils/age_utils.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/event_logging/event_types.h"
@@ -40,6 +41,7 @@ struct SusceptibleMember {
   double susceptibility;
   const VisitorInfo* visitor;
   uint8_t encounter_type_id;
+  uint32_t transmission_modifier_set_id = 0;
 };
 
 struct BinGroup {
@@ -240,6 +242,10 @@ class InteractionManager {
     runtime_group_allocator_ = a;
   }
 
+  void setPolicyManager(const PolicyManager* policy_manager) {
+    policy_manager_ = policy_manager;
+  }
+
   // The force-of-infection pass for transport lines, run after the ordinary
   // venue loop. Lines are not in that loop: a line's members come from the
   // allocator's rider table, since a rider on four legs holds only one
@@ -271,6 +277,7 @@ class InteractionManager {
   };
   struct PartialPresenceLambdaResult {
     std::unordered_map<PersonId, double> susc_lambda;
+    std::unordered_map<PersonId, std::vector<double>> susc_lambda_by_mode;
     std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>
         susc_sources;
   };
@@ -298,6 +305,7 @@ class InteractionManager {
   const ParallelConfig& parallel_config_;
   Disease* disease_;
   EventLogger* event_logger_;
+  const PolicyManager* policy_manager_ = nullptr;
   int current_day_type_idx_ = 0;
 
   // Pre-pass over locations (already sorted by venue) building
@@ -419,7 +427,8 @@ class InteractionManager {
   void accumulatePartialLambdaContributions(
       const std::vector<PartialPresenceSubBin>& sub_bins,
       const std::vector<std::vector<const RuntimeGroupMember*>>& susc_by_bin,
-      uint8_t venue_type_id, const ContactMatrix& bin_structure,
+      const Venue* venue, uint8_t venue_type_id,
+      const ContactMatrix& bin_structure,
       int num_bins_needed, int num_modes,
       const TransmissionParams& trans_params,
       PartialPresenceLambdaResult& result) const;
@@ -431,6 +440,7 @@ class InteractionManager {
                           float slot_duration_min, double current_time,
                           double delta_hours, int num_modes,
                           int num_bins_needed, uint8_t venue_type_id,
+                          const Venue* venue,
                           const ContactMatrix& bin_structure,
                           const TransmissionParams& trans_params,
                           std::vector<PartialPresenceSubBin>& sub_bins,
@@ -554,14 +564,15 @@ class InteractionManager {
   // susceptible bin. Walks every mode and every infectious bin, computes
   // omega * inf_total * susc_mult, and appends a SourceEntry{m, inf_bin}
   // for each positive weight. Mutates sources_buffer_, source_weights_buffer_,
-  // and accumulates into total_lambda_eff. Routes through
+  // and accumulates into lambda_by_mode. Routes through
   // lookupContactsForBinPair for the contacts lookup.
   void appendDirectContactSources(int susc_bin, int num_bins_needed,
                                   int num_modes, bool is_virtual_encounter,
                                   uint8_t encounter_type_id,
                                   uint8_t venue_type_id,
                                   const TransmissionParams& trans_params,
-                                  double& total_lambda_eff);
+                                  const Venue* venue,
+                                  std::vector<double>& lambda_by_mode);
 
   // STEP 3a.bis: append a single SIBLING-mixing source per mode for the
   // current susceptible bin. Reads from the parent ParentAggregate, subtracts
@@ -574,7 +585,7 @@ class InteractionManager {
                                   const ParentAggregate* parent_agg,
                                   const ContactMatrix* parent_flat_matrix,
                                   const TransmissionParams& trans_params,
-                                  double& total_lambda_eff);
+                                  std::vector<double>& lambda_by_mode);
 
   // Verbose JUNE_DEBUG_PARENT_MIXING per-(susc_bin, mode) sibling-FOI dump.
   // Inlined out of appendSiblingMixingSources to keep that orchestrator
@@ -587,22 +598,25 @@ class InteractionManager {
                          int sibling_size, double omega, double weighted);
 
   // STEP 3a: append per-fomite-mode sentinel sources (inf_bin = -1) to the
-  // current susceptible bin. Multiplies lambda_fomite_by_mode[fm] by the
-  // mode's susceptibility multiplier.
+  // current susceptible bin. Applies the mode transmissibility and venue
+  // contact/environment factors while retaining the mode-specific lambda.
   void appendFomiteSources(int num_fomite_modes,
                            const std::vector<FomiteModeRef>& fomite_modes,
                            const std::vector<double>& lambda_fomite_by_mode,
                            const TransmissionParams& trans_params,
-                           double& total_lambda_eff);
+                           const Venue* venue,
+                           std::vector<double>& lambda_by_mode);
 
   // STEP 3a: append compartmental-uptake sentinel sources (inf_bin = -2) to
   // the current susceptible bin. Reads the plugin's coupling output buffer,
-  // scales by the venue-type foi_scale, and applies each mode's susc_mult.
+  // scales by the venue-type foi_scale, and applies each mode's base and venue
+  // transmission factors.
   void appendCompUptakeSources(VenueId actual_venue_id, uint8_t venue_type_id,
                                const std::vector<int>& comp_uptake_modes,
                                const CompartmentalModelManager* comp_model,
                                const TransmissionParams& trans_params,
-                               double& total_lambda_eff);
+                               const Venue* venue,
+                               std::vector<double>& lambda_by_mode);
 
   // Build cumulative weights over the parent's infector pool for one mode,
   // excluding entries whose origin child_venue_id matches actual_venue_id, then
@@ -689,8 +703,9 @@ class InteractionManager {
   // symptom on success, and apply the infection. Returns true iff a new
   // infection was created.
   bool processOneVenueSusceptible(
-      const SusceptibleMember& susc_mem, double total_risk, int susc_bin,
-      bool have_source_dist, uint64_t time_bits, double current_time,
+      const SusceptibleMember& susc_mem,
+      const std::vector<double>& lambda_by_mode, int susc_bin,
+      uint64_t time_bits, double current_time,
       VenueId actual_venue_id, Venue* venue, uint8_t venue_type_id,
       const ParentAggregate* parent_agg,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
@@ -824,7 +839,8 @@ class InteractionManager {
   // cumulative weights, and draws one sample with the given RNG. Returns
   // mode=0, infector=-1 when the source list is empty / all-zero-weight.
   std::pair<int, PersonId> sampleInfectorFromAccumSources(
-      std::vector<PartialPresenceAccumSource>& srcs, SplitMix64& rng) const;
+      std::vector<PartialPresenceAccumSource>& srcs,
+      const std::vector<double>& target_modifiers, SplitMix64& rng) const;
 
   // Look up the infector's current symptom id. For local persons reads from
   // Infection::getTrajectory(); for cross-rank visitors reads from
@@ -842,6 +858,16 @@ class InteractionManager {
                                      const VisitorInfo* visitor,
                                      double current_time) const;
 
+  double personTransmissionModifier(const Person* person,
+                                    const VisitorInfo* visitor, size_t mode,
+                                    TransmissionEffectChannel channel) const;
+  double effectiveTargetSusceptibility(const Person* person,
+                                       const VisitorInfo* visitor,
+                                       double base_susceptibility,
+                                       size_t mode) const;
+  double venueTransmissionModifier(const Venue* venue, size_t mode,
+                                   TransmissionEffectChannel channel) const;
+
   // Run the per-susceptible Bernoulli draw + (if infected) infector sampling
   // + apply step for one susceptible id in the partial-presence post-pass.
   // Returns true iff a new infection was created (counted toward
@@ -849,6 +875,7 @@ class InteractionManager {
   // susceptibility, missed roll) returns false.
   bool processOnePartialSusceptible(
       PersonId susc_id, const std::unordered_map<PersonId, double>& susc_lambda,
+      const std::unordered_map<PersonId, std::vector<double>>& susc_lambda_by_mode,
       std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>&
           susc_sources,
       double current_time, Venue* venue, uint8_t venue_type_id,

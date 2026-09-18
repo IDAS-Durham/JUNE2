@@ -90,7 +90,6 @@ mpirun -n 4 ./build/disease_sim --world worlds/world_2021.h5 \
 | `--world <path.h5>` | **Required.** Population/geography world file. |
 | `--config <path.yaml>` | **Required.** Path to `simulation.yaml`. |
 | `--infection_seeds <path>` | Override the seeds file declared in `simulation.yaml`. |
-| `--beta <float>` | Override transmission `beta` (sweep convenience). |
 | `--seed <int>` | Override the master random seed. |
 | `--days <N>` | Cap simulation length, ignoring `end_date`. |
 | `--run-id <name>` | Label the output directory under `runs/`. |

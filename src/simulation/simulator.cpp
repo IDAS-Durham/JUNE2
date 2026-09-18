@@ -486,19 +486,18 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Initialize policy manager
   policy_manager_ = std::make_unique<PolicyManager>(world_);
   policy_manager_->setBaseSeed(config_.simulation.random_seed);
-  try {
+  if (!config_.simulation.policies_file.empty()) {
     PolicyLoader::loadPolicies(*policy_manager_,
                                config_.simulation.policies_file,
                                config_.simulation.start_date);
-  } catch (const std::exception& e) {
-    std::cerr << "Warning: Could not load policies: " << e.what() << std::endl;
-    std::cerr << "Continuing without policies." << std::endl;
   }
+  interaction_manager_->setPolicyManager(policy_manager_.get());
 
   // Set disease in domain manager (if in parallel mode)
 #ifdef USE_MPI
   if (domain_mgr_) {
     domain_mgr_->setDisease(disease_.get());
+    domain_mgr_->setPolicyManager(policy_manager_.get());
   }
 #endif
 
@@ -530,6 +529,8 @@ Simulator::Simulator(WorldState& world, Config& config,
       policy_manager_->getTemporalPolicyCount() > 0) {
     policy_manager_->resolveAll(*disease_);
     policy_manager_->precomputePolicyApplicability(world_.people);
+    policy_manager_->initializeTransmissionModifiers(*disease_,
+                                                     current_simulation_time_);
   }
 
   // Set policy manager in coordinated encounter manager

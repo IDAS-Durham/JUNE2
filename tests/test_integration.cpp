@@ -75,7 +75,6 @@ struct TestFixture {
     default_contact_matrix.bins = {"all"};
     default_contact_matrix.contacts = {{0.15}};
     cm.default_matrix = default_contact_matrix;
-    cm.default_characteristic_time = 1.0;
   }
 
   Disease makeDisease() {

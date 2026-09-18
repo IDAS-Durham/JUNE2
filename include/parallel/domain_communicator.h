@@ -20,6 +20,7 @@
 
 namespace june {
 class DomainManager;
+class PolicyManager;
 
 /**
  * DomainCommunicator - Handles adaptive MPI communication for visitors and
@@ -30,6 +31,9 @@ class DomainCommunicator {
   DomainCommunicator(WorldState& world, const Config& config, Domain& domain);
 
   void setDisease(const Disease* disease) { disease_ = disease; }
+  void setPolicyManager(const PolicyManager* policy_manager) {
+    policy_manager_ = policy_manager;
+  }
 
   // Exchange visitors across ranks
   void exchangeVisitors(const std::vector<PersonLocation>& locations,
@@ -106,6 +110,7 @@ class DomainCommunicator {
   const Config& config_;
   Domain& domain_;
   const Disease* disease_;
+  const PolicyManager* policy_manager_ = nullptr;
   int rank_, num_ranks_;
 };
 

@@ -247,9 +247,38 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       info.immunity_level = visitor.immunity_level;
       info.symptom_id = visitor.symptom_id;
       info.time_in_stage = visitor.time_in_stage;
-      std::copy(std::begin(visitor.integrated_infectiousness),
-                std::end(visitor.integrated_infectiousness),
-                std::begin(info.integrated_infectiousness));
+      for (int mode = 0; mode < VisitorInfo::MAX_MODES; ++mode) {
+        info.integrated_infectiousness[mode] = 0.0;
+        info.target_susceptibility[mode] = 1.0;
+        info.deposition_source_multiplier[mode] = 1.0;
+      }
+      const size_t mode_count =
+          std::min(visitor.integrated_infectiousness.size(),
+                   static_cast<size_t>(VisitorInfo::MAX_MODES));
+      for (size_t mode = 0; mode < mode_count; ++mode) {
+        info.integrated_infectiousness[mode] =
+            visitor.integrated_infectiousness[mode];
+      }
+      const size_t target_count =
+          std::min(visitor.target_susceptibility.size(),
+                   static_cast<size_t>(VisitorInfo::MAX_MODES));
+      info.has_target_susceptibility = target_count > 0;
+      for (size_t mode = 0; mode < target_count; ++mode) {
+        info.target_susceptibility[mode] = visitor.target_susceptibility[mode];
+      }
+      size_t deposition_index = 0;
+      const auto& modes = disease_->getTransmissionParams().modes;
+      for (size_t mode = 0;
+           mode < modes.size() && mode < VisitorInfo::MAX_MODES; ++mode) {
+        if (modes[mode].type != TransmissionModeType::Fomite &&
+            modes[mode].type != TransmissionModeType::CompartmentalDeposition)
+          continue;
+        if (deposition_index >= visitor.deposition_source_multiplier.size())
+          break;
+        info.deposition_source_multiplier[mode] =
+            visitor.deposition_source_multiplier[deposition_index++];
+      }
+      info.has_deposition_source_multiplier = deposition_index > 0;
       visitor_data_map[visitor.person_id] = info;
     }
   } catch (const std::exception& e) {
@@ -341,6 +370,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   }
 
   // Per-slot venue distribution print (collective Reduce → rank 0 prints).
+  if (policy_manager_) {
+    policy_manager_->refreshTransmissionModifiers(
+        current_simulation_time_, epidemiology_->getActiveInfectionsMutable());
+  }
   printSlotVenueDistribution(world_, locations_, domain_mgr_, rank);
 
 #ifdef USE_MPI
@@ -393,9 +426,15 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   // Deposition write-back: aggregate per-node contributions from infected
   // people at owned venues and forward to the plugin for the next advance()
   // call.
+  const std::unordered_map<PersonId, VisitorInfo>* deposition_visitor_data =
+      nullptr;
+#ifdef USE_MPI
+  if (have_mpi) deposition_visitor_data = &visitor_data_map;
+#endif
   compartmental_model_manager_->computeDepositionWriteback(
-      locations_, world_, *disease_,
-      current_simulation_time_ - delta_hours / 24.0, current_simulation_time_);
+      transmission_locations, world_, *disease_, current_simulation_time_,
+      current_simulation_time_ + delta_hours / 24.0, policy_manager_.get(),
+      deposition_visitor_data);
 
   compartmental_model_manager_->maybeSnapshot(
       static_cast<float>(current_simulation_time_));

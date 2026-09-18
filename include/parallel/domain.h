@@ -66,6 +66,16 @@ class Domain {
     // active count's worth of doubles. See packVisitor/unpackVisitor.
     std::vector<double> integrated_infectiousness;
 
+    // Effective target susceptibility per transmission mode, computed on the
+    // home rank. Visitor modifier-set IDs are rank-local, so the values—not
+    // the compact IDs—cross MPI.
+    std::vector<double> target_susceptibility;
+
+    // Source multipliers for deposition modes. Fomite and compartmental
+    // deposition are reconstructed on the venue rank, so their source effect
+    // must be sent separately from integrated_infectiousness.
+    std::vector<double> deposition_source_multiplier;
+
     // Return data: infection status changes
     bool newly_infected;
     double new_infection_time;

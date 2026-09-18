@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "core/world_state.h"
+#include "epidemiology/policy.h"
+#include "epidemiology/transmission_modifiers.h"
 
 #ifdef USE_MPI
 #include "parallel/domain_manager.h"
@@ -509,7 +511,9 @@ void CompartmentalModelManager::resolveVenueTypes(
 
 void CompartmentalModelManager::computeDepositionWriteback(
     const std::vector<PersonLocation>& locations, WorldState& world,
-    const Disease& disease, double t0, double t1) {
+    const Disease& disease, double t0, double t1,
+    const PolicyManager* policy_manager,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
   if (!isActive()) return;
 
   const auto& tp = disease.getTransmissionParams();
@@ -541,37 +545,59 @@ void CompartmentalModelManager::computeDepositionWriteback(
     if (node_idx < 0) continue;
 
     const Person* person = world.getPerson(loc.person_id);
-    if (!person || !person->infection) continue;
-
-    const auto& traj = person->infection->getTrajectory();
-
-    // Walk transitions to find symptom at t0 and the time it started.
-    uint16_t symptom_id = 0;
-    double stage_start = person->infection->getInfectionTime();
-    for (const auto& trans : traj.transitions) {
-      if (t0 >= trans.first) {
-        stage_start = trans.first;
-        symptom_id = trans.second;
-      } else {
-        break;
-      }
+    const VisitorInfo* visitor = nullptr;
+    if (!person && visitor_data) {
+      auto it = visitor_data->find(loc.person_id);
+      if (it != visitor_data->end()) visitor = &it->second;
     }
+    if ((!person || !person->infection) && (!visitor || !visitor->is_infected))
+      continue;
 
-    double t_in_stage_start = t0 - stage_start;
-    double t_in_stage_end = t1 - stage_start;
+    // Resolve symptom and time in stage from the local trajectory or the
+    // visitor payload. Visitors carry the stage clock at the slot boundary.
+    uint16_t symptom_id = 0;
+    double t_in_stage_start = 0.0;
+    double t_in_stage_end = 0.0;
+    if (person && person->infection) {
+      const auto& traj = person->infection->getTrajectory();
+      double stage_start = person->infection->getInfectionTime();
+      for (const auto& trans : traj.transitions) {
+        if (t0 >= trans.first) {
+          stage_start = trans.first;
+          symptom_id = trans.second;
+        } else {
+          break;
+        }
+      }
+      t_in_stage_start = t0 - stage_start;
+      t_in_stage_end = t1 - stage_start;
+    } else {
+      symptom_id = visitor->symptom_id;
+      t_in_stage_start = visitor->time_in_stage;
+      t_in_stage_end = t_in_stage_start + (t1 - t0);
+    }
 
     // Coupling matrix weight for this venue type (pre-resolved or default).
     const Venue* venue = world.getVenue(loc.venue_id);
     int venue_type_id = venue ? static_cast<int>(venue->type_id) : -1;
     float cm_val = coupling_matrix_.getValue(venue_type_id, 0);
 
-    for (const auto& tmode : tp.modes) {
+    for (size_t mode_index = 0; mode_index < tp.modes.size(); ++mode_index) {
+      const auto& tmode = tp.modes[mode_index];
       if (tmode.type != TransmissionModeType::CompartmentalDeposition) continue;
       const auto& dcfg = std::get<CompartmentalDepositionConfig>(tmode.config);
       if (symptom_id >= dcfg.deposition_by_symptom.size()) continue;
       const auto& curve = dcfg.deposition_by_symptom[symptom_id];
       if (!curve) continue;
       double dep = curve->integrate(t_in_stage_start, t_in_stage_end) * 24.0;
+      if (policy_manager && person) {
+        dep *= policy_manager->personModifier(
+            *person, mode_index,
+            TransmissionEffectChannel::SourceInfectiousness);
+      } else if (visitor && visitor->has_deposition_source_multiplier &&
+                 mode_index < VisitorInfo::MAX_MODES) {
+        dep *= visitor->deposition_source_multiplier[mode_index];
+      }
       if (dep > 0.0) {
         deposition[static_cast<size_t>(node_idx)] +=
             static_cast<float>(dep) * cm_val;

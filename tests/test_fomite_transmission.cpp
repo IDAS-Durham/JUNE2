@@ -395,7 +395,6 @@ TEST_CASE("No Stale Bin Data Across Venues With Different Bin Counts") {
 
   // --- Contact matrix for "school": 3 age-based bins with high contacts ---
   ContactMatrixConfig cm_config;
-  cm_config.default_beta = 1.0;
   ContactMatrix default_contact_matrix;
   default_contact_matrix.bins = {"all"};
   default_contact_matrix.contacts = {{10.0}};
@@ -409,9 +408,7 @@ TEST_CASE("No Stale Bin Data Across Venues With Different Bin Counts") {
       {5.0, 10.0, 5.0},  // from bin 1
       {5.0, 5.0, 10.0},  // from bin 2
   };
-  school_matrix.characteristic_time = 1.0;
   cm_config.matrices["school"] = std::move(school_matrix);
-  cm_config.betas["school"] = 1.0;
   // No matrix for "home" → defaults to 1 bin
 
   cm_config.resolve(world);
@@ -470,4 +467,81 @@ TEST_CASE("No Stale Bin Data Across Venues With Different Bin Counts") {
   // history. Any infection of person 2 is a false positive caused by stale
   // bin data leaking from venue 0 through the shared bins_buffer_.
   CHECK(false_infections == 0);
+}
+
+TEST_CASE("Surface cleaning suppresses fomite risk without suppressing deposition") {
+  auto makeWorld = []() {
+    WorldState world;
+    world.venue_type_names = {"office"};
+    Venue venue;
+    venue.id = 0;
+    venue.type_id = 0;
+    world.venues.push_back(venue);
+    Person& person = world.people.emplace_back();
+    person.id = 0;
+    person.age = 30.0f;
+    person.sex = Sex::MALE;
+    person.geo_unit_id = -1;
+    Person& source = world.people.emplace_back();
+    source.id = 1;
+    source.age = 30.0f;
+    source.sex = Sex::FEMALE;
+    source.geo_unit_id = -1;
+    world.buildIndices();
+    world.venues[0].fomite_history.assign(1, {});
+    world.venues[0].fomite_history[0].push_back({4.0, 100.0});
+    return world;
+  };
+
+  auto makeLocations = []() {
+    return std::vector<PersonLocation>{{0, 0, -1, -1, 255, 0},
+                                       {1, 0, -1, -1, 255, 1}};
+  };
+
+  Disease disease = makeDiseaseWithFomite(1.0, 10.0, 50.0);
+  ContactMatrixConfig cm_config;
+  SimulationConfig sim_config;
+  ParallelConfig parallel_config;
+  cm_config.allow_default_matrix = true;
+
+  SUBCASE("without cleaning the deposit infects") {
+    WorldState world = makeWorld();
+    world.people[1].infection = std::make_unique<Infection>(
+        &disease, 0.0, &world.people[1], 42, &world, "office", 0);
+    finalizeContactMatrices(cm_config, world, disease);
+    InteractionManager im(world, cm_config, sim_config, parallel_config,
+                          &disease, nullptr);
+    im.processTransmissions(makeLocations(), 5.0, 1.0, nullptr);
+    CHECK(world.people[0].infection != nullptr);
+  }
+
+  SUBCASE("cleaning removes only environmental fomite risk") {
+    WorldState world = makeWorld();
+    world.people[1].infection = std::make_unique<Infection>(
+        &disease, 0.0, &world.people[1], 42, &world, "office", 0);
+    PolicyManager policy_manager(world);
+    TemporalPolicy cleaning;
+    cleaning.name = "surface_cleaning";
+    cleaning.action.compliance_rate = 1.0;
+    policy_manager.addTemporalPolicy(cleaning);
+    PolicyTransmissionEffect effect;
+    effect.policy_index = 0;
+    effect.scope = TransmissionEffectScope::Venue;
+    effect.mode_name = "fomite_env";
+    effect.channel = TransmissionEffectChannel::EnvironmentalRisk;
+    effect.multiplier = 0.0;
+    policy_manager.addTransmissionEffect(effect);
+    policy_manager.precomputePolicyApplicability(world.people);
+    policy_manager.initializeTransmissionModifiers(disease, 5.0);
+
+    ContactMatrixConfig policy_cm;
+    policy_cm.allow_default_matrix = true;
+    finalizeContactMatrices(policy_cm, world, disease);
+    InteractionManager im(world, policy_cm, sim_config, parallel_config,
+                          &disease, nullptr);
+    im.setPolicyManager(&policy_manager);
+    im.processTransmissions(makeLocations(), 5.0, 1.0, nullptr);
+    CHECK(world.people[0].infection == nullptr);
+    CHECK(world.venues[0].fomite_history[0].size() > 1);
+  }
 }

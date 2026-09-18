@@ -13,6 +13,7 @@ namespace june {
 
 class DomainManager;
 class WorldState;
+class PolicyManager;
 
 // ---------------------------------------------------------------------------
 // Coupling matrix: per-venue-type, per-person-bin scalar weights.
@@ -199,7 +200,10 @@ class CompartmentalModelManager {
   // inactive or when the disease has no CompartmentalDeposition modes.
   void computeDepositionWriteback(const std::vector<PersonLocation>& locations,
                                   WorldState& world, const Disease& disease,
-                                  double t0, double t1);
+                                  double t0, double t1,
+                                  const PolicyManager* policy_manager = nullptr,
+                                  const std::unordered_map<PersonId, VisitorInfo>*
+                                      visitor_data = nullptr);
 
   static PluginSidecarConfig realLoadSidecar(const std::string& sidecar_path);
 

@@ -96,7 +96,6 @@ void registerSimpleContactMatrix(ContactMatrixConfig& cm,
   ContactMatrix mat;
   mat.bins = {"rider"};
   mat.contacts = {{contacts_per_slot}};
-  mat.proportion_physical = {{0.0}};
   cm.matrices[venue_type_name] = mat;
   cm.mode_matrices[venue_type_name]["respiratory"] = mat;
   if (cm.mode_names.empty()) cm.mode_names = {"respiratory"};
@@ -254,6 +253,32 @@ TEST_CASE(
     total_weight += s.weighted;
   }
   CHECK(total_weight == doctest::Approx(expected_lambda_b).epsilon(1e-6));
+
+  // Social distancing is a contact-intensity modifier. It scales this
+  // partial-presence path while leaving the infectious rider's source state
+  // untouched.
+  PolicyManager policy_manager(world);
+  TemporalPolicy distancing;
+  distancing.name = "distancing";
+  distancing.action.compliance_rate = 1.0;
+  policy_manager.addTemporalPolicy(distancing);
+  PolicyTransmissionEffect contact_effect;
+  contact_effect.policy_index = 0;
+  contact_effect.scope = TransmissionEffectScope::Venue;
+  contact_effect.mode_name = "default";
+  contact_effect.channel = TransmissionEffectChannel::ContactIntensity;
+  contact_effect.multiplier = 0.80;
+  policy_manager.addTransmissionEffect(contact_effect);
+  policy_manager.precomputePolicyApplicability(world.people);
+  policy_manager.initializeTransmissionModifiers(*disease, 5.0);
+  im.setPolicyManager(&policy_manager);
+
+  auto reduced = im.computePartialPresenceLambda(
+      members, venue_ptr, line, /*current_time=*/5.0, delta_hours,
+      /*visitor_data=*/nullptr, /*encounter_type_id=*/255);
+  REQUIRE(reduced.susc_lambda.count(/*B=*/1) == 1);
+  CHECK(reduced.susc_lambda.at(1) ==
+        doctest::Approx(expected_lambda_b * 0.80).epsilon(1e-6));
 }
 
 // -----------------------------------------------------------------------------
@@ -488,7 +513,6 @@ TEST_CASE(
     ContactMatrix mat;
     mat.bins = {"rider"};
     mat.contacts = {{6.0}};
-    mat.proportion_physical = {{0.0}};
     cm.default_matrix = mat;
     return cm;
   };

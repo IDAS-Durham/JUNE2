@@ -500,14 +500,61 @@ policies:
 
 - Symptom policies fire when a person has any of the listed symptom
   tags. They override the activities the schedule asked for.
-- Temporal policies are active in date windows (inclusive). If both
+- Temporal policies are active in half-open date windows (`start_date`
+  included, `end_date` excluded). If both
   apply, the **first matching** policy wins — order them by
   specificity.
 - `override_activities: "*"` overrides everything.
-- `compliance_rate` is rolled per slot, per person.
+- `compliance_rate` is a sticky per-person decision for each policy.
 - `applies_to` uses the same selection grammar as everywhere else
   (`property`, `operator`, `value`).
 - Use `follow_up_policy` to chain policies (e.g. mild ⇒ severe).
+
+### Transmission effects
+
+A policy can reference a CSV of transmission effects with
+`transmission_effects_file`. A policy with that field and no location action
+changes transmission only; it does not send anyone home. The path may be
+relative to `policies.yaml`.
+
+```yaml
+policies:
+  temporal_policies:
+    - name: masks
+      start_date: "2024-03-23"
+      end_date: "2024-05-15"
+      compliance_rate: 0.8
+      transmission_effects_file: masks.csv
+    - name: distancing
+      start_date: "2024-03-23"
+      end_date: "2024-05-15"
+      compliance_rate: 1.0
+      transmission_effects_file: distancing.csv
+```
+
+`masks.csv` can select people using the existing `filter.*` columns, including
+`filter.properties.<name>`:
+
+```csv
+filter.properties.risk_group,scope,transmission_mode,effect_channel,multiplier
+high,person,respiratory,source_infectiousness,0.60
+high,person,respiratory,target_susceptibility,0.70
+```
+
+`distancing.csv` selects venues with the same column convention:
+
+```csv
+filter.venue_type,scope,transmission_mode,effect_channel,multiplier
+school,venue,respiratory,contact_intensity,0.80
+```
+
+The other channels are `environmental_risk` (for example, cleaning on a
+fomite mode) and the two person channels shown above. Each row is one effect;
+all distinct matching rows and active policies multiply. A missing effect uses
+`1.0`, and duplicate definitions are rejected. Venue effects apply once per
+venue and require a temporal policy with `compliance_rate: 1`; symptom policies
+can carry person effects. Source/target person effects share their policy's
+sticky compliance decision with any location action.
 
 ---
 

@@ -208,7 +208,8 @@ set(JUNE_CORE_SOURCES
     src/loaders/domain_loader_internals.cpp
     src/loaders/config_loader.cpp
     src/loaders/config_loader_encounters.cpp
-    src/loaders/config_loader_vaccination.cpp)
+    src/loaders/config_loader_vaccination.cpp
+    src/loaders/policy_loader_transmission.cpp)
 
 if(MPI_FOUND)
   list(APPEND JUNE_CORE_SOURCES
@@ -358,6 +359,7 @@ if(BUILD_TESTING)
   add_june_test(test_config_checks "tests/test_config_checks.cpp")
   add_june_test(test_activity_manager "tests/test_activity_manager.cpp")
   add_june_test(test_policy "tests/test_policy.cpp")
+  add_june_test(test_transmission_modifiers "tests/test_transmission_modifiers.cpp")
   add_june_test(test_on_the_fly_venue_allocator "tests/test_on_the_fly_venue_allocator.cpp")
   add_june_test(test_schedule_csv "tests/test_schedule_csv.cpp")
   add_june_test(test_day_types "tests/test_day_types.cpp")
