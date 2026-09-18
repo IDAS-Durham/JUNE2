@@ -182,6 +182,10 @@ void DomainManager::setDisease(const Disease* disease) {
   if (communicator_) communicator_->setDisease(disease);
 }
 
+void DomainManager::setPolicyManager(const PolicyManager* policy_manager) {
+  if (communicator_) communicator_->setPolicyManager(policy_manager);
+}
+
 void DomainManager::loadGeographyOnNonZeroRanks() {
   WorldState temp = HDF5Loader::loadGeographyOnly(world_state_file_);
   world_.geo_units = std::move(temp.geo_units);

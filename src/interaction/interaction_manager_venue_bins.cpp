@@ -213,7 +213,7 @@ void InteractionManager::binMemberClassification(
     } else if (!visitor->is_infected && visitor->immunity_level < 1.0) {
       double susceptibility = 1.0 - visitor->immunity_level;
       bins_buffer_[bin_index].susceptible.push_back(
-          {pid, susceptibility, visitor, member.encounter_type_id});
+          {pid, susceptibility, visitor, member.encounter_type_id, 0});
     }
     return;
   }
@@ -227,7 +227,8 @@ void InteractionManager::binMemberClassification(
         person->getSusceptibility(current_time, disease_->getName());
     if (susceptibility > 0.0) {
       bins_buffer_[bin_index].susceptible.push_back(
-          {pid, susceptibility, /*visitor=*/nullptr, member.encounter_type_id});
+          {pid, susceptibility, /*visitor=*/nullptr, member.encounter_type_id,
+           person->transmission_modifier_set_id});
     }
   }
   if (person->infection && num_fomite_modes > 0) {
@@ -346,7 +347,9 @@ void InteractionManager::accumulateVisitorInfectiousnessAndFomite(
           t_stage_k_e);
       if (dep_k > 0.0)
         bins_buffer_[bin_index].total_fomite_deposition_sub[local_fm][k] +=
-            dep_k;
+            dep_k * personTransmissionModifier(
+                        nullptr, visitor, fomite_modes[local_fm].mode_index,
+                        TransmissionEffectChannel::SourceInfectiousness);
     }
   }
 }
@@ -360,7 +363,10 @@ void InteractionManager::accumulateLocalInfectiousness(
   double infectiousness_total = 0.0;
   for (int m = 0; m < num_modes; ++m) {
     im_scratch_buffer_[m] =
-        person->infection->getIntegratedInfectiousness(m, current_time, t1);
+        person->infection->getIntegratedInfectiousness(m, current_time, t1) *
+        personTransmissionModifier(
+            person, nullptr, m,
+            TransmissionEffectChannel::SourceInfectiousness);
     infectiousness_total += im_scratch_buffer_[m];
   }
   if (infectiousness_total > 0.0) {
@@ -388,6 +394,9 @@ void InteractionManager::accumulateLocalFomiteDeposition(
       double t_sub_e = current_time + (k + 1) * dt_sub;
       double dep_k = person->infection->getIntegratedFomiteDeposition(
           fomite_modes[local_fm].mode_index, t_sub_s, t_sub_e);
+      dep_k *= personTransmissionModifier(
+          person, nullptr, fomite_modes[local_fm].mode_index,
+          TransmissionEffectChannel::SourceInfectiousness);
       if (dep_k > 0.0)
         bins_buffer_[bin_index].total_fomite_deposition_sub[local_fm][k] +=
             dep_k;

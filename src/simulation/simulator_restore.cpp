@@ -411,6 +411,9 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
 
   // ---- rebuild derived caches; set resume point ----
   if (epidemiology_) epidemiology_->restoreAfterCheckpoint(lpt_map);
+  if (policy_manager_ && disease_)
+    policy_manager_->initializeTransmissionModifiers(*disease_,
+                                                     current_simulation_time_);
   resume_from_day_ = completed_day + 1;
 
   validateResumeBounds(completed_day);

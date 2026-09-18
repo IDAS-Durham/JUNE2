@@ -73,6 +73,10 @@ struct VisitorInfo {
   // Pre-computed integrated infectiousness per mode (from sending rank)
   static constexpr int MAX_MODES = 8;
   double integrated_infectiousness[MAX_MODES] = {};
+  double target_susceptibility[MAX_MODES] = {};
+  double deposition_source_multiplier[MAX_MODES] = {};
+  bool has_target_susceptibility = false;
+  bool has_deposition_source_multiplier = false;
 };
 
 // Special venue ID for infection seed events
@@ -258,6 +262,7 @@ struct Person {
   float age;
   Sex sex;                // Enum
   GeoUnitId geo_unit_id;  // Where they live (SGU level)
+  uint32_t transmission_modifier_set_id = 0;
 
   // Schedule type - determines daily routine pattern
   uint16_t schedule_type_id = 0xFFFF;  // ID into schedule_type_names
@@ -375,6 +380,7 @@ struct Venue {
   VenueId id;
   uint8_t type_id;        // ID into type_names
   GeoUnitId geo_unit_id;  // Where venue is located
+  uint32_t transmission_modifier_set_id = 0;
   VenueId
       parent_id;  // -1 if no parent (e.g., school has classrooms as children)
   float latitude;

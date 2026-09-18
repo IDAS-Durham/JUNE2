@@ -45,6 +45,7 @@ class DomainManager {
   void setMPI(int rank, int num_ranks);  // For tests
 
   void setDisease(const Disease* disease);
+  void setPolicyManager(const PolicyManager* policy_manager);
 
   // Delegated exchanges
   void exchangeVisitors(const std::vector<PersonLocation>& locations,

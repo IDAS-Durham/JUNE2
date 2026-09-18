@@ -1,0 +1,4 @@
+name,date,type,geo_level,geo_unit,cases,cases_per_capita,filter.properties.ethnicity,filter.age_groups
+bulk_uniform_seed,2024-01-01 08:00,uniform,,,0.0005,,W,
+bulk_exact_seed,2024-01-02 08:00,exact,MGU,E02004292,10,,,18-30
+bulk_clustered_seed,2024-01-03 08:00,clustered,MGU,E02004292,5,,,

@@ -189,9 +189,6 @@ void printConfig(const Config& config) {
   std::cout << "\nContact Matrices:" << std::endl;
   std::cout << "  Venue types configured: "
             << config.contact_matrices.matrices.size() << std::endl;
-  std::cout << "  Betas: " << config.contact_matrices.betas.size() << std::endl;
-  std::cout << "  Default beta: " << config.contact_matrices.default_beta
-            << std::endl;
 
   // Show a few contact matrices
   int shown = 0;
@@ -238,8 +235,6 @@ int main(int argc, char* argv[]) {
   // as the "not provided" sentinel. Auto-generated seeds routinely exceed
   // INT_MAX, and must be feedable back via --seed for reproducible restart.
   long long seed_override = -1;
-  double beta_override = -1.0;
-
   std::vector<std::string> cli_args(argv + 1, argv + argc);
 
   for (int i = 1; i < argc; ++i) {
@@ -249,14 +244,6 @@ int main(int argc, char* argv[]) {
       infection_seeds_cli_override = true;
     } else if ((arg == "--sim_config" || arg == "--config") && i + 1 < argc) {
       sim_config_file = argv[++i];
-    } else if (arg == "--beta" && i + 1 < argc) {
-      try {
-        beta_override = std::stod(argv[++i]);
-      } catch (...) {
-        if (rank == 0)
-          std::cerr << "Warning: Invalid value for --beta: " << argv[i]
-                    << std::endl;
-      }
     } else if (arg == "--seed" && i + 1 < argc) {
       try {
         long long v = std::stoll(argv[++i]);
@@ -383,13 +370,6 @@ int main(int argc, char* argv[]) {
       std::cout << "  Run dir: " << run_path.string() << std::endl;
     }
 
-    // Apply overrides
-    if (beta_override >= 0.0) {
-      config.contact_matrices.global_beta.enabled = true;
-      config.contact_matrices.global_beta.value = beta_override;
-      if (rank == 0)
-        std::cout << "Overriding global beta: " << beta_override << std::endl;
-    }
     // (random seed already resolved + recorded above, before snapshotRun)
     // Apply days override if provided
     if (days_override > 0) {
@@ -408,10 +388,6 @@ int main(int argc, char* argv[]) {
       std::cout << "  Start: " << config.simulation.start_date
                 << "  End: " << config.simulation.end_date
                 << "  Seed: " << config.simulation.random_seed << std::endl;
-      if (config.contact_matrices.global_beta.enabled) {
-        std::cout << "  Global Beta: "
-                  << config.contact_matrices.global_beta.value << std::endl;
-      }
     }
 
     // Seed global RNG before creating any components

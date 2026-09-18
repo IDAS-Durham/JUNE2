@@ -33,6 +33,7 @@ struct SelectionCriterion {
   // Evaluate this criterion against a person
   bool evaluate(const Person& person, const WorldState* world = nullptr,
                 const Person* partner = nullptr) const;
+  bool evaluate(const Venue& venue, const WorldState* world) const;
 
   // Resolve string values to codes for early interning
   void resolve(const WorldState& world);
@@ -44,6 +45,8 @@ struct SelectionCriterion {
   // instead of as the config error it is. `context` names the offending config
   // block in the error message.
   void resolveOrThrow(const WorldState& world, const std::string& context);
+  void resolveVenueOrThrow(const WorldState& world,
+                           const std::string& context);
 
   // True for the property paths whose `value` is a geographical unit name (or
   // a list of them) rather than a number: `geo_unit.<LEVEL>` and nothing else.
@@ -105,6 +108,7 @@ struct SelectionCriterion {
   mutable std::string cached_activity_name;  // (also reused for facet name)
   mutable std::string cached_sub_property;   // (also reused for facet field)
   mutable int cached_prop_idx = -1;
+  mutable int cached_venue_prop_idx = -1;
   mutable int32_t target_code = -1;  // Interned code for comparison
 };
 
@@ -421,28 +425,13 @@ struct ContactMatrix {
   // Contact matrix: from_bin -> to_bin -> number_of_contacts
   std::vector<std::vector<double>> contacts;
 
-  // Physical contact proportion matrix
-  std::vector<std::vector<double>> proportion_physical;
-
   // Bin names (e.g., ["residents", "workers"])
   std::vector<std::string> bins;
-
-  // Characteristic time in hours
-  double characteristic_time = 24.0;
 
   // Get number of contacts between two bins
   double getContacts(size_t from_bin, size_t to_bin) const {
     if (from_bin < contacts.size() && to_bin < contacts[from_bin].size()) {
       return contacts[from_bin][to_bin];
-    }
-    return 0.0;
-  }
-
-  // Get proportion physical between two bins
-  double getProportionPhysical(size_t from_bin, size_t to_bin) const {
-    if (from_bin < proportion_physical.size() &&
-        to_bin < proportion_physical[from_bin].size()) {
-      return proportion_physical[from_bin][to_bin];
     }
     return 0.0;
   }
@@ -474,9 +463,6 @@ struct ContactMatrix {
 };
 
 struct ContactMatrixConfig {
-  // Beta values (transmission coefficients) per venue type
-  std::unordered_map<std::string, double> betas;
-
   // Contact matrices per venue type
   std::unordered_map<std::string, ContactMatrix> matrices;
 
@@ -497,18 +483,6 @@ struct ContactMatrixConfig {
   // ranks)
   std::map<std::string, int> matrix_name_to_id;
 
-  // Default values
-  double default_beta = 0.05;
-  double default_proportion_physical = 0.1;
-  double default_characteristic_time = 24.0;
-  double alpha_physical = 1.0;
-
-  // Global transmission scaling
-  struct GlobalBetaConfig {
-    bool enabled = false;
-    double value = 1.0;
-  } global_beta;
-
   // Ordered mode names. Single-mode configs use {"default"}.
   std::vector<std::string> mode_names;
 
@@ -526,23 +500,6 @@ struct ContactMatrixConfig {
   std::unordered_map<std::string,
                      std::unordered_map<std::string, ContactMatrix>>
       mode_matrices;
-
-  // Get beta for a venue type
-  double getBeta(const std::string& venue_type) const {
-    auto it = betas.find(venue_type);
-    if (it != betas.end()) {
-      return it->second;
-    }
-    return default_beta;
-  }
-
-  // Get beta by venue type ID
-  double getBeta(uint8_t venue_type_id) const {
-    if (venue_type_id < betas_by_id.size()) {
-      return betas_by_id[venue_type_id];
-    }
-    return default_beta;
-  }
 
   // Get contact matrix for a venue type
   const ContactMatrix* getMatrix(const std::string& venue_type) const {
@@ -677,7 +634,6 @@ struct ContactMatrixConfig {
   std::vector<const ContactMatrix*> bin_structure_by_id;
   std::vector<const ContactMatrix*> virtual_bin_structure_by_id;
 
-  std::vector<double> betas_by_id;
   // [disease_mode_index] → the default matrix for that mode, or nullptr.
   // Rebuilt against the disease's own mode list by finalizeDefaultModeMatrices
   // and read while resolving pairs that have no matrix of their own.

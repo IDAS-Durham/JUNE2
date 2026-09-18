@@ -157,6 +157,28 @@ policies:
       compliance_rate: 1.0
 
     # -------------------------------------------------------------------------
+    # Synthetic transmission-effect examples used by the 2021 configuration.
+    # The shared CSV keeps the numeric values in one place; its policy column
+    # selects the rows belonging to each policy.
+    # -------------------------------------------------------------------------
+    - name: "mask_wearing"
+
+      start_date: "2020-03-23"
+      end_date: "2020-05-15"
+
+      compliance_rate: 0.8
+      transmission_effects_file: "policies.csv"
+
+    - name: "social_distancing"
+
+      start_date: "2020-03-23"
+      end_date: "2020-05-15"
+
+      # Venue effects are deterministic and therefore require full compliance.
+      compliance_rate: 1.0
+      transmission_effects_file: "policies.csv"
+
+    # -------------------------------------------------------------------------
     # Example: Lockdown exempting grocery venues, with a no_venue companion
     # -------------------------------------------------------------------------
     # exempt_venue_types (the ExemptFrom direction) closes every venue type

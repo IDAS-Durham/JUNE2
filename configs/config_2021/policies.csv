@@ -1,0 +1,6 @@
+# Shared transmission-effect table. The optional policy column selects rows for
+# the YAML policy that references this file.
+policy,scope,transmission_mode,effect_channel,multiplier
+mask_wearing,person,respiratory,source_infectiousness,0.70
+mask_wearing,person,respiratory,target_susceptibility,0.80
+social_distancing,venue,respiratory,contact_intensity,0.75

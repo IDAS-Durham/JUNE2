@@ -218,7 +218,10 @@ bool InteractionManager::gatherMemberInfectiousnessByMode(
     const double t1 = current_time + delta_hours / 24.0;
     for (int m = 0; m < num_modes; ++m) {
       inf_by_mode[m] =
-          person->infection->getIntegratedInfectiousness(m, current_time, t1);
+          person->infection->getIntegratedInfectiousness(m, current_time, t1) *
+          personTransmissionModifier(
+              person, nullptr, m,
+              TransmissionEffectChannel::SourceInfectiousness);
       total += inf_by_mode[m];
     }
   } else {
@@ -587,6 +590,51 @@ double InteractionManager::lookupContactsForBinPair(const ContactMatrix& matrix,
       "lookupContactsForBinPair: no contact matrix entry for (susc_bin=" +
       std::to_string(susc_bin) + ", inf_bin=" + std::to_string(inf_bin) +
       "); matrix has " + std::to_string(matrix.contacts.size()) + " bin rows.");
+}
+
+double InteractionManager::personTransmissionModifier(
+    const Person* person, const VisitorInfo* visitor, size_t mode,
+    TransmissionEffectChannel channel) const {
+  if (visitor) {
+    if (mode >= VisitorInfo::MAX_MODES) return 1.0;
+    const double value =
+        channel == TransmissionEffectChannel::TargetSusceptibility
+            ? (visitor->has_target_susceptibility
+                   ? visitor->target_susceptibility[mode]
+                   : 1.0)
+            : (visitor->has_deposition_source_multiplier
+                   ? visitor->deposition_source_multiplier[mode]
+                   : 1.0);
+    return value;
+  }
+  if (person && policy_manager_) {
+    const double value =
+        policy_manager_->personModifier(*person, mode, channel);
+    return value;
+  }
+  return 1.0;
+}
+
+double InteractionManager::effectiveTargetSusceptibility(
+    const Person* person, const VisitorInfo* visitor,
+    double base_susceptibility, size_t mode) const {
+  if (visitor && visitor->has_target_susceptibility &&
+      mode < VisitorInfo::MAX_MODES) {
+    const double value = visitor->target_susceptibility[mode];
+    return value;
+  }
+  const double value = base_susceptibility *
+                       personTransmissionModifier(
+                           person, nullptr, mode,
+                           TransmissionEffectChannel::TargetSusceptibility);
+  return value;
+}
+
+double InteractionManager::venueTransmissionModifier(
+    const Venue* venue, size_t mode, TransmissionEffectChannel channel) const {
+  if (!venue || !policy_manager_) return 1.0;
+  const double value = policy_manager_->venueModifier(venue, mode, channel);
+  return value;
 }
 
 uint16_t InteractionManager::resolveInfectorSymptomId(

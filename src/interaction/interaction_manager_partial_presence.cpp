@@ -51,8 +51,8 @@ std::optional<int> InteractionManager::dispatchPartialPresenceIfApplicable(
 void InteractionManager::accumulateOneGroup(
     const std::vector<RuntimeGroupMember>& group, float slot_duration_min,
     double current_time, double delta_hours, int num_modes, int num_bins_needed,
-    uint8_t venue_type_id, const ContactMatrix& bin_structure,
-    const TransmissionParams& trans_params,
+    uint8_t venue_type_id, const Venue* venue,
+    const ContactMatrix& bin_structure, const TransmissionParams& trans_params,
     std::vector<PartialPresenceSubBin>& sub_bins,
     PartialPresenceLambdaResult& result) const {
   std::vector<float> events =
@@ -75,20 +75,22 @@ void InteractionManager::accumulateOneGroup(
     classifyMembersInSubInterval(group, t0, t1, scale, current_time,
                                  delta_hours, num_modes, sub_bins, susc_by_bin);
 
-    accumulatePartialLambdaContributions(sub_bins, susc_by_bin, venue_type_id,
-                                         bin_structure, num_bins_needed,
-                                         num_modes, trans_params, result);
+    accumulatePartialLambdaContributions(
+        sub_bins, susc_by_bin, venue, venue_type_id, bin_structure,
+        num_bins_needed, num_modes, trans_params, result);
   }
 }
 
 void InteractionManager::accumulatePartialLambdaContributions(
     const std::vector<PartialPresenceSubBin>& sub_bins,
     const std::vector<std::vector<const RuntimeGroupMember*>>& susc_by_bin,
-    uint8_t venue_type_id, const ContactMatrix& bin_structure,
-    int num_bins_needed, int num_modes, const TransmissionParams& trans_params,
+    const Venue* venue, uint8_t venue_type_id,
+    const ContactMatrix& bin_structure, int num_bins_needed, int num_modes,
+    const TransmissionParams& trans_params,
     PartialPresenceLambdaResult& result) const {
   using AccumSource = PartialPresenceAccumSource;
   auto& susc_lambda = result.susc_lambda;
+  auto& susc_lambda_by_mode = result.susc_lambda_by_mode;
   auto& susc_sources = result.susc_sources;
 
   for (int susc_bin = 0; susc_bin < num_bins_needed; ++susc_bin) {
@@ -114,6 +116,10 @@ void InteractionManager::accumulatePartialLambdaContributions(
         if (susc_bin == inf_bin) bin_size = std::max(1, bin_size - 1);
         double omega = contacts / bin_size;
         double contrib = omega * total_inf * mode_susc_mult;
+        contrib *= venueTransmissionModifier(
+            venue, mode, TransmissionEffectChannel::ContactIntensity);
+        contrib *= venueTransmissionModifier(
+            venue, mode, TransmissionEffectChannel::EnvironmentalRisk);
         if (!(contrib > 0.0)) continue;
 
         for (const RuntimeGroupMember* sm : susc_by_bin[susc_bin]) {
@@ -123,7 +129,12 @@ void InteractionManager::accumulatePartialLambdaContributions(
           // below intentionally omit f_S — it is a per-susceptible constant, so
           // it cannot change the relative infector sampling for this
           // susceptible.
-          susc_lambda[sm->pid] += contrib * sm->f_presence;
+          const double contribution = contrib * sm->f_presence;
+          susc_lambda[sm->pid] += contribution;
+          auto& by_mode = susc_lambda_by_mode[sm->pid];
+          if (by_mode.size() < static_cast<size_t>(num_modes))
+            by_mode.assign(num_modes, 0.0);
+          by_mode[mode] += contribution;
           // Pick an infector for this contribution by weight-sampling
           // proportional to per-person infectiousness in this sub-interval.
           // We record one AccumSource per (susc, mode, inf_bin, sub) with
@@ -183,6 +194,9 @@ void InteractionManager::classifyMembersInSubInterval(
       for (int mode = 0; mode < num_modes; ++mode) {
         double inf_full = m.person->infection->getIntegratedInfectiousness(
             mode, current_time, t_end_d);
+        inf_full *= personTransmissionModifier(
+            m.person, nullptr, mode,
+            TransmissionEffectChannel::SourceInfectiousness);
         // f_I: this infectious rider's presence cap (1.0 unless over-long).
         double inf_sub = inf_full * scale * m.f_presence;
         if (inf_sub > 0.0) {
@@ -356,8 +370,8 @@ InteractionManager::computePartialPresenceLambda(
     const auto& group = groups[c];
     if (group.empty()) continue;
     accumulateOneGroup(group, slot_duration_min, current_time, delta_hours,
-                       num_modes, num_bins_needed, venue_type_id, bin_structure,
-                       trans_params, sub_bins, result);
+                       num_modes, num_bins_needed, venue_type_id, venue,
+                       bin_structure, trans_params, sub_bins, result);
   }
 
   return result;
@@ -514,7 +528,8 @@ int InteractionManager::resolvePartialPresenceInfections(
 }
 
 std::pair<int, PersonId> InteractionManager::sampleInfectorFromAccumSources(
-    std::vector<PartialPresenceAccumSource>& srcs, SplitMix64& rng) const {
+    std::vector<PartialPresenceAccumSource>& srcs,
+    const std::vector<double>& target_modifiers, SplitMix64& rng) const {
   if (srcs.empty()) return {0, -1};
 
   // Sort for determinism, then cumulative-sample.
@@ -528,7 +543,11 @@ std::pair<int, PersonId> InteractionManager::sampleInfectorFromAccumSources(
   cum.reserve(srcs.size());
   double acc = 0.0;
   for (const auto& s : srcs) {
-    acc += s.weighted;
+    const double target =
+        s.mode >= 0 && s.mode < static_cast<int>(target_modifiers.size())
+            ? target_modifiers[s.mode]
+            : 1.0;
+    acc += s.weighted * target;
     cum.push_back(acc);
   }
   int sampled = (acc > 0.0) ? sampleFromCumulative(cum, rng) : 0;
@@ -558,6 +577,8 @@ double InteractionManager::computeMemberSusceptibility(
 
 bool InteractionManager::processOnePartialSusceptible(
     PersonId susc_id, const std::unordered_map<PersonId, double>& susc_lambda,
+    const std::unordered_map<PersonId, std::vector<double>>&
+        susc_lambda_by_mode,
     std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>&
         susc_sources,
     double current_time, Venue* venue, uint8_t venue_type_id,
@@ -568,8 +589,7 @@ bool InteractionManager::processOnePartialSusceptible(
     uint64_t venue_key) {
   auto lambda_it = susc_lambda.find(susc_id);
   if (lambda_it == susc_lambda.end()) return false;
-  double lambda = lambda_it->second;
-  if (!(lambda > 0.0)) return false;
+  double lambda = 0.0;
 
   Person* susc_person = world_.getPerson(susc_id);
   const VisitorInfo* visitor = nullptr;
@@ -583,11 +603,25 @@ bool InteractionManager::processOnePartialSusceptible(
       computeMemberSusceptibility(susc_person, visitor, current_time);
   if (!(susceptibility > 0.0)) return false;
 
+  std::vector<double> target_modifiers;
+  auto mode_lambda_it = susc_lambda_by_mode.find(susc_id);
+  if (mode_lambda_it != susc_lambda_by_mode.end()) {
+    target_modifiers.resize(mode_lambda_it->second.size(), 1.0);
+    for (size_t mode = 0; mode < mode_lambda_it->second.size(); ++mode) {
+      target_modifiers[mode] = effectiveTargetSusceptibility(
+          susc_person, visitor, susceptibility, mode);
+      lambda += mode_lambda_it->second[mode] * target_modifiers[mode];
+    }
+  } else {
+    lambda = lambda_it->second;
+  }
+  if (!(lambda > 0.0)) return false;
+
   double total_risk = lambda;
   if (simulation_config_.regional_risk.enabled && venue) {
     total_risk *= venue->transmission_factor;
   }
-  double prob = 1.0 - std::exp(-total_risk * susceptibility);
+  double prob = 1.0 - std::exp(-total_risk);
   if (!(prob > 1e-12)) return false;
 
   SplitMix64 susc_rng(mix_seed(base_seed_, susc_id, venue_key, time_bits));
@@ -599,8 +633,8 @@ bool InteractionManager::processOnePartialSusceptible(
   int sampled_mode = 0;
   PersonId infector_id = -1;
   if (src_it != susc_sources.end()) {
-    std::tie(sampled_mode, infector_id) =
-        sampleInfectorFromAccumSources(src_it->second, susc_rng);
+    std::tie(sampled_mode, infector_id) = sampleInfectorFromAccumSources(
+        src_it->second, target_modifiers, susc_rng);
   }
 
   uint16_t infector_symptom_id =
@@ -642,9 +676,9 @@ int InteractionManager::processPartialPresenceVenue(
 
   for (PersonId susc_id : ordered_susc) {
     if (processOnePartialSusceptible(
-            susc_id, susc_lambda, susc_sources, current_time, venue,
-            venue_type_id, actual_venue_id, visitor_data, active_infections,
-            pending_infections, time_bits, venue_key)) {
+            susc_id, susc_lambda, acc.susc_lambda_by_mode, susc_sources,
+            current_time, venue, venue_type_id, actual_venue_id, visitor_data,
+            active_infections, pending_infections, time_bits, venue_key)) {
       new_infections++;
     }
   }

@@ -636,8 +636,6 @@ TEST_CASE("F1: Trajectory-driven transmission occurs") {
   default_contact_matrix.contacts = {{100.0}};
   cm.default_matrix =
       default_contact_matrix;  // High contacts for near-certain transmission
-  cm.default_beta = 1.0;       // Neutralize beta dampening for this test
-  cm.default_characteristic_time = 1.0;  // Match delta_hours for unit scaling
   SimulationConfig sim;
   sim.random_seed = 123;
   ParallelConfig par;

@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "epidemiology/policy.h"
 #include "parallel/domain_communicator_detail.h"
 #include "parallel/domain_manager.h"
 #include "parallel/mpi_utils.h"
@@ -20,9 +21,10 @@ using june::domain_comm_detail::packField;
 using june::domain_comm_detail::unpackField;
 
 // Fixed header of the visitor wire format (everything before the
-// integrated_infectiousness payload); the variable-length per-mode payload
-// is appended manually after this, outside WireRecord.
-// Total wire size = VISITOR_WIRE_HEADER + num_modes * sizeof(double).
+// mode-specific payloads); the variable-length payload is appended manually
+// after this, outside WireRecord.
+// Total wire size = VISITOR_WIRE_HEADER +
+//   (2 * num_modes + num_deposition_modes) * sizeof(double).
 constexpr auto kVisitorWire = makeWireRecord(
     &june::Domain::VisitorData::person_id,
     &june::Domain::VisitorData::home_rank, &june::Domain::VisitorData::venue_id,
@@ -51,41 +53,61 @@ static_assert(offsetof(june::Domain::VisitorData, integrated_infectiousness) ==
                   40,
               "VisitorData's fixed-header region changed - check kVisitorWire "
               "covers every field, then update this literal");
-inline int visitorWireSize(int num_modes) {
-  return VISITOR_WIRE_HEADER + num_modes * static_cast<int>(sizeof(double));
+inline int visitorWireSize(int num_modes, int num_deposition_modes) {
+  return VISITOR_WIRE_HEADER + (2 * num_modes + num_deposition_modes) *
+                                   static_cast<int>(sizeof(double));
 }
 
-char* packVisitor(char* ptr, const june::Domain::VisitorData& v,
-                  int num_modes) {
+char* packVisitor(char* ptr, const june::Domain::VisitorData& v, int num_modes,
+                  int num_deposition_modes) {
   ptr = kVisitorWire.pack(ptr, v);
-  // Variable-length per-mode payload. The vector must be exactly num_modes
-  // long; sender and receiver agree on this from disease->numModes(), which
-  // is loaded identically on every rank. Mismatches indicate a config bug
-  // and are caught loud at the build site rather than papered over here.
-  if (static_cast<int>(v.integrated_infectiousness.size()) != num_modes) {
-    throw std::runtime_error(
-        "packVisitor: integrated_infectiousness size " +
-        std::to_string(v.integrated_infectiousness.size()) + " != num_modes " +
-        std::to_string(num_modes));
-  }
-  if (num_modes > 0) {
-    std::memcpy(ptr, v.integrated_infectiousness.data(),
-                num_modes * sizeof(double));
-    ptr += num_modes * sizeof(double);
-  }
+  const auto append = [&](const std::vector<double>& values, int expected,
+                          const char* name) {
+    if (static_cast<int>(values.size()) != expected) {
+      throw std::runtime_error("packVisitor: " + std::string(name) + " size " +
+                               std::to_string(values.size()) +
+                               " != " + std::to_string(expected));
+    }
+    if (expected > 0) {
+      std::memcpy(ptr, values.data(), expected * sizeof(double));
+      ptr += expected * sizeof(double);
+    }
+  };
+  append(v.integrated_infectiousness, num_modes, "integrated_infectiousness");
+  append(v.target_susceptibility, num_modes, "target_susceptibility");
+  append(v.deposition_source_multiplier, num_deposition_modes,
+         "deposition_source_multiplier");
   return ptr;
 }
 
 const char* unpackVisitor(const char* ptr, june::Domain::VisitorData& v,
-                          int num_modes) {
+                          int num_modes, int num_deposition_modes) {
   ptr = kVisitorWire.unpack(ptr, v);
   v.integrated_infectiousness.assign(num_modes, 0.0);
-  if (num_modes > 0) {
-    std::memcpy(v.integrated_infectiousness.data(), ptr,
-                num_modes * sizeof(double));
-    ptr += num_modes * sizeof(double);
-  }
+  v.target_susceptibility.assign(num_modes, 0.0);
+  v.deposition_source_multiplier.assign(num_deposition_modes, 1.0);
+  const auto read = [&](std::vector<double>& values, int count) {
+    if (count > 0) {
+      std::memcpy(values.data(), ptr, count * sizeof(double));
+      ptr += count * sizeof(double);
+    }
+  };
+  read(v.integrated_infectiousness, num_modes);
+  read(v.target_susceptibility, num_modes);
+  read(v.deposition_source_multiplier, num_deposition_modes);
   return ptr;
+}
+
+int countDepositionModes(const june::Disease* disease) {
+  if (!disease) return 0;
+  int count = 0;
+  for (const auto& mode : disease->getTransmissionParams().modes) {
+    if (mode.type == june::TransmissionModeType::Fomite ||
+        mode.type == june::TransmissionModeType::CompartmentalDeposition) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 // Builds a fully-populated VisitorData for a person attending a remote
@@ -95,12 +117,10 @@ const char* unpackVisitor(const char* ptr, june::Domain::VisitorData& v,
 // integrated_infectiousness vector is always sized to num_modes
 // (zero-filled for non-infectious people); the wire format expects
 // exactly that many doubles.
-june::Domain::VisitorData buildVisitorPayload(const june::PersonLocation& loc,
-                                              const june::Person& person,
-                                              int home_rank,
-                                              double current_time,
-                                              double delta_hours, int num_modes,
-                                              const june::Disease* disease) {
+june::Domain::VisitorData buildVisitorPayload(
+    const june::PersonLocation& loc, const june::Person& person, int home_rank,
+    double current_time, double delta_hours, int num_modes,
+    const june::Disease* disease, const june::PolicyManager* policy_manager) {
   june::Domain::VisitorData visitor;
   visitor.person_id = loc.person_id;
   visitor.home_rank = home_rank;
@@ -125,6 +145,33 @@ june::Domain::VisitorData buildVisitorPayload(const june::PersonLocation& loc,
   visitor.symptom_id = 0;
   visitor.time_in_stage = 0.0;
   visitor.integrated_infectiousness.assign(num_modes, 0.0);
+  visitor.target_susceptibility.assign(num_modes, susceptibility);
+  visitor.deposition_source_multiplier.assign(countDepositionModes(disease),
+                                              1.0);
+  for (int m = 0; m < num_modes; ++m) {
+    const double target_multiplier =
+        policy_manager
+            ? policy_manager->personModifier(
+                  person, static_cast<size_t>(m),
+                  june::TransmissionEffectChannel::TargetSusceptibility)
+            : 1.0;
+    visitor.target_susceptibility[m] = susceptibility * target_multiplier;
+  }
+  size_t deposition_index = 0;
+  if (disease) {
+    for (size_t m = 0; m < disease->getTransmissionParams().modes.size(); ++m) {
+      const auto mode_type = disease->getTransmissionParams().modes[m].type;
+      if (mode_type != june::TransmissionModeType::Fomite &&
+          mode_type != june::TransmissionModeType::CompartmentalDeposition)
+        continue;
+      visitor.deposition_source_multiplier[deposition_index++] =
+          policy_manager
+              ? policy_manager->personModifier(
+                    person, m,
+                    june::TransmissionEffectChannel::SourceInfectiousness)
+              : 1.0;
+    }
+  }
   if (visitor.is_infected && person.infection) {
     const june::InfectionTrajectory& traj = person.infection->getTrajectory();
     double stage_start_time = traj.infection_time;
@@ -144,7 +191,12 @@ june::Domain::VisitorData buildVisitorPayload(const june::PersonLocation& loc,
       double t1 = current_time + delta_hours / 24.0;
       for (int m = 0; m < num_modes; ++m) {
         visitor.integrated_infectiousness[m] =
-            person.infection->getIntegratedInfectiousness(m, current_time, t1);
+            person.infection->getIntegratedInfectiousness(m, current_time, t1) *
+            (policy_manager
+                 ? policy_manager->personModifier(
+                       person, static_cast<size_t>(m),
+                       june::TransmissionEffectChannel::SourceInfectiousness)
+                 : 1.0);
       }
     }
   }
@@ -176,10 +228,10 @@ void DomainCommunicator::exchangeVisitors(
   // their own buffer layout.
   const int num_modes =
       (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
-
   auto send = [&](const PersonLocation& loc, Person& person, int target_rank) {
-    outgoing[target_rank].push_back(buildVisitorPayload(
-        loc, person, rank_, current_time, delta_hours, num_modes, disease_));
+    outgoing[target_rank].push_back(
+        buildVisitorPayload(loc, person, rank_, current_time, delta_hours,
+                            num_modes, disease_, policy_manager_));
     send_counts[target_rank]++;
   };
 
@@ -267,7 +319,8 @@ void DomainCommunicator::exchangeAllToAll(
 
   const int num_modes =
       (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
-  const int wire_size = visitorWireSize(num_modes);
+  const int num_deposition_modes = countDepositionModes(disease_);
+  const int wire_size = visitorWireSize(num_modes, num_deposition_modes);
 
   std::vector<int> sdisp, rdisp;
   int stotal, rtotal;
@@ -280,7 +333,7 @@ void DomainCommunicator::exchangeAllToAll(
   for (int r = 0; r < num_ranks_; ++r) {
     char* ptr = sbuf.data() + sdisp[r];
     for (const auto& v : outgoing[r]) {
-      ptr = packVisitor(ptr, v, num_modes);
+      ptr = packVisitor(ptr, v, num_modes, num_deposition_modes);
     }
   }
 
@@ -297,7 +350,7 @@ void DomainCommunicator::exchangeAllToAll(
     const char* ptr = rbuf.data() + rdisp[r];
     for (int i = 0; i < recv_counts[r]; ++i) {
       Domain::VisitorData v;
-      ptr = unpackVisitor(ptr, v, num_modes);
+      ptr = unpackVisitor(ptr, v, num_modes, num_deposition_modes);
       if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
     }
   }
@@ -322,7 +375,8 @@ void DomainCommunicator::performP2PVisitorExchange(
 
   const int num_modes =
       (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
-  const int wire_size = visitorWireSize(num_modes);
+  const int num_deposition_modes = countDepositionModes(disease_);
+  const int wire_size = visitorWireSize(num_modes, num_deposition_modes);
 
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
@@ -351,7 +405,7 @@ void DomainCommunicator::performP2PVisitorExchange(
       }
       char* ptr = sbufs[r].data();
       for (const auto& v : outgoing[r]) {
-        ptr = packVisitor(ptr, v, num_modes);
+        ptr = packVisitor(ptr, v, num_modes, num_deposition_modes);
       }
       MPI_Request req;
       MPI_Isend(sbufs[r].data(), sbufs[r].size(), MPI_BYTE, r, 101,
@@ -368,7 +422,7 @@ void DomainCommunicator::performP2PVisitorExchange(
       const char* ptr = rbufs[r].data();
       for (int i = 0; i < recv_counts[r]; ++i) {
         Domain::VisitorData v;
-        ptr = unpackVisitor(ptr, v, num_modes);
+        ptr = unpackVisitor(ptr, v, num_modes, num_deposition_modes);
         if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
       }
     }

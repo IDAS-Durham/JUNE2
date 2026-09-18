@@ -473,6 +473,83 @@ bool SelectionCriterion::evaluate(const Person& person, const WorldState* world,
   return false;
 }
 
+bool SelectionCriterion::evaluate(const Venue& venue,
+                                  const WorldState* world) const {
+  if (!world) return false;
+  if (comparesAgainstUnitNames(property_path)) {
+    const size_t slot = geoMaskSlot(venue.geo_unit_id);
+    if (slot >= geo_ancestor_mask.size() || geo_ancestor_mask[slot] == 2)
+      return false;
+    if (operator_type == "==" || operator_type == "in")
+      return geo_ancestor_mask[slot] == 1;
+    return operator_type == "!=" && geo_ancestor_mask[slot] == 0;
+  }
+
+  PropertyValue actual;
+  if (property_path == "venue_type") {
+    if (venue.type_id >= world->venue_type_names.size()) return false;
+    actual = world->venue_type_names[venue.type_id];
+  } else if (property_path == "geo_unit_id") {
+    actual = static_cast<int32_t>(venue.geo_unit_id);
+  } else if (property_path == "id") {
+    actual = static_cast<int32_t>(venue.id);
+  } else if (property_path.compare(0, 11, "properties.") == 0) {
+    auto props = world->getVenueProperties(venue);
+    if (cached_venue_prop_idx < 0 ||
+        cached_venue_prop_idx >= static_cast<int>(props.size()))
+      return false;
+    int32_t raw = props[cached_venue_prop_idx];
+    if (raw < 0) return false;
+    const std::string name = property_path.substr(11);
+    auto registry = world->venue_property_value_registries.find(name);
+    if (registry != world->venue_property_value_registries.end() &&
+        std::holds_alternative<std::string>(value)) {
+      if (static_cast<size_t>(raw) >= registry->second.size()) return false;
+      actual = registry->second[raw];
+    } else if (std::holds_alternative<bool>(value)) {
+      actual = (raw != 0);
+    } else {
+      actual = raw;
+    }
+  } else {
+    return false;
+  }
+
+  if (operator_type == "==") return actual == value;
+  if (operator_type == "!=") return actual != value;
+  if (operator_type == "contains" &&
+      std::holds_alternative<std::string>(actual) &&
+      std::holds_alternative<std::string>(value)) {
+    return std::get<std::string>(actual).find(std::get<std::string>(value)) !=
+           std::string::npos;
+  }
+  if (operator_type == "in" &&
+      std::holds_alternative<std::vector<int32_t>>(value) &&
+      std::holds_alternative<int32_t>(actual)) {
+    const auto& values = std::get<std::vector<int32_t>>(value);
+    return std::find(values.begin(), values.end(), std::get<int32_t>(actual)) !=
+           values.end();
+  }
+  auto number = [](const PropertyValue& v, double& out) {
+    if (auto p = std::get_if<int32_t>(&v)) {
+      out = *p;
+      return true;
+    }
+    if (auto p = std::get_if<double>(&v)) {
+      out = *p;
+      return true;
+    }
+    return false;
+  };
+  double lhs = 0.0, rhs = 0.0;
+  if (!number(actual, lhs) || !number(value, rhs)) return false;
+  if (operator_type == ">") return lhs > rhs;
+  if (operator_type == "<") return lhs < rhs;
+  if (operator_type == ">=") return lhs >= rhs;
+  if (operator_type == "<=") return lhs <= rhs;
+  return false;
+}
+
 void SimulationConfig::resolve(const WorldState& world) {
   // Resolve the partial-presence venue type names into a bitmask of
   // venue_type_ids + a per-id target_group_size lookup. Unknown names are
@@ -563,12 +640,6 @@ void resolveContactMatrixBins(ContactMatrix& matrix, const WorldState& world) {
 }  // namespace
 
 void ContactMatrixConfig::resolve(const WorldState& world) {
-  betas_by_id.assign(world.venue_type_names.size(), default_beta);
-  for (const auto& [name, beta] : betas) {
-    int idx = world.getVenueTypeIndex(name);
-    if (idx >= 0 && idx < (int)betas_by_id.size()) betas_by_id[idx] = beta;
-  }
-
   // Resolve every matrix's bin fields against this world, whatever it is
   // keyed under. finalizeResolvedMatrices picks matrices out of these same
   // containers by name, so covering the containers covers everything that
@@ -1032,6 +1103,39 @@ void SelectionCriterion::resolveOrThrow(const WorldState& world,
     throw std::runtime_error(context + ": operator '" + operator_type +
                              "' is not supported (use one of > < >= <= == != "
                              "in contains)");
+  }
+}
+
+void SelectionCriterion::resolveVenueOrThrow(const WorldState& world,
+                                             const std::string& context) {
+  if (comparesAgainstUnitNames(property_path)) {
+    resolveOrThrow(world, context);
+    return;
+  }
+  if (property_path == "venue_type") {
+    if (!std::holds_alternative<std::string>(value))
+      throw std::runtime_error(context + ": venue_type requires a name");
+    if (world.getVenueTypeIndex(std::get<std::string>(value)) < 0)
+      throw std::runtime_error(context + ": unknown venue_type '" +
+                               std::get<std::string>(value) + "'");
+  } else if (property_path.compare(0, 11, "properties.") == 0) {
+    cached_venue_prop_idx =
+        world.getVenuePropertyIndex(property_path.substr(11));
+    if (cached_venue_prop_idx < 0)
+      throw std::runtime_error(context + ": venue property '" +
+                               property_path.substr(11) +
+                               "' is not carried by this world");
+  } else if (property_path != "geo_unit_id" && property_path != "id") {
+    throw std::runtime_error(context + ": property '" + property_path +
+                             "' is not available on venues");
+  }
+  static const std::array<const char*, 8> kOperators = {
+      ">", "<", ">=", "<=", "==", "!=", "in", "contains"};
+  if (std::find_if(kOperators.begin(), kOperators.end(), [&](const char* op) {
+        return operator_type == op;
+      }) == kOperators.end()) {
+    throw std::runtime_error(context + ": unsupported operator '" +
+                             operator_type + "'");
   }
 }
 

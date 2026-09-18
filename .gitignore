@@ -11,6 +11,8 @@ compile_commands.json
 outputs/
 # Simulation output files
 *.csv
+!configs/config_2021/bulk_seeds.csv
+!configs/config_2021/policies.csv
 !data/infection_outcome_rates_covid19.csv
 !data/infection_outcome_rates_plague.csv
 !data/infection_outcome_rates_spanishflu.csv

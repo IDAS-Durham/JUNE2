@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
@@ -251,6 +252,12 @@ WorldState HDF5Loader::loadDomainChunked(
 
   // Discover venue property names per type; values are loaded lazily later
   auto venue_type_prop_names = detail::discoverVenuePropertyNames(loader);
+  std::set<std::string> all_venue_property_names;
+  for (const auto& entry : venue_type_prop_names) {
+    all_venue_property_names.insert(entry.second.begin(), entry.second.end());
+  }
+  loader.world_.venue_property_names.assign(all_venue_property_names.begin(),
+                                            all_venue_property_names.end());
 
   // Person index built up incrementally across chunks (used by activity-
   // mapping stitching and membership_metadata side-table lookup)

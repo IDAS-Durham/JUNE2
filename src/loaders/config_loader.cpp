@@ -180,9 +180,6 @@ ContactMatrix parseContactMatrix(const YAML::Node& matrix_node) {
   if (matrix_node["bins"]) {
     cm.bins = matrix_node["bins"].as<std::vector<std::string>>();
   }
-  if (matrix_node["characteristic_time"]) {
-    cm.characteristic_time = matrix_node["characteristic_time"].as<double>();
-  }
   double beta = 1.0;
   if (matrix_node["beta"]) {
     beta = matrix_node["beta"].as<double>();
@@ -194,52 +191,7 @@ ContactMatrix parseContactMatrix(const YAML::Node& matrix_node) {
       cm.contacts.push_back(row_vec);
     }
   }
-  if (matrix_node["proportion_physical"]) {
-    for (const auto& row : matrix_node["proportion_physical"]) {
-      std::vector<double> row_vec;
-      for (const auto& val : row) row_vec.push_back(val.as<double>());
-      cm.proportion_physical.push_back(row_vec);
-    }
-  }
   return cm;
-}
-
-// Read the top-level betas / global_beta / default_* scalars onto the
-// ContactMatrixConfig. The per-matrix `contact_matrices:` block is handled
-// separately by parseContactMatricesList.
-void parseContactMatrixScalars(const YAML::Node& root,
-                               ContactMatrixConfig& config) {
-  if (root["betas"]) {
-    for (const auto& beta_kv : root["betas"]) {
-      std::string venue_type = beta_kv.first.as<std::string>();
-      double beta = beta_kv.second.as<double>();
-      config.betas[venue_type] = beta;
-    }
-  }
-
-  if (root["global_beta"]) {
-    if (root["global_beta"]["value"]) {
-      config.global_beta.value = root["global_beta"]["value"].as<double>();
-    }
-    if (root["global_beta"]["enabled"]) {
-      config.global_beta.enabled = root["global_beta"]["enabled"].as<bool>();
-    }
-  }
-
-  if (root["default_beta"]) {
-    config.default_beta = root["default_beta"].as<double>();
-  }
-  if (root["default_proportion_physical"]) {
-    config.default_proportion_physical =
-        root["default_proportion_physical"].as<double>();
-  }
-  if (root["alpha_physical"]) {
-    config.alpha_physical = root["alpha_physical"].as<double>();
-  }
-  if (root["default_characteristic_time"]) {
-    config.default_characteristic_time =
-        root["default_characteristic_time"].as<double>();
-  }
 }
 
 // Read the `contact_matrices:` block: for each venue type, dispatch on
@@ -581,8 +533,6 @@ ContactMatrixConfig ConfigLoader::loadContactMatrices(
     const std::string& filename) {
   YAML::Node root = YAML::LoadFile(filename);
   ContactMatrixConfig config;
-
-  parseContactMatrixScalars(root, config);
 
   if (root["contact_matrices"]) {
     parseContactMatricesList(root["contact_matrices"], config);

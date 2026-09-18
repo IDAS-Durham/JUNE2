@@ -2,6 +2,7 @@
 // per-susceptible Bernoulli pipeline (per-source builders, susc-bin
 // orchestrator, infector sampling, infection apply).
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -128,42 +129,34 @@ int InteractionManager::processOneSuscBin(
   const auto& susc_group = bins_buffer_[susc_bin];
   if (susc_group.susceptible.empty()) return 0;
 
-  // 3a. Pre-calculate total Force of Infection across all modes and bins.
+  // 3a. Pre-calculate per-mode force of infection across all bins. Keep modes
+  // separate until each target's susceptibility modifiers are applied.
   sources_buffer_.clear();
   source_weights_buffer_.clear();
-  double total_lambda_eff = 0.0;
+  std::vector<double> lambda_by_mode(num_modes, 0.0);
 
-  appendDirectContactSources(susc_bin, num_bins_needed, num_modes,
-                             is_virtual_encounter, encounter_type_id,
-                             venue_type_id, trans_params, total_lambda_eff);
+  appendDirectContactSources(
+      susc_bin, num_bins_needed, num_modes, is_virtual_encounter,
+      encounter_type_id, venue_type_id, trans_params, venue, lambda_by_mode);
   appendSiblingMixingSources(susc_bin, num_modes, actual_venue_id, venue,
                              parent_agg, parent_flat_matrix, trans_params,
-                             total_lambda_eff);
+                             lambda_by_mode);
   appendFomiteSources(num_fomite_modes, fomite_modes, lambda_fomite_by_mode,
-                      trans_params, total_lambda_eff);
+                      trans_params, venue, lambda_by_mode);
   appendCompUptakeSources(actual_venue_id, venue_type_id, comp_uptake_modes,
-                          comp_model, trans_params, total_lambda_eff);
+                          comp_model, trans_params, venue, lambda_by_mode);
 
-  double total_risk = total_lambda_eff;
-  if (simulation_config_.regional_risk.enabled && venue) {
-    total_risk *= venue->transmission_factor;
-  }
-  if (total_risk <= 0.0) return 0;
-
-  // Build cumulative source weights once per susc_bin; each susceptible
-  // samples from it via sampleFromCumulative below. Avoids the per-bin
-  // std::discrete_distribution construction that dominated the 60M run.
-  bool have_source_dist =
-      source_weights_buffer_.size() > 1 &&
-      buildCumulative(source_weights_buffer_, source_cumulative_buffer_) > 0.0;
+  bool any_risk = std::any_of(lambda_by_mode.begin(), lambda_by_mode.end(),
+                              [](double value) { return value > 0.0; });
+  if (!any_risk) return 0;
 
   uint64_t time_bits = static_cast<uint64_t>(current_time * 1000);
   int new_infections = 0;
   for (const auto& susc_mem : susc_group.susceptible) {
     if (processOneVenueSusceptible(
-            susc_mem, total_risk, susc_bin, have_source_dist, time_bits,
-            current_time, actual_venue_id, venue, venue_type_id, parent_agg,
-            visitor_data, active_infections, pending_infections)) {
+            susc_mem, lambda_by_mode, susc_bin, time_bits, current_time,
+            actual_venue_id, venue, venue_type_id, parent_agg, visitor_data,
+            active_infections, pending_infections)) {
       new_infections++;
     }
   }
@@ -172,15 +165,29 @@ int InteractionManager::processOneSuscBin(
 }
 
 bool InteractionManager::processOneVenueSusceptible(
-    const SusceptibleMember& susc_mem, double total_risk, int susc_bin,
-    bool have_source_dist, uint64_t time_bits, double current_time,
-    VenueId actual_venue_id, Venue* venue, uint8_t venue_type_id,
-    const ParentAggregate* parent_agg,
+    const SusceptibleMember& susc_mem,
+    const std::vector<double>& lambda_by_mode, int susc_bin, uint64_t time_bits,
+    double current_time, VenueId actual_venue_id, Venue* venue,
+    uint8_t venue_type_id, const ParentAggregate* parent_agg,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
     std::unordered_set<PersonId>* active_infections,
     std::vector<PendingInfection>* pending_infections) {
   PersonId susceptible_id = susc_mem.id;
-  double prob = 1.0 - std::exp(-total_risk * susc_mem.susceptibility);
+  double lambda_eff = 0.0;
+  std::array<double, VisitorInfo::MAX_MODES> target_susceptibility{};
+  const Person* person =
+      susc_mem.visitor ? nullptr : world_.getPerson(susceptible_id);
+  for (size_t mode = 0;
+       mode < lambda_by_mode.size() && mode < target_susceptibility.size();
+       ++mode) {
+    target_susceptibility[mode] = effectiveTargetSusceptibility(
+        person, susc_mem.visitor, susc_mem.susceptibility, mode);
+    lambda_eff += lambda_by_mode[mode] * target_susceptibility[mode];
+  }
+  if (simulation_config_.regional_risk.enabled && venue) {
+    lambda_eff *= venue->transmission_factor;
+  }
+  double prob = 1.0 - std::exp(-lambda_eff);
   if (!(prob > 1e-12)) return false;
 
   // Per-susceptible deterministic RNG for MPI reproducibility. For a virtual
@@ -196,7 +203,18 @@ bool InteractionManager::processOneVenueSusceptible(
   double rng_roll = uniform_dist_(susc_rng);
   if (!(rng_roll < prob)) return false;
 
-  int src_idx = have_source_dist
+  source_cumulative_buffer_.clear();
+  double source_total = 0.0;
+  for (size_t i = 0; i < source_weights_buffer_.size(); ++i) {
+    const int mode = sources_buffer_[i].mode;
+    const double target =
+        mode >= 0 && mode < static_cast<int>(lambda_by_mode.size())
+            ? target_susceptibility[mode]
+            : 1.0;
+    source_total += source_weights_buffer_[i] * target;
+    source_cumulative_buffer_.push_back(source_total);
+  }
+  int src_idx = source_total > 0.0
                     ? sampleFromCumulative(source_cumulative_buffer_, susc_rng)
                     : 0;
   if (src_idx < 0) src_idx = 0;
@@ -368,7 +386,8 @@ void InteractionManager::applyVenueInfection(
 void InteractionManager::appendDirectContactSources(
     int susc_bin, int num_bins_needed, int num_modes, bool is_virtual_encounter,
     uint8_t encounter_type_id, uint8_t venue_type_id,
-    const TransmissionParams& trans_params, double& total_lambda_eff) {
+    const TransmissionParams& trans_params, const Venue* venue,
+    std::vector<double>& lambda_by_mode) {
   for (int m = 0; m < num_modes; ++m) {
     // Get mode-specific contact matrix. Virtual encounters are keyed by
     // encounter_type_id; physical venues by venue_type_id. The split
@@ -400,9 +419,13 @@ void InteractionManager::appendDirectContactSources(
       double omega = contacts / bin_size;
       double contrib = omega * inf_group.total_infectiousness_by_mode[m];
       double weighted = contrib * mode_susc_mult;
+      weighted *= venueTransmissionModifier(
+          venue, m, TransmissionEffectChannel::ContactIntensity);
+      weighted *= venueTransmissionModifier(
+          venue, m, TransmissionEffectChannel::EnvironmentalRisk);
 
       if (weighted > 0.0) {
-        total_lambda_eff += weighted;
+        lambda_by_mode[m] += weighted;
         sources_buffer_.push_back({m, inf_bin});
         source_weights_buffer_.push_back(weighted);
       }
@@ -431,7 +454,8 @@ void InteractionManager::logSiblingFOIDump(
 void InteractionManager::appendSiblingMixingSources(
     int susc_bin, int num_modes, VenueId actual_venue_id, const Venue* venue,
     const ParentAggregate* parent_agg, const ContactMatrix* parent_flat_matrix,
-    const TransmissionParams& trans_params, double& total_lambda_eff) {
+    const TransmissionParams& trans_params,
+    std::vector<double>& lambda_by_mode) {
   if (!parent_agg) return;
 
   const int pbin = 0;  // single-bin parent assumption (enforced earlier)
@@ -469,9 +493,15 @@ void InteractionManager::appendSiblingMixingSources(
             : 1.0;
     double omega = contacts / sibling_size;
     double weighted = omega * sibling_inf * mode_susc_mult;
+    const Venue* parent_venue =
+        venue ? world_.getVenue(venue->parent_id) : nullptr;
+    weighted *= venueTransmissionModifier(
+        parent_venue, m, TransmissionEffectChannel::ContactIntensity);
+    weighted *= venueTransmissionModifier(
+        parent_venue, m, TransmissionEffectChannel::EnvironmentalRisk);
     if (weighted <= 0.0) continue;
 
-    total_lambda_eff += weighted;
+    lambda_by_mode[m] += weighted;
     SourceEntry se;
     se.mode = m;
     se.inf_bin = SIBLING_INF_BIN_SENTINEL;
@@ -488,7 +518,8 @@ void InteractionManager::appendSiblingMixingSources(
 void InteractionManager::appendFomiteSources(
     int num_fomite_modes, const std::vector<FomiteModeRef>& fomite_modes,
     const std::vector<double>& lambda_fomite_by_mode,
-    const TransmissionParams& trans_params, double& total_lambda_eff) {
+    const TransmissionParams& trans_params, const Venue* venue,
+    std::vector<double>& lambda_by_mode) {
   for (int local_fm = 0; local_fm < num_fomite_modes; ++local_fm) {
     if (lambda_fomite_by_mode[local_fm] <= 0.0) continue;
     int fomite_mode_idx = fomite_modes[local_fm].mode_index;
@@ -497,9 +528,15 @@ void InteractionManager::appendFomiteSources(
                                       .mode_transmissibility_multiplier
                                 : 1.0;
     double weighted = lambda_fomite_by_mode[local_fm] * mode_susc_mult;
-    total_lambda_eff += weighted;
-    sources_buffer_.push_back(SourceEntry{fomite_mode_idx, -1});
-    source_weights_buffer_.push_back(weighted);
+    weighted *= venueTransmissionModifier(
+        venue, fomite_mode_idx, TransmissionEffectChannel::EnvironmentalRisk);
+    weighted *= venueTransmissionModifier(
+        venue, fomite_mode_idx, TransmissionEffectChannel::ContactIntensity);
+    lambda_by_mode[fomite_mode_idx] += weighted;
+    if (weighted > 0.0) {
+      sources_buffer_.push_back(SourceEntry{fomite_mode_idx, -1});
+      source_weights_buffer_.push_back(weighted);
+    }
   }
 }
 
@@ -507,7 +544,8 @@ void InteractionManager::appendCompUptakeSources(
     VenueId actual_venue_id, uint8_t venue_type_id,
     const std::vector<int>& comp_uptake_modes,
     const CompartmentalModelManager* comp_model,
-    const TransmissionParams& trans_params, double& total_lambda_eff) {
+    const TransmissionParams& trans_params, const Venue* venue,
+    std::vector<double>& lambda_by_mode) {
   if (!comp_model || comp_uptake_modes.empty()) return;
   const float* buf = comp_model->readCouplingOutputs();
   int node_idx =
@@ -522,8 +560,12 @@ void InteractionManager::appendCompUptakeSources(
             ? trans_params.modes[mode_idx].mode_transmissibility_multiplier
             : 1.0;
     double weighted = node_output * mode_susc_mult;
+    weighted *= venueTransmissionModifier(
+        venue, mode_idx, TransmissionEffectChannel::EnvironmentalRisk);
+    weighted *= venueTransmissionModifier(
+        venue, mode_idx, TransmissionEffectChannel::ContactIntensity);
     if (weighted <= 0.0) continue;
-    total_lambda_eff += weighted;
+    lambda_by_mode[mode_idx] += weighted;
     sources_buffer_.push_back(SourceEntry{mode_idx, -2});
     source_weights_buffer_.push_back(weighted);
   }

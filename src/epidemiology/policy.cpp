@@ -1,6 +1,9 @@
 #include "epidemiology/policy.h"
 
+#include <cmath>
+
 #include "epidemiology/disease.h"
+#include "utils/filtering.h"
 
 namespace june {
 
@@ -13,6 +16,205 @@ void PolicyManager::addSymptomPolicy(const SymptomPolicy& policy) {
 
 void PolicyManager::addTemporalPolicy(const TemporalPolicy& policy) {
   temporal_policies_.push_back(policy);
+}
+
+void PolicyManager::resolveTransmissionEffects(const Disease& disease) {
+  transmission_mode_count_ =
+      static_cast<size_t>(std::max(1, disease.numModes()));
+  for (auto& effect : transmission_effects_) {
+    const bool person_scope = effect.scope == TransmissionEffectScope::Person;
+    const bool person_channel =
+        effect.channel == TransmissionEffectChannel::SourceInfectiousness ||
+        effect.channel == TransmissionEffectChannel::TargetSusceptibility;
+    if (person_scope != person_channel)
+      throw std::runtime_error(
+          "transmission policy effect scope/channel mismatch");
+    if (effect.policy_kind == TransmissionPolicyKind::Symptom) {
+      if (effect.policy_index >= symptom_policies_.size())
+        throw std::runtime_error(
+            "transmission effect names an unknown symptom policy");
+      if (!person_scope)
+        throw std::runtime_error("venue effects require a temporal policy");
+    } else {
+      if (effect.policy_index >= temporal_policies_.size())
+        throw std::runtime_error(
+            "transmission effect names an unknown temporal policy");
+      if (!person_scope &&
+          temporal_policies_[effect.policy_index].action.compliance_rate != 1.0)
+        throw std::runtime_error("venue effects require compliance_rate: 1");
+      if (!person_scope &&
+          !temporal_policies_[effect.policy_index].applies_to.empty())
+        throw std::runtime_error(
+            "venue effects cannot use person-level applies_to criteria");
+    }
+    int mode = -1;
+    for (int i = 0; i < disease.numModes(); ++i) {
+      if (disease.getModeName(static_cast<uint8_t>(i)) == effect.mode_name) {
+        mode = i;
+        break;
+      }
+    }
+    if (mode < 0)
+      throw std::runtime_error("unknown transmission mode '" +
+                               effect.mode_name + "'");
+    const auto mode_type = disease.getTransmissionParams().modes[mode].type;
+    if (mode_type == TransmissionModeType::CompartmentalDeposition &&
+        effect.channel != TransmissionEffectChannel::SourceInfectiousness)
+      throw std::runtime_error(
+          "compartmental deposition only supports source_infectiousness "
+          "effects");
+    if (mode_type == TransmissionModeType::CompartmentalUptake &&
+        effect.channel == TransmissionEffectChannel::SourceInfectiousness)
+      throw std::runtime_error(
+          "compartmental uptake has no person source infectiousness");
+    effect.mode_index = static_cast<uint8_t>(mode);
+    for (auto& criterion : effect.criteria) {
+      const std::string context =
+          "transmission effect for mode '" + effect.mode_name + "'";
+      if (person_scope)
+        criterion.resolveOrThrow(world_, context);
+      else
+        criterion.resolveVenueOrThrow(world_, context);
+    }
+  }
+}
+
+uint64_t PolicyManager::policyWindowBits(double current_time) const {
+  uint64_t bits = 0;
+  for (size_t i = 0; i < temporal_policies_.size(); ++i)
+    if (temporal_policies_[i].window.contains(current_time)) bits |= 1ULL << i;
+  for (size_t i = 0; i < symptom_policies_.size(); ++i)
+    if (symptom_policies_[i].window.contains(current_time))
+      bits |= 1ULL << (i + 32);
+  return bits;
+}
+
+void PolicyManager::rebuildPersonTransmissionModifier(Person& person,
+                                                      double current_time) {
+  auto values = transmission_modifier_table_.get(0);
+  for (const auto& effect : transmission_effects_) {
+    if (effect.scope != TransmissionEffectScope::Person) continue;
+    const uint32_t bit = 1u << effect.policy_index;
+    if (effect.policy_kind == TransmissionPolicyKind::Temporal) {
+      const auto& policy = temporal_policies_[effect.policy_index];
+      if (!policy.window.contains(current_time) ||
+          !(person.applicable_temporal_policy_mask & bit) ||
+          !isParticipating(person.temporal_policy_decisions,
+                           person.active_temporal_policy_participation,
+                           effect.policy_index, policy.action.compliance_rate,
+                           person.id,
+                           static_cast<uint32_t>(effect.policy_index + 100)))
+        continue;
+    } else {
+      const auto& policy = symptom_policies_[effect.policy_index];
+      if (!policy.window.contains(current_time) ||
+          !(person.applicable_symptom_policy_mask & bit) || !person.infection ||
+          !policy.triggeredBy(
+              person.infection->getTrajectory().getCurrentSymptomId(
+                  current_time)) ||
+          !isParticipating(person.symptom_policy_decisions,
+                           person.active_symptom_policy_participation,
+                           effect.policy_index, policy.action.compliance_rate,
+                           person.id,
+                           static_cast<uint32_t>(effect.policy_index)))
+        continue;
+    }
+    if (!filtering::matchesCriteria(person, &world_, effect.criteria)) continue;
+    double& value =
+        values[effect.mode_index][static_cast<size_t>(effect.channel)];
+    value *= effect.multiplier;
+    if (!std::isfinite(value))
+      throw std::runtime_error("transmission policy multipliers overflow");
+  }
+  person.transmission_modifier_set_id =
+      transmission_modifier_table_.intern(values);
+}
+
+void PolicyManager::rebuildVenueTransmissionModifier(Venue& venue,
+                                                     double current_time) {
+  auto values = transmission_modifier_table_.get(0);
+  for (const auto& effect : transmission_effects_) {
+    if (effect.scope != TransmissionEffectScope::Venue) continue;
+    if (!temporal_policies_[effect.policy_index].window.contains(current_time))
+      continue;
+    bool matches = true;
+    for (const auto& criterion : effect.criteria) {
+      if (!criterion.evaluate(venue, &world_)) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      double& value =
+          values[effect.mode_index][static_cast<size_t>(effect.channel)];
+      value *= effect.multiplier;
+      if (!std::isfinite(value))
+        throw std::runtime_error("transmission policy multipliers overflow");
+    }
+  }
+  venue.transmission_modifier_set_id =
+      transmission_modifier_table_.intern(values);
+}
+
+void PolicyManager::rebuildTransmissionModifiers(double current_time) {
+  transmission_modifier_table_.reset(transmission_mode_count_);
+  for (auto& person : world_.people)
+    rebuildPersonTransmissionModifier(person, current_time);
+  for (auto& venue : world_.venues)
+    rebuildVenueTransmissionModifier(venue, current_time);
+  last_policy_window_bits_ = policyWindowBits(current_time);
+  last_symptom_ids_.clear();
+  for (const auto& person : world_.people) {
+    if (person.infection)
+      last_symptom_ids_[person.id] =
+          person.infection->getTrajectory().getCurrentSymptomId(current_time);
+  }
+}
+
+void PolicyManager::initializeTransmissionModifiers(const Disease& disease,
+                                                    double current_time) {
+  if (transmission_effects_.empty()) return;
+  if (transmission_mode_count_ == 0) resolveTransmissionEffects(disease);
+  rebuildTransmissionModifiers(current_time);
+  transmission_modifiers_initialized_ = true;
+}
+
+void PolicyManager::refreshTransmissionModifiers(
+    double current_time,
+    const std::unordered_set<PersonId>& active_infections) {
+  if (!transmission_modifiers_initialized_) return;
+  if (policyWindowBits(current_time) != last_policy_window_bits_) {
+    rebuildTransmissionModifiers(current_time);
+    return;
+  }
+  bool has_symptom_effect = false;
+  for (const auto& effect : transmission_effects_)
+    if (effect.policy_kind == TransmissionPolicyKind::Symptom) {
+      has_symptom_effect = true;
+      break;
+    }
+  if (!has_symptom_effect) return;
+
+  for (auto it = last_symptom_ids_.begin(); it != last_symptom_ids_.end();) {
+    if (active_infections.count(it->first)) {
+      ++it;
+      continue;
+    }
+    if (Person* person = world_.getPerson(it->first))
+      rebuildPersonTransmissionModifier(*person, current_time);
+    it = last_symptom_ids_.erase(it);
+  }
+  for (PersonId id : active_infections) {
+    Person* person = world_.getPerson(id);
+    if (!person || !person->infection) continue;
+    uint16_t symptom =
+        person->infection->getTrajectory().getCurrentSymptomId(current_time);
+    auto [it, inserted] = last_symptom_ids_.emplace(id, symptom);
+    if (inserted || it->second != symptom) {
+      rebuildPersonTransmissionModifier(*person, current_time);
+      it->second = symptom;
+    }
+  }
 }
 
 bool PolicyManager::checkCompliance(double compliance_rate, PersonId person_id,

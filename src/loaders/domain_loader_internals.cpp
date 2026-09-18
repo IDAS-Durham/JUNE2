@@ -137,9 +137,12 @@ void loadVenuePropertiesForSpan(
               p_vals[k], loader.world_.venue_property_value_registries[p_name],
               venue_property_indices_cache[p_name]);
 
+          const int global_prop_idx =
+              loader.world_.getVenuePropertyIndex(p_name);
+          if (global_prop_idx < 0) continue;
           size_t global_v_idx = span_p.internal_indices[k];
-          uint32_t flat_idx =
-              span_venues[global_v_idx].properties_start + p_idx;
+          uint32_t flat_idx = span_venues[global_v_idx].properties_start +
+                              static_cast<size_t>(global_prop_idx);
           loader.world_.venue_properties[flat_idx] = interned_val;
         }
       }
@@ -357,10 +360,7 @@ void loadVenuesInSpan(
                            ? false
                            : (chunk_is_residence_raw[j_off] != 0);
 
-      const std::string& type_name = loader.world_.venue_type_names[v.type_id];
-      auto pn_it = venue_type_prop_names.find(type_name);
-      size_t prop_count =
-          (pn_it == venue_type_prop_names.end()) ? 0 : pn_it->second.size();
+      size_t prop_count = loader.world_.venue_property_names.size();
 
       v.properties_start =
           static_cast<uint32_t>(loader.world_.venue_properties.size());

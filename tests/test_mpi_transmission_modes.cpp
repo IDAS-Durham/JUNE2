@@ -22,6 +22,7 @@
 #include "epidemiology/disease.h"
 #include "epidemiology/infectiousness_curves.h"
 #include "epidemiology/interaction_manager.h"
+#include "epidemiology/policy.h"
 #include "parallel/domain.h"
 #include "parallel/domain_manager.h"
 #include "test_utils.h"
@@ -144,12 +145,42 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
   Disease disease("StageFlu", stags, {}, {td}, {}, tp);
   f.dm->setDisease(&disease);
 
+  // The visitor wire carries effective values, not the sender's rank-local
+  // modifier-set ID. Source and target channels deliberately differ here so
+  // the test catches a collapsed scalar payload.
+  PolicyManager policy_manager(f.world);
+  TemporalPolicy policy;
+  policy.name = "visitor_channels";
+  policy.action.compliance_rate = 1.0;
+  policy_manager.addTemporalPolicy(policy);
+  PolicyTransmissionEffect source_effect;
+  source_effect.policy_index = 0;
+  source_effect.scope = TransmissionEffectScope::Person;
+  source_effect.mode_name = "default";
+  source_effect.channel = TransmissionEffectChannel::SourceInfectiousness;
+  source_effect.multiplier = 0.50;
+  policy_manager.addTransmissionEffect(source_effect);
+  PolicyTransmissionEffect target_effect = source_effect;
+  target_effect.channel = TransmissionEffectChannel::TargetSusceptibility;
+  target_effect.multiplier = 0.25;
+  policy_manager.addTransmissionEffect(target_effect);
+  policy_manager.precomputePolicyApplicability(f.world.people);
+  policy_manager.initializeTransmissionModifiers(disease, 0.0);
+  f.dm->setPolicyManager(&policy_manager);
+
   // Rank 0: infect person 0
   if (f.rank == 0) {
     Person* p = f.world.getPerson(TwoRankFixture::PERSON_R0);
     p->infection = std::make_unique<Infection>(
         &disease, -1.0, p, 42u, &f.world, "household", 0, 1.0f, 0, "general");
   }
+
+  double expected_integrated = 0.0;
+  if (f.rank == 0) {
+    expected_integrated = f.world.people[0].infection->getIntegratedInfectiousness(
+        0, 0.0, 1.0 / 24.0);
+  }
+  MPI_Bcast(&expected_integrated, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   // Person visits remote venue
   f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
@@ -174,6 +205,8 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
     std::copy(std::begin(vis.integrated_infectiousness),
               std::end(vis.integrated_infectiousness),
               std::begin(vi.integrated_infectiousness));
+    vi.has_target_susceptibility = true;
+    vi.target_susceptibility[0] = vis.target_susceptibility[0];
     visitor_data[vis.person_id] = vi;
 
     std::unordered_set<PersonId> visitor_ids = {vis.person_id};
@@ -201,6 +234,9 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
 
     // Person 1 (local) should be infected
     CHECK(f.world.getPerson(f.rank)->infection != nullptr);
+    CHECK(vis.integrated_infectiousness[0] ==
+          doctest::Approx(expected_integrated * 0.50));
+    CHECK(vis.target_susceptibility[0] == doctest::Approx(0.25));
   }
 }
 
