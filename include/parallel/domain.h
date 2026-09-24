@@ -55,7 +55,8 @@ class Domain {
     float immunity_level;
     uint8_t encounter_type_id;  // Coordinated encounter type (ID in registry)
 
-    // Stage-driven infectiousness fields
+    // Stage at packing time: infector attribution and compartmental
+    // deposition writeback
     uint16_t symptom_id = 0;     // Current symptom ID at packing time
     double time_in_stage = 0.0;  // Time in current stage at packing time
 
@@ -71,10 +72,17 @@ class Domain {
     // the compact IDs—cross MPI.
     std::vector<double> target_susceptibility;
 
-    // Source multipliers for deposition modes. Fomite and compartmental
-    // deposition are reconstructed on the venue rank, so their source effect
-    // must be sent separately from integrated_infectiousness.
+    // Source multipliers for deposition modes. Compartmental deposition is
+    // reconstructed on the venue rank, so its source effect must be sent
+    // separately from integrated_infectiousness. Fomite entries are unused:
+    // fomite_deposition_sub already carries the source modifier.
     std::vector<double> deposition_source_multiplier;
+
+    // Fomite deposit per (fomite mode, sub-bin), flat in
+    // FomiteSubBinSchedule order, computed on the sending rank by the same
+    // integration and source modifier as locals. Always
+    // FomiteSubBinSchedule::totalSubBins() long.
+    std::vector<double> fomite_deposition_sub;
 
     // Return data: infection status changes
     bool newly_infected;
