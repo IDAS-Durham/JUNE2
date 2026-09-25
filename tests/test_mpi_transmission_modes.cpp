@@ -211,7 +211,7 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
   MPI_Bcast(&expected_integrated, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   // Person visits remote venue
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   Domain& domain = f.dm->getDomain();
   REQUIRE(domain.incoming_visitors.size() == 1);
@@ -283,7 +283,7 @@ TEST_CASE("H2: Trajectory-driven visitor infects local susceptible") {
         &disease, -1.0, p, 42u, &f.world, "household", 0, 1.0f, 0, "general");
   }
 
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   Domain& domain = f.dm->getDomain();
   REQUIRE(domain.incoming_visitors.size() == 1);
@@ -354,7 +354,7 @@ TEST_CASE("H3: Local infector infects visitor, pending routed back") {
   }
 
   // Person 0 (rank 0, susceptible) visits venue 1 (rank 1)
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   Domain& domain = f.dm->getDomain();
 
@@ -442,7 +442,7 @@ TEST_CASE("H4: Multi-mode stage-driven infectiousness across ranks") {
         &disease, -1.0, p, 42u, &f.world, "household", 0, 1.0f, 0, "general");
   }
 
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   if (f.rank == 1) {
     const auto& vis = f.dm->getDomain().incoming_visitors[0];
@@ -491,7 +491,7 @@ TEST_CASE("H5: Transmission mode index preserved across ranks") {
   f.dm->setDisease(&disease);
 
   // Person 0 visits rank 1's venue
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   // Rank 1 reports person 0 was infected via RESPIRATORY mode (index 1)
   std::vector<PendingInfection> pending;
@@ -562,7 +562,7 @@ TEST_CASE("H6: Immune visitor resists cross-rank infection") {
     p->immunity.natural_waning_rate = 0.0;
   }
 
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   std::vector<PendingInfection> pending;
 
@@ -642,7 +642,7 @@ TEST_CASE("H7: Bidirectional cross-rank transmission") {
                                   "household", f.rank, 1.0f, 0, "general");
 
   // Each person visits the other rank's venue
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, 0.0, 1.0);
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
 
   Domain& domain = f.dm->getDomain();
   // Each rank should receive one visitor
@@ -772,7 +772,7 @@ static void checkVisitorDepositsLikeLocal(
   Person* local_person = f.world.getPerson(f.rank);
   local_person->infection = makeInfection(disease, infection_time, transitions);
 
-  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, current_time,
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, current_time,
                          delta_hours);
   if (f.rank != 1) return;
 
@@ -893,7 +893,6 @@ static void checkMixedStateExchange(const std::vector<int>& senders) {
   TwoRankFixture f;
   REQUIRE(f.size == 2);
   Disease disease = makeFomiteDisease(/*sub_bin_time=*/2.0);
-  f.dm->setDisease(&disease);
   addStatePeople(f, disease);
 
   std::vector<PersonLocation> locations;
@@ -906,7 +905,7 @@ static void checkMixedStateExchange(const std::vector<int>& senders) {
       locations.push_back(location);
     }
   }
-  f.dm->exchangeVisitors(locations, kCurrentTime, kDeltaHours);
+  f.dm->exchangeVisitors(locations, disease, kCurrentTime, kDeltaHours);
 
   const auto& incoming = f.dm->getDomain().incoming_visitors;
   const bool receives =

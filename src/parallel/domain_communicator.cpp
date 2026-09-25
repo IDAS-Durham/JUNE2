@@ -17,10 +17,9 @@
 
 namespace {
 
-int countDepositionModes(const june::Disease* disease) {
-  if (!disease) return 0;
+int countDepositionModes(const june::Disease& disease) {
   int count = 0;
-  for (const auto& mode : disease->getTransmissionParams().modes) {
+  for (const auto& mode : disease.getTransmissionParams().modes) {
     if (mode.type == june::TransmissionModeType::Fomite ||
         mode.type == june::TransmissionModeType::CompartmentalDeposition) {
       ++count;
@@ -49,9 +48,9 @@ double sourceModifier(const june::PolicyManager* policy_manager,
 // left empty otherwise; see visitor_wire.h.
 june::Domain::VisitorData buildVisitorPayload(
     const june::PersonLocation& loc, const june::Person& person, int home_rank,
-    double current_time, double delta_hours, int num_modes,
-    const june::Disease* disease, const june::PolicyManager* policy_manager,
-    const june::FomiteSubBinSchedule* fomite_schedule) {
+    double current_time, double delta_hours, const june::Disease& disease,
+    const june::PolicyManager* policy_manager,
+    const june::FomiteSubBinSchedule& fomite_schedule) {
   june::Domain::VisitorData visitor;
   visitor.person_id = loc.person_id;
   visitor.home_rank = home_rank;
@@ -61,12 +60,8 @@ june::Domain::VisitorData buildVisitorPayload(
   visitor.is_infectious =
       visitor.is_infected && person.infection->isInfectious(current_time);
 
-  double susceptibility = 1.0;
-  if (disease) {
-    susceptibility = person.getSusceptibility(current_time, disease->getName());
-  } else {
-    susceptibility = 1.0 - person.immunity.natural_level;
-  }
+  const double susceptibility =
+      person.getSusceptibility(current_time, disease.getName());
   visitor.immunity_level = static_cast<float>(1.0 - susceptibility);
 
   visitor.encounter_type_id = loc.encounter_type_id;
@@ -75,6 +70,7 @@ june::Domain::VisitorData buildVisitorPayload(
 
   visitor.symptom_id = 0;
   visitor.time_in_stage = 0.0;
+  const int num_modes = disease.numModes();
   visitor.target_susceptibility.assign(num_modes, susceptibility);
   for (int m = 0; m < num_modes; ++m) {
     const double target_multiplier =
@@ -103,44 +99,36 @@ june::Domain::VisitorData buildVisitorPayload(
     visitor.deposition_source_multiplier.assign(countDepositionModes(disease),
                                                 1.0);
     size_t deposition_index = 0;
-    if (disease) {
-      for (size_t m = 0; m < disease->getTransmissionParams().modes.size();
-           ++m) {
-        const auto mode_type = disease->getTransmissionParams().modes[m].type;
-        if (mode_type != june::TransmissionModeType::Fomite &&
-            mode_type != june::TransmissionModeType::CompartmentalDeposition)
-          continue;
-        visitor.deposition_source_multiplier[deposition_index++] =
-            sourceModifier(policy_manager, person, m);
-      }
+    for (size_t m = 0; m < disease.getTransmissionParams().modes.size(); ++m) {
+      const auto mode_type = disease.getTransmissionParams().modes[m].type;
+      if (mode_type != june::TransmissionModeType::Fomite &&
+          mode_type != june::TransmissionModeType::CompartmentalDeposition)
+        continue;
+      visitor.deposition_source_multiplier[deposition_index++] =
+          sourceModifier(policy_manager, person, m);
     }
-    if (fomite_schedule) {
-      fomite_schedule->integrateDeposits(person.infection.get(), current_time,
-                                         visitor.fomite_deposition_sub);
-      // Same product as InteractionManager::addFomiteDeposits for locals.
-      const auto& n_sub_per_mode = fomite_schedule->subBinsPerMode();
-      int offset = 0;
-      for (int local_fm = 0; local_fm < fomite_schedule->numModes();
-           ++local_fm) {
-        const double source_modifier =
-            sourceModifier(policy_manager, person,
-                           fomite_schedule->modes()[local_fm].mode_index);
-        for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
-          visitor.fomite_deposition_sub[offset + k] *= source_modifier;
-        }
-        offset += n_sub_per_mode[local_fm];
+    fomite_schedule.integrateDeposits(person.infection.get(), current_time,
+                                      visitor.fomite_deposition_sub);
+    // Same product as InteractionManager::addFomiteDeposits for locals.
+    const auto& n_sub_per_mode = fomite_schedule.subBinsPerMode();
+    int offset = 0;
+    for (int local_fm = 0; local_fm < fomite_schedule.numModes(); ++local_fm) {
+      const double source_modifier =
+          sourceModifier(policy_manager, person,
+                         fomite_schedule.modes()[local_fm].mode_index);
+      for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
+        visitor.fomite_deposition_sub[offset + k] *= source_modifier;
       }
+      offset += n_sub_per_mode[local_fm];
     }
     if (visitor.is_infectious) {
       visitor.integrated_infectiousness.assign(num_modes, 0.0);
-      if (disease) {
-        double t1 = current_time + delta_hours / 24.0;
-        for (int m = 0; m < num_modes; ++m) {
-          visitor.integrated_infectiousness[m] =
-              person.infection->getIntegratedInfectiousness(m, current_time,
-                                                            t1) *
-              sourceModifier(policy_manager, person, static_cast<size_t>(m));
-        }
+      const double t1 = current_time + delta_hours / 24.0;
+      for (int m = 0; m < num_modes; ++m) {
+        visitor.integrated_infectiousness[m] =
+            person.infection->getIntegratedInfectiousness(m, current_time,
+                                                          t1) *
+            sourceModifier(policy_manager, person, static_cast<size_t>(m));
       }
     }
   }
@@ -159,8 +147,8 @@ DomainCommunicator::DomainCommunicator(WorldState& world, const Config& config,
 }
 
 void DomainCommunicator::exchangeVisitors(
-    const std::vector<PersonLocation>& locations, const DomainManager& dm,
-    double current_time, double delta_hours,
+    const std::vector<PersonLocation>& locations, const Disease& disease,
+    const DomainManager& dm, double current_time, double delta_hours,
     const RuntimeGroupAllocator* alloc) {
   domain_.clearVisitors();
   std::vector<std::vector<Domain::VisitorData>> outgoing(num_ranks_);
@@ -170,20 +158,16 @@ void DomainCommunicator::exchangeVisitors(
   // Tail lengths are fixed for the exchange (Disease YAML and timestep).
   // Derive them once here so the same values size every visitor's payload
   // below and every wire buffer in the exchange helpers.
-  const int num_modes =
-      (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
-  std::optional<FomiteSubBinSchedule> fomite_schedule;
-  if (disease_) {
-    fomite_schedule.emplace(disease_->getTransmissionParams(), delta_hours);
-  }
-  const VisitorTailCounts tails{
-      num_modes, countDepositionModes(disease_),
-      fomite_schedule ? fomite_schedule->totalSubBins() : 0};
+  const FomiteSubBinSchedule fomite_schedule(disease.getTransmissionParams(),
+                                             delta_hours);
+  const VisitorTailCounts tails{disease.numModes(),
+                                countDepositionModes(disease),
+                                fomite_schedule.totalSubBins()};
 
   auto send = [&](const PersonLocation& loc, Person& person, int target_rank) {
-    outgoing[target_rank].push_back(buildVisitorPayload(
-        loc, person, rank_, current_time, delta_hours, num_modes, disease_,
-        policy_manager_, fomite_schedule ? &*fomite_schedule : nullptr));
+    outgoing[target_rank].push_back(
+        buildVisitorPayload(loc, person, rank_, current_time, delta_hours,
+                            disease, policy_manager_, fomite_schedule));
     send_counts[target_rank] +=
         visitor_wire::recordSize(outgoing[target_rank].back(), tails);
   };
