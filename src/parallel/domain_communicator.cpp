@@ -157,6 +157,8 @@ void DomainCommunicator::exchangeVisitors(
     const RuntimeGroupAllocator* alloc) {
   domain_.clearVisitors();
   std::vector<std::vector<Domain::VisitorData>> outgoing(num_ranks_);
+  // Bytes bound for each rank: records vary in length, so every exchange path
+  // sizes buffers and slices in bytes, not records.
   std::vector<int> send_counts(num_ranks_, 0);
   // Tail lengths are fixed for the exchange (Disease YAML and timestep).
   // Derive them once here so the same values size every visitor's payload
@@ -175,7 +177,8 @@ void DomainCommunicator::exchangeVisitors(
     outgoing[target_rank].push_back(buildVisitorPayload(
         loc, person, rank_, current_time, delta_hours, num_modes, disease_,
         policy_manager_, fomite_schedule ? &*fomite_schedule : nullptr));
-    send_counts[target_rank]++;
+    send_counts[target_rank] +=
+        visitor_wire::recordSize(outgoing[target_rank].back(), tails);
   };
 
   for (const auto& loc : locations) {
@@ -248,6 +251,13 @@ void DomainCommunicator::dispatchVisitorExchange(
     exchangePointToPointVerySparse(outgoing, send_counts, tails);
 }
 
+void DomainCommunicator::unpackIncomingVisitors(
+    const char* begin, const char* end, const VisitorTailCounts& tails) {
+  visitor_wire::unpackSlice(begin, end, tails, [&](Domain::VisitorData&& v) {
+    if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
+  });
+}
+
 void DomainCommunicator::exchangeAllToAll(
     const std::vector<std::vector<Domain::VisitorData>>& outgoing,
     const std::vector<int>& send_counts_in, const VisitorTailCounts& tails) {
@@ -256,13 +266,10 @@ void DomainCommunicator::exchangeAllToAll(
   MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
                MPI_COMM_WORLD);
 
-  // Every record has full-length tails, so one size fits all.
-  const int wire_size = visitor_wire::recordSize(Domain::VisitorData{}, tails);
-
   std::vector<int> sdisp, rdisp;
   int stotal, rtotal;
-  mpi_utils::computeByteDisplacements(send_counts, wire_size, sdisp, stotal);
-  mpi_utils::computeByteDisplacements(recv_counts, wire_size, rdisp, rtotal);
+  mpi_utils::computeByteDisplacements(send_counts, 1, sdisp, stotal);
+  mpi_utils::computeByteDisplacements(recv_counts, 1, rdisp, rtotal);
 
   std::vector<char> sbuf(stotal);
   std::vector<char> rbuf(rtotal);
@@ -274,22 +281,13 @@ void DomainCommunicator::exchangeAllToAll(
     }
   }
 
-  std::vector<int> sc(num_ranks_), rc(num_ranks_);
-  for (int i = 0; i < num_ranks_; ++i) {
-    sc[i] = send_counts[i] * wire_size;
-    rc[i] = recv_counts[i] * wire_size;
-  }
-
-  MPI_Alltoallv(sbuf.data(), sc.data(), sdisp.data(), MPI_BYTE, rbuf.data(),
-                rc.data(), rdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+  MPI_Alltoallv(sbuf.data(), send_counts.data(), sdisp.data(), MPI_BYTE,
+                rbuf.data(), recv_counts.data(), rdisp.data(), MPI_BYTE,
+                MPI_COMM_WORLD);
 
   for (int r = 0; r < num_ranks_; ++r) {
-    const char* ptr = rbuf.data() + rdisp[r];
-    for (int i = 0; i < recv_counts[r]; ++i) {
-      Domain::VisitorData v;
-      ptr = visitor_wire::unpack(ptr, v, tails);
-      if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
-    }
+    const char* slice = rbuf.data() + rdisp[r];
+    unpackIncomingVisitors(slice, slice + recv_counts[r], tails);
   }
 }
 
@@ -311,13 +309,10 @@ void DomainCommunicator::performP2PVisitorExchange(
   std::vector<MPI_Request> sreqs, rreqs;
   std::vector<std::vector<char>> rbufs(num_ranks_);
 
-  // Every record has full-length tails, so one size fits all.
-  const int wire_size = visitor_wire::recordSize(Domain::VisitorData{}, tails);
-
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
       try {
-        rbufs[r].resize(recv_counts[r] * wire_size);
+        rbufs[r].resize(recv_counts[r]);
       } catch (const std::exception& e) {
         std::cerr << "[MPI] rbufs resize failed: recv_counts[r]="
                   << recv_counts[r] << " error: " << e.what() << std::endl;
@@ -333,7 +328,7 @@ void DomainCommunicator::performP2PVisitorExchange(
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && send_counts[r] > 0) {
       try {
-        sbufs[r].resize(send_counts[r] * wire_size);
+        sbufs[r].resize(send_counts[r]);
       } catch (const std::exception& e) {
         std::cerr << "[MPI] sbufs resize failed: send_counts[r]="
                   << send_counts[r] << " error: " << e.what() << std::endl;
@@ -355,12 +350,8 @@ void DomainCommunicator::performP2PVisitorExchange(
 
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
-      const char* ptr = rbufs[r].data();
-      for (int i = 0; i < recv_counts[r]; ++i) {
-        Domain::VisitorData v;
-        ptr = visitor_wire::unpack(ptr, v, tails);
-        if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
-      }
+      unpackIncomingVisitors(rbufs[r].data(),
+                             rbufs[r].data() + rbufs[r].size(), tails);
     }
   }
 
