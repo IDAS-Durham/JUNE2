@@ -2,8 +2,6 @@
 
 #include "parallel/visitor_payload.h"
 
-#include <utility>
-
 #include "epidemiology/policy.h"
 
 namespace june {
@@ -71,13 +69,9 @@ Domain::VisitorData buildVisitorPayload(const PersonLocation& location,
                        TransmissionEffectChannel::TargetSusceptibility);
   }
 
-  Emission emission;
-  calculator.emit(person, slot_start, emission);
-  visitor.integrated_infectiousness =
-      std::move(emission.infectiousness_by_mode);
-  visitor.fomite_deposition_sub = std::move(emission.fomite_deposits);
-  for (size_t m = 0; m < visitor.integrated_infectiousness.size(); ++m) {
-    visitor.integrated_infectiousness[m] *=
+  calculator.emit(person, slot_start, visitor.emission);
+  for (size_t m = 0; m < visitor.emission.infectiousness_by_mode.size(); ++m) {
+    visitor.emission.infectiousness_by_mode[m] *=
         personModifier(policy_manager, person, m,
                        TransmissionEffectChannel::SourceInfectiousness);
   }
@@ -96,13 +90,13 @@ Domain::VisitorData buildVisitorPayload(const PersonLocation& location,
   const auto& sub_bins_per_mode = fomite_schedule.subBinsPerMode();
   size_t offset = 0;
   for (int local_fm = 0; local_fm < fomite_schedule.numModes() &&
-                         offset < visitor.fomite_deposition_sub.size();
+                         offset < visitor.emission.fomite_deposits.size();
        ++local_fm) {
     const double source_modifier = personModifier(
         policy_manager, person, fomite_schedule.modes()[local_fm].mode_index,
         TransmissionEffectChannel::SourceInfectiousness);
     for (int k = 0; k < sub_bins_per_mode[local_fm]; ++k) {
-      visitor.fomite_deposition_sub[offset + k] *= source_modifier;
+      visitor.emission.fomite_deposits[offset + k] *= source_modifier;
     }
     offset += sub_bins_per_mode[local_fm];
   }

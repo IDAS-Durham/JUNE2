@@ -255,11 +255,11 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
         info.deposition_source_multiplier[mode] = 1.0;
       }
       const size_t mode_count =
-          std::min(visitor.integrated_infectiousness.size(),
+          std::min(visitor.emission.infectiousness_by_mode.size(),
                    static_cast<size_t>(VisitorInfo::MAX_MODES));
       for (size_t mode = 0; mode < mode_count; ++mode) {
         info.integrated_infectiousness[mode] =
-            visitor.integrated_infectiousness[mode];
+            visitor.emission.infectiousness_by_mode[mode];
       }
       const size_t target_count =
           std::min(visitor.target_susceptibility.size(),
@@ -281,7 +281,7 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
             visitor.deposition_source_multiplier[deposition_index++];
       }
       info.has_deposition_source_multiplier = deposition_index > 0;
-      info.fomite_deposition_sub = visitor.fomite_deposition_sub;
+      info.fomite_deposition_sub = visitor.emission.fomite_deposits;
       visitor_data_map[visitor.person_id] = std::move(info);
     }
   } catch (const std::exception& e) {

@@ -30,13 +30,13 @@ Domain::VisitorData makeVisitor(int num_modes, int num_deposition_modes,
   visitor.symptom_id = 9;
   visitor.time_in_stage = 2.5;
   for (int mode = 0; mode < num_modes; ++mode) {
-    visitor.integrated_infectiousness.push_back(0.1 * (mode + 1) + 1e-17);
+    visitor.emission.infectiousness_by_mode.push_back(0.1 * (mode + 1) + 1e-17);
     visitor.target_susceptibility.push_back(0.7 / (mode + 1));
   }
   for (int mode = 0; mode < num_deposition_modes; ++mode)
     visitor.deposition_source_multiplier.push_back(0.5 + 0.1 * mode);
   for (int bin = 0; bin < fomite_sub_bins; ++bin)
-    visitor.fomite_deposition_sub.push_back(1.0 / 3.0 * (bin + 1));
+    visitor.emission.fomite_deposits.push_back(1.0 / 3.0 * (bin + 1));
   return visitor;
 }
 
@@ -63,11 +63,11 @@ void checkRoundTrip(const Domain::VisitorData& sent,
   CHECK(received.symptom_id == sent.symptom_id);
   CHECK(received.time_in_stage == sent.time_in_stage);
   // Exact equality: tails must arrive bit-identical.
-  CHECK(received.integrated_infectiousness == sent.integrated_infectiousness);
+  CHECK(received.emission.infectiousness_by_mode == sent.emission.infectiousness_by_mode);
   CHECK(received.target_susceptibility == sent.target_susceptibility);
   CHECK(received.deposition_source_multiplier ==
         sent.deposition_source_multiplier);
-  CHECK(received.fomite_deposition_sub == sent.fomite_deposition_sub);
+  CHECK(received.emission.fomite_deposits == sent.emission.fomite_deposits);
 }
 
 }  // namespace
@@ -75,7 +75,7 @@ void checkRoundTrip(const Domain::VisitorData& sent,
 // Uninfected, as the sender builds it: target_susceptibility only.
 Domain::VisitorData makeUninfectedVisitor() {
   Domain::VisitorData visitor = makeVisitor(2, 0, 0);
-  visitor.integrated_infectiousness.clear();
+  visitor.emission.infectiousness_by_mode.clear();
   visitor.is_infected = false;
   visitor.is_infectious = false;
   visitor.symptom_id = 0;
@@ -86,7 +86,7 @@ Domain::VisitorData makeUninfectedVisitor() {
 // Infected, not yet infectious, as the sender builds it: no ii.
 Domain::VisitorData makeIncubatingVisitor(int fomite_sub_bins) {
   Domain::VisitorData visitor = makeVisitor(2, 1, fomite_sub_bins);
-  visitor.integrated_infectiousness.clear();
+  visitor.emission.infectiousness_by_mode.clear();
   visitor.is_infectious = false;
   return visitor;
 }
@@ -159,8 +159,8 @@ TEST_CASE("visitor wire: slice of records round-trips in order") {
   REQUIRE(received.size() == sent.size());
   for (std::size_t index = 0; index < sent.size(); ++index) {
     CHECK(received[index].person_id == sent[index].person_id);
-    CHECK(received[index].fomite_deposition_sub ==
-          sent[index].fomite_deposition_sub);
+    CHECK(received[index].emission.fomite_deposits ==
+          sent[index].emission.fomite_deposits);
   }
 }
 
@@ -208,8 +208,8 @@ TEST_CASE("visitor wire: pack throws when a tail it skips is nonzero") {
 
   SUBCASE("uninfected with a deposit") {
     Domain::VisitorData uninfected = makeUninfectedVisitor();
-    uninfected.fomite_deposition_sub.assign(10, 0.0);
-    uninfected.fomite_deposition_sub[4] = 1e-9;
+    uninfected.emission.fomite_deposits.assign(10, 0.0);
+    uninfected.emission.fomite_deposits[4] = 1e-9;
     CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), uninfected, tails),
                     std::runtime_error);
   }
@@ -221,7 +221,7 @@ TEST_CASE("visitor wire: pack throws when a tail it skips is nonzero") {
   }
   SUBCASE("not infectious with integrated infectiousness") {
     Domain::VisitorData incubating = makeIncubatingVisitor(10);
-    incubating.integrated_infectiousness = {0.0, 1e-9};
+    incubating.emission.infectiousness_by_mode = {0.0, 1e-9};
     CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), incubating, tails),
                     std::runtime_error);
   }
@@ -230,17 +230,17 @@ TEST_CASE("visitor wire: pack throws when a tail it skips is nonzero") {
 TEST_CASE("visitor wire: an all-zero skipped tail packs and arrives empty") {
   const visitor_wire::TailCounts tails{2, 1, 10};
   Domain::VisitorData uninfected = makeUninfectedVisitor();
-  uninfected.integrated_infectiousness.assign(2, 0.0);
+  uninfected.emission.infectiousness_by_mode.assign(2, 0.0);
   uninfected.deposition_source_multiplier.assign(1, 0.0);
-  uninfected.fomite_deposition_sub.assign(10, 0.0);
+  uninfected.emission.fomite_deposits.assign(10, 0.0);
   std::vector<char> buffer(visitor_wire::recordSize(uninfected, tails));
   visitor_wire::pack(buffer.data(), uninfected, tails);
 
   Domain::VisitorData received{};
   visitor_wire::unpack(buffer.data(), received, tails);
-  CHECK(received.integrated_infectiousness.empty());
+  CHECK(received.emission.infectiousness_by_mode.empty());
   CHECK(received.deposition_source_multiplier.empty());
-  CHECK(received.fomite_deposition_sub.empty());
+  CHECK(received.emission.fomite_deposits.empty());
   CHECK(received.target_susceptibility == uninfected.target_susceptibility);
 }
 

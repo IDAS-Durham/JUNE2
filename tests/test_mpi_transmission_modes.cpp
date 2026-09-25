@@ -55,14 +55,14 @@ static VisitorInfo toVisitorInfo(const Domain::VisitorData& vis) {
   vi.home_array_index = vis.person_id;
   vi.symptom_id = vis.symptom_id;
   vi.time_in_stage = vis.time_in_stage;
-  std::copy(std::begin(vis.integrated_infectiousness),
-            std::end(vis.integrated_infectiousness),
+  std::copy(std::begin(vis.emission.infectiousness_by_mode),
+            std::end(vis.emission.infectiousness_by_mode),
             std::begin(vi.integrated_infectiousness));
   vi.has_target_susceptibility = !vis.target_susceptibility.empty();
   std::copy(std::begin(vis.target_susceptibility),
             std::end(vis.target_susceptibility),
             std::begin(vi.target_susceptibility));
-  vi.fomite_deposition_sub = vis.fomite_deposition_sub;
+  vi.fomite_deposition_sub = vis.emission.fomite_deposits;
   return vi;
 }
 
@@ -152,7 +152,7 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
 
     // Person 1 (local) should be infected
     CHECK(f.world.getPerson(f.rank)->infection != nullptr);
-    CHECK(vis.integrated_infectiousness[0] ==
+    CHECK(vis.emission.infectiousness_by_mode[0] ==
           doctest::Approx(expected_integrated * 0.50));
     CHECK(vis.target_susceptibility[0] == doctest::Approx(0.25));
   }
@@ -295,9 +295,9 @@ TEST_CASE("H4: Multi-mode stage-driven infectiousness across ranks") {
 
     // Each mode's infectiousness arrives integrated over the 1 h slot:
     // 24 * rate * (1 / 24) d = rate.
-    REQUIRE(vis.integrated_infectiousness.size() == 2);
-    CHECK(vis.integrated_infectiousness[0] == doctest::Approx(2.0));
-    CHECK(vis.integrated_infectiousness[1] == doctest::Approx(0.8));
+    REQUIRE(vis.emission.infectiousness_by_mode.size() == 2);
+    CHECK(vis.emission.infectiousness_by_mode[0] == doctest::Approx(2.0));
+    CHECK(vis.emission.infectiousness_by_mode[1] == doctest::Approx(0.8));
   }
 }
 
@@ -433,7 +433,7 @@ TEST_CASE("H7: Bidirectional cross-rank transmission") {
 
   const auto& vis = domain.incoming_visitors[0];
   CHECK(vis.is_infectious == true);
-  CHECK(vis.integrated_infectiousness[0] > 0.0);
+  CHECK(vis.emission.infectiousness_by_mode[0] > 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -656,9 +656,9 @@ static void checkMixedStateExchange(const std::vector<int>& senders) {
     CHECK(visitor.is_infected == infected);
     CHECK(visitor.is_infectious == infectious);
     // A tail arrives full length if its header gate sends it, else empty.
-    CHECK(visitor.integrated_infectiousness.size() ==
+    CHECK(visitor.emission.infectiousness_by_mode.size() ==
           (infectious ? kNumModes : 0u));
-    REQUIRE(visitor.fomite_deposition_sub.size() ==
+    REQUIRE(visitor.emission.fomite_deposits.size() ==
             (infected ? kFomiteSubBins : 0u));
     // target_susceptibility always travels; the source multiplier with the
     // deposits.
