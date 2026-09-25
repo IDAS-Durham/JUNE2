@@ -72,9 +72,38 @@ void checkRoundTrip(const Domain::VisitorData& sent,
 
 }  // namespace
 
+// Uninfected, as the sender builds it: target_susceptibility only.
+Domain::VisitorData makeUninfectedVisitor() {
+  Domain::VisitorData visitor = makeVisitor(2, 0, 0);
+  visitor.integrated_infectiousness.clear();
+  visitor.is_infected = false;
+  visitor.is_infectious = false;
+  visitor.symptom_id = 0;
+  visitor.time_in_stage = 0.0;
+  return visitor;
+}
+
+// Infected, not yet infectious, as the sender builds it: no ii.
+Domain::VisitorData makeIncubatingVisitor(int fomite_sub_bins) {
+  Domain::VisitorData visitor = makeVisitor(2, 1, fomite_sub_bins);
+  visitor.integrated_infectiousness.clear();
+  visitor.is_infectious = false;
+  return visitor;
+}
+
 TEST_CASE("visitor wire: record round-trips header and all tails") {
   const visitor_wire::TailCounts tails{2, 1, 10};
   checkRoundTrip(makeVisitor(2, 1, 10), tails);
+}
+
+TEST_CASE("visitor wire: uninfected record sends header and "
+          "target_susceptibility alone") {
+  const visitor_wire::TailCounts tails{2, 1, 10};
+  const Domain::VisitorData uninfected = makeUninfectedVisitor();
+  checkRoundTrip(uninfected, tails);
+  CHECK(visitor_wire::recordSize(uninfected, tails) +
+            (2 + 1 + 10) * static_cast<int>(sizeof(double)) ==
+        visitor_wire::recordSize(makeVisitor(2, 1, 10), tails));
 }
 
 TEST_CASE("visitor wire: pack throws when a tail's length differs from its "
@@ -153,6 +182,58 @@ TEST_CASE("visitor wire: unpacking a slice throws unless records end exactly "
                                               tails, ignore),
                     std::runtime_error);
   }
+}
+
+TEST_CASE("visitor wire: incubating record sends deposits, not ii") {
+  const visitor_wire::TailCounts tails{2, 1, 10};
+  const Domain::VisitorData incubating = makeIncubatingVisitor(10);
+  checkRoundTrip(incubating, tails);
+  CHECK(visitor_wire::recordSize(incubating, tails) +
+            2 * static_cast<int>(sizeof(double)) ==
+        visitor_wire::recordSize(makeVisitor(2, 1, 10), tails));
+}
+
+TEST_CASE("visitor wire: pack throws when a tail it skips is nonzero") {
+  const visitor_wire::TailCounts tails{2, 1, 10};
+  std::vector<char> buffer(
+      visitor_wire::recordSize(makeVisitor(2, 1, 10), tails));
+
+  SUBCASE("uninfected with a deposit") {
+    Domain::VisitorData uninfected = makeUninfectedVisitor();
+    uninfected.fomite_deposition_sub.assign(10, 0.0);
+    uninfected.fomite_deposition_sub[4] = 1e-9;
+    CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), uninfected, tails),
+                    std::runtime_error);
+  }
+  SUBCASE("uninfected with a deposition source multiplier") {
+    Domain::VisitorData uninfected = makeUninfectedVisitor();
+    uninfected.deposition_source_multiplier = {0.5};
+    CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), uninfected, tails),
+                    std::runtime_error);
+  }
+  SUBCASE("not infectious with integrated infectiousness") {
+    Domain::VisitorData incubating = makeIncubatingVisitor(10);
+    incubating.integrated_infectiousness = {0.0, 1e-9};
+    CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), incubating, tails),
+                    std::runtime_error);
+  }
+}
+
+TEST_CASE("visitor wire: an all-zero skipped tail packs and arrives empty") {
+  const visitor_wire::TailCounts tails{2, 1, 10};
+  Domain::VisitorData uninfected = makeUninfectedVisitor();
+  uninfected.integrated_infectiousness.assign(2, 0.0);
+  uninfected.deposition_source_multiplier.assign(1, 0.0);
+  uninfected.fomite_deposition_sub.assign(10, 0.0);
+  std::vector<char> buffer(visitor_wire::recordSize(uninfected, tails));
+  visitor_wire::pack(buffer.data(), uninfected, tails);
+
+  Domain::VisitorData received{};
+  visitor_wire::unpack(buffer.data(), received, tails);
+  CHECK(received.integrated_infectiousness.empty());
+  CHECK(received.deposition_source_multiplier.empty());
+  CHECK(received.fomite_deposition_sub.empty());
+  CHECK(received.target_susceptibility == uninfected.target_susceptibility);
 }
 
 #endif  // USE_MPI

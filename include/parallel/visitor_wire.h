@@ -10,7 +10,15 @@
 // Wire format of one Visitor record: a fixed header (WireRecord over
 // VisitorData's plain fields) followed by four count-known-elsewhere tails:
 // integrated_infectiousness, target_susceptibility,
-// deposition_source_multiplier, fomite_deposition_sub.
+// deposition_source_multiplier, fomite_deposition_sub. A source tail travels
+// only when the header says it can be nonzero, and arrives empty otherwise;
+// target_susceptibility always travels, since any visitor can be a target:
+//
+//   !is_infected                    header + ts
+//   is_infected && !is_infectious   header + ts + dsm + deposits
+//   is_infectious                   header + ii + ts + dsm + deposits
+//
+// The receiver derives nothing from disease state.
 namespace june::visitor_wire {
 
 // Lengths of a visitor record's tails. Derived from the Disease and timestep,
@@ -21,15 +29,17 @@ struct TailCounts {
   int fomite_sub_bins;       // fomite_deposition_sub
 };
 
-// Bytes `visitor` occupies on the wire.
+// Bytes `visitor` occupies on the wire; depends on its header bools.
 int recordSize(const Domain::VisitorData& visitor, const TailCounts& tails);
 
-// Writes `visitor` at `ptr`, returns the end of the record. Throws if a tail's
-// length differs from its count in `tails`.
+// Writes `visitor` at `ptr`, returns the end of the record. Throws if a sent
+// tail's length differs from its count in `tails`, or if a skipped tail is
+// not empty or all zero.
 char* pack(char* ptr, const Domain::VisitorData& visitor,
            const TailCounts& tails);
 
 // Reads one record at `ptr` into `visitor`, returns the end of the record.
+// Skipped tails come back empty.
 const char* unpack(const char* ptr, Domain::VisitorData& visitor,
                    const TailCounts& tails);
 

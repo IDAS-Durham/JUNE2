@@ -42,9 +42,10 @@ double sourceModifier(const june::PolicyManager* policy_manager,
 // deposit per sub-bin using the SAME code paths and source modifiers as
 // local people (getIntegratedInfectiousness,
 // FomiteSubBinSchedule::integrateDeposits) so FP results are bit-identical
-// regardless of where a person is processed. All tails are always full
-// length (zero-filled for people who emit nothing); the wire format expects
-// exactly that many doubles.
+// regardless of where a person is processed. target_susceptibility is always
+// filled; each source tail only when its header gate sends it (ii when
+// infectious, deposition_source_multiplier and deposits when infected) and
+// left empty otherwise; see visitor_wire.h.
 june::Domain::VisitorData buildVisitorPayload(
     const june::PersonLocation& loc, const june::Person& person, int home_rank,
     double current_time, double delta_hours, int num_modes,
@@ -73,10 +74,7 @@ june::Domain::VisitorData buildVisitorPayload(
 
   visitor.symptom_id = 0;
   visitor.time_in_stage = 0.0;
-  visitor.integrated_infectiousness.assign(num_modes, 0.0);
   visitor.target_susceptibility.assign(num_modes, susceptibility);
-  visitor.deposition_source_multiplier.assign(countDepositionModes(disease),
-                                              1.0);
   for (int m = 0; m < num_modes; ++m) {
     const double target_multiplier =
         policy_manager
@@ -85,33 +83,6 @@ june::Domain::VisitorData buildVisitorPayload(
                   june::TransmissionEffectChannel::TargetSusceptibility)
             : 1.0;
     visitor.target_susceptibility[m] = susceptibility * target_multiplier;
-  }
-  size_t deposition_index = 0;
-  if (disease) {
-    for (size_t m = 0; m < disease->getTransmissionParams().modes.size(); ++m) {
-      const auto mode_type = disease->getTransmissionParams().modes[m].type;
-      if (mode_type != june::TransmissionModeType::Fomite &&
-          mode_type != june::TransmissionModeType::CompartmentalDeposition)
-        continue;
-      visitor.deposition_source_multiplier[deposition_index++] =
-          sourceModifier(policy_manager, person, m);
-    }
-  }
-  if (fomite_schedule) {
-    fomite_schedule->integrateDeposits(person.infection.get(), current_time,
-                                       visitor.fomite_deposition_sub);
-    // Same product as InteractionManager::addFomiteDeposits for locals.
-    const auto& n_sub_per_mode = fomite_schedule->subBinsPerMode();
-    int offset = 0;
-    for (int local_fm = 0; local_fm < fomite_schedule->numModes(); ++local_fm) {
-      const double source_modifier =
-          sourceModifier(policy_manager, person,
-                         fomite_schedule->modes()[local_fm].mode_index);
-      for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
-        visitor.fomite_deposition_sub[offset + k] *= source_modifier;
-      }
-      offset += n_sub_per_mode[local_fm];
-    }
   }
   if (visitor.is_infected) {
     const june::InfectionTrajectory& traj = person.infection->getTrajectory();
@@ -128,12 +99,47 @@ june::Domain::VisitorData buildVisitorPayload(
     visitor.symptom_id = cur_symptom_id;
     visitor.time_in_stage = current_time - stage_start_time;
 
-    if (visitor.is_infectious && disease) {
-      double t1 = current_time + delta_hours / 24.0;
-      for (int m = 0; m < num_modes; ++m) {
-        visitor.integrated_infectiousness[m] =
-            person.infection->getIntegratedInfectiousness(m, current_time, t1) *
-            sourceModifier(policy_manager, person, static_cast<size_t>(m));
+    visitor.deposition_source_multiplier.assign(countDepositionModes(disease),
+                                                1.0);
+    size_t deposition_index = 0;
+    if (disease) {
+      for (size_t m = 0; m < disease->getTransmissionParams().modes.size();
+           ++m) {
+        const auto mode_type = disease->getTransmissionParams().modes[m].type;
+        if (mode_type != june::TransmissionModeType::Fomite &&
+            mode_type != june::TransmissionModeType::CompartmentalDeposition)
+          continue;
+        visitor.deposition_source_multiplier[deposition_index++] =
+            sourceModifier(policy_manager, person, m);
+      }
+    }
+    if (fomite_schedule) {
+      fomite_schedule->integrateDeposits(person.infection.get(), current_time,
+                                         visitor.fomite_deposition_sub);
+      // Same product as InteractionManager::addFomiteDeposits for locals.
+      const auto& n_sub_per_mode = fomite_schedule->subBinsPerMode();
+      int offset = 0;
+      for (int local_fm = 0; local_fm < fomite_schedule->numModes();
+           ++local_fm) {
+        const double source_modifier =
+            sourceModifier(policy_manager, person,
+                           fomite_schedule->modes()[local_fm].mode_index);
+        for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
+          visitor.fomite_deposition_sub[offset + k] *= source_modifier;
+        }
+        offset += n_sub_per_mode[local_fm];
+      }
+    }
+    if (visitor.is_infectious) {
+      visitor.integrated_infectiousness.assign(num_modes, 0.0);
+      if (disease) {
+        double t1 = current_time + delta_hours / 24.0;
+        for (int m = 0; m < num_modes; ++m) {
+          visitor.integrated_infectiousness[m] =
+              person.infection->getIntegratedInfectiousness(m, current_time,
+                                                            t1) *
+              sourceModifier(policy_manager, person, static_cast<size_t>(m));
+        }
       }
     }
   }
