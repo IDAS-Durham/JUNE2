@@ -3,6 +3,7 @@
 // simulator.cpp (declared in simulation/simulator.h).
 #include <algorithm>
 #include <iostream>
+#include <utility>
 #include <vector>
 
 #include "simulation/simulator.h"
@@ -280,7 +281,7 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       }
       info.has_deposition_source_multiplier = deposition_index > 0;
       info.fomite_deposition_sub = visitor.fomite_deposition_sub;
-      visitor_data_map[visitor.person_id] = info;
+      visitor_data_map[visitor.person_id] = std::move(info);
     }
   } catch (const std::exception& e) {
     std::cerr << "[Step 2 MPI] Fatal error: " << e.what() << std::endl;
