@@ -342,11 +342,17 @@ class InteractionManager {
                                                     int parent_num_bins,
                                                     int num_modes);
 
+  // What a member emits over the slot starting at current_time: a Visitor's
+  // Emission arrives with it; a local's is emitted into `emission_scratch`.
+  // Null if the member is neither.
+  static const Emission* memberEmission(
+      const Person* person, const VisitorInfo* visitor, double current_time,
+      const EmissionCalculator& emission_calculator,
+      Emission& emission_scratch);
+
   // Fill inf_by_mode with the per-mode integrated infectiousness (24*∫I dt)
-  // contributed by this member over the slot starting at current_time.
-  // Visitor branch reads pre-computed values from the sending rank; local
-  // branch takes its Emission from `emission_calculator` into
-  // `emission_scratch`. Returns true iff the member contributes any positive
+  // this member emits over the slot starting at current_time (see
+  // memberEmission). Returns true iff it contributes any positive
   // infectiousness.
   bool gatherMemberInfectiousnessByMode(
       const Person* person, const VisitorInfo* visitor, double current_time,
@@ -738,11 +744,11 @@ class InteractionManager {
 
   // STEP 1 classification dispatch for one (member, person, visitor) tuple
   // already pinned to bin_index. Pushes susceptible into
-  // bins_buffer_[bin_index] or routes to accumulate{Visitor,Local}* helpers
-  // when infectious. A local's Emission comes from `emission_calculator`.
+  // bins_buffer_[bin_index] or routes to accumulateInfectiousness when
+  // infectious, and adds fomite deposits. The member's Emission comes from
+  // memberEmission.
   void binMemberClassification(const InteractionMember& member, Person* person,
                                const VisitorInfo* visitor, int bin_index,
-                               int num_modes,
                                const EmissionCalculator& emission_calculator,
                                double current_time);
 
@@ -763,31 +769,24 @@ class InteractionManager {
   // fomite deposition, or susceptible.
   void binOneMember(
       const InteractionMember& member, Venue* venue,
-      const ContactMatrix& bin_structure, int num_bins_needed, int num_modes,
+      const ContactMatrix& bin_structure, int num_bins_needed,
       const EmissionCalculator& emission_calculator, double current_time,
       uint8_t encounter_type_id, const std::string& venue_type,
       uint8_t venue_type_id,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
 
-  // Append a cross-rank visitor's per-mode infectiousness (pre-computed on
-  // the sending rank) into bins_buffer_[bin_index]. Caller has already
-  // confirmed visitor->is_infectious. Uses im_scratch_buffer_ as scratch.
-  void accumulateVisitorInfectiousness(const VisitorInfo* visitor, PersonId pid,
-                                       int bin_index, int num_modes);
-
-  // Append a local infectious person's per-mode integrated infectiousness
-  // (Emission::infectiousness_by_mode, non-empty), scaled by the person's
+  // Append an infectious member's per-mode integrated infectiousness
+  // (Emission::infectiousness_by_mode, non-empty), scaled by the source's
   // SourceInfectiousness modifier, into bins_buffer_[bin_index]. Uses
   // im_scratch_buffer_ as scratch.
-  void accumulateLocalInfectiousness(
-      const Person* person, const std::vector<double>& infectiousness_by_mode,
+  void accumulateInfectiousness(
+      const Person* source, const std::vector<double>& infectiousness_by_mode,
       PersonId pid, int bin_index);
 
   // Add one infected member's deposits, flat in fomite_schedule order (see
   // FomiteSubBinSchedule::integrateDeposits), into
-  // bins_buffer_[bin_index].total_fomite_deposition_sub. Locals' come from
-  // their Emission; visitors arrive with theirs
-  // (VisitorInfo::fomite_deposition_sub). Scales by source's
+  // bins_buffer_[bin_index].total_fomite_deposition_sub. Deposits come from
+  // the member's Emission (Emission::fomite_deposits). Scales by source's
   // SourceInfectiousness modifier; nullptr (visitors, pre-multiplied on the
   // home rank) scales by 1.
   void addFomiteDeposits(int bin_index,
@@ -947,6 +946,8 @@ class InteractionManager {
   // sampled once per susceptible). Avoids per-bin std::discrete_distribution
   // allocation; see sampleFromCumulative in utils/random.h.
   std::vector<double> source_cumulative_buffer_;
+  // Per-mode effective target susceptibility of the current susceptible
+  std::vector<double> target_susceptibility_buffer_;
 
   // Scratch buffers for sibling-infector two-stage sampling. Reused across
   // infections so we don't reallocate on every sibling-attributed event.

@@ -241,7 +241,8 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
     visitor_ids = domain_mgr_->getVisitorIds();
 
     // Populate visitor data map for transmission calculations
-    for (const auto& visitor : domain.incoming_visitors) {
+    // Emission is moved out: incoming_visitors is only read for ids after this.
+    for (auto& visitor : domain.incoming_visitors) {
       VisitorInfo info;
       info.person_id = visitor.person_id;
       info.is_infected = visitor.is_infected;
@@ -249,39 +250,24 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       info.immunity_level = visitor.immunity_level;
       info.symptom_id = visitor.symptom_id;
       info.time_in_stage = visitor.time_in_stage;
-      for (int mode = 0; mode < VisitorInfo::MAX_MODES; ++mode) {
-        info.integrated_infectiousness[mode] = 0.0;
-        info.target_susceptibility[mode] = 1.0;
-        info.deposition_source_multiplier[mode] = 1.0;
+      info.emission = std::move(visitor.emission);
+      info.target_susceptibility = std::move(visitor.target_susceptibility);
+      // Wire carries one multiplier per deposition mode; expand to per mode.
+      if (!visitor.deposition_source_multiplier.empty()) {
+        const auto& modes = disease_->getTransmissionParams().modes;
+        info.deposition_source_multiplier.assign(modes.size(), 1.0);
+        size_t deposition_index = 0;
+        for (size_t mode = 0; mode < modes.size(); ++mode) {
+          if (modes[mode].type != TransmissionModeType::Fomite &&
+              modes[mode].type != TransmissionModeType::CompartmentalDeposition)
+            continue;
+          if (deposition_index >= visitor.deposition_source_multiplier.size())
+            break;
+          info.deposition_source_multiplier[mode] =
+              visitor.deposition_source_multiplier[deposition_index++];
+        }
+        if (deposition_index == 0) info.deposition_source_multiplier.clear();
       }
-      const size_t mode_count =
-          std::min(visitor.emission.infectiousness_by_mode.size(),
-                   static_cast<size_t>(VisitorInfo::MAX_MODES));
-      for (size_t mode = 0; mode < mode_count; ++mode) {
-        info.integrated_infectiousness[mode] =
-            visitor.emission.infectiousness_by_mode[mode];
-      }
-      const size_t target_count =
-          std::min(visitor.target_susceptibility.size(),
-                   static_cast<size_t>(VisitorInfo::MAX_MODES));
-      info.has_target_susceptibility = target_count > 0;
-      for (size_t mode = 0; mode < target_count; ++mode) {
-        info.target_susceptibility[mode] = visitor.target_susceptibility[mode];
-      }
-      size_t deposition_index = 0;
-      const auto& modes = disease_->getTransmissionParams().modes;
-      for (size_t mode = 0;
-           mode < modes.size() && mode < VisitorInfo::MAX_MODES; ++mode) {
-        if (modes[mode].type != TransmissionModeType::Fomite &&
-            modes[mode].type != TransmissionModeType::CompartmentalDeposition)
-          continue;
-        if (deposition_index >= visitor.deposition_source_multiplier.size())
-          break;
-        info.deposition_source_multiplier[mode] =
-            visitor.deposition_source_multiplier[deposition_index++];
-      }
-      info.has_deposition_source_multiplier = deposition_index > 0;
-      info.fomite_deposition_sub = visitor.emission.fomite_deposits;
       visitor_data_map[visitor.person_id] = std::move(info);
     }
   } catch (const std::exception& e) {

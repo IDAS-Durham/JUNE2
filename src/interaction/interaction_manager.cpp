@@ -202,36 +202,35 @@ std::vector<PersonLocation> InteractionManager::buildPersonIdSortedMembers(
   return mem_sorted;
 }
 
+const Emission* InteractionManager::memberEmission(
+    const Person* person, const VisitorInfo* visitor, double current_time,
+    const EmissionCalculator& emission_calculator, Emission& emission_scratch) {
+  if (visitor) return &visitor->emission;
+  if (!person) return nullptr;
+  emission_calculator.emit(*person, current_time, emission_scratch);
+  return &emission_scratch;
+}
+
 bool InteractionManager::gatherMemberInfectiousnessByMode(
     const Person* person, const VisitorInfo* visitor, double current_time,
     const EmissionCalculator& emission_calculator, int num_modes,
     Emission& emission_scratch, std::vector<double>& inf_by_mode) const {
   inf_by_mode.assign(num_modes, 0.0);
+  const Emission* emission = memberEmission(
+      person, visitor, current_time, emission_calculator, emission_scratch);
+  if (!emission) return false;
+  const std::vector<double>& emitted = emission->infectiousness_by_mode;
+  if (emitted.empty()) return false;
+  const int num_emitted = std::min(num_modes, static_cast<int>(emitted.size()));
   double total = 0.0;
-  if (visitor) {
-    if (!visitor->is_infectious) return false;
-    for (int m = 0; m < num_modes; ++m) {
-      inf_by_mode[m] = (m < VisitorInfo::MAX_MODES)
-                           ? visitor->integrated_infectiousness[m]
-                           : 0.0;
-      total += inf_by_mode[m];
-    }
-  } else if (person) {
-    emission_calculator.emit(*person, current_time, emission_scratch);
-    const std::vector<double>& emitted =
-        emission_scratch.infectiousness_by_mode;
-    if (emitted.empty()) return false;
-    const int num_emitted =
-        std::min(num_modes, static_cast<int>(emitted.size()));
-    for (int m = 0; m < num_emitted; ++m) {
-      inf_by_mode[m] =
-          emitted[m] * personTransmissionModifier(
-                           person, nullptr, m,
-                           TransmissionEffectChannel::SourceInfectiousness);
-      total += inf_by_mode[m];
-    }
-  } else {
-    return false;
+  // Visitors' Emission arrives source-multiplied: scale locals only.
+  const Person* source = visitor ? nullptr : person;
+  for (int m = 0; m < num_emitted; ++m) {
+    inf_by_mode[m] =
+        emitted[m] *
+        personTransmissionModifier(
+            source, nullptr, m, TransmissionEffectChannel::SourceInfectiousness);
+    total += inf_by_mode[m];
   }
   return total > 0.0;
 }
@@ -607,16 +606,11 @@ double InteractionManager::personTransmissionModifier(
     const Person* person, const VisitorInfo* visitor, size_t mode,
     TransmissionEffectChannel channel) const {
   if (visitor) {
-    if (mode >= VisitorInfo::MAX_MODES) return 1.0;
-    const double value =
+    const std::vector<double>& values =
         channel == TransmissionEffectChannel::TargetSusceptibility
-            ? (visitor->has_target_susceptibility
-                   ? visitor->target_susceptibility[mode]
-                   : 1.0)
-            : (visitor->has_deposition_source_multiplier
-                   ? visitor->deposition_source_multiplier[mode]
-                   : 1.0);
-    return value;
+            ? visitor->target_susceptibility
+            : visitor->deposition_source_multiplier;
+    return mode < values.size() ? values[mode] : 1.0;
   }
   if (person && policy_manager_) {
     const double value =
@@ -629,10 +623,9 @@ double InteractionManager::personTransmissionModifier(
 double InteractionManager::effectiveTargetSusceptibility(
     const Person* person, const VisitorInfo* visitor,
     double base_susceptibility, size_t mode) const {
-  if (visitor && visitor->has_target_susceptibility &&
-      mode < VisitorInfo::MAX_MODES) {
-    const double value = visitor->target_susceptibility[mode];
-    return value;
+  if (visitor && !visitor->target_susceptibility.empty()) {
+    return personTransmissionModifier(
+        nullptr, visitor, mode, TransmissionEffectChannel::TargetSusceptibility);
   }
   const double value = base_susceptibility *
                        personTransmissionModifier(

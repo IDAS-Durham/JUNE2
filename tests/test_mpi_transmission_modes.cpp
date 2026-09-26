@@ -55,14 +55,8 @@ static VisitorInfo toVisitorInfo(const Domain::VisitorData& vis) {
   vi.home_array_index = vis.person_id;
   vi.symptom_id = vis.symptom_id;
   vi.time_in_stage = vis.time_in_stage;
-  std::copy(std::begin(vis.emission.infectiousness_by_mode),
-            std::end(vis.emission.infectiousness_by_mode),
-            std::begin(vi.integrated_infectiousness));
-  vi.has_target_susceptibility = !vis.target_susceptibility.empty();
-  std::copy(std::begin(vis.target_susceptibility),
-            std::end(vis.target_susceptibility),
-            std::begin(vi.target_susceptibility));
-  vi.fomite_deposition_sub = vis.emission.fomite_deposits;
+  vi.emission = vis.emission;
+  vi.target_susceptibility = vis.target_susceptibility;
   return vi;
 }
 
@@ -666,9 +660,7 @@ static void checkMixedStateExchange(const std::vector<int>& senders) {
     CHECK(visitor.deposition_source_multiplier.size() == (infected ? 1u : 0u));
 
     const VisitorInfo info = toVisitorInfo(visitor);
-    for (double integrated : info.integrated_infectiousness) {
-      if (!infectious) CHECK(integrated == 0.0);
-    }
+    CHECK(info.emission == visitor.emission);
     if (!infected) continue;
 
     std::unordered_map<PersonId, VisitorInfo> visitor_data = {

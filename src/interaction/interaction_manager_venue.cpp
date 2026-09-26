@@ -178,12 +178,11 @@ bool InteractionManager::processOneVenueSusceptible(
     std::vector<PendingInfection>* pending_infections) {
   PersonId susceptible_id = susc_mem.id;
   double lambda_eff = 0.0;
-  std::array<double, VisitorInfo::MAX_MODES> target_susceptibility{};
+  std::vector<double>& target_susceptibility = target_susceptibility_buffer_;
+  target_susceptibility.assign(lambda_by_mode.size(), 0.0);
   const Person* person =
       susc_mem.visitor ? nullptr : world_.getPerson(susceptible_id);
-  for (size_t mode = 0;
-       mode < lambda_by_mode.size() && mode < target_susceptibility.size();
-       ++mode) {
+  for (size_t mode = 0; mode < lambda_by_mode.size(); ++mode) {
     target_susceptibility[mode] = effectiveTargetSusceptibility(
         person, susc_mem.visitor, susc_mem.susceptibility, mode);
     lambda_eff += lambda_by_mode[mode] * target_susceptibility[mode];

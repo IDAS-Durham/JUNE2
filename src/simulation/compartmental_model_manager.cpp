@@ -594,8 +594,8 @@ void CompartmentalModelManager::computeDepositionWriteback(
         dep *= policy_manager->personModifier(
             *person, mode_index,
             TransmissionEffectChannel::SourceInfectiousness);
-      } else if (visitor && visitor->has_deposition_source_multiplier &&
-                 mode_index < VisitorInfo::MAX_MODES) {
+      } else if (visitor &&
+                 mode_index < visitor->deposition_source_multiplier.size()) {
         dep *= visitor->deposition_source_multiplier[mode_index];
       }
       if (dep > 0.0) {
