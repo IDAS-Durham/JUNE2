@@ -56,26 +56,24 @@ TEST_CASE("Uninfected Person packs empty tails and symptom 0") {
   CHECK(visitor.subset_idx == 3);
   CHECK(visitor.encounter_type_id == 5);
   CHECK_FALSE(visitor.is_infected);
-  CHECK_FALSE(visitor.is_infectious);
   CHECK(visitor.symptom_id == 0);
   CHECK(visitor.emission.infectiousness_by_mode.empty());
   CHECK(visitor.emission.fomite_deposits.empty());
   checkMatchesEmit(visitor, person, calculator);
 }
 
-TEST_CASE("Infected, not yet infectious: deposits only") {
+TEST_CASE("Incubating: zero per mode, deposits as usual") {
   Disease disease = makeDisease(2.0);
   EmissionCalculator calculator(disease, kSlotHours);
   Person person =
       makeInfectedPerson(disease, 8.0, {{9.0, kHealthy}, {11.0, kMild}});
-  REQUIRE_FALSE(person.infection->isInfectious(kSlotStart));
 
   Domain::VisitorData visitor = pack(person, disease, calculator);
 
   CHECK(visitor.is_infected);
-  CHECK_FALSE(visitor.is_infectious);
   CHECK(visitor.symptom_id == person.infection->symptomIdAt(kSlotStart));
-  CHECK(visitor.emission.infectiousness_by_mode.empty());
+  CHECK(visitor.emission.infectiousness_by_mode ==
+        std::vector<double>{0.0, 0.0, 0.0});
   CHECK(visitor.emission.fomite_deposits.size() == 3);
   checkMatchesEmit(visitor, person, calculator);
 }
@@ -85,12 +83,10 @@ TEST_CASE("Infectious: per-mode integrals and deposits") {
   EmissionCalculator calculator(disease, kSlotHours);
   Person person =
       makeInfectedPerson(disease, 8.0, {{9.0, kExposed}, {9.5, kMild}});
-  REQUIRE(person.infection->isInfectious(kSlotStart));
 
   Domain::VisitorData visitor = pack(person, disease, calculator);
 
   CHECK(visitor.is_infected);
-  CHECK(visitor.is_infectious);
   CHECK(visitor.symptom_id == kMild);
   CHECK(visitor.symptom_id == person.infection->symptomIdAt(kSlotStart));
   CHECK(visitor.emission.infectiousness_by_mode.size() == 3);

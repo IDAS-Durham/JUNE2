@@ -48,7 +48,6 @@ static VisitorInfo toVisitorInfo(const Domain::VisitorData& vis) {
   VisitorInfo vi;
   vi.person_id = vis.person_id;
   vi.is_infected = vis.is_infected;
-  vi.is_infectious = vis.is_infectious;
   vi.immunity_level = vis.immunity_level;
   vi.home_array_index = vis.person_id;
   vi.symptom_id = vis.symptom_id;
@@ -388,7 +387,7 @@ TEST_CASE("H7: Bidirectional cross-rank transmission") {
   REQUIRE(domain.incoming_visitors.size() == 1);
 
   const auto& vis = domain.incoming_visitors[0];
-  CHECK(vis.is_infectious == true);
+  CHECK(vis.is_infected == true);
   CHECK(vis.emission.infectiousness_by_mode[0] > 0.0);
 }
 
@@ -565,12 +564,10 @@ static void checkMixedStateExchange(const std::vector<int>& senders) {
   for (const auto& visitor : incoming) {
     const VisitorState state = stateOf(visitor.person_id);
     const bool infected = state != VisitorState::Uninfected;
-    const bool infectious = state == VisitorState::Infectious;
     CHECK(visitor.is_infected == infected);
-    CHECK(visitor.is_infectious == infectious);
-    // A tail arrives full length if its header gate sends it, else empty.
+    // Both tails arrive full length if the Visitor is infected, else empty.
     CHECK(visitor.emission.infectiousness_by_mode.size() ==
-          (infectious ? kNumModes : 0u));
+          (infected ? kNumModes : 0u));
     REQUIRE(visitor.emission.fomite_deposits.size() ==
             (infected ? kFomiteSubBins : 0u));
 

@@ -23,7 +23,6 @@ Domain::VisitorData makeVisitor(int num_modes, int fomite_sub_bins) {
   visitor.venue_id = 777;
   visitor.subset_idx = 3;
   visitor.is_infected = true;
-  visitor.is_infectious = true;
   visitor.immunity_level = 0.25f;
   visitor.encounter_type_id = 5;
   visitor.symptom_id = 9;
@@ -51,7 +50,6 @@ void checkRoundTrip(const Domain::VisitorData& sent,
   CHECK(received.venue_id == sent.venue_id);
   CHECK(received.subset_idx == sent.subset_idx);
   CHECK(received.is_infected == sent.is_infected);
-  CHECK(received.is_infectious == sent.is_infectious);
   CHECK(received.immunity_level == sent.immunity_level);
   CHECK(received.encounter_type_id == sent.encounter_type_id);
   CHECK(received.symptom_id == sent.symptom_id);
@@ -67,15 +65,7 @@ void checkRoundTrip(const Domain::VisitorData& sent,
 Domain::VisitorData makeUninfectedVisitor() {
   Domain::VisitorData visitor = makeVisitor(0, 0);
   visitor.is_infected = false;
-  visitor.is_infectious = false;
   visitor.symptom_id = 0;
-  return visitor;
-}
-
-// Infected, not yet infectious, as the sender builds it: deposits only.
-Domain::VisitorData makeIncubatingVisitor(int fomite_sub_bins) {
-  Domain::VisitorData visitor = makeVisitor(0, fomite_sub_bins);
-  visitor.is_infectious = false;
   return visitor;
 }
 
@@ -167,15 +157,6 @@ TEST_CASE("visitor wire: unpacking a slice throws unless records end exactly "
   }
 }
 
-TEST_CASE("visitor wire: incubating record sends deposits, not ii") {
-  const visitor_wire::TailCounts tails{2, 10};
-  const Domain::VisitorData incubating = makeIncubatingVisitor(10);
-  checkRoundTrip(incubating, tails);
-  CHECK(visitor_wire::recordSize(incubating, tails) +
-            2 * static_cast<int>(sizeof(double)) ==
-        visitor_wire::recordSize(makeVisitor(2, 10), tails));
-}
-
 TEST_CASE("visitor wire: pack throws when a tail it skips is nonzero") {
   const visitor_wire::TailCounts tails{2, 10};
   std::vector<char> buffer(visitor_wire::recordSize(makeVisitor(2, 10), tails));
@@ -187,10 +168,10 @@ TEST_CASE("visitor wire: pack throws when a tail it skips is nonzero") {
     CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), uninfected, tails),
                     std::runtime_error);
   }
-  SUBCASE("not infectious with integrated infectiousness") {
-    Domain::VisitorData incubating = makeIncubatingVisitor(10);
-    incubating.emission.infectiousness_by_mode = {0.0, 1e-9};
-    CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), incubating, tails),
+  SUBCASE("uninfected with integrated infectiousness") {
+    Domain::VisitorData uninfected = makeUninfectedVisitor();
+    uninfected.emission.infectiousness_by_mode = {0.0, 1e-9};
+    CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), uninfected, tails),
                     std::runtime_error);
   }
 }

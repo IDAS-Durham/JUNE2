@@ -16,7 +16,6 @@ void EmissionCalculator::emit(const Person& person, double slot_start,
   if (!infection) return;
   fomite_schedule_.integrateDeposits(infection, slot_start,
                                      out.fomite_deposits);
-  if (!infection->isInfectious(slot_start)) return;
   const int num_modes = disease_.numModes();
   const double slot_end = slot_start + slot_hours_ / 24.0;
   out.infectiousness_by_mode.resize(num_modes);

@@ -23,7 +23,7 @@ using june::domain_comm_detail::makeWireRecord;
 constexpr auto kVisitorWire = makeWireRecord(
     &Domain::VisitorData::person_id, &Domain::VisitorData::home_rank,
     &Domain::VisitorData::venue_id, &Domain::VisitorData::subset_idx,
-    &Domain::VisitorData::is_infected, &Domain::VisitorData::is_infectious,
+    &Domain::VisitorData::is_infected,
     &Domain::VisitorData::immunity_level,
     &Domain::VisitorData::encounter_type_id, &Domain::VisitorData::symptom_id);
 constexpr int VISITOR_WIRE_HEADER = kVisitorWire.size();
@@ -94,11 +94,11 @@ const char* unpackTail(const char* ptr, std::vector<double>& tail,
   return ptr;
 }
 
-// Tail lengths on the wire for `visitor`: a tail travels only when the header
-// says it can be nonzero, and is omitted otherwise.
+// Tail lengths on the wire for `visitor`: both tails travel only when the
+// Visitor is infected, and are omitted otherwise.
 TailCounts sentTailCounts(const Domain::VisitorData& visitor,
                           const TailCounts& tails) {
-  return {visitor.is_infectious ? tails.num_modes : 0,
+  return {visitor.is_infected ? tails.num_modes : 0,
           visitor.is_infected ? tails.fomite_sub_bins : 0};
 }
 
@@ -114,7 +114,7 @@ char* pack(char* ptr, const Domain::VisitorData& visitor,
            const TailCounts& tails) {
   ptr = kVisitorWire.pack(ptr, visitor);
   ptr = packGatedTail(ptr, visitor.emission.infectiousness_by_mode,
-                      visitor.is_infectious, tails.num_modes,
+                      visitor.is_infected, tails.num_modes,
                       "infectiousness_by_mode");
   return packGatedTail(ptr, visitor.emission.fomite_deposits,
                        visitor.is_infected, tails.fomite_sub_bins,

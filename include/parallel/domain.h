@@ -53,7 +53,6 @@ class Domain {
 
     // Infection state (for transmission calculations)
     bool is_infected;
-    bool is_infectious;
     float immunity_level;
     uint8_t encounter_type_id;  // Coordinated encounter type (ID in registry)
 

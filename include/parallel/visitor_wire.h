@@ -9,13 +9,11 @@
 
 // Wire format of one Visitor record: a fixed header (WireRecord over
 // VisitorData's plain fields) followed by two count-known-elsewhere tails,
-// emission.infectiousness_by_mode then emission.fomite_deposits. A tail
-// travels only when the header says it can be nonzero, and arrives empty
-// otherwise:
+// emission.infectiousness_by_mode then emission.fomite_deposits. Both tails
+// travel only when the Visitor is infected, and arrive empty otherwise:
 //
-//   !is_infected                    header
-//   is_infected && !is_infectious   header + deposits
-//   is_infectious                   header + ii + deposits
+//   !is_infected   header
+//   is_infected    header + ii + deposits
 //
 // The receiver derives nothing from disease state (ADR 0014).
 namespace june::visitor_wire {
