@@ -164,30 +164,18 @@ TEST_CASE("Slot length fixes both the sub-bin schedule and the integrals") {
         six_hour_emission.infectiousness_by_mode[1]);
 }
 
-TEST_CASE("symptomIdAt walks transitions forward from symptom 0") {
+TEST_CASE("Symptom id before the first transition is the first stage") {
   Disease disease = makeDisease(2.0);
   // Infected at 8, exposed from 9, mild from 11.
   Person person =
       makeInfectedPerson(disease, 8.0, {{9.0, kExposed}, {11.0, kMild}});
-  const Infection& infection = *person.infection;
+  const InfectionTrajectory& trajectory = person.infection->getTrajectory();
 
-  CHECK(infection.symptomIdAt(8.0) == 0);  // before the first transition
-  CHECK(infection.symptomIdAt(8.99) == 0);
-  CHECK(infection.symptomIdAt(9.0) == kExposed);  // at a transition
-  CHECK(infection.symptomIdAt(10.0) == kExposed);
-  CHECK(infection.symptomIdAt(11.0) == kMild);
-  CHECK(infection.symptomIdAt(50.0) == kMild);  // after the last
-}
-
-TEST_CASE("symptomIdAt leaves the checkpointed symptom cache alone") {
-  Disease disease = makeDisease(2.0);
-  Person person =
-      makeInfectedPerson(disease, 8.0, {{9.0, kExposed}, {11.0, kMild}});
-  const Infection& infection = *person.infection;
-
-  infection.symptomIdAt(10.0);
-
-  CHECK(infection.ckptLastCheckedTime() == -1.0);
-  CHECK(infection.ckptCachedSymptomId() == kHealthy);
-  CHECK(infection.ckptCachedSymptomStartTime() == 8.0);
+  // Symptom 0 means recovered (ADR 0005), so it is never the pre-start answer.
+  CHECK(trajectory.getCurrentSymptomId(8.0) == kExposed);
+  CHECK(trajectory.getCurrentSymptomId(8.99) == kExposed);
+  CHECK(trajectory.getCurrentSymptomId(9.0) == kExposed);  // at a transition
+  CHECK(trajectory.getCurrentSymptomId(10.0) == kExposed);
+  CHECK(trajectory.getCurrentSymptomId(11.0) == kMild);
+  CHECK(trajectory.getCurrentSymptomId(50.0) == kMild);  // after the last
 }

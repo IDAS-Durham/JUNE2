@@ -25,7 +25,9 @@ Domain::VisitorData buildVisitorPayload(const PersonLocation& location,
   visitor.new_infection_time = -1.0;
 
   visitor.symptom_id =
-      visitor.is_infected ? person.infection->symptomIdAt(slot_start) : 0;
+      visitor.is_infected
+          ? person.infection->getTrajectory().getCurrentSymptomId(slot_start)
+          : 0;
 
   calculator.emit(person, slot_start, visitor.emission);
   return visitor;

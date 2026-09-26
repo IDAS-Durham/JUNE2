@@ -1,7 +1,8 @@
 // Unit tests for Visitor payload building (include/parallel/visitor_payload.h):
 // a packed record's emission tails equal EmissionCalculator::emit and its
-// symptom id equals Infection::symptomIdAt. No MPI runtime, so this runs as a
-// plain ctest binary, not under mpirun.
+// symptom id equals InfectionTrajectory::getCurrentSymptomId, as for a
+// local infector. No MPI runtime, so this runs as a plain ctest binary, not
+// under mpirun.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -71,7 +72,8 @@ TEST_CASE("Incubating: zero per mode, deposits as usual") {
   Domain::VisitorData visitor = pack(person, disease, calculator);
 
   CHECK(visitor.is_infected);
-  CHECK(visitor.symptom_id == person.infection->symptomIdAt(kSlotStart));
+  CHECK(visitor.symptom_id ==
+        person.infection->getTrajectory().getCurrentSymptomId(kSlotStart));
   CHECK(visitor.emission.infectiousness_by_mode ==
         std::vector<double>{0.0, 0.0, 0.0});
   CHECK(visitor.emission.fomite_deposits.size() == 3);
@@ -88,20 +90,22 @@ TEST_CASE("Infectious: per-mode integrals and deposits") {
 
   CHECK(visitor.is_infected);
   CHECK(visitor.symptom_id == kMild);
-  CHECK(visitor.symptom_id == person.infection->symptomIdAt(kSlotStart));
+  CHECK(visitor.symptom_id ==
+        person.infection->getTrajectory().getCurrentSymptomId(kSlotStart));
   CHECK(visitor.emission.infectiousness_by_mode.size() == 3);
   checkMatchesEmit(visitor, person, calculator);
 }
 
-TEST_CASE("Before the first transition the symptom id is 0") {
+TEST_CASE("Before the first transition the symptom id is the first stage") {
   Disease disease = makeDisease(2.0);
   EmissionCalculator calculator(disease, kSlotHours);
   Person person = makeInfectedPerson(disease, 9.0, {{11.0, kMild}});
 
   Domain::VisitorData visitor = pack(person, disease, calculator);
 
-  CHECK(visitor.symptom_id == 0);
-  CHECK(visitor.symptom_id == person.infection->symptomIdAt(kSlotStart));
+  CHECK(visitor.symptom_id == kMild);
+  CHECK(visitor.symptom_id ==
+        person.infection->getTrajectory().getCurrentSymptomId(kSlotStart));
 }
 
 #endif  // USE_MPI
