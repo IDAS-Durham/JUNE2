@@ -9,7 +9,8 @@ namespace june {
 // records (VisitorData, VisitorInfo) can carry it without pulling in Disease.
 struct Emission {
   // Integrated infectiousness per Transmission Mode (hour units, 24 * ∫I dt),
-  // Disease::numModes() long. Empty unless infectious at slot start.
+  // Disease::numModes() long. Empty unless infected; may be all zero (e.g.
+  // incubating, or a zero curve).
   std::vector<double> infectiousness_by_mode;
   // Deposit per (fomite mode, sub-bin), flat in FomiteSubBinSchedule order,
   // totalSubBins() long. Empty unless infected (or no fomite modes).

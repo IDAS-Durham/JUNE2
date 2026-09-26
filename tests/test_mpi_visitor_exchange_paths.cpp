@@ -37,7 +37,7 @@ constexpr double kDeltaHours = 6.0;
 constexpr int kFomiteSubBins = 3;  // 6 h slot / 2 h sub-bins
 
 // Each rank's person is in one disease state, so every exchange mixes
-// record lengths: infectious (all tails), incubating (all but ii) and
+// record lengths: infected (all tails; all-zero ii while incubating) and
 // uninfected (target_susceptibility only).
 enum class HomeState { Uninfected, Incubating, Infectious };
 HomeState homeState(int home_rank) {
@@ -63,8 +63,8 @@ void checkExchange(const std::vector<std::pair<int, int>>& pairs) {
   if (state != HomeState::Uninfected) {
     InfectionTrajectory trajectory;
     trajectory.infection_time = 9.0;
-    // Healthy has no direct-contact curve, so incubating isn't infectious
-    // but still deposits.
+    // Healthy has no direct-contact curve, so incubating emits zero ii but
+    // still deposits.
     trajectory.transitions =
         state == HomeState::Infectious
             ? std::vector<std::pair<double, uint16_t>>{{9.0, kMild}}
@@ -102,13 +102,15 @@ void checkExchange(const std::vector<std::pair<int, int>>& pairs) {
     const bool infected = sender_state != HomeState::Uninfected;
     const bool infectious = sender_state == HomeState::Infectious;
     CHECK(visitor.is_infected == infected);
-    CHECK(visitor.is_infectious == infectious);
-    // A tail arrives full length if its header gate sends it, else empty.
+    // Both tails arrive full length if the Visitor is infected, else empty.
     REQUIRE(visitor.emission.infectiousness_by_mode.size() ==
-            (infectious ? kNumModes : 0));
+            (infected ? kNumModes : 0));
     REQUIRE(visitor.emission.fomite_deposits.size() ==
             (infected ? kFomiteSubBins : 0));
     if (infectious) CHECK(visitor.emission.infectiousness_by_mode[0] > 0.0);
+    if (infected && !infectious)
+      for (double value : visitor.emission.infectiousness_by_mode)
+        CHECK(value == 0.0);
     for (double deposit : visitor.emission.fomite_deposits)
       CHECK(deposit > 0.0);
   }

@@ -68,7 +68,6 @@ struct PendingInfection {
 struct VisitorInfo {
   PersonId person_id;
   bool is_infected;
-  bool is_infectious;
   float immunity_level;
   int32_t home_array_index = -1;  // For lookup on home rank
   uint16_t symptom_id = 0;

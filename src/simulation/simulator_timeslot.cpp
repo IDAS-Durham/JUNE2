@@ -246,7 +246,6 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       VisitorInfo info;
       info.person_id = visitor.person_id;
       info.is_infected = visitor.is_infected;
-      info.is_infectious = visitor.is_infectious;
       info.immunity_level = visitor.immunity_level;
       info.symptom_id = visitor.symptom_id;
       info.time_in_stage = visitor.time_in_stage;

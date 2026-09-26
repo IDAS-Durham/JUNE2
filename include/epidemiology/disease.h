@@ -257,7 +257,6 @@ class Disease {
   bool isRecoveredStage(const std::string& symptom_name) const;
   bool isHospitalisedStage(const std::string& symptom_name) const;
   bool isICUStage(const std::string& symptom_name) const;
-  bool isInfectiousStage(const std::string& symptom_name) const;
 
   // Resolve outcome rate criteria after WorldState is built.
   std::vector<std::string> resolve(const WorldState& world) {
@@ -375,7 +374,6 @@ class Infection {
       uint16_t cached_symptom_id, double cached_symptom_start_time);
 
   // Check status
-  bool isInfectious(double current_time) const;
   bool isSymptomatic(double current_time) const;
   bool isRecovered(double current_time) const;
   bool isDead(double current_time) const;

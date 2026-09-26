@@ -40,8 +40,6 @@ Domain::VisitorData buildVisitorPayload(const PersonLocation& location,
   visitor.venue_id = location.venue_id;
   visitor.subset_idx = location.subset_index;
   visitor.is_infected = (person.infection != nullptr);
-  visitor.is_infectious =
-      visitor.is_infected && person.infection->isInfectious(slot_start);
 
   const double susceptibility =
       person.getSusceptibility(slot_start, disease.getName());

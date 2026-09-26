@@ -10,13 +10,12 @@
 // Wire format of one Visitor record: a fixed header (WireRecord over
 // VisitorData's plain fields) followed by four count-known-elsewhere tails:
 // emission.infectiousness_by_mode, target_susceptibility,
-// deposition_source_multiplier, emission.fomite_deposits. A source tail travels
-// only when the header says it can be nonzero, and arrives empty otherwise;
+// deposition_source_multiplier, emission.fomite_deposits. Source tails travel
+// only when the Visitor is infected, and arrive empty otherwise;
 // target_susceptibility always travels, since any visitor can be a target:
 //
-//   !is_infected                    header + ts
-//   is_infected && !is_infectious   header + ts + dsm + deposits
-//   is_infectious                   header + ii + ts + dsm + deposits
+//   !is_infected   header + ts
+//   is_infected    header + ii + ts + dsm + deposits
 //
 // The receiver derives nothing from disease state.
 namespace june::visitor_wire {

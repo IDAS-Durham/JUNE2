@@ -25,13 +25,12 @@ TEST_CASE("Uninfected Person emits nothing") {
   CHECK(emission.fomite_deposits.empty());
 }
 
-TEST_CASE("Infected, not yet infectious: deposits only") {
+TEST_CASE("Incubating: zero per mode, deposits as usual") {
   Disease disease = makeDisease(2.0);
   EmissionCalculator calculator(disease, 6.0);
-  // Healthy (incubating) until 11, so not infectious at slot start 10.
+  // Healthy (incubating) for the whole slot 10 to 10.25; mild from 11.
   Person person =
       makeInfectedPerson(disease, 9.0, {{9.0, kHealthy}, {11.0, kMild}});
-  REQUIRE_FALSE(person.infection->isInfectious(10.0));
 
   Emission emission;
   calculator.emit(person, 10.0, emission);
@@ -39,7 +38,7 @@ TEST_CASE("Infected, not yet infectious: deposits only") {
   std::vector<double> expected_deposits;
   calculator.fomiteSchedule().integrateDeposits(person.infection.get(), 10.0,
                                                 expected_deposits);
-  CHECK(emission.infectiousness_by_mode.empty());
+  CHECK(emission.infectiousness_by_mode == std::vector<double>{0.0, 0.0, 0.0});
   REQUIRE(emission.fomite_deposits.size() == 3);
   CHECK(emission.fomite_deposits == expected_deposits);
   CHECK(emission.fomite_deposits[0] > 0.0);
@@ -52,7 +51,6 @@ TEST_CASE("Infectious: per-mode integrals and deposits") {
   // depend on the exact time in stage.
   Person person =
       makeInfectedPerson(disease, 9.0, {{9.0, kHealthy}, {9.5, kMild}});
-  REQUIRE(person.infection->isInfectious(10.0));
 
   Emission emission;
   calculator.emit(person, 10.0, emission);
@@ -70,6 +68,77 @@ TEST_CASE("Infectious: per-mode integrals and deposits") {
   calculator.fomiteSchedule().integrateDeposits(person.infection.get(), 10.0,
                                                 expected_deposits);
   CHECK(emission.fomite_deposits == expected_deposits);
+}
+
+TEST_CASE("Onset mid-slot: the infectious part of the slot counts") {
+  Disease disease = makeDisease(2.0);
+  EmissionCalculator calculator(disease, 6.0);
+  // Healthy at slot start 10, mild from 10.1, before the slot ends at 10.25.
+  Person person =
+      makeInfectedPerson(disease, 9.0, {{9.0, kHealthy}, {10.1, kMild}});
+
+  Emission emission;
+  calculator.emit(person, 10.0, emission);
+
+  const double slot_end = 10.0 + 6.0 / 24.0;
+  REQUIRE(emission.infectiousness_by_mode.size() == 3);
+  for (int mode = 0; mode < 3; ++mode) {
+    CHECK(emission.infectiousness_by_mode[mode] ==
+          person.infection->getIntegratedInfectiousness(mode, 10.0, slot_end));
+  }
+  // Constant 0.3 while mild, over the 0.15 days of mild in the slot.
+  CHECK(emission.infectiousness_by_mode[1] ==
+        doctest::Approx(24.0 * 0.3 * 0.15));
+}
+
+TEST_CASE("Trajectory-Driven: recovered or dead at slot start emits zero") {
+  // The gamma profile ignores stage, so without the t0 check a Person whose
+  // recovery or death the post-transmission update has not yet cleared would
+  // keep emitting.
+  constexpr uint16_t kRecovered = 0;
+  constexpr uint16_t kMildStage = 1;
+  constexpr uint16_t kDead = 2;
+  TransmissionParams transmission;
+  transmission.mode = InfectiousnessMode::TRAJECTORY_DRIVEN;
+  transmission.type = "gamma";
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"recovered"};
+  stage_settings.fatality_stages = {"dead"};
+  TrajectoryDefinition trajectory_definition;
+  trajectory_definition.selection_key = "general";
+  trajectory_definition.severity = 1.0;
+  trajectory_definition.stages.push_back(
+      {"mild", {"constant", {{"value", 100.0}}}});
+  Disease disease("TrajectoryEmission",
+                  {{"recovered", -2, kRecovered},
+                   {"mild", 1, kMildStage},
+                   {"dead", 2, kDead}},
+                  stage_settings, {trajectory_definition}, {}, transmission);
+  EmissionCalculator calculator(disease, 6.0);
+
+  auto makePerson = [&](std::vector<std::pair<double, uint16_t>> transitions) {
+    InfectionTrajectory trajectory;
+    trajectory.infection_time = 9.0;
+    trajectory.transitions = std::move(transitions);
+    Person person{};
+    person.infection = Infection::fromCheckpoint(
+        &disease, 9.0, trajectory, /*max_infectiousness=*/1.0,
+        /*transmission_shape=*/2.0, /*transmission_rate=*/1.0,
+        /*transmission_shift=*/0.0, /*last_checked_time=*/-1.0, kMildStage,
+        9.0);
+    return person;
+  };
+  auto emitAtTen = [&](const Person& person) {
+    Emission emission;
+    calculator.emit(person, 10.0, emission);
+    REQUIRE(emission.infectiousness_by_mode.size() == 1);
+    return emission.infectiousness_by_mode[0];
+  };
+
+  CHECK(emitAtTen(makePerson({{9.0, kMildStage}, {9.9, kRecovered}})) == 0.0);
+  CHECK(emitAtTen(makePerson({{9.0, kMildStage}, {10.0, kDead}})) == 0.0);
+  // Recovering after slot start still counts the whole slot.
+  CHECK(emitAtTen(makePerson({{9.0, kMildStage}, {10.1, kRecovered}})) > 0.0);
 }
 
 TEST_CASE("Slot length fixes both the sub-bin schedule and the integrals") {

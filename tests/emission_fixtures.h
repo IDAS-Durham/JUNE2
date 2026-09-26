@@ -14,7 +14,8 @@ namespace emission_fixtures {
 
 using namespace june;
 
-// Symptom ids: 0 = healthy (infected, not infectious), 1 = exposed, 2 = mild.
+// Symptom ids: 0 = healthy (incubating: no direct curve), 1 = exposed,
+// 2 = mild.
 inline constexpr uint16_t kHealthy = 0;
 inline constexpr uint16_t kExposed = 1;
 inline constexpr uint16_t kMild = 2;
