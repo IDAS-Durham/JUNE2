@@ -193,18 +193,54 @@ std::vector<SelectionCriterion> parseCriterionFromKeyValue(
   return results;
 }
 
+// The context field `criterion` filters on, or null if it filters on a
+// Person property.
+static const std::string* contextFactFor(const SelectionCriterion& criterion,
+                                         const InfectionContext& ctx) {
+  if (criterion.property_path == "infector_symptom") {
+    return &ctx.infector_symptom;
+  }
+  if (criterion.property_path == "transmission_mode") {
+    return &ctx.transmission_mode;
+  }
+  if (criterion.property_path == "infection_source") {
+    return &ctx.infection_source;
+  }
+  return nullptr;
+}
+
+// An absent (empty) fact fails every criterion on it, `==` or `!=`, so only
+// rows that don't ask for that fact match.
+static bool contextFactMatches(const SelectionCriterion& criterion,
+                               const std::string& fact) {
+  if (fact.empty()) return false;
+  const std::string* required = std::get_if<std::string>(&criterion.value);
+  if (!required) return false;
+  bool equal = (fact == *required);
+  if (criterion.operator_type == "==") return equal;
+  if (criterion.operator_type == "!=") return !equal;
+  return true;
+}
+
 bool matchesCriteria(const Person& person, const WorldState* world,
                      const std::vector<SelectionCriterion>& criteria,
                      const InfectionContext& ctx) {
-  for (const SelectionCriterion& criterion : criteria) {
-    if (!criterion.evaluate(person, world, nullptr, &ctx)) return false;
+  for (const auto& c : criteria) {
+    // #34 owns the cached, world-free evaluation path for the original two
+    // context facts. infection_source was added by #40 and is handled here
+    // because SelectionCriterion does not resolve that fact from a Person.
+    if (c.property_path == "infection_source") {
+      const std::string* fact = contextFactFor(c, ctx);
+      if (fact == nullptr || !contextFactMatches(c, *fact)) return false;
+    } else {
+      if (!c.evaluate(person, world, nullptr, &ctx)) return false;
+    }
   }
   return true;
 }
 
 bool isInfectionContextCriterion(const SelectionCriterion& criterion) {
-  return criterion.property_path == "infector_symptom" ||
-         criterion.property_path == "transmission_mode";
+  return contextFactFor(criterion, InfectionContext{}) != nullptr;
 }
 
 std::vector<std::pair<int, std::string>> findFilterColumns(
