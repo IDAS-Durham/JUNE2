@@ -111,8 +111,9 @@ std::vector<SelectionCriterion> parseCriterionFromKeyValue(
 /// Criteria are evaluated conjunctively (AND). An empty criteria list matches
 /// all persons. Criteria with `property_path == "infector_symptom"` or
 /// `"transmission_mode"` are matched against the corresponding field of `ctx`
-/// rather than person attributes; a non-empty criterion on either field fails
-/// when the context field is empty (e.g. seeded infections).
+/// rather than person attributes. An empty context field is an absent fact:
+/// any criterion on it, `==` or `!=`, fails, so only rows that don't ask for
+/// that fact match.
 ///
 /// Args:
 ///   person:   The person being evaluated.

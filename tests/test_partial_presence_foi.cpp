@@ -12,6 +12,7 @@
 #include "epidemiology/emission/emission.h"
 #include "epidemiology/interaction_manager.h"
 #include "test_utils.h"
+#include "transmission_fixtures.h"
 
 #ifdef USE_MPI
 #include <mpi.h>
@@ -191,9 +192,9 @@ TEST_CASE(
 
   // Make rider A infectious. Constant trajectory means they stay infectious
   // throughout the slot.
-  world.people[0].infection =
-      std::make_unique<Infection>(disease.get(), 0.0, &world.people[0],
-                                  /*seed=*/7, &world, "route_line", line);
+  world.people[0].infection = std::make_unique<Infection>(
+      disease.get(), 0.0, &world.people[0],
+      /*seed=*/7, kNoTransmissionContext, &world, "route_line", line);
 
   // Allocator + interaction manager wiring.
   RuntimeGroupAllocator allocator(world, config);
@@ -321,9 +322,9 @@ TEST_CASE("partial-presence FOI: bin isolation yields zero cross-bin lambda") {
 
   auto disease = makeUnitConstantDisease();
   ParallelConfig parallel_config;
-  world.people[0].infection =
-      std::make_unique<Infection>(disease.get(), 0.0, &world.people[0],
-                                  /*seed=*/7, &world, "route_line", line);
+  world.people[0].infection = std::make_unique<Infection>(
+      disease.get(), 0.0, &world.people[0],
+      /*seed=*/7, kNoTransmissionContext, &world, "route_line", line);
 
   RuntimeGroupAllocator allocator(world, config);
   InteractionManager im(world, cm, sim_cfg, parallel_config, disease.get(),
@@ -439,9 +440,9 @@ TEST_CASE(
     ParallelConfig parallel_config;
     auto disease = makeUnitConstantDisease();
 
-    world.people[0].infection =
-        std::make_unique<Infection>(disease.get(), 0.0, &world.people[0],
-                                    /*seed=*/seed, &world, "office", 0);
+    world.people[0].infection = std::make_unique<Infection>(
+        disease.get(), 0.0, &world.people[0],
+        /*seed=*/seed, kNoTransmissionContext, &world, "office", 0);
 
     // Wire an allocator only when partial_presence is declared (mirrors how
     // Simulator wires it conditionally).
@@ -541,9 +542,9 @@ TEST_CASE(
 
     auto disease = makeUnitConstantDisease();
     ParallelConfig parallel_config;
-    world.people[0].infection =
-        std::make_unique<Infection>(disease.get(), 0.0, &world.people[0],
-                                    /*seed=*/7, &world, "route_line", line);
+    world.people[0].infection = std::make_unique<Infection>(
+        disease.get(), 0.0, &world.people[0],
+        /*seed=*/7, kNoTransmissionContext, &world, "route_line", line);
 
     RuntimeGroupAllocator allocator(world, config);
     InteractionManager im(world, cm, sim_cfg, parallel_config, disease.get(),
@@ -635,7 +636,8 @@ TEST_CASE(
                   {trajectory}, OutcomeRates{}, transmission);
 
   world.people[0].infection = std::make_unique<Infection>(
-      &disease, 0.0, &world.people[0], /*seed=*/7, &world, "route_line", line);
+      &disease, 0.0, &world.people[0], /*seed=*/7, kNoTransmissionContext,
+      &world, "route_line", line);
   const double delta_hours = 1.0;
   const double current_time = 5.0;
   Emission emission;
