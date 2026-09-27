@@ -627,6 +627,8 @@ TEST_CASE("a fomite infection has no infector symptom but keeps its mode") {
                                            simulation_config, parallel_config,
                                            &disease, nullptr);
     interaction_manager.processTransmissions({location}, 5.0, 8.0, nullptr);
+    // A fomite has no infector to look up, so it is not a lookup gap.
+    CHECK(interaction_manager.infectorLookupGapCount() == 0);
   }
   REQUIRE(world.people[0].infection);
   CHECK(disease.getSymptomName(world.people[0]

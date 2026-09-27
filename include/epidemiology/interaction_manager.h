@@ -13,6 +13,7 @@
 #include "disease.h"
 #include "epidemiology/emission/emission.h"
 #include "epidemiology/fomite/fomite_sub_bins.h"
+#include "epidemiology/transmission/infector_symptom_lookup.h"
 #include "policy.h"
 #include "transmission_modifiers.h"
 #include "utils/age_utils.h"
@@ -220,6 +221,12 @@ class InteractionManager {
       const CompartmentalModelManager* comp_model = nullptr);
 
   PerformanceStats& getStats() { return stats_; }
+
+  // Infector-symptom lookups on this rank that found no symptom for a Person
+  // infector. Each gap judged an infection with its infector symptom absent.
+  uint64_t infectorLookupGapCount() const {
+    return infector_symptom_lookup_.gapCount();
+  }
 
   // The sibling-mixing aggregate for `parent_id` from the last
   // processTransmissions call, or nullptr if no child of it was occupied.
@@ -844,14 +851,6 @@ class InteractionManager {
       std::vector<PartialPresenceAccumSource>& srcs,
       const std::vector<double>& target_modifiers, SplitMix64& rng) const;
 
-  // Look up the infector's current symptom id. For local persons reads from
-  // Infection::getTrajectory(); for cross-rank visitors reads from
-  // VisitorInfo::symptom_id. Returns 0 if infector_id is negative or neither
-  // a local infection nor a visitor record exists.
-  uint16_t resolveInfectorSymptomId(
-      PersonId infector_id, double current_time,
-      const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
-
   // Compute susceptibility for either a local Person or a cross-rank
   // VisitorInfo. Returns 0.0 if both are null. Local persons go through
   // Person::getSusceptibility(current_time, disease_name); visitors use
@@ -928,6 +927,7 @@ class InteractionManager {
       uint8_t encounter_type_id, const CompartmentalModelManager* comp_model);
 
   PerformanceStats stats_;
+  InfectorSymptomLookup infector_symptom_lookup_{world_};
 
   // Optimization buffers (reused across calls to avoid allocation)
   std::vector<PersonLocation> active_locations_buffer_;

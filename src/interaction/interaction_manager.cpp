@@ -642,19 +642,4 @@ double InteractionManager::venueTransmissionModifier(
   return value;
 }
 
-uint16_t InteractionManager::resolveInfectorSymptomId(
-    PersonId infector_id, double current_time,
-    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
-  if (infector_id < 0) return kNoSymptomId;
-  Person* infp = world_.getPerson(infector_id);
-  if (infp && infp->infection) {
-    return infp->infection->getTrajectory().getCurrentSymptomId(current_time);
-  }
-  if (!infp && visitor_data) {
-    auto vit = visitor_data->find(infector_id);
-    if (vit != visitor_data->end()) return vit->second.symptom_id;
-  }
-  return kNoSymptomId;
-}
-
 }  // namespace june

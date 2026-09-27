@@ -19,6 +19,7 @@
 #include <stdexcept>
 
 #include "epidemiology/seeding/seed_shortfall.h"
+#include "epidemiology/transmission/infector_symptom_lookup.h"
 #include "loaders/calendar_event_loader.h"
 #include "loaders/catchment_rule_loader.h"
 #include "utils/event_logging/event_writer.h"
@@ -613,8 +614,22 @@ void Simulator::run() {
   }
 
   writeFinalEventsAndLookups(rank);
+  warnInfectorLookupGaps(rank);
 
   if (rank == 0) printRunSummary();
+}
+
+void Simulator::warnInfectorLookupGaps(int rank) {
+  uint64_t local_gaps =
+      interaction_manager_ ? interaction_manager_->infectorLookupGapCount() : 0;
+  uint64_t global_gaps = local_gaps;
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    MPI_Allreduce(&local_gaps, &global_gaps, 1, MPI_UINT64_T, MPI_SUM,
+                  MPI_COMM_WORLD);
+  }
+#endif
+  if (rank == 0) std::cerr << formatInfectorLookupGapWarning(global_gaps);
 }
 
 void Simulator::runOneDay(int day, int rank) {

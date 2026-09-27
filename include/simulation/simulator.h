@@ -257,6 +257,9 @@ class Simulator {
   // the wall-clock summary, activity/interaction stats, and encounter stats.
   void writeFinalEventsAndLookups(int rank);
   void printRunSummary();
+  // Sum the infector-symptom lookup gaps across ranks (collective) and warn
+  // once on rank 0 if any.
+  void warnInfectorLookupGaps(int rank);
 
   // End-of-day checkpoint trigger. Consults the configured cadence and, if
   // the day fires, announces on rank 0 and writes a checkpoint.

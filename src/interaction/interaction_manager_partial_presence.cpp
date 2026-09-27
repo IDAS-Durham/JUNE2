@@ -631,7 +631,7 @@ bool InteractionManager::processOnePartialSusceptible(
   }
 
   uint16_t infector_symptom_id =
-      resolveInfectorSymptomId(infector_id, current_time, visitor_data);
+      infector_symptom_lookup_.resolve(infector_id, current_time, visitor_data);
 
   const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
   recordPartialPresenceCandidate(susc_id, infector_id, transmission_mode_index,
