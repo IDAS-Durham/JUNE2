@@ -139,10 +139,13 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
     InfectionSeedType type;
     std::string trajectory_key;
     std::string start_symptom;
+    std::string infector_symptom;
+    std::string transmission_mode;
     bool operator<(const SeedKey& o) const {
-      return std::tie(name, date, type, trajectory_key, start_symptom) <
-             std::tie(o.name, o.date, o.type, o.trajectory_key,
-                      o.start_symptom);
+      return std::tie(name, date, type, trajectory_key, start_symptom,
+                      infector_symptom, transmission_mode) <
+             std::tie(o.name, o.date, o.type, o.trajectory_key, o.start_symptom,
+                      o.infector_symptom, o.transmission_mode);
     }
   };
 
@@ -190,8 +193,13 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
           "', date='" + date_val + "', type='" + type_val + "')");
     }
 
-    SeedKey key = {name_val, date_val, parseSeedType(type_val),
-                   get(row, "trajectory_key"), get(row, "start_symptom")};
+    SeedKey key = {name_val,
+                   date_val,
+                   parseSeedType(type_val),
+                   get(row, "trajectory_key"),
+                   get(row, "start_symptom"),
+                   get(row, "infector_symptom"),
+                   get(row, "transmission_mode")};
     auto& draft = drafts[key];
     if (draft.event.name.empty()) {
       draft.event.name = key.name;
@@ -199,6 +207,8 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
       draft.event.type = key.type;
       draft.event.trajectory_key = key.trajectory_key;
       draft.event.start_symptom = key.start_symptom;
+      draft.event.infector_symptom = key.infector_symptom;
+      draft.event.transmission_mode = key.transmission_mode;
     }
 
     if (key.type == InfectionSeedType::UNIFORM) {
@@ -299,6 +309,12 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
           seed.trajectory_key = seed_node["trajectory_key"].as<std::string>();
         if (seed_node["start_symptom"])
           seed.start_symptom = seed_node["start_symptom"].as<std::string>();
+        if (seed_node["infector_symptom"])
+          seed.infector_symptom =
+              seed_node["infector_symptom"].as<std::string>();
+        if (seed_node["transmission_mode"])
+          seed.transmission_mode =
+              seed_node["transmission_mode"].as<std::string>();
 
         if (seed_node["parameters"]) {
           auto params = seed_node["parameters"];
@@ -431,6 +447,44 @@ InfectionSeeder::InfectionSeeder(WorldState& world, const Disease* disease,
       current_simulation_time_(0.0),
       base_seed_(base_seed) {}
 
+// Index of `name` in `known_names`; throws, naming the seed and value, when
+// the disease has no such name.
+static uint8_t resolveDeclaredName(const std::string& name,
+                                   const std::vector<std::string>& known_names,
+                                   const std::string& fact,
+                                   const std::string& seed_name) {
+  auto it = std::find(known_names.begin(), known_names.end(), name);
+  if (it != known_names.end()) {
+    return static_cast<uint8_t>(it - known_names.begin());
+  }
+  std::string known_list;
+  for (const std::string& known : known_names) {
+    known_list += (known_list.empty() ? "" : ", ") + known;
+  }
+  throw std::runtime_error(
+      "Infection seed '" + seed_name + "': " + fact + " '" + name +
+      "' is not one this disease defines. Known: " + known_list);
+}
+
+void InfectionSeeder::resolveConfig(const WorldState& world) {
+  config_.resolve(world);
+  std::vector<std::string> mode_names;
+  for (int mode_index = 0; mode_index < disease_->numModes(); ++mode_index) {
+    mode_names.push_back(disease_->getModeName(mode_index));
+  }
+  for (auto& seed : config_.seeds) {
+    if (!seed.infector_symptom.empty()) {
+      seed.infector_symptom_id = resolveDeclaredName(
+          seed.infector_symptom, disease_->getSymptomNames(),
+          "infector_symptom", seed.name);
+    }
+    if (!seed.transmission_mode.empty()) {
+      seed.transmission_mode_index = resolveDeclaredName(
+          seed.transmission_mode, mode_names, "transmission_mode", seed.name);
+    }
+  }
+}
+
 std::vector<PersonId> InfectionSeeder::seedInfections(
     const std::string& current_datetime, double simulation_time) {
   current_simulation_time_ = simulation_time;
@@ -443,6 +497,11 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
     if (seed.date_time == current_datetime) {
       std::string seed_key =
           seed.name + "|" + seed.trajectory_key + "|" + seed.start_symptom;
+      // Declared context joins the key only when present, so an undeclared
+      // seed keeps the key older checkpoints recorded.
+      if (!seed.infector_symptom.empty() || !seed.transmission_mode.empty()) {
+        seed_key += "|" + seed.infector_symptom + "|" + seed.transmission_mode;
+      }
       if (applied_seeds_.count(seed_key) > 0) {
         continue;
       }
@@ -499,7 +558,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
     double rng_val = dist(prng);
     bool seeded = rng_val < cases_per_capita;
     if (seeded) {
-      infectPerson(&person, seed.trajectory_key, seed.start_symptom);
+      infectPerson(&person, seed);
       if (person.infection != nullptr) {
         infected_ids.push_back(person.id);
       }
@@ -678,7 +737,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
       auto held = local_candidates.find(assignment.person_id);
       if (held == local_candidates.end()) continue;  // another rank holds them
       if (held->second->infection != nullptr) continue;
-      infectPerson(held->second, seed.trajectory_key, seed.start_symptom);
+      infectPerson(held->second, seed);
       if (held->second->infection != nullptr) {
         infected_ids.push_back(assignment.person_id);
       }
@@ -858,7 +917,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
       // infectPerson is a no-op there, so recording the id would report a case
       // this step did not place.
       if (held->second->infection != nullptr) continue;
-      infectPerson(held->second, seed.trajectory_key, seed.start_symptom);
+      infectPerson(held->second, seed);
       if (held->second->infection != nullptr) {
         infected_ids.push_back(assignment.person_id);
       }
@@ -877,8 +936,7 @@ bool InfectionSeeder::matchesAttributes(
 }
 
 void InfectionSeeder::infectPerson(Person* person,
-                                   const std::string& trajectory_key,
-                                   const std::string& start_symptom) {
+                                   const InfectionSeedEvent& seed) {
   if (person->infection != nullptr) return;
   if (person->getSusceptibility(current_simulation_time_, disease_->getName()) <
       0.01)
@@ -892,14 +950,17 @@ void InfectionSeeder::infectPerson(Person* person,
   auto* gu = world_.getGeoUnit(person->geo_unit_id);
   if (gu) severity_factor = gu->severity_factor;
 
-  // No infector and no transmission: both context facts are absent.
-  const TransmissionRecord transmission{InfectionSource::Seed, kNoSymptomId,
-                                        kNoModeIndex};
+  // No infector and no transmission, so the only context facts are the ones
+  // the seed declares; the rest are absent.
+  const TransmissionRecord transmission{InfectionSource::Seed,
+                                        seed.infector_symptom_id,
+                                        seed.transmission_mode_index};
   person->infection = std::make_unique<Infection>(
       disease_, current_simulation_time_, person,
       static_cast<unsigned int>(infection_seed), transmission, &world_,
       "seed",  // venue type
-      INFECTION_SEED_VENUE_ID, severity_factor, trajectory_key, start_symptom);
+      INFECTION_SEED_VENUE_ID, severity_factor, seed.trajectory_key,
+      seed.start_symptom);
 
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(

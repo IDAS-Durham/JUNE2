@@ -359,6 +359,80 @@ TEST_CASE("bulk CSV seeds each criteria set its own count") {
 }
 
 // =============================================================================
+// Seeds declare their Infection Context
+// =============================================================================
+
+TEST_CASE("bulk CSV reads a seed's infector symptom and transmission mode") {
+  std::filesystem::path csv_path =
+      std::filesystem::temp_directory_path() / "june_bulk_seed_context.csv";
+  {
+    std::ofstream out(csv_path);
+    out << "name,date,type,geo_level,geo_unit,cases,infector_symptom,"
+           "transmission_mode\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,3,mild,rat_flea_bite\n";
+  }
+
+  InfectionSeedConfig config;
+  InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
+  std::filesystem::remove(csv_path);
+
+  REQUIRE(config.seeds.size() == 1);
+  CHECK(config.seeds[0].infector_symptom == "mild");
+  CHECK(config.seeds[0].transmission_mode == "rat_flea_bite");
+}
+
+TEST_CASE("bulk CSV without context columns leaves both facts absent") {
+  std::filesystem::path csv_path =
+      std::filesystem::temp_directory_path() / "june_bulk_seed_no_context.csv";
+  {
+    std::ofstream out(csv_path);
+    out << "name,date,type,geo_level,geo_unit,cases\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,3\n";
+  }
+
+  InfectionSeedConfig config;
+  InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
+  std::filesystem::remove(csv_path);
+
+  REQUIRE(config.seeds.size() == 1);
+  CHECK(config.seeds[0].infector_symptom.empty());
+  CHECK(config.seeds[0].transmission_mode.empty());
+}
+
+TEST_CASE("YAML uniform and structured seeds read either context key alone") {
+  auto config = loadYaml(R"(
+infection_seeds:
+  - name: "uniform_both"
+    type: "uniform"
+    date: "2020-02-01 08:00"
+    infector_symptom: "mild"
+    transmission_mode: "rat_flea_bite"
+  - name: "structured_symptom_only"
+    type: "exact"
+    date: "2020-02-01 08:00"
+    infector_symptom: "mild"
+    parameters:
+      units:
+        "U1": 1
+  - name: "structured_mode_only"
+    type: "clustered"
+    date: "2020-02-01 08:00"
+    transmission_mode: "rat_flea_bite"
+    parameters:
+      units:
+        "U1": 1
+)");
+
+  REQUIRE(config.seeds.size() == 3);
+  CHECK(config.seeds[0].infector_symptom == "mild");
+  CHECK(config.seeds[0].transmission_mode == "rat_flea_bite");
+  CHECK(config.seeds[1].infector_symptom == "mild");
+  CHECK(config.seeds[1].transmission_mode.empty());
+  CHECK(config.seeds[2].infector_symptom.empty());
+  CHECK(config.seeds[2].transmission_mode == "rat_flea_bite");
+}
+
+// =============================================================================
 // Case counts and seed strength are numbers of people: whole, zero or more
 // =============================================================================
 
