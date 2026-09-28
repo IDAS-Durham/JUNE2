@@ -503,7 +503,7 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
       if (applied_seeds_.count(seed_key) > 0) {
         continue;
       }
-      std::vector<PersonId> infected = applySeed(seed);
+      std::vector<PersonId> infected = applySeed(seed, seed_index);
       applied_seeds_.insert(seed_key);
       all_infected.insert(all_infected.end(), infected.begin(), infected.end());
 
@@ -514,22 +514,28 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   return all_infected;
 }
 
-std::vector<PersonId> InfectionSeeder::applySeed(
-    const InfectionSeedEvent& seed) {
+std::vector<PersonId> InfectionSeeder::applySeed(const InfectionSeedEvent& seed,
+                                                 size_t seed_index) {
+  // Keyed by position as well as name: seeds sharing a name, as the bulk CSV
+  // groups them, would otherwise make the same draws, so two uniform rates
+  // took the larger rather than their sum, and a later structured seed took
+  // the next-best people of the same ranking.
+  const uint64_t event_base =
+      mix_seed(base_seed_, hash_name(seed.name), seed_index);
   switch (seed.type) {
     case InfectionSeedType::UNIFORM:
-      return applyUniformSeed(seed);
+      return applyUniformSeed(seed, event_base);
     case InfectionSeedType::EXACT:
-      return applyExactSeed(seed);
+      return applyExactSeed(seed, event_base);
     case InfectionSeedType::CLUSTERED:
-      return applyClusteredSeed(seed);
+      return applyClusteredSeed(seed, event_base);
     default:
       throw std::runtime_error("Unknown seed type");
   }
 }
 
 std::vector<PersonId> InfectionSeeder::applyUniformSeed(
-    const InfectionSeedEvent& seed) {
+    const InfectionSeedEvent& seed, uint64_t event_base) {
   std::vector<PersonId> infected_ids;
 
   double cases_per_capita =
@@ -540,7 +546,6 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
   // MPI-reproducible seeding: each person gets a per-person deterministic
   // decision based on their ID. This ensures the same person is always
   // seeded regardless of which rank owns them or the local population size.
-  uint64_t seed_name_hash = hash_name(seed.name);
   uint64_t time_bits = static_cast<uint64_t>(current_simulation_time_ * 1000);
 
   for (auto& person : world_.people) {
@@ -551,7 +556,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
     if (!matchesAttributes(&person, seed.attribute_filters)) continue;
 
     // Per-person deterministic draw keyed to person ID
-    SplitMix64 prng(mix_seed(base_seed_, person.id, seed_name_hash, time_bits));
+    SplitMix64 prng(mix_seed(event_base, person.id, time_bits));
     std::uniform_real_distribution<double> dist(0.0, 1.0);
     double rng_val = dist(prng);
     bool seeded = rng_val < cases_per_capita;
@@ -569,7 +574,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
 }
 
 std::vector<PersonId> InfectionSeeder::applyExactSeed(
-    const InfectionSeedEvent& seed) {
+    const InfectionSeedEvent& seed, uint64_t event_base) {
   // A structured seed's count is absolute, so it cannot be resolved from one
   // rank's slice of a unit: a unit above the partition level is split across
   // ranks. Each rank instead offers its own candidates, keyed off the run seed
@@ -596,8 +601,6 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
   std::vector<uint32_t> unit_of_slot;
   std::vector<SeedOffer> local_offers;
   std::unordered_map<PersonId, Person*> local_candidates;
-
-  const uint64_t event_base = mix_seed(base_seed_, hash_name(seed.name));
 
   for (const auto& unit_case : seed.structured_config.unit_cases) {
     ExactUnit unit;
@@ -745,7 +748,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
 }
 
 std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
-    const InfectionSeedEvent& seed) {
+    const InfectionSeedEvent& seed, uint64_t event_base) {
   // Like an exact seed, a clustered seed's count is absolute, so it cannot be
   // resolved from one rank's slice of a unit above the partition level. Each
   // rank offers the households it holds and every rank then replays the same
@@ -771,8 +774,6 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     std::vector<LocalMember> members;
     size_t matched = 0;
   };
-
-  const uint64_t event_base = mix_seed(base_seed_, hash_name(seed.name));
 
   std::vector<ClusterUnit> units;
   std::vector<uint32_t> unit_of_slot;

@@ -207,13 +207,17 @@ class InfectionSeeder {
   // Track which seeds have been applied
   std::set<std::string> applied_seeds_;
 
-  // Apply a single seed event
-  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed);
+  // Apply a single seed event, its draws keyed by its position in the config
+  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed,
+                                  size_t seed_index);
 
-  // Type-specific seeding methods
-  std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed);
-  std::vector<PersonId> applyExactSeed(const InfectionSeedEvent& seed);
-  std::vector<PersonId> applyClusteredSeed(const InfectionSeedEvent& seed);
+  // Type-specific seeding methods; event_base keys every draw of the event
+  std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed,
+                                         uint64_t event_base);
+  std::vector<PersonId> applyExactSeed(const InfectionSeedEvent& seed,
+                                       uint64_t event_base);
+  std::vector<PersonId> applyClusteredSeed(const InfectionSeedEvent& seed,
+                                           uint64_t event_base);
 
   // Helper methods
   bool matchesAttributes(const Person* person,
