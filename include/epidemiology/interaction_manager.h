@@ -888,7 +888,7 @@ class InteractionManager {
   // resolvePartialPresenceInfections.
   void recordPartialPresenceCandidate(PersonId susc_id, PersonId infector_id,
                                       uint8_t transmission_mode_index,
-                                      uint16_t infector_symptom_id,
+                                      uint8_t infector_symptom_id,
                                       double current_time,
                                       uint8_t venue_type_id,
                                       VenueId actual_venue_id);

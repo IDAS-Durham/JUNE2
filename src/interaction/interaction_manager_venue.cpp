@@ -229,8 +229,8 @@ bool InteractionManager::processOneVenueSusceptible(
       susc_rng, infection_source, transmission_mode_index);
   const TransmissionRecord transmission{
       infection_source,
-      static_cast<uint8_t>(infector_symptom_lookup_.resolve(
-          infection_source, infector_id, current_time, visitor_data)),
+      infector_symptom_lookup_.resolve(infection_source, infector_id,
+                                       current_time, visitor_data),
       transmission_mode_index};
 
   applyVenueInfection(susc_mem, infector_id, transmission, current_time,

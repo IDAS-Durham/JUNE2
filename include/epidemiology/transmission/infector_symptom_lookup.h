@@ -22,7 +22,7 @@ class InfectorSymptomLookup {
  public:
   explicit InfectorSymptomLookup(const WorldState& world) : world_(world) {}
 
-  uint16_t resolve(
+  uint8_t resolve(
       InfectionSource source, PersonId infector_id, double current_time,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 

@@ -371,7 +371,7 @@ InteractionManager::computePartialPresenceLambda(
 
 void InteractionManager::recordPartialPresenceCandidate(
     PersonId susc_id, PersonId infector_id, uint8_t transmission_mode_index,
-    uint16_t infector_symptom_id, double current_time, uint8_t venue_type_id,
+    uint8_t infector_symptom_id, double current_time, uint8_t venue_type_id,
     VenueId actual_venue_id) {
   // Nothing is applied here. A rider is susceptible on every leg of their
   // journey at once, and the legs can be owned by different ranks, so infecting
@@ -603,7 +603,7 @@ bool InteractionManager::processOnePartialSusceptible(
                                        susc_rng);
   }
 
-  uint16_t infector_symptom_id = infector_symptom_lookup_.resolve(
+  uint8_t infector_symptom_id = infector_symptom_lookup_.resolve(
       InfectionSource::Person, infector_id, current_time, visitor_data);
 
   recordPartialPresenceCandidate(susc_id, infector_id, transmission_mode_index,

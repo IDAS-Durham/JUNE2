@@ -5,19 +5,23 @@
 
 namespace june {
 
-uint16_t InfectorSymptomLookup::resolve(
+uint8_t InfectorSymptomLookup::resolve(
     InfectionSource source, PersonId infector_id, double current_time,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
   if (source != InfectionSource::Person) return kNoSymptomId;
   const Person* infector =
       infector_id >= 0 ? world_.getPerson(infector_id) : nullptr;
+  // Symptom ids are stored wide but registries stay under kNoSymptomId, so
+  // narrowing here, once, is lossless.
   if (infector && infector->infection) {
-    return infector->infection->getTrajectory().getCurrentSymptomId(
-        current_time);
+    return static_cast<uint8_t>(
+        infector->infection->getTrajectory().getCurrentSymptomId(
+            current_time));
   }
   if (!infector && visitor_data) {
     auto visitor = visitor_data->find(infector_id);
-    if (visitor != visitor_data->end()) return visitor->second.symptom_id;
+    if (visitor != visitor_data->end())
+      return static_cast<uint8_t>(visitor->second.symptom_id);
   }
   return kNoSymptomId;
 }
