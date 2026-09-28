@@ -697,6 +697,96 @@ TEST_CASE("H9b: mixed-state Visitors, two-way (all-to-all)") {
   checkMixedStateExchange({0, 1});
 }
 
+// One slot at venue 1, where nobody is infectious but a large fomite deposit
+// lies. Person 0 visits it; person 1, its resident, is there too if
+// `resident_present`. Returns the infections this rank applied from the
+// cross-rank exchange.
+static std::vector<PendingInfection> slotAtFomiteVenue(TwoRankFixture& f,
+                                                       Disease& disease,
+                                                       bool resident_present) {
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.3, 1.0);
+  std::vector<PendingInfection> pending;
+  const auto& incoming = f.dm->getDomain().incoming_visitors;
+  // Not REQUIRE on rank 1: rank 0 would then wait forever on the exchange.
+  if (f.rank == 1 && incoming.size() == 1) {
+    const PersonId visitor_id = incoming[0].person_id;
+    std::unordered_map<PersonId, VisitorInfo> visitor_data = {
+        {visitor_id, toVisitorInfo(incoming[0])}};
+    std::unordered_set<PersonId> visitor_ids = {visitor_id};
+    std::vector<PersonLocation> locs = {{visitor_id, f.rank, -1, 0, 255, 0}};
+    if (resident_present) locs.push_back({f.rank, f.rank, -1, 0, 255, 0});
+
+    Venue* venue = f.world.getVenue(f.rank);
+    venue->fomite_history.assign(1, {});
+    venue->fomite_history[0].push_back({0.2, 1.0e6});
+    ContactMatrixConfig cm;
+    ContactMatrix default_contact_matrix;
+    default_contact_matrix.bins = {"all"};
+    default_contact_matrix.contacts = {{100.0}};
+    cm.default_matrix = default_contact_matrix;
+    cm.allow_default_matrix = true;
+    finalizeContactMatrices(cm, f.world, disease);
+    SimulationConfig sim;
+    ParallelConfig par;
+    InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
+    im.processTransmissions(locs, 0.3, 1.0, nullptr, &visitor_ids, &pending,
+                            &visitor_data);
+    CHECK(pending.size() == 1);
+  }
+  if (f.rank == 1) CHECK(incoming.size() == 1);
+  return f.dm->receivePendingInfections(pending, disease);
+}
+
+// ---------------------------------------------------------------------------
+// H10: a fomite infection of a Visitor keeps its source on the home rank
+// ---------------------------------------------------------------------------
+TEST_CASE("H10: Cross-rank fomite infection is applied as Fomite") {
+  TwoRankFixture f;
+  REQUIRE(f.size == 2);
+  Disease disease = makeFomiteDisease(/*sub_bin_time=*/0.0);
+
+  auto applied = slotAtFomiteVenue(f, disease, /*resident_present=*/false);
+  if (f.rank == 0) {
+    REQUIRE(applied.size() == 1);
+    CHECK(applied[0].source == InfectionSource::Fomite);
+    CHECK(applied[0].transmission_mode_index == 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// H11: the outcome row a fomite infection takes does not depend on whether
+// the infected person lives on the rank that holds the Venue
+// ---------------------------------------------------------------------------
+TEST_CASE("H11: Local and cross-rank fomite infections take the same row") {
+  TwoRankFixture f;
+  REQUIRE(f.size == 2);
+
+  SelectionCriterion source_is_fomite;
+  source_is_fomite.property_path = "infection_source";
+  source_is_fomite.operator_type = "==";
+  source_is_fomite.value = "fomite";
+  OutcomeRates outcomes;
+  outcomes.rows = {{{source_is_fomite}, {{"fomite_route", 1.0}}},
+                   {{}, {{"default_route", 1.0}}}};
+  TrajectoryDefinition fomite_route;
+  fomite_route.selection_key = "fomite_route";
+  fomite_route.stages.push_back({"exposed", {"constant", {{"value", 100.0}}}});
+  TrajectoryDefinition default_route;
+  default_route.selection_key = "default_route";
+  default_route.stages.push_back({"mild", {"constant", {{"value", 100.0}}}});
+  Disease disease = makeFomiteDisease(/*sub_bin_time=*/0.0, outcomes,
+                                      {fomite_route, default_route});
+  disease.resolve(f.world);
+
+  // Rank 0's person is infected as a Visitor, rank 1's at home.
+  slotAtFomiteVenue(f, disease, /*resident_present=*/true);
+  const Person* person = f.world.getPerson(f.rank);
+  REQUIRE(person->infection != nullptr);
+  CHECK(disease.getSymptomName(
+            person->infection->getTrajectory().transitions.at(0).second) ==
+        "exposed");
+}
+
 #endif  // USE_MPI
 
 // ---------------------------------------------------------------------------

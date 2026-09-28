@@ -172,13 +172,10 @@ void Simulator::receivePendingAndApply(
         domain_mgr_->receivePendingInfections(pending_infections, *disease_);
     for (const auto& applied : mpi_infected) {
       epidemiology_->trackInfection(applied.person_id);
-      // PendingInfection carries no source yet; logged as Person-sourced,
-      // matching the record the Infection was built from.
       event_logger_.logInfection(
           applied.person_id, applied.infector_id, applied.venue_id,
           applied.infection_time, applied.encounter_type_id,
-          TransmissionRecord{InfectionSource::Person,
-                             applied.infector_symptom_id,
+          TransmissionRecord{applied.source, applied.infector_symptom_id,
                              applied.transmission_mode_index});
     }
   } catch (const std::exception& e) {

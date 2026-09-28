@@ -348,6 +348,7 @@ void InteractionManager::applyVenueInfection(
     pending.venue_id = actual_venue_id;
     pending.infector_symptom_id = transmission.infector_symptom_id;
     pending.transmission_mode_index = transmission.transmission_mode_index;
+    pending.source = transmission.source;
     if (visitor) pending.home_array_index = visitor->home_array_index;
     pending_infections->push_back(pending);
     return;
