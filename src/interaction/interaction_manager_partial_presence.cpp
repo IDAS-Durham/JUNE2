@@ -521,35 +521,6 @@ int InteractionManager::resolvePartialPresenceInfections(
   return applied;
 }
 
-std::pair<int, PersonId> InteractionManager::sampleInfectorFromAccumSources(
-    std::vector<PartialPresenceAccumSource>& srcs,
-    const std::vector<double>& target_modifiers, SplitMix64& rng) const {
-  if (srcs.empty()) return {0, -1};
-
-  // Sort for determinism, then cumulative-sample.
-  std::sort(srcs.begin(), srcs.end(),
-            [](const PartialPresenceAccumSource& a,
-               const PartialPresenceAccumSource& b) {
-              if (a.mode != b.mode) return a.mode < b.mode;
-              return a.infector < b.infector;
-            });
-  std::vector<double> cum;
-  cum.reserve(srcs.size());
-  double acc = 0.0;
-  for (const auto& s : srcs) {
-    const double target =
-        s.mode >= 0 && s.mode < static_cast<int>(target_modifiers.size())
-            ? target_modifiers[s.mode]
-            : 1.0;
-    acc += s.weighted * target;
-    cum.push_back(acc);
-  }
-  int sampled = (acc > 0.0) ? sampleFromCumulative(cum, rng) : 0;
-  if (sampled < 0) sampled = 0;
-  if (sampled >= static_cast<int>(srcs.size())) return {0, -1};
-  return {srcs[sampled].mode, srcs[sampled].infector};
-}
-
 std::vector<PersonId> InteractionManager::orderSusceptibles(
     const std::unordered_map<PersonId, double>& susc_lambda) const {
   std::vector<PersonId> ordered;
@@ -624,17 +595,17 @@ bool InteractionManager::processOnePartialSusceptible(
 
   // Source attribution: weight-sample from accumulated AccumSource entries.
   auto src_it = susc_sources.find(susc_id);
-  int sampled_mode = 0;
+  uint8_t transmission_mode_index = kNoModeIndex;
   PersonId infector_id = -1;
   if (src_it != susc_sources.end()) {
-    std::tie(sampled_mode, infector_id) = sampleInfectorFromAccumSources(
-        src_it->second, target_modifiers, susc_rng);
+    std::tie(transmission_mode_index, infector_id) =
+        sampleInfectorFromAccumSources(src_it->second, target_modifiers,
+                                       susc_rng);
   }
 
   uint16_t infector_symptom_id = infector_symptom_lookup_.resolve(
       InfectionSource::Person, infector_id, current_time, visitor_data);
 
-  const uint8_t transmission_mode_index = static_cast<uint8_t>(sampled_mode);
   recordPartialPresenceCandidate(susc_id, infector_id, transmission_mode_index,
                                  infector_symptom_id, current_time,
                                  venue_type_id, actual_venue_id);

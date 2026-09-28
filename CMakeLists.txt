@@ -170,6 +170,7 @@ set(JUNE_CORE_SOURCES
     src/epidemiology/emission/emission.cpp
     src/epidemiology/transmission/infection_context.cpp
     src/epidemiology/transmission/infector_symptom_lookup.cpp
+    src/epidemiology/transmission/partial_presence_sources.cpp
     src/epidemiology/trajectory/stage_curve_integral.cpp
     src/epidemiology/disease.cpp
     src/loaders/disease_loader.cpp
@@ -365,6 +366,7 @@ if(BUILD_TESTING)
   add_june_test(test_follow "tests/test_follow.cpp")
   add_june_test(test_fomite_transmission "tests/test_fomite_transmission.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_infector_symptom_lookup "tests/test_infector_symptom_lookup.cpp")
+  add_june_test(test_partial_presence_sources "tests/test_partial_presence_sources.cpp")
   add_june_test(test_fomite_sub_bins "tests/test_fomite_sub_bins.cpp")
   add_june_test(test_emission "tests/test_emission.cpp")
   add_june_test(test_stage_curve_integral "tests/test_stage_curve_integral.cpp")
