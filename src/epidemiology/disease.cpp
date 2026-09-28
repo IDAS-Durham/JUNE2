@@ -34,23 +34,30 @@ double OutcomeRates::getRate(const Person& person, const WorldState* world,
   return 0.0;
 }
 
+size_t requireKnownName(const std::string& name,
+                        const std::vector<std::string>& known_names,
+                        const std::string& message_prefix) {
+  auto it = std::find(known_names.begin(), known_names.end(), name);
+  if (it != known_names.end()) {
+    return static_cast<size_t>(it - known_names.begin());
+  }
+  std::string known_list;
+  for (const std::string& known : known_names) {
+    known_list += (known_list.empty() ? "" : ", ") + known;
+  }
+  throw std::runtime_error(message_prefix + " '" + name +
+                           "' is not one this disease defines. Known: " +
+                           known_list);
+}
+
 // Throw unless every value `criterion` names is one of `known_names`.
 static void requireKnownContextValue(const SelectionCriterion& criterion,
                                      const std::vector<std::string>& known_names,
                                      const std::string& row_label) {
+  // A non-string value gets a placeholder no disease defines, so it throws.
   const std::string* value = std::get_if<std::string>(&criterion.value);
-  if (value && std::find(known_names.begin(), known_names.end(), *value) !=
-                   known_names.end()) {
-    return;
-  }
-  std::string known_list;
-  for (const std::string& name : known_names) {
-    known_list += (known_list.empty() ? "" : ", ") + name;
-  }
-  throw std::runtime_error(
-      row_label + ": " + criterion.property_path + " '" +
-      (value ? *value : std::string("<not a single name>")) +
-      "' is not one this disease defines. Known: " + known_list);
+  requireKnownName(value ? *value : std::string("<not a single name>"),
+                   known_names, row_label + ": " + criterion.property_path);
 }
 
 std::vector<std::string> OutcomeRates::resolve(
@@ -123,6 +130,14 @@ const std::string& Disease::getModeName(uint8_t index) const {
 
 int Disease::numModes() const {
   return static_cast<int>(transmission_params_.modes.size());
+}
+
+std::vector<std::string> Disease::getModeNames() const {
+  std::vector<std::string> mode_names;
+  for (const auto& mode : transmission_params_.modes) {
+    mode_names.push_back(mode.name);
+  }
+  return mode_names;
 }
 
 uint16_t Disease::getSymptomId(const std::string& name) const {

@@ -94,6 +94,12 @@ struct TrajectoryDefinition {
 // Filter-Based Outcome Rates
 // =============================================================================
 
+// Index of `name` in `known_names`; otherwise throws
+// "<message_prefix> '<name>' is not one this disease defines. Known: ...".
+size_t requireKnownName(const std::string& name,
+                        const std::vector<std::string>& known_names,
+                        const std::string& message_prefix);
+
 // A single demographic row: filter criteria + outcome probabilities.
 struct OutcomeRow {
   std::vector<SelectionCriterion> criteria;     // empty = matches all persons
@@ -266,11 +272,7 @@ class Disease {
 
   // Resolve outcome rate criteria after WorldState is built.
   std::vector<std::string> resolve(const WorldState& world) {
-    std::vector<std::string> mode_names;
-    for (const auto& mode : transmission_params_.modes) {
-      mode_names.push_back(mode.name);
-    }
-    return outcome_rates_.resolve(world, id_to_name_, mode_names);
+    return outcome_rates_.resolve(world, id_to_name_, getModeNames());
   }
 
   // Fast lookup
@@ -284,6 +286,8 @@ class Disease {
   /// range.
   const std::string& getModeName(uint8_t index) const;
   int numModes() const;
+  /// Transmission mode names, in mode-index order.
+  std::vector<std::string> getModeNames() const;
 
   /// Evaluate stage-driven infectiousness for a given mode, symptom, and
   /// time-in-stage. Returns 0.0 for TRAJECTORY_DRIVEN diseases.

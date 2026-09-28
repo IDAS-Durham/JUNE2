@@ -453,25 +453,13 @@ static uint8_t resolveDeclaredName(const std::string& name,
                                    const std::vector<std::string>& known_names,
                                    const std::string& fact,
                                    const std::string& seed_name) {
-  auto it = std::find(known_names.begin(), known_names.end(), name);
-  if (it != known_names.end()) {
-    return static_cast<uint8_t>(it - known_names.begin());
-  }
-  std::string known_list;
-  for (const std::string& known : known_names) {
-    known_list += (known_list.empty() ? "" : ", ") + known;
-  }
-  throw std::runtime_error(
-      "Infection seed '" + seed_name + "': " + fact + " '" + name +
-      "' is not one this disease defines. Known: " + known_list);
+  return static_cast<uint8_t>(requireKnownName(
+      name, known_names, "Infection seed '" + seed_name + "': " + fact));
 }
 
 void InfectionSeeder::resolveConfig(const WorldState& world) {
   config_.resolve(world);
-  std::vector<std::string> mode_names;
-  for (int mode_index = 0; mode_index < disease_->numModes(); ++mode_index) {
-    mode_names.push_back(disease_->getModeName(mode_index));
-  }
+  const std::vector<std::string> mode_names = disease_->getModeNames();
   for (auto& seed : config_.seeds) {
     if (!seed.infector_symptom.empty()) {
       seed.infector_symptom_id = resolveDeclaredName(

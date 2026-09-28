@@ -400,10 +400,8 @@ Simulator::Simulator(WorldState& world, Config& config,
   // than surfacing later as a runtime lookup failure. Independent of whether
   // contact_matrices.mode_names ended up empty.
   {
-    std::vector<std::string> disease_mode_names;
-    for (const auto& mode : disease_->getTransmissionParams().modes) {
-      disease_mode_names.push_back(mode.name);
-    }
+    const std::vector<std::string> disease_mode_names =
+        disease_->getModeNames();
     config_.contact_matrices.finalizeDefaultModeMatrices(world_,
                                                          disease_mode_names);
     // Reconcile ContactMatrixConfig's own mode order (derived from
