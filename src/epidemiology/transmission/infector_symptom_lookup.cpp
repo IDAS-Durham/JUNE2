@@ -6,10 +6,11 @@
 namespace june {
 
 uint16_t InfectorSymptomLookup::resolve(
-    PersonId infector_id, double current_time,
+    InfectionSource source, PersonId infector_id, double current_time,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
-  if (infector_id < 0) return kNoSymptomId;
-  const Person* infector = world_.getPerson(infector_id);
+  if (source != InfectionSource::Person) return kNoSymptomId;
+  const Person* infector =
+      infector_id >= 0 ? world_.getPerson(infector_id) : nullptr;
   if (infector && infector->infection) {
     return infector->infection->getTrajectory().getCurrentSymptomId(
         current_time);
@@ -26,8 +27,9 @@ std::string formatInfectorLookupGapWarning(uint64_t gap_count) {
   if (gap_count == 0) return "";
   return "[WARNING] infector symptom lookup: " + std::to_string(gap_count) +
          " infection(s) had a Person infector with no symptom found (no "
-         "Infection, or a visitor missing from the visitor data); they were "
-         "judged with the infector symptom absent.\n";
+         "infector sampled, no Infection, or a visitor missing from the "
+         "visitor data); they were judged with the infector symptom "
+         "absent.\n";
 }
 
 }  // namespace june

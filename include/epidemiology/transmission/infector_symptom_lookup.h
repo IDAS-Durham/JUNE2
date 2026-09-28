@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include "core/types.h"
+#include "epidemiology/transmission/transmission_record.h"
 
 namespace june {
 
@@ -12,14 +13,15 @@ class WorldState;
 
 // Looks up the infector's current symptom id for a transmission. A local
 // Person's comes from their Infection; a cross-rank visitor's from their
-// VisitorInfo. A non-Person infector (negative id) has no symptom, so the
-// result is absent (kNoSymptomId).
+// VisitorInfo. A non-Person source has no infector, so the result is absent
+// (kNoSymptomId). A Person source whose symptom can't be found, including one
+// with no infector sampled (negative id), is absent too and counts as a gap.
 class InfectorSymptomLookup {
  public:
   explicit InfectorSymptomLookup(const WorldState& world) : world_(world) {}
 
   uint16_t resolve(
-      PersonId infector_id, double current_time,
+      InfectionSource source, PersonId infector_id, double current_time,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
 
   // Lookups on this rank that found no symptom for a Person infector.
