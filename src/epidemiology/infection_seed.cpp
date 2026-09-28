@@ -491,17 +491,15 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
 
-  for (const auto& seed : config_.seeds) {
+  for (size_t seed_index = 0; seed_index < config_.seeds.size();
+       ++seed_index) {
+    const InfectionSeedEvent& seed = config_.seeds[seed_index];
     // Standardized comparison: skip whitespace/case if needed,
     // though currently matching exact string.
     if (seed.date_time == current_datetime) {
-      std::string seed_key =
-          seed.name + "|" + seed.trajectory_key + "|" + seed.start_symptom;
-      // Declared context joins the key only when present, so an undeclared
-      // seed keeps the key older checkpoints recorded.
-      if (!seed.infector_symptom.empty() || !seed.transmission_mode.empty()) {
-        seed_key += "|" + seed.infector_symptom + "|" + seed.transmission_mode;
-      }
+      // Keyed by position, not content: seeds sharing a name, or identical
+      // ones, each fire once; a repeat call at the same datetime does not.
+      const std::string seed_key = std::to_string(seed_index);
       if (applied_seeds_.count(seed_key) > 0) {
         continue;
       }

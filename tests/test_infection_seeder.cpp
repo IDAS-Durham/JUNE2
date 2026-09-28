@@ -349,3 +349,40 @@ TEST_CASE("seeds differing only in declared context each fire") {
   CHECK(infections[0].transmission_mode_index == 0);
   CHECK(infections[1].transmission_mode_index == 1);
 }
+
+TEST_CASE("seeds sharing a name each fire on their own date") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[1].date_time = "2024-01-08 08:00";
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
+  CHECK(seeder.seedInfections("2024-01-08 08:00", 7.0).size() == 1);
+}
+
+TEST_CASE("seeds sharing a name and date but not a type each fire") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[1].type = InfectionSeedType::EXACT;
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  const std::vector<PersonId> infected =
+      seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  REQUIRE(infected.size() == 2);
+  CHECK(infected[0] != infected[1]);
+}
+
+TEST_CASE("a seed fires once when its datetime is seeded twice") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeeder seeder(world, &disease, clusteredConfig(1), nullptr, 12345);
+
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).empty());
+}
