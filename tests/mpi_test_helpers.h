@@ -180,8 +180,12 @@ constexpr uint16_t kMild = 2;
 
 // Direct mode 0 plus fomite mode 1, sub-binned at `sub_bin_time` hours. Each
 // symptom deposits on a different curve; mild ramps, so a deposit depends on
-// the exact time in stage.
-inline Disease makeFomiteDisease(double sub_bin_time) {
+// the exact time in stage. Every infection is long mild unless `outcomes`
+// and `trajectories` say otherwise.
+inline Disease makeFomiteDisease(
+    double sub_bin_time, const OutcomeRates& outcomes = {},
+    const std::vector<TrajectoryDefinition>& trajectories = {
+        longMildTrajectory()}) {
   TransmissionParams params;
   params.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto curve = std::make_shared<ConstantCurve>(5.0);
@@ -211,8 +215,7 @@ inline Disease makeFomiteDisease(double sub_bin_time) {
   std::vector<SymptomTag> symptom_tags = {{"healthy", -1, fomite_flu::kHealthy},
                                           {"exposed", 0, fomite_flu::kExposed},
                                           {"mild", 1, fomite_flu::kMild}};
-  return Disease("FomiteFlu", symptom_tags, {}, {longMildTrajectory()}, {},
-                 params);
+  return Disease("FomiteFlu", symptom_tags, {}, trajectories, outcomes, params);
 }
 
 }  // namespace june

@@ -118,6 +118,14 @@ struct InfectionSeedEvent {
       "";  // e.g. "pneumonic_perished"; empty = use rates
   std::string start_symptom =
       "";  // e.g. "pneumonia"; empty = trajectory's own start_stage
+
+  // Declared Infection Context for the seeded infections: the infector's
+  // symptom and the transmission mode, by name. Empty = absent.
+  std::string infector_symptom = "";   // e.g. "pneumonic"
+  std::string transmission_mode = "";  // e.g. "rat_flea_bite"
+  // The same facts as ids, set by InfectionSeeder::resolveConfig.
+  uint8_t infector_symptom_id = kNoSymptomId;
+  uint8_t transmission_mode_index = kNoModeIndex;
 };
 
 // Collection of all infection seeds
@@ -173,8 +181,9 @@ class InfectionSeeder {
   }
 
   // Re-resolve all attribute_filter SelectionCriterion against the current
-  // WorldState. Called after the world is fully loaded.
-  void resolveConfig(const WorldState& world) { config_.resolve(world); }
+  // WorldState, and each seed's declared Infection Context against the
+  // disease; an unknown name throws. Called after the world is fully loaded.
+  void resolveConfig(const WorldState& world);
 
   // --- Checkpoint serialization ---
   // applied_seeds_ tracks which seed events have already fired. It MUST be
@@ -198,20 +207,25 @@ class InfectionSeeder {
   // Track which seeds have been applied
   std::set<std::string> applied_seeds_;
 
-  // Apply a single seed event
-  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed);
+  // Apply a single seed event, its draws keyed by its position in the config
+  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed,
+                                  size_t seed_index);
 
-  // Type-specific seeding methods
-  std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed);
-  std::vector<PersonId> applyExactSeed(const InfectionSeedEvent& seed);
-  std::vector<PersonId> applyClusteredSeed(const InfectionSeedEvent& seed);
+  // Type-specific seeding methods; event_base keys every draw of the event
+  std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed,
+                                         uint64_t event_base);
+  std::vector<PersonId> applyExactSeed(const InfectionSeedEvent& seed,
+                                       uint64_t event_base);
+  std::vector<PersonId> applyClusteredSeed(const InfectionSeedEvent& seed,
+                                           uint64_t event_base);
 
   // Helper methods
   bool matchesAttributes(const Person* person,
                          const std::vector<SelectionCriterion>& filters);
 
-  void infectPerson(Person* person, const std::string& trajectory_key = "",
-                    const std::string& start_symptom = "");
+  // Infect `person` as `seed` declares: its trajectory override and its
+  // Infection Context.
+  void infectPerson(Person* person, const InfectionSeedEvent& seed);
 };
 
 // =============================================================================

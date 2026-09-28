@@ -139,10 +139,13 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
     InfectionSeedType type;
     std::string trajectory_key;
     std::string start_symptom;
+    std::string infector_symptom;
+    std::string transmission_mode;
     bool operator<(const SeedKey& o) const {
-      return std::tie(name, date, type, trajectory_key, start_symptom) <
-             std::tie(o.name, o.date, o.type, o.trajectory_key,
-                      o.start_symptom);
+      return std::tie(name, date, type, trajectory_key, start_symptom,
+                      infector_symptom, transmission_mode) <
+             std::tie(o.name, o.date, o.type, o.trajectory_key, o.start_symptom,
+                      o.infector_symptom, o.transmission_mode);
     }
   };
 
@@ -190,8 +193,13 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
           "', date='" + date_val + "', type='" + type_val + "')");
     }
 
-    SeedKey key = {name_val, date_val, parseSeedType(type_val),
-                   get(row, "trajectory_key"), get(row, "start_symptom")};
+    SeedKey key = {name_val,
+                   date_val,
+                   parseSeedType(type_val),
+                   get(row, "trajectory_key"),
+                   get(row, "start_symptom"),
+                   get(row, "infector_symptom"),
+                   get(row, "transmission_mode")};
     auto& draft = drafts[key];
     if (draft.event.name.empty()) {
       draft.event.name = key.name;
@@ -199,6 +207,8 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
       draft.event.type = key.type;
       draft.event.trajectory_key = key.trajectory_key;
       draft.event.start_symptom = key.start_symptom;
+      draft.event.infector_symptom = key.infector_symptom;
+      draft.event.transmission_mode = key.transmission_mode;
     }
 
     if (key.type == InfectionSeedType::UNIFORM) {
@@ -299,6 +309,12 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
           seed.trajectory_key = seed_node["trajectory_key"].as<std::string>();
         if (seed_node["start_symptom"])
           seed.start_symptom = seed_node["start_symptom"].as<std::string>();
+        if (seed_node["infector_symptom"])
+          seed.infector_symptom =
+              seed_node["infector_symptom"].as<std::string>();
+        if (seed_node["transmission_mode"])
+          seed.transmission_mode =
+              seed_node["transmission_mode"].as<std::string>();
 
         if (seed_node["parameters"]) {
           auto params = seed_node["parameters"];
@@ -431,22 +447,51 @@ InfectionSeeder::InfectionSeeder(WorldState& world, const Disease* disease,
       current_simulation_time_(0.0),
       base_seed_(base_seed) {}
 
+// Index of `name` in `known_names`; throws, naming the seed and value, when
+// the disease has no such name.
+static uint8_t resolveDeclaredName(const std::string& name,
+                                   const std::vector<std::string>& known_names,
+                                   const std::string& fact,
+                                   const std::string& seed_name) {
+  return static_cast<uint8_t>(requireKnownName(
+      name, known_names, "Infection seed '" + seed_name + "': " + fact));
+}
+
+void InfectionSeeder::resolveConfig(const WorldState& world) {
+  config_.resolve(world);
+  const std::vector<std::string> mode_names = disease_->getModeNames();
+  for (auto& seed : config_.seeds) {
+    if (!seed.infector_symptom.empty()) {
+      seed.infector_symptom_id = resolveDeclaredName(
+          seed.infector_symptom, disease_->getSymptomNames(),
+          "infector_symptom", seed.name);
+    }
+    if (!seed.transmission_mode.empty()) {
+      seed.transmission_mode_index = resolveDeclaredName(
+          seed.transmission_mode, mode_names, "transmission_mode", seed.name);
+    }
+  }
+}
+
 std::vector<PersonId> InfectionSeeder::seedInfections(
     const std::string& current_datetime, double simulation_time) {
   current_simulation_time_ = simulation_time;
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
 
-  for (const auto& seed : config_.seeds) {
+  for (size_t seed_index = 0; seed_index < config_.seeds.size();
+       ++seed_index) {
+    const InfectionSeedEvent& seed = config_.seeds[seed_index];
     // Standardized comparison: skip whitespace/case if needed,
     // though currently matching exact string.
     if (seed.date_time == current_datetime) {
-      std::string seed_key =
-          seed.name + "|" + seed.trajectory_key + "|" + seed.start_symptom;
+      // Keyed by position, not content: seeds sharing a name, or identical
+      // ones, each fire once; a repeat call at the same datetime does not.
+      const std::string seed_key = std::to_string(seed_index);
       if (applied_seeds_.count(seed_key) > 0) {
         continue;
       }
-      std::vector<PersonId> infected = applySeed(seed);
+      std::vector<PersonId> infected = applySeed(seed, seed_index);
       applied_seeds_.insert(seed_key);
       all_infected.insert(all_infected.end(), infected.begin(), infected.end());
 
@@ -457,22 +502,28 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   return all_infected;
 }
 
-std::vector<PersonId> InfectionSeeder::applySeed(
-    const InfectionSeedEvent& seed) {
+std::vector<PersonId> InfectionSeeder::applySeed(const InfectionSeedEvent& seed,
+                                                 size_t seed_index) {
+  // Keyed by position as well as name: seeds sharing a name, as the bulk CSV
+  // groups them, would otherwise make the same draws, so two uniform rates
+  // took the larger rather than their sum, and a later structured seed took
+  // the next-best people of the same ranking.
+  const uint64_t event_base =
+      mix_seed(base_seed_, hash_name(seed.name), seed_index);
   switch (seed.type) {
     case InfectionSeedType::UNIFORM:
-      return applyUniformSeed(seed);
+      return applyUniformSeed(seed, event_base);
     case InfectionSeedType::EXACT:
-      return applyExactSeed(seed);
+      return applyExactSeed(seed, event_base);
     case InfectionSeedType::CLUSTERED:
-      return applyClusteredSeed(seed);
+      return applyClusteredSeed(seed, event_base);
     default:
       throw std::runtime_error("Unknown seed type");
   }
 }
 
 std::vector<PersonId> InfectionSeeder::applyUniformSeed(
-    const InfectionSeedEvent& seed) {
+    const InfectionSeedEvent& seed, uint64_t event_base) {
   std::vector<PersonId> infected_ids;
 
   double cases_per_capita =
@@ -483,7 +534,6 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
   // MPI-reproducible seeding: each person gets a per-person deterministic
   // decision based on their ID. This ensures the same person is always
   // seeded regardless of which rank owns them or the local population size.
-  uint64_t seed_name_hash = hash_name(seed.name);
   uint64_t time_bits = static_cast<uint64_t>(current_simulation_time_ * 1000);
 
   for (auto& person : world_.people) {
@@ -494,12 +544,12 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
     if (!matchesAttributes(&person, seed.attribute_filters)) continue;
 
     // Per-person deterministic draw keyed to person ID
-    SplitMix64 prng(mix_seed(base_seed_, person.id, seed_name_hash, time_bits));
+    SplitMix64 prng(mix_seed(event_base, person.id, time_bits));
     std::uniform_real_distribution<double> dist(0.0, 1.0);
     double rng_val = dist(prng);
     bool seeded = rng_val < cases_per_capita;
     if (seeded) {
-      infectPerson(&person, seed.trajectory_key, seed.start_symptom);
+      infectPerson(&person, seed);
       if (person.infection != nullptr) {
         infected_ids.push_back(person.id);
       }
@@ -512,7 +562,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
 }
 
 std::vector<PersonId> InfectionSeeder::applyExactSeed(
-    const InfectionSeedEvent& seed) {
+    const InfectionSeedEvent& seed, uint64_t event_base) {
   // A structured seed's count is absolute, so it cannot be resolved from one
   // rank's slice of a unit: a unit above the partition level is split across
   // ranks. Each rank instead offers its own candidates, keyed off the run seed
@@ -539,8 +589,6 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
   std::vector<uint32_t> unit_of_slot;
   std::vector<SeedOffer> local_offers;
   std::unordered_map<PersonId, Person*> local_candidates;
-
-  const uint64_t event_base = mix_seed(base_seed_, hash_name(seed.name));
 
   for (const auto& unit_case : seed.structured_config.unit_cases) {
     ExactUnit unit;
@@ -678,7 +726,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
       auto held = local_candidates.find(assignment.person_id);
       if (held == local_candidates.end()) continue;  // another rank holds them
       if (held->second->infection != nullptr) continue;
-      infectPerson(held->second, seed.trajectory_key, seed.start_symptom);
+      infectPerson(held->second, seed);
       if (held->second->infection != nullptr) {
         infected_ids.push_back(assignment.person_id);
       }
@@ -688,7 +736,7 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
 }
 
 std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
-    const InfectionSeedEvent& seed) {
+    const InfectionSeedEvent& seed, uint64_t event_base) {
   // Like an exact seed, a clustered seed's count is absolute, so it cannot be
   // resolved from one rank's slice of a unit above the partition level. Each
   // rank offers the households it holds and every rank then replays the same
@@ -714,8 +762,6 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
     std::vector<LocalMember> members;
     size_t matched = 0;
   };
-
-  const uint64_t event_base = mix_seed(base_seed_, hash_name(seed.name));
 
   std::vector<ClusterUnit> units;
   std::vector<uint32_t> unit_of_slot;
@@ -858,7 +904,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
       // infectPerson is a no-op there, so recording the id would report a case
       // this step did not place.
       if (held->second->infection != nullptr) continue;
-      infectPerson(held->second, seed.trajectory_key, seed.start_symptom);
+      infectPerson(held->second, seed);
       if (held->second->infection != nullptr) {
         infected_ids.push_back(assignment.person_id);
       }
@@ -877,8 +923,7 @@ bool InfectionSeeder::matchesAttributes(
 }
 
 void InfectionSeeder::infectPerson(Person* person,
-                                   const std::string& trajectory_key,
-                                   const std::string& start_symptom) {
+                                   const InfectionSeedEvent& seed) {
   if (person->infection != nullptr) return;
   if (person->getSusceptibility(current_simulation_time_, disease_->getName()) <
       0.01)
@@ -892,19 +937,22 @@ void InfectionSeeder::infectPerson(Person* person,
   auto* gu = world_.getGeoUnit(person->geo_unit_id);
   if (gu) severity_factor = gu->severity_factor;
 
+  // No infector and no transmission, so the only context facts are the ones
+  // the seed declares; the rest are absent.
+  const TransmissionRecord transmission{InfectionSource::Seed,
+                                        seed.infector_symptom_id,
+                                        seed.transmission_mode_index};
   person->infection = std::make_unique<Infection>(
       disease_, current_simulation_time_, person,
-      static_cast<unsigned int>(infection_seed), &world_,
+      static_cast<unsigned int>(infection_seed), transmission, &world_,
       "seed",  // venue type
-      INFECTION_SEED_VENUE_ID, severity_factor,
-      0,  // infector_symptom_id -- no infector for seeds
-      trajectory_key, start_symptom);
+      INFECTION_SEED_VENUE_ID, severity_factor, seed.trajectory_key,
+      seed.start_symptom);
 
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(
         person->id, kInvalidPersonId, INFECTION_SEED_VENUE_ID,
-        current_simulation_time_, kDefaultEncounterTypeId,
-        kNoSymptomId);  // no infector for seeds
+        current_simulation_time_, kDefaultEncounterTypeId, transmission);
   }
 }
 

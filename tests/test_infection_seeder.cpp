@@ -7,6 +7,7 @@
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
 #include "epidemiology/infectiousness_curves.h"
+#include "utils/event_logging/event_logger.h"
 
 using namespace june;
 
@@ -99,7 +100,130 @@ InfectionSeedConfig clusteredConfig(int cases) {
   return config;
 }
 
+// A plague-shaped disease with two modes and the given outcome rows.
+Disease makePlagueDisease(std::vector<OutcomeRow> rows = {},
+                          std::vector<TrajectoryDefinition> trajectories = {}) {
+  SymptomTag recovered{.name = "recovered", .value = -3, .id = 0};
+  SymptomTag pneumonic{.name = "primary_pneumonic", .value = 2, .id = 1};
+  SymptomTag bubonic{.name = "bubonic", .value = 1, .id = 2};
+  SymptomTag mild{.name = "mild", .value = 1, .id = 3};
+
+  TransmissionParams transmission;
+  TransmissionMode respiratory;
+  respiratory.name = "respiratory";
+  TransmissionMode rat_flea_bite;
+  rat_flea_bite.name = "rat_flea_bite";
+  transmission.modes = {respiratory, rat_flea_bite};
+
+  OutcomeRates rates;
+  rates.rows = std::move(rows);
+  return Disease("Plague", {recovered, pneumonic, bubonic, mild},
+                 DiseaseStageSettings{}, trajectories, rates, transmission);
+}
+
+// A clustered seed of one case that declares the given Infection Context.
+InfectionSeedConfig declaredSeedConfig(const std::string& infector_symptom,
+                                       const std::string& transmission_mode) {
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds[0].infector_symptom = infector_symptom;
+  config.seeds[0].transmission_mode = transmission_mode;
+  return config;
+}
+
+SelectionCriterion contextCriterion(const std::string& fact,
+                                    const std::string& value) {
+  SelectionCriterion criterion;
+  criterion.property_path = fact;
+  criterion.operator_type = "==";
+  criterion.value = value;
+  return criterion;
+}
+
+OutcomeRow rowInto(std::vector<SelectionCriterion> criteria,
+                   const std::string& selection_key) {
+  OutcomeRow row;
+  row.criteria = std::move(criteria);
+  row.probabilities = {{selection_key, 1.0}};
+  return row;
+}
+
+// A one-stage trajectory, so the chosen trajectory is visible as its symptom.
+TrajectoryDefinition trajectoryInto(const std::string& selection_key,
+                                    const std::string& symptom) {
+  TrajectoryDefinition trajectory;
+  trajectory.selection_key = selection_key;
+  TrajectoryStage stage;
+  stage.symptom_tag = symptom;
+  stage.completion_time.type = "constant";
+  stage.completion_time.params = {{"value", 1.0}};
+  trajectory.stages = {stage};
+  return trajectory;
+}
+
+// Rows keyed to the flea mode, to a pneumonic infector, then a default; each
+// leads to a trajectory whose one symptom names the row.
+Disease makeRoutedPlagueDisease() {
+  return makePlagueDisease(
+      {rowInto({contextCriterion("transmission_mode", "rat_flea_bite")},
+               "flea_route"),
+       rowInto({contextCriterion("infector_symptom", "primary_pneumonic")},
+               "symptom_route"),
+       rowInto({}, "default_route")},
+      {trajectoryInto("flea_route", "bubonic"),
+       trajectoryInto("symptom_route", "primary_pneumonic"),
+       trajectoryInto("default_route", "mild")});
+}
+
+// Seeds the one case and returns the symptom its trajectory starts in.
+std::string seededStartSymptom(WorldState& world, const Disease& disease,
+                               const InfectionSeedConfig& config) {
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  seeder.resolveConfig(world);
+  const std::vector<PersonId> infected =
+      seeder.seedInfections("2024-01-01 08:00", 0.0);
+  REQUIRE(infected.size() == 1);
+  const Person& person = world.people[world.person_index.at(infected[0])];
+  return disease.getSymptomName(
+      person.infection->getTrajectory().transitions.at(0).second);
+}
+
+std::string resolveError(InfectionSeeder& seeder, const WorldState& world) {
+  try {
+    seeder.resolveConfig(world);
+  } catch (const std::runtime_error& error) {
+    return error.what();
+  }
+  return "";
+}
+
 }  // namespace
+
+TEST_CASE(
+    "a seed declaring an unknown symptom or mode is refused at load, naming "
+    "the seed and value") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makePlagueDisease();
+
+  SUBCASE("unknown infector symptom") {
+    InfectionSeeder seeder(world, &disease,
+                           declaredSeedConfig("pneumonik", ""));
+    const std::string message = resolveError(seeder, world);
+    CHECK(message.find("ties") != std::string::npos);
+    CHECK(message.find("pneumonik") != std::string::npos);
+  }
+  SUBCASE("unknown transmission mode") {
+    InfectionSeeder seeder(world, &disease,
+                           declaredSeedConfig("", "rat_flee_bite"));
+    const std::string message = resolveError(seeder, world);
+    CHECK(message.find("ties") != std::string::npos);
+    CHECK(message.find("rat_flee_bite") != std::string::npos);
+  }
+  SUBCASE("known names resolve") {
+    InfectionSeeder seeder(world, &disease,
+                           declaredSeedConfig("bubonic", "rat_flea_bite"));
+    CHECK_NOTHROW(seeder.resolveConfig(world));
+  }
+}
 
 TEST_CASE(
     "Clustered seeding breaks density ties by the portable household key") {
@@ -120,4 +244,168 @@ TEST_CASE(
       9,  10, 11, 12,  44,  45, 46, 47, 113, 114, 115, 116, 78,
       79, 80, 81, 120, 121, 94, 95, 86, 87,  23,  24,  105, 106};
   CHECK(infected == expected);
+}
+
+TEST_CASE(
+    "an undeclared seed is logged with source Seed and no symptom or mode") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  EventLogger logger;
+  InfectionSeeder seeder(world, &disease, clusteredConfig(1), &logger, 12345);
+
+  seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  const std::vector<InfectionEvent>& infections = logger.getInfectionEvents();
+  REQUIRE(infections.size() == 1);
+  CHECK(infections[0].source == InfectionSource::Seed);
+  CHECK(infections[0].infector_symptom_id == kNoSymptomId);
+  CHECK(infections[0].transmission_mode_index == kNoModeIndex);
+}
+
+TEST_CASE("a seed's declared context picks the outcome row keyed to it") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeRoutedPlagueDisease();
+
+  SUBCASE("declared mode") {
+    CHECK(seededStartSymptom(world, disease,
+                             declaredSeedConfig("", "rat_flea_bite")) ==
+          "bubonic");
+  }
+  SUBCASE("declared symptom only") {
+    CHECK(seededStartSymptom(world, disease,
+                             declaredSeedConfig("primary_pneumonic", "")) ==
+          "primary_pneumonic");
+  }
+  SUBCASE("nothing declared") {
+    CHECK(seededStartSymptom(world, disease, declaredSeedConfig("", "")) ==
+          "mild");
+  }
+}
+
+TEST_CASE("a declared seed logs its declared ids, 255 for any fact left out") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makePlagueDisease();
+  EventLogger logger;
+
+  auto loggedInfection = [&](const InfectionSeedConfig& config) {
+    InfectionSeeder seeder(world, &disease, config, &logger, 12345);
+    seeder.resolveConfig(world);
+    seeder.seedInfections("2024-01-01 08:00", 0.0);
+    REQUIRE(logger.getInfectionEvents().size() == 1);
+    return logger.getInfectionEvents()[0];
+  };
+
+  SUBCASE("symptom only") {
+    const InfectionEvent logged =
+        loggedInfection(declaredSeedConfig("primary_pneumonic", ""));
+    CHECK(logged.source == InfectionSource::Seed);
+    CHECK(logged.infector_symptom_id == 1);
+    CHECK(logged.transmission_mode_index == kNoModeIndex);
+  }
+  SUBCASE("mode only") {
+    const InfectionEvent logged =
+        loggedInfection(declaredSeedConfig("", "rat_flea_bite"));
+    CHECK(logged.infector_symptom_id == kNoSymptomId);
+    CHECK(logged.transmission_mode_index == 1);
+  }
+}
+
+TEST_CASE(
+    "a forced trajectory wins over a declared context, which is still logged") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeRoutedPlagueDisease();
+  EventLogger logger;
+  InfectionSeedConfig config = declaredSeedConfig("", "rat_flea_bite");
+  config.seeds[0].trajectory_key = "default_route";
+
+  InfectionSeeder seeder(world, &disease, config, &logger, 12345);
+  seeder.resolveConfig(world);
+  const std::vector<PersonId> infected =
+      seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  REQUIRE(infected.size() == 1);
+  const Person& person = world.people[world.person_index.at(infected[0])];
+  CHECK(disease.getSymptomName(
+            person.infection->getTrajectory().transitions.at(0).second) ==
+        "mild");
+  REQUIRE(logger.getInfectionEvents().size() == 1);
+  CHECK(logger.getInfectionEvents()[0].transmission_mode_index == 1);
+}
+
+TEST_CASE("seeds differing only in declared context each fire") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makePlagueDisease();
+  EventLogger logger;
+  InfectionSeedConfig config = declaredSeedConfig("", "respiratory");
+  config.seeds.push_back(declaredSeedConfig("", "rat_flea_bite").seeds[0]);
+  for (auto& seed : config.seeds) seed.type = InfectionSeedType::EXACT;
+
+  InfectionSeeder seeder(world, &disease, config, &logger, 12345);
+  seeder.resolveConfig(world);
+  seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  const std::vector<InfectionEvent>& infections = logger.getInfectionEvents();
+  REQUIRE(infections.size() == 2);
+  CHECK(infections[0].transmission_mode_index == 0);
+  CHECK(infections[1].transmission_mode_index == 1);
+}
+
+TEST_CASE("seeds sharing a name each fire on their own date") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[1].date_time = "2024-01-08 08:00";
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
+  CHECK(seeder.seedInfections("2024-01-08 08:00", 7.0).size() == 1);
+}
+
+TEST_CASE("seeds sharing a name and date but not a type each fire") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[1].type = InfectionSeedType::EXACT;
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  const std::vector<PersonId> infected =
+      seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  REQUIRE(infected.size() == 2);
+  CHECK(infected[0] != infected[1]);
+}
+
+TEST_CASE("uniform seeds sharing a name and date add their rates") {
+  // Shared draws let the second seed hit only people the first already had.
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds[0].type = InfectionSeedType::UNIFORM;
+  config.seeds[0].uniform_config.cases_per_capita = 0.2;
+  config.seeds.push_back(config.seeds[0]);
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  const std::vector<PersonId> infected =
+      seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  WorldState single_world = makeHouseholdWorld();
+  config.seeds.pop_back();
+  InfectionSeeder single_seeder(single_world, &disease, config, nullptr, 12345);
+  const std::vector<PersonId> single_infected =
+      single_seeder.seedInfections("2024-01-01 08:00", 0.0);
+
+  REQUIRE_FALSE(single_infected.empty());
+  CHECK(infected.size() > single_infected.size());
+}
+
+TEST_CASE("a seed fires once when its datetime is seeded twice") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeeder seeder(world, &disease, clusteredConfig(1), nullptr, 12345);
+
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).empty());
 }

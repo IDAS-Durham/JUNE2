@@ -10,6 +10,7 @@
 
 #include "core/config.h"
 #include "core/types.h"
+#include "epidemiology/transmission/transmission_record.h"
 #include "infectiousness_curves.h"
 #include "utils/deterministic_rng.h"
 #include "utils/filtering.h"
@@ -93,6 +94,12 @@ struct TrajectoryDefinition {
 // Filter-Based Outcome Rates
 // =============================================================================
 
+// Index of `name` in `known_names`; otherwise throws
+// "<message_prefix> '<name>' is not one this disease defines. Known: ...".
+size_t requireKnownName(const std::string& name,
+                        const std::vector<std::string>& known_names,
+                        const std::string& message_prefix);
+
 // A single demographic row: filter criteria + outcome probabilities.
 struct OutcomeRow {
   std::vector<SelectionCriterion> criteria;     // empty = matches all persons
@@ -113,8 +120,13 @@ struct OutcomeRates {
   // Resolve every row's filters against the world, throwing on anything the
   // world cannot answer. An outcome table is reference data, so a row may name
   // a geographical unit this world does not contain; those names are returned,
-  // one line each, for the caller to report, and match nobody.
-  std::vector<std::string> resolve(const WorldState& world);
+  // one line each, for the caller to report, and match nobody. Infection
+  // Context criteria are exempt from world resolution; their values must name
+  // one of `symptom_names`, `mode_names` or `infectionSourceNames()`, or
+  // resolving throws.
+  std::vector<std::string> resolve(const WorldState& world,
+                                   const std::vector<std::string>& symptom_names,
+                                   const std::vector<std::string>& mode_names);
 };
 
 // =============================================================================
@@ -260,7 +272,7 @@ class Disease {
 
   // Resolve outcome rate criteria after WorldState is built.
   std::vector<std::string> resolve(const WorldState& world) {
-    return outcome_rates_.resolve(world);
+    return outcome_rates_.resolve(world, id_to_name_, getModeNames());
   }
 
   // Fast lookup
@@ -274,6 +286,8 @@ class Disease {
   /// range.
   const std::string& getModeName(uint8_t index) const;
   int numModes() const;
+  /// Transmission mode names, in mode-index order.
+  std::vector<std::string> getModeNames() const;
 
   /// Evaluate stage-driven infectiousness for a given mode, symptom, and
   /// time-in-stage. Returns 0.0 for TRAJECTORY_DRIVEN diseases.
@@ -331,12 +345,12 @@ class Infection {
  public:
   Infection(const Disease* disease, double infection_time,
             const Person* person,  // Pass person for vaccine context
-            unsigned int random_seed, const WorldState* world = nullptr,
+            unsigned int random_seed, const TransmissionRecord& transmission,
+            const WorldState* world = nullptr,
             const std::string& venue_type = "", int venue_id = -1,
-            float severity_factor = 1.0f, uint16_t infector_symptom_id = 0,
+            float severity_factor = 1.0f,
             const std::string& trajectory_key_override = "",
-            const std::string& start_symptom_override = "",
-            uint8_t transmission_mode_index = 0);
+            const std::string& start_symptom_override = "");
 
   // Getters
   const Disease* getDisease() const { return disease_; }
@@ -464,11 +478,11 @@ class Infection {
 
   InfectionTrajectory generateTrajectoryFromRates(
       SplitMix64& rng, const Person* person, const WorldState* world,
+      const TransmissionRecord& transmission,
       const std::string& venue_type = "", int venue_id = -1,
-      float severity_factor = 1.0f, uint16_t infector_symptom_id = 0,
+      float severity_factor = 1.0f,
       const std::string& trajectory_key_override = "",
-      const std::string& start_symptom_override = "",
-      uint8_t transmission_mode_index = 0);
+      const std::string& start_symptom_override = "");
 
   // Sample transmission parameters from disease config
   void sampleTransmissionParameters(SplitMix64& rng);

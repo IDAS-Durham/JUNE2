@@ -75,13 +75,20 @@ constexpr auto kInfectionWire = makeWireRecord(
     &june::PendingInfection::encounter_type_id,
     &june::PendingInfection::venue_id,
     &june::PendingInfection::infector_symptom_id,
-    &june::PendingInfection::transmission_mode_index);
+    &june::PendingInfection::transmission_mode_index,
+    &june::PendingInfection::source);
 // Tripwire: PendingInfection is all-scalar (kInfectionWire's fields plus
 // the excluded local-only home_array_index), so sizeof is a proxy for
 // drift. Same caveat as PROPOSAL_WIRE_SIZE's tripwire above.
 static_assert(sizeof(june::PendingInfection) == 32,
               "PendingInfection size changed - check kInfectionWire (+ "
               "home_array_index) covers every field, then update this literal");
+// sizeof alone misses a u8 that lands in tail padding (source took byte 30;
+// byte 31 is the last free one), so pin the wire bytes too:
+// 4 + 4 + 8 + 1 + 1 + 4 + 1 + 1 + 1.
+static_assert(kInfectionWire.size() == 25,
+              "kInfectionWire changed - check PendingInfection's fields, then "
+              "update this literal");
 
 // Fixed header of a finalized encounter; participant_count + the
 // variable-length participants tail are appended manually around this (see
@@ -558,11 +565,13 @@ std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
   uint64_t infection_seed =
       mix_seed(config_.simulation.random_seed, pending.person_id,
                static_cast<uint64_t>(pending.infection_time * 1000), venue_key);
+  const TransmissionRecord transmission{pending.source,
+                                        pending.infector_symptom_id,
+                                        pending.transmission_mode_index};
   person->infection = std::make_unique<Infection>(
       &disease, pending.infection_time, person,
-      static_cast<unsigned int>(infection_seed), &world_, venue_type_name,
-      pending.venue_id, severity_factor, pending.infector_symptom_id, "", "",
-      pending.transmission_mode_index);
+      static_cast<unsigned int>(infection_seed), transmission, &world_,
+      venue_type_name, pending.venue_id, severity_factor);
 
   return pending;
 }
