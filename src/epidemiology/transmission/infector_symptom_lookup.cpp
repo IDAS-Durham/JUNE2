@@ -7,7 +7,7 @@ namespace june {
 
 uint16_t InfectorSymptomLookup::resolve(
     InfectionSource source, PersonId infector_id, double current_time,
-    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const {
   if (source != InfectionSource::Person) return kNoSymptomId;
   const Person* infector =
       infector_id >= 0 ? world_.getPerson(infector_id) : nullptr;
@@ -19,8 +19,13 @@ uint16_t InfectorSymptomLookup::resolve(
     auto visitor = visitor_data->find(infector_id);
     if (visitor != visitor_data->end()) return visitor->second.symptom_id;
   }
-  ++gap_count_;
   return kNoSymptomId;
+}
+
+void InfectorSymptomLookup::countIfGap(const TransmissionRecord& transmission) {
+  if (transmission.source == InfectionSource::Person &&
+      transmission.infector_symptom_id == kNoSymptomId)
+    ++gap_count_;
 }
 
 std::string formatInfectorLookupGapWarning(uint64_t gap_count) {

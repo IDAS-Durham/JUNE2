@@ -374,6 +374,7 @@ void InteractionManager::applyVenueInfection(
       disease_, current_time, susc_person,
       static_cast<unsigned int>(infection_seed), transmission, &world_,
       venue_type_name, actual_venue_id, severity_factor);
+  infector_symptom_lookup_.countIfGap(transmission);
 
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(susceptible_id, infector_id, actual_venue_id,

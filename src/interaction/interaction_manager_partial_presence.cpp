@@ -509,6 +509,7 @@ int InteractionManager::resolvePartialPresenceInfections(
     p->infection = std::make_unique<Infection>(
         disease_, current_time, p, static_cast<unsigned int>(seed),
         transmission, &world_, venue_type_name, c.venue_id, severity_factor);
+    infector_symptom_lookup_.countIfGap(transmission);
 
     if (event_logger_ != nullptr)
       event_logger_->logInfection(c.person_id, c.infector_id, c.venue_id,

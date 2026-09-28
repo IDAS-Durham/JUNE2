@@ -17,8 +17,12 @@ TEST_CASE(
   world.buildIndices();
   InfectorSymptomLookup lookup(world);
 
-  CHECK(lookup.resolve(InfectionSource::Person, 7, 1.0, nullptr) ==
-        kNoSymptomId);
+  const uint8_t symptom_id =
+      lookup.resolve(InfectionSource::Person, 7, 1.0, nullptr);
+  CHECK(symptom_id == kNoSymptomId);
+  // Looking up alone counts nothing; only an applied infection is a gap.
+  CHECK(lookup.gapCount() == 0);
+  lookup.countIfGap(TransmissionRecord{InfectionSource::Person, symptom_id, 0});
   CHECK(lookup.gapCount() == 1);
 }
 
@@ -34,8 +38,10 @@ TEST_CASE(
 
   CHECK(lookup.resolve(InfectionSource::Person, 8, 1.0, &visitor_data) == 2);
   CHECK(lookup.gapCount() == 0);
-  CHECK(lookup.resolve(InfectionSource::Person, 9, 1.0, &visitor_data) ==
-        kNoSymptomId);
+  const uint8_t symptom_id =
+      lookup.resolve(InfectionSource::Person, 9, 1.0, &visitor_data);
+  CHECK(symptom_id == kNoSymptomId);
+  lookup.countIfGap(TransmissionRecord{InfectionSource::Person, symptom_id, 0});
   CHECK(lookup.gapCount() == 1);
 }
 
@@ -45,12 +51,14 @@ TEST_CASE(
   world.buildIndices();
   InfectorSymptomLookup lookup(world);
 
-  CHECK(lookup.resolve(InfectionSource::Person, -1, 1.0, nullptr) ==
-        kNoSymptomId);
+  const uint8_t symptom_id =
+      lookup.resolve(InfectionSource::Person, -1, 1.0, nullptr);
+  CHECK(symptom_id == kNoSymptomId);
+  lookup.countIfGap(TransmissionRecord{InfectionSource::Person, symptom_id, 0});
   CHECK(lookup.gapCount() == 1);
 }
 
-TEST_CASE("a Fomite or compartmental source is an absent symptom, not a gap") {
+TEST_CASE("a non-Person source is an absent symptom and never a gap") {
   WorldState world;
   world.buildIndices();
   InfectorSymptomLookup lookup(world);
@@ -59,6 +67,10 @@ TEST_CASE("a Fomite or compartmental source is an absent symptom, not a gap") {
         kNoSymptomId);
   CHECK(lookup.resolve(InfectionSource::Compartmental, -1, 1.0, nullptr) ==
         kNoSymptomId);
+  for (InfectionSource source :
+       {InfectionSource::Fomite, InfectionSource::Compartmental,
+        InfectionSource::Seed})
+    lookup.countIfGap(TransmissionRecord{source, kNoSymptomId, 0});
   CHECK(lookup.gapCount() == 0);
 }
 

@@ -15,16 +15,21 @@ class WorldState;
 // Person's comes from their Infection; a cross-rank visitor's from their
 // VisitorInfo. A non-Person source has no infector, so the result is absent
 // (kNoSymptomId). A Person source whose symptom can't be found, including one
-// with no infector sampled (negative id), is absent too and counts as a gap.
+// with no infector sampled (negative id), is absent too. Looking up counts
+// nothing: a lookup can belong to an attempt that is later discarded, so each
+// site counts a gap only once its infection is applied (countIfGap).
 class InfectorSymptomLookup {
  public:
   explicit InfectorSymptomLookup(const WorldState& world) : world_(world) {}
 
   uint16_t resolve(
       InfectionSource source, PersonId infector_id, double current_time,
-      const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
+      const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
 
-  // Lookups on this rank that found no symptom for a Person infector.
+  // Counts one gap if an applied infection had a Person source but no symptom.
+  void countIfGap(const TransmissionRecord& transmission);
+
+  // Applied infections on this rank whose Person infector had no symptom.
   uint64_t gapCount() const { return gap_count_; }
 
  private:

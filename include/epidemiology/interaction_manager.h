@@ -222,10 +222,16 @@ class InteractionManager {
 
   PerformanceStats& getStats() { return stats_; }
 
-  // Infector-symptom lookups on this rank that found no symptom for a Person
-  // infector. Each gap judged an infection with its infector symptom absent.
+  // Applied infections on this rank whose Person infector had no symptom found;
+  // each was judged with its infector symptom absent.
   uint64_t infectorLookupGapCount() const {
     return infector_symptom_lookup_.gapCount();
+  }
+
+  // Counts a gap for an infection applied outside this manager: a visitor's
+  // pending infection, applied on their home rank.
+  void countInfectorLookupGap(const TransmissionRecord& transmission) {
+    infector_symptom_lookup_.countIfGap(transmission);
   }
 
   // The sibling-mixing aggregate for `parent_id` from the last

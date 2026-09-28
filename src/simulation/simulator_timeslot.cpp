@@ -171,12 +171,15 @@ void Simulator::receivePendingAndApply(
     auto mpi_infected =
         domain_mgr_->receivePendingInfections(pending_infections, *disease_);
     for (const auto& applied : mpi_infected) {
+      const TransmissionRecord transmission{applied.source,
+                                            applied.infector_symptom_id,
+                                            applied.transmission_mode_index};
       epidemiology_->trackInfection(applied.person_id);
-      event_logger_.logInfection(
-          applied.person_id, applied.infector_id, applied.venue_id,
-          applied.infection_time, applied.encounter_type_id,
-          TransmissionRecord{applied.source, applied.infector_symptom_id,
-                             applied.transmission_mode_index});
+      if (interaction_manager_)
+        interaction_manager_->countInfectorLookupGap(transmission);
+      event_logger_.logInfection(applied.person_id, applied.infector_id,
+                                 applied.venue_id, applied.infection_time,
+                                 applied.encounter_type_id, transmission);
     }
   } catch (const std::exception& e) {
     std::cerr << "[Step 4 Receive Pending] Fatal error: " << e.what()
