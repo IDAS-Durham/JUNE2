@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -14,12 +16,31 @@ namespace june {
 // Quantities, filters and target groups are not part of it, so changing a
 // seed's count leaves it the same seed.
 //
-// Each field is length-prefixed, so no value can run into the next.
-std::string seedIdentity(const InfectionSeedEvent& seed);
+// fields() is the one list of what counts; key, hash and ordering all derive
+// from it, so they cannot disagree.
+struct SeedIdentity {
+  std::string name;
+  std::string date_time;
+  InfectionSeedType type = InfectionSeedType::UNIFORM;
+  std::string trajectory_key;
+  std::string start_symptom;
+  std::string infector_symptom;
+  std::string transmission_mode;
 
-// The same seven fields hashed, each on its own and then mixed in turn, so a
-// value can't slide from one field into the next. Keys the seed's draws.
-uint64_t seedIdentityHash(const InfectionSeedEvent& seed);
+  static SeedIdentity of(const InfectionSeedEvent& seed);
+  void writeTo(InfectionSeedEvent& seed) const;
+
+  std::array<std::string, 7> fields() const;
+
+  // Each field length-prefixed, so no value can run into the next.
+  std::string key() const;
+
+  // Each field hashed on its own and then mixed in turn, so a value can't
+  // slide from one field into the next. Keys the seed's draws.
+  uint64_t hash() const;
+
+  bool operator<(const SeedIdentity& other) const;
+};
 
 // Two seeds with the same identity are a config error: nothing but position
 // would tell them apart. Throws, naming the clashing seed.

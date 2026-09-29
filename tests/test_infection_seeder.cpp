@@ -428,13 +428,13 @@ TEST_CASE("an applied seed stays applied when a seed is inserted ahead of it") {
   config.seeds.insert(config.seeds.begin(), inserted_seed);
 
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
-  seeder.setAppliedSeeds({seedIdentity(applied_seed)});
+  seeder.setAppliedSeeds({SeedIdentity::of(applied_seed).key()});
 
   CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 2);
   CHECK(seeder.getAppliedSeeds() ==
-        std::set<std::string>{seedIdentity(inserted_seed),
-                              seedIdentity(applied_seed),
-                              seedIdentity(later_seed)});
+        std::set<std::string>{SeedIdentity::of(inserted_seed).key(),
+                              SeedIdentity::of(applied_seed).key(),
+                              SeedIdentity::of(later_seed).key()});
 }
 
 namespace {

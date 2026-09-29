@@ -201,7 +201,7 @@ class InfectionSeeder {
   void resolveConfig(const WorldState& world);
 
   // --- Checkpoint serialization ---
-  // applied_seeds_ holds the seedIdentity() of each seed event already fired.
+  // applied_seeds_ holds the SeedIdentity key of each seed event already fired.
   // It MUST be saved and restored across a checkpoint, otherwise a resume
   // re-fires already-applied seeds and double-infects. Keys from older
   // checkpoints (index or name based) never match and are ignored.
