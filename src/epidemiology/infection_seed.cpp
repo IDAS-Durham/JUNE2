@@ -487,9 +487,10 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
     // Standardized comparison: skip whitespace/case if needed,
     // though currently matching exact string.
     if (seed.date_time == current_datetime) {
-      // Keyed by position, not content: seeds sharing a name, or identical
-      // ones, each fire once; a repeat call at the same datetime does not.
-      const std::string seed_key = std::to_string(seed_index);
+      // Keyed by Seed Identity, not position: a repeat call at the same
+      // datetime does not re-fire, and a config edit that shifts a seed's
+      // index leaves a restored applied set pointing at the same seed.
+      const std::string seed_key = seedIdentity(seed);
       if (applied_seeds_.count(seed_key) > 0) {
         continue;
       }

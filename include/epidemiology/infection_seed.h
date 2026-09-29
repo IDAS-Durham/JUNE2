@@ -201,9 +201,10 @@ class InfectionSeeder {
   void resolveConfig(const WorldState& world);
 
   // --- Checkpoint serialization ---
-  // applied_seeds_ tracks which seed events have already fired. It MUST be
-  // saved and restored across a checkpoint, otherwise a resume re-fires
-  // already-applied seeds and double-infects.
+  // applied_seeds_ holds the seedIdentity() of each seed event already fired.
+  // It MUST be saved and restored across a checkpoint, otherwise a resume
+  // re-fires already-applied seeds and double-infects. Keys from older
+  // checkpoints (index or name based) never match and are ignored.
   const std::set<std::string>& getAppliedSeeds() const {
     return applied_seeds_;
   }
@@ -219,7 +220,7 @@ class InfectionSeeder {
   const SeedOfferExchange* seed_offer_exchange_ = nullptr;
   std::vector<SeedShortfall> seed_shortfalls_;
 
-  // Track which seeds have been applied
+  // Seed Identity of each seed already applied
   std::set<std::string> applied_seeds_;
 
   // Apply a single seed event, its draws keyed by its position in the config

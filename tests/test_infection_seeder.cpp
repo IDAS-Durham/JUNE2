@@ -7,6 +7,7 @@
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
 #include "epidemiology/infectiousness_curves.h"
+#include "epidemiology/seeding/seed_identity.h"
 #include "utils/event_logging/event_logger.h"
 
 using namespace june;
@@ -408,4 +409,29 @@ TEST_CASE("a seed fires once when its datetime is seeded twice") {
 
   CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
   CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).empty());
+}
+
+TEST_CASE("an applied seed stays applied when a seed is inserted ahead of it") {
+  // Restored applied set names seed A; a config edit then shifts A's position.
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  const InfectionSeedEvent applied_seed = config.seeds[0];
+  InfectionSeedEvent later_seed = applied_seed;
+  later_seed.name = "later";
+  later_seed.type = InfectionSeedType::EXACT;
+  config.seeds.push_back(later_seed);
+  InfectionSeedEvent inserted_seed = applied_seed;
+  inserted_seed.name = "inserted";
+  inserted_seed.type = InfectionSeedType::EXACT;
+  config.seeds.insert(config.seeds.begin(), inserted_seed);
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  seeder.setAppliedSeeds({seedIdentity(applied_seed)});
+
+  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 2);
+  CHECK(seeder.getAppliedSeeds() ==
+        std::set<std::string>{seedIdentity(inserted_seed),
+                              seedIdentity(applied_seed),
+                              seedIdentity(later_seed)});
 }
