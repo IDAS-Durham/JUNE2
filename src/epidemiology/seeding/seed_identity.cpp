@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <unordered_set>
 
+#include "utils/deterministic_rng.h"
+
 namespace june {
 
 namespace {
@@ -48,6 +50,16 @@ std::string seedIdentity(const InfectionSeedEvent& seed) {
   appendField(identity, seed.infector_symptom);
   appendField(identity, seed.transmission_mode);
   return identity;
+}
+
+uint64_t seedIdentityHash(const InfectionSeedEvent& seed) {
+  uint64_t identity_hash = 0;
+  for (const std::string& field :
+       {seed.name, seed.date_time, seedTypeName(seed.type), seed.trajectory_key,
+        seed.start_symptom, seed.infector_symptom, seed.transmission_mode}) {
+    identity_hash = mix_seed(identity_hash, hash_name(field));
+  }
+  return identity_hash;
 }
 
 void requireUniqueSeedIdentities(const std::vector<InfectionSeedEvent>& seeds) {

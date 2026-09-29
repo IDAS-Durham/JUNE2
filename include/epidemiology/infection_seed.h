@@ -223,9 +223,8 @@ class InfectionSeeder {
   // Seed Identity of each seed already applied
   std::set<std::string> applied_seeds_;
 
-  // Apply a single seed event, its draws keyed by its position in the config
-  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed,
-                                  size_t seed_index);
+  // Apply a single seed event, its draws keyed by its Seed Identity
+  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed);
 
   // Type-specific seeding methods; event_base keys every draw of the event
   std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed,

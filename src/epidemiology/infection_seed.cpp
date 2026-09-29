@@ -482,8 +482,7 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
 
-  for (size_t seed_index = 0; seed_index < config_.seeds.size(); ++seed_index) {
-    const InfectionSeedEvent& seed = config_.seeds[seed_index];
+  for (const InfectionSeedEvent& seed : config_.seeds) {
     // Standardized comparison: skip whitespace/case if needed,
     // though currently matching exact string.
     if (seed.date_time == current_datetime) {
@@ -494,7 +493,7 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
       if (applied_seeds_.count(seed_key) > 0) {
         continue;
       }
-      std::vector<PersonId> infected = applySeed(seed, seed_index);
+      std::vector<PersonId> infected = applySeed(seed);
       applied_seeds_.insert(seed_key);
       all_infected.insert(all_infected.end(), infected.begin(), infected.end());
 
@@ -505,14 +504,13 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   return all_infected;
 }
 
-std::vector<PersonId> InfectionSeeder::applySeed(const InfectionSeedEvent& seed,
-                                                 size_t seed_index) {
-  // Keyed by position as well as name: seeds sharing a name, as the bulk CSV
-  // groups them, would otherwise make the same draws, so two uniform rates
-  // took the larger rather than their sum, and a later structured seed took
-  // the next-best people of the same ranking.
-  const uint64_t event_base =
-      mix_seed(base_seed_, hash_name(seed.name), seed_index);
+std::vector<PersonId> InfectionSeeder::applySeed(
+    const InfectionSeedEvent& seed) {
+  // Keyed by Seed Identity, which the constructor has made unique: seeds
+  // sharing a name still draw apart, and adding, removing or reordering other
+  // seeds leaves this seed's draws unchanged. Counts are not in the identity,
+  // so raising one keeps the smaller pick.
+  const uint64_t event_base = mix_seed(base_seed_, seedIdentityHash(seed));
   switch (seed.type) {
     case InfectionSeedType::UNIFORM:
       return applyUniformSeed(seed, event_base);

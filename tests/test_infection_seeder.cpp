@@ -1,4 +1,5 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -235,15 +236,15 @@ TEST_CASE(
   const std::vector<PersonId> infected =
       seeder.seedInfections("2024-01-01 08:00", 0.0);
 
-  // Worked out independently of this code: FNV-1a of the seed name and of "U1"
-  // key each household through mix_seed, denser households go first, equal
-  // density falls back to the key, and members fill in person-id order. All
-  // four size-4 households come first, then the first five size-2 households
-  // by key. A comparator that let ties fall where the sort left them, or any
-  // change to the key, moves these.
+  // Worked out independently of this code: the seed's identity hash and FNV-1a
+  // of "U1" key each household through mix_seed, denser households go first,
+  // equal density falls back to the key, and members fill in person-id order.
+  // All four size-4 households come first, then the first five size-2
+  // households by key. A comparator that let ties fall where the sort left
+  // them, or any change to the key, moves these.
   const std::vector<PersonId> expected = {
-      9,  10, 11, 12,  44,  45, 46, 47, 113, 114, 115, 116, 78,
-      79, 80, 81, 120, 121, 94, 95, 86, 87,  23,  24,  105, 106};
+      113, 114, 115, 116, 9,  10, 11, 12, 44, 45, 46, 47, 78,
+      79,  80,  81,  34,  35, 99, 100, 76, 77, 67, 68, 120, 121};
   CHECK(infected == expected);
 }
 
@@ -434,4 +435,55 @@ TEST_CASE("an applied seed stays applied when a seed is inserted ahead of it") {
         std::set<std::string>{seedIdentity(inserted_seed),
                               seedIdentity(applied_seed),
                               seedIdentity(later_seed)});
+}
+
+namespace {
+
+// Seeds a fresh household world on 2024-01-01 and returns who was infected,
+// sorted.
+std::vector<PersonId> infectedOnFirstDate(const InfectionSeedConfig& config) {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  std::vector<PersonId> infected =
+      seeder.seedInfections("2024-01-01 08:00", 0.0);
+  std::sort(infected.begin(), infected.end());
+  return infected;
+}
+
+}  // namespace
+
+TEST_CASE("a seed infects the same people when a seed is inserted ahead of it") {
+  InfectionSeedConfig config = clusteredConfig(3);
+  SUBCASE("uniform") {
+    config.seeds[0].type = InfectionSeedType::UNIFORM;
+    config.seeds[0].uniform_config.cases_per_capita = 0.2;
+  }
+  SUBCASE("exact") { config.seeds[0].type = InfectionSeedType::EXACT; }
+  SUBCASE("clustered") {}
+
+  // Fires on another date, so only the position of the seed under test moves.
+  InfectionSeedEvent inserted_seed = config.seeds[0];
+  inserted_seed.name = "inserted";
+  inserted_seed.date_time = "2024-01-08 08:00";
+  InfectionSeedConfig edited_config = config;
+  edited_config.seeds.insert(edited_config.seeds.begin(), inserted_seed);
+
+  const std::vector<PersonId> infected = infectedOnFirstDate(config);
+  REQUIRE_FALSE(infected.empty());
+  CHECK(infectedOnFirstDate(edited_config) == infected);
+}
+
+TEST_CASE("an exact seed raised from one case to two keeps its first pick") {
+  InfectionSeedConfig one_case_config = clusteredConfig(1);
+  one_case_config.seeds[0].type = InfectionSeedType::EXACT;
+  InfectionSeedConfig two_case_config = clusteredConfig(2);
+  two_case_config.seeds[0].type = InfectionSeedType::EXACT;
+
+  const std::vector<PersonId> one_case = infectedOnFirstDate(one_case_config);
+  const std::vector<PersonId> two_cases = infectedOnFirstDate(two_case_config);
+  REQUIRE(one_case.size() == 1);
+  REQUIRE(two_cases.size() == 2);
+  CHECK(std::find(two_cases.begin(), two_cases.end(), one_case[0]) !=
+        two_cases.end());
 }
