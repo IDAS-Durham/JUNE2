@@ -555,15 +555,7 @@ int main(int argc, char* argv[]) {
         Simulator simulator(world, config, nullptr, infection_seeds_file,
                             output_path);
 
-        if (!restart_from.empty()) {
-          // Resume: state (incl. applied_seeds_) comes from the checkpoint.
-          // Do NOT re-apply the start-of-sim seeds.
-          simulator.restoreFromCheckpoint(restart_from);
-        } else {
-          // Apply configured infection seeds
-          std::string start_dt = config.simulation.start_date + " 00:00";
-          simulator.applyInfectionSeeds(start_dt);
-        }
+        if (!restart_from.empty()) simulator.restoreFromCheckpoint(restart_from);
 
         // Start CPU profiling
 #ifdef USE_GPERFTOOLS
