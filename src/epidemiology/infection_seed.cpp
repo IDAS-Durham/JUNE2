@@ -465,17 +465,15 @@ void InfectionSeeder::resolveConfig(const WorldState& world) {
 }
 
 std::vector<PersonId> InfectionSeeder::seedInfections(
-    const std::string& current_datetime, double simulation_time) {
+    const SeedWindow& window, double simulation_time) {
   current_simulation_time_ = simulation_time;
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
 
   for (const InfectionSeedEvent& seed : config_.seeds) {
-    // Standardized comparison: skip whitespace/case if needed,
-    // though currently matching exact string.
-    if (seed.date_time == current_datetime) {
-      // Keyed by Seed Identity, not position: a repeat call at the same
-      // datetime does not re-fire, and a config edit that shifts a seed's
+    if (window.contains(seed.date_minutes)) {
+      // Keyed by Seed Identity, not position: a repeat call with the same
+      // window does not re-fire, and a config edit that shifts a seed's
       // index leaves a restored applied set pointing at the same seed.
       const std::string seed_key = SeedIdentity::of(seed).key();
       if (applied_seeds_.count(seed_key) > 0) {

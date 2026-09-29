@@ -8,10 +8,17 @@
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
 #include "epidemiology/seeding/seed_identity.h"
+#include "utils/time_utils.h"
 
 using namespace june;
 
 namespace {
+
+// The window of the slot starting at `date_time`, as the run's first slot.
+SeedWindow windowEndingAt(const std::string& date_time) {
+  const long long minutes = parseDateTimeMinutes(date_time);
+  return {minutes - 1, minutes};
+}
 
 // Writes YAML to a throwaway file and loads it, so the tests exercise the
 // loader's real public entry point rather than a parsing helper.
@@ -195,7 +202,7 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections("2020-02-01 08:00", 0.0);
+  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 }
@@ -218,7 +225,7 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections("2020-02-01 08:00", 0.0);
+  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 
@@ -345,7 +352,7 @@ TEST_CASE("bulk CSV seeds each criteria set its own count") {
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections("1348-06-02 08:00", 0.0);
+  auto infected = seeder.seedInfections(windowEndingAt("1348-06-02 08:00"), 0.0);
 
   REQUIRE(infected.size() == 14);
   int children = 0;

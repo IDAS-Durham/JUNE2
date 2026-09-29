@@ -56,8 +56,8 @@ class Simulator {
   // Run the full simulation
   void run();
 
-  // Apply configured infection seeds at a specific time
-  void applyInfectionSeeds(const std::string& current_datetime);
+  // Apply the infection seeds whose Seed Dates fall in `window`
+  void applyInfectionSeeds(const SeedWindow& window);
 
   // Get event logger for external access
   EventLogger* getEventLogger() { return &event_logger_; }

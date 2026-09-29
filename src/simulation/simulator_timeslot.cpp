@@ -297,9 +297,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
       static_cast<float>(delta_hours / 24.0),
       static_cast<float>(current_simulation_time_));
 
-  // Step 0: Apply infection seeds for this time
-  std::string current_dt = formatDate(current_date_) + " " + slot.start;
-  applyInfectionSeeds(current_dt);
+  // Step 0: Apply the infection seeds dated since the previous slot start
+  applyInfectionSeeds(seedWindowForSlot(config_.schedule,
+                                        config_.simulation.start_date,
+                                        current_day_num_, time_slot_index));
 
   // Step 1: Assign people to activities using pre-computed schedules
   // Update current time for policy checks

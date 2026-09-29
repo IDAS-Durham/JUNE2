@@ -16,6 +16,12 @@ using namespace june;
 
 namespace {
 
+// The window of the slot starting at `date_time`, as the run's first slot.
+SeedWindow windowEndingAt(const std::string& date_time) {
+  const long long minutes = parseDateTimeMinutes(date_time);
+  return {minutes - 1, minutes};
+}
+
 // A one-stage disease, enough for the seeder to construct an Infection.
 Disease makeDisease() {
   TransmissionParams transmission;
@@ -183,7 +189,7 @@ std::string seededStartSymptom(WorldState& world, const Disease& disease,
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
   seeder.resolveConfig(world);
   const std::vector<PersonId> infected =
-      seeder.seedInfections("2024-01-01 08:00", 0.0);
+      seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
   REQUIRE(infected.size() == 1);
   const Person& person = world.people[world.person_index.at(infected[0])];
   return disease.getSymptomName(
@@ -235,7 +241,7 @@ TEST_CASE(
   InfectionSeeder seeder(world, &disease, clusteredConfig(26), nullptr, 12345);
 
   const std::vector<PersonId> infected =
-      seeder.seedInfections("2024-01-01 08:00", 0.0);
+      seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
 
   // Worked out independently of this code: the seed's identity hash and FNV-1a
   // of "U1" key each household through mix_seed, denser households go first,
@@ -256,7 +262,7 @@ TEST_CASE(
   EventLogger logger;
   InfectionSeeder seeder(world, &disease, clusteredConfig(1), &logger, 12345);
 
-  seeder.seedInfections("2024-01-01 08:00", 0.0);
+  seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
 
   const std::vector<InfectionEvent>& infections = logger.getInfectionEvents();
   REQUIRE(infections.size() == 1);
@@ -293,7 +299,7 @@ TEST_CASE("a declared seed logs its declared ids, 255 for any fact left out") {
   auto loggedInfection = [&](const InfectionSeedConfig& config) {
     InfectionSeeder seeder(world, &disease, config, &logger, 12345);
     seeder.resolveConfig(world);
-    seeder.seedInfections("2024-01-01 08:00", 0.0);
+    seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
     REQUIRE(logger.getInfectionEvents().size() == 1);
     return logger.getInfectionEvents()[0];
   };
@@ -324,7 +330,7 @@ TEST_CASE(
   InfectionSeeder seeder(world, &disease, config, &logger, 12345);
   seeder.resolveConfig(world);
   const std::vector<PersonId> infected =
-      seeder.seedInfections("2024-01-01 08:00", 0.0);
+      seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
 
   REQUIRE(infected.size() == 1);
   const Person& person = world.people[world.person_index.at(infected[0])];
@@ -345,7 +351,7 @@ TEST_CASE("seeds differing only in declared context each fire") {
 
   InfectionSeeder seeder(world, &disease, config, &logger, 12345);
   seeder.resolveConfig(world);
-  seeder.seedInfections("2024-01-01 08:00", 0.0);
+  seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
 
   const std::vector<InfectionEvent>& infections = logger.getInfectionEvents();
   REQUIRE(infections.size() == 2);
@@ -362,8 +368,8 @@ TEST_CASE("seeds sharing a name each fire on their own date") {
 
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
 
-  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
-  CHECK(seeder.seedInfections("2024-01-08 08:00", 7.0).size() == 1);
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() == 1);
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-08 08:00"), 7.0).size() == 1);
 }
 
 TEST_CASE("seeds sharing a name and date but not a type each fire") {
@@ -375,7 +381,7 @@ TEST_CASE("seeds sharing a name and date but not a type each fire") {
 
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
   const std::vector<PersonId> infected =
-      seeder.seedInfections("2024-01-01 08:00", 0.0);
+      seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
 
   REQUIRE(infected.size() == 2);
   CHECK(infected[0] != infected[1]);
@@ -447,13 +453,30 @@ TEST_CASE("date-time minutes count across day and year boundaries") {
         180);
 }
 
+TEST_CASE("a slot start fires seeds dated after the previous start, up to it") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[0].date_time = "2024-01-01 08:00";  // previous start: earlier
+  config.seeds[1].date_time = "2024-01-01 10:30";  // inside the slot
+  config.seeds[2].date_time = "2024-01-01 12:00";  // this start
+
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+  const SeedWindow slot_at_noon{parseDateTimeMinutes("2024-01-01 08:00"),
+                                parseDateTimeMinutes("2024-01-01 12:00")};
+
+  CHECK(seeder.seedInfections(slot_at_noon, 0.0).size() == 2);
+}
+
 TEST_CASE("a seed fires once when its datetime is seeded twice") {
   WorldState world = makeHouseholdWorld();
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, clusteredConfig(1), nullptr, 12345);
 
-  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 1);
-  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).empty());
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() == 1);
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).empty());
 }
 
 TEST_CASE("an applied seed stays applied when a seed is inserted ahead of it") {
@@ -474,7 +497,7 @@ TEST_CASE("an applied seed stays applied when a seed is inserted ahead of it") {
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
   seeder.setAppliedSeeds({SeedIdentity::of(applied_seed).key()});
 
-  CHECK(seeder.seedInfections("2024-01-01 08:00", 0.0).size() == 2);
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() == 2);
   CHECK(seeder.getAppliedSeeds() ==
         std::set<std::string>{SeedIdentity::of(inserted_seed).key(),
                               SeedIdentity::of(applied_seed).key(),
@@ -490,7 +513,7 @@ std::vector<PersonId> infectedOnFirstDate(const InfectionSeedConfig& config) {
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
   std::vector<PersonId> infected =
-      seeder.seedInfections("2024-01-01 08:00", 0.0);
+      seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0);
   std::sort(infected.begin(), infected.end());
   return infected;
 }

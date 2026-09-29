@@ -14,6 +14,7 @@
 #include "core/types.h"
 #include "core/world_state.h"
 #include "epidemiology/seeding/seed_shortfall.h"
+#include "epidemiology/seeding/seed_window.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/filtering.h"
 
@@ -178,9 +179,9 @@ class InfectionSeeder {
                   const InfectionSeedConfig& config,
                   EventLogger* event_logger = nullptr, uint64_t base_seed = 0);
 
-  // Seed infections for a given simulation time
-  // Returns IDs of people infected
-  std::vector<PersonId> seedInfections(const std::string& current_datetime,
+  // Apply every seed whose Seed Date falls in `window`; returns the people
+  // infected.
+  std::vector<PersonId> seedInfections(const SeedWindow& window,
                                        double simulation_time);
 
   // Structured seeds are counted globally: the seeder offers its local
