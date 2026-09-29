@@ -166,6 +166,7 @@ set(JUNE_CORE_SOURCES
     src/epidemiology/seeding/seed_selector.cpp
     src/epidemiology/seeding/seed_shortfall.cpp
     src/epidemiology/seeding/seed_cluster_planner.cpp
+    src/epidemiology/seeding/seed_identity.cpp
     src/epidemiology/fomite/fomite_sub_bins.cpp
     src/epidemiology/emission/emission.cpp
     src/epidemiology/transmission/infection_context.cpp

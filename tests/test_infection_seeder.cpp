@@ -378,27 +378,27 @@ TEST_CASE("seeds sharing a name and date but not a type each fire") {
   CHECK(infected[0] != infected[1]);
 }
 
-TEST_CASE("uniform seeds sharing a name and date add their rates") {
-  // Shared draws let the second seed hit only people the first already had.
+TEST_CASE("seeds with equal identity are refused") {
+  // Nothing but position would tell them apart.
   WorldState world = makeHouseholdWorld();
   Disease disease = makeDisease();
   InfectionSeedConfig config = clusteredConfig(1);
-  config.seeds[0].type = InfectionSeedType::UNIFORM;
-  config.seeds[0].uniform_config.cases_per_capita = 0.2;
   config.seeds.push_back(config.seeds[0]);
+  config.seeds[1].structured_config.unit_cases[0].budgets[0].cases = 3;
 
-  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
-  const std::vector<PersonId> infected =
-      seeder.seedInfections("2024-01-01 08:00", 0.0);
+  CHECK_THROWS_WITH(
+      InfectionSeeder(world, &disease, config, nullptr, 12345),
+      doctest::Contains("share name 'ties'"));
+}
 
-  WorldState single_world = makeHouseholdWorld();
-  config.seeds.pop_back();
-  InfectionSeeder single_seeder(single_world, &disease, config, nullptr, 12345);
-  const std::vector<PersonId> single_infected =
-      single_seeder.seedInfections("2024-01-01 08:00", 0.0);
+TEST_CASE("seeds differing only in an optional identity field are allowed") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[1].trajectory_key = "general";
 
-  REQUIRE_FALSE(single_infected.empty());
-  CHECK(infected.size() > single_infected.size());
+  CHECK_NOTHROW(InfectionSeeder(world, &disease, config, nullptr, 12345));
 }
 
 TEST_CASE("a seed fires once when its datetime is seeded twice") {

@@ -11,6 +11,7 @@
 
 #include "epidemiology/disease.h"
 #include "epidemiology/seeding/seed_cluster_planner.h"
+#include "epidemiology/seeding/seed_identity.h"
 #include "epidemiology/seeding/seed_offer_exchange.h"
 #include "epidemiology/seeding/seed_selector.h"
 #include "utils/deterministic_rng.h"
@@ -445,7 +446,9 @@ InfectionSeeder::InfectionSeeder(WorldState& world, const Disease* disease,
       config_(config),
       event_logger_(event_logger),
       current_simulation_time_(0.0),
-      base_seed_(base_seed) {}
+      base_seed_(base_seed) {
+  requireUniqueSeedIdentities(config_.seeds);
+}
 
 // Index of `name` in `known_names`; throws, naming the seed and value, when
 // the disease has no such name.

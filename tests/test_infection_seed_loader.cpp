@@ -7,6 +7,7 @@
 #include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
+#include "epidemiology/seeding/seed_identity.h"
 
 using namespace june;
 
@@ -493,4 +494,50 @@ infection_seeds:
 )");
   REQUIRE(config.seeds.size() == 1);
   CHECK(config.seeds[0].structured_config.unit_cases[0].budgets[0].cases == 0);
+}
+
+// =============================================================================
+// Seed identity: equal identities across YAML and bulk CSV clash
+// =============================================================================
+
+TEST_CASE("a YAML seed and a bulk CSV seed with equal identity clash") {
+  std::filesystem::path csv_path =
+      std::filesystem::temp_directory_path() / "june_bulk_seed_clash.csv";
+  {
+    std::ofstream out(csv_path);
+    out << "name,date,type,geo_level,geo_unit,cases\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,U1,3\n";
+  }
+  auto config = loadYaml("bulk_csv: \"" + csv_path.string() + R"("
+infection_seeds:
+  - name: "bubonic"
+    type: "exact"
+    date: "1348-06-02 08:00"
+    parameters:
+      units:
+        "U1": 1
+)");
+  std::filesystem::remove(csv_path);
+
+  REQUIRE(config.seeds.size() == 2);
+  CHECK_THROWS_WITH(requireUniqueSeedIdentities(config.seeds),
+                    doctest::Contains("share name 'bubonic'"));
+}
+
+TEST_CASE("bulk CSV rows differing only in a context column are two seeds") {
+  std::filesystem::path csv_path =
+      std::filesystem::temp_directory_path() / "june_bulk_seed_two_modes.csv";
+  {
+    std::ofstream out(csv_path);
+    out << "name,date,type,geo_level,geo_unit,cases,transmission_mode\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,U1,3,rat_flea_bite\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,U1,2,\n";
+  }
+
+  InfectionSeedConfig config;
+  InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
+  std::filesystem::remove(csv_path);
+
+  REQUIRE(config.seeds.size() == 2);
+  CHECK_NOTHROW(requireUniqueSeedIdentities(config.seeds));
 }
