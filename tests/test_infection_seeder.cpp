@@ -10,6 +10,7 @@
 #include "epidemiology/infectiousness_curves.h"
 #include "epidemiology/seeding/seed_identity.h"
 #include "utils/event_logging/event_logger.h"
+#include "utils/time_utils.h"
 
 using namespace june;
 
@@ -401,6 +402,49 @@ TEST_CASE("seeds differing only in an optional identity field are allowed") {
   config.seeds[1].trajectory_key = "general";
 
   CHECK_NOTHROW(InfectionSeeder(world, &disease, config, nullptr, 12345));
+}
+
+TEST_CASE("a seed with a malformed date is refused, naming seed and date") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds[0].date_time = "2024-01-01 8am";
+
+  CHECK_THROWS_WITH(
+      InfectionSeeder(world, &disease, config, nullptr, 12345),
+      doctest::Contains("seed 'ties': invalid date '2024-01-01 8am'"));
+}
+
+TEST_CASE("a seed dated before 1970 is accepted") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds[0].date_time = "1665-06-01 08:00";
+
+  CHECK_NOTHROW(InfectionSeeder(world, &disease, config, nullptr, 12345));
+}
+
+TEST_CASE("a seed on a day its month lacks is refused") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds[0].date_time = "2023-02-29 08:00";
+
+  CHECK_THROWS_WITH(
+      InfectionSeeder(world, &disease, config, nullptr, 12345),
+      doctest::Contains("invalid date '2023-02-29 08:00'"));
+}
+
+TEST_CASE("date-time minutes count across day and year boundaries") {
+  CHECK(parseDateTimeMinutes("2024-01-01 00:00") -
+            parseDateTimeMinutes("2023-12-31 23:59") ==
+        1);
+  CHECK(parseDateTimeMinutes("2024-03-01 08:00") -
+            parseDateTimeMinutes("2024-02-28 08:00") ==
+        2 * 1440);
+  CHECK(parseDateTimeMinutes("1970-01-01 00:00") -
+            parseDateTimeMinutes("1969-12-31 21:00") ==
+        180);
 }
 
 TEST_CASE("a seed fires once when its datetime is seeded twice") {

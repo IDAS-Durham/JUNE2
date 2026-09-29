@@ -91,6 +91,33 @@ inline std::tm julianDayToTm(long long jd) {
   return result;
 }
 
+// Parse "YYYY-MM-DD HH:MM" to minutes since the Julian Day epoch, so any two
+// such moments compare and subtract directly, pre-1970 included. Throws on
+// any other format or on an impossible date or time.
+inline long long parseDateTimeMinutes(const std::string& date_time) {
+  const auto refuse = [&]() {
+    throw std::invalid_argument("invalid date '" + date_time +
+                                "' (expected YYYY-MM-DD HH:MM)");
+  };
+  const std::string pattern = "dddd-dd-dd dd:dd";
+  if (date_time.size() != pattern.size()) refuse();
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    const bool is_digit = date_time[i] >= '0' && date_time[i] <= '9';
+    if (pattern[i] == 'd' ? !is_digit : date_time[i] != pattern[i]) refuse();
+  }
+  const int year = std::stoi(date_time.substr(0, 4));
+  const int month = std::stoi(date_time.substr(5, 2));
+  const int day = std::stoi(date_time.substr(8, 2));
+  const int hours = std::stoi(date_time.substr(11, 2));
+  const int minutes = std::stoi(date_time.substr(14, 2));
+  if (month < 1 || month > 12 || day < 1 || hours > 23 || minutes > 59)
+    refuse();
+  const long long julian_day = toJulianDay(year, month, day);
+  // A day past the month's end rolls into the next month; refuse it.
+  if (julianDayToTm(julian_day).tm_mday != day) refuse();
+  return julian_day * 1440 + hours * 60 + minutes;
+}
+
 inline bool isPreEpoch(const std::tm& date) {
   return date.tm_year + 1900 < 1970;
 }

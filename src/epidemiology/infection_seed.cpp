@@ -17,6 +17,7 @@
 #include "utils/deterministic_rng.h"
 #include "utils/filtered_csv.h"
 #include "utils/random.h"
+#include "utils/time_utils.h"
 
 namespace june {
 
@@ -427,6 +428,14 @@ InfectionSeeder::InfectionSeeder(WorldState& world, const Disease* disease,
       current_simulation_time_(0.0),
       base_seed_(base_seed) {
   requireUniqueSeedIdentities(config_.seeds);
+  for (auto& seed : config_.seeds) {
+    try {
+      seed.date_minutes = parseDateTimeMinutes(seed.date_time);
+    } catch (const std::invalid_argument& error) {
+      throw std::runtime_error("Infection seed '" + seed.name +
+                               "': " + error.what());
+    }
+  }
 }
 
 // Index of `name` in `known_names`; throws, naming the seed and value, when

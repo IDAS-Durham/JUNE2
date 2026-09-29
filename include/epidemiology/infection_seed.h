@@ -113,6 +113,8 @@ struct InfectionSeedEvent {
   std::string name;
   InfectionSeedType type;
   std::string date_time;  // ISO format: "2025-08-28 09:00"
+  // date_time as minutes since the Julian Day epoch; set by InfectionSeeder.
+  long long date_minutes = 0;
 
   // Type-specific configuration
   StructuredSeedConfig structured_config;  // For EXACT/CLUSTERED
