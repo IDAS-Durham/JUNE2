@@ -613,6 +613,7 @@ void Simulator::run() {
 
   writeFinalEventsAndLookups(rank);
   warnInfectorLookupGaps(rank);
+  warnUnmatchedTrajectorySelections(rank);
 
   if (rank == 0) printRunSummary();
 }
@@ -628,6 +629,22 @@ void Simulator::warnInfectorLookupGaps(int rank) {
   }
 #endif
   if (rank == 0) std::cerr << formatInfectorLookupGapWarning(global_gaps);
+}
+
+void Simulator::warnUnmatchedTrajectorySelections(int rank) {
+  uint64_t local_unmatched =
+      disease_ ? disease_->unmatchedTrajectorySelectionCount() : 0;
+  uint64_t global_unmatched = local_unmatched;
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    MPI_Allreduce(&local_unmatched, &global_unmatched, 1, MPI_UINT64_T,
+                  MPI_SUM, MPI_COMM_WORLD);
+  }
+#endif
+  if (rank == 0 && disease_) {
+    std::cerr << formatUnmatchedTrajectoryWarning(disease_->getName(),
+                                                  global_unmatched);
+  }
 }
 
 void Simulator::runOneDay(int day, int rank) {
