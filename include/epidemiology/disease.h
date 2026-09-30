@@ -294,6 +294,17 @@ class Disease {
   double evaluateStageDrivenInfectiousness(int mode_index, uint16_t symptom_id,
                                            float time_in_stage) const;
 
+  // Infections on this rank whose rate-based trajectory selection had a zero
+  // total rate (no outcome row matched, or every rate was 0), so they fell
+  // back to trajectories[0]. Counted here, the one per-rank object every
+  // Infection sees; a run statistic, not model state.
+  void countUnmatchedTrajectorySelection() const {
+    ++unmatched_trajectory_selection_count_;
+  }
+  uint64_t unmatchedTrajectorySelectionCount() const {
+    return unmatched_trajectory_selection_count_;
+  }
+
  private:
   std::string name_;
   std::vector<SymptomTag> symptom_tags_;
@@ -304,7 +315,13 @@ class Disease {
   OutcomeRates outcome_rates_;
 
   std::vector<std::string> id_to_name_;  // Maps runtime ID to symptom name
+  mutable uint64_t unmatched_trajectory_selection_count_ = 0;
 };
+
+// One end-of-run warning for the rank-summed unmatched-selection count, empty
+// when there were none. Pure, so rank 0 can emit it after the sum.
+std::string formatUnmatchedTrajectoryWarning(const std::string& disease_name,
+                                             uint64_t unmatched_count);
 
 // =============================================================================
 // Infection Trajectory

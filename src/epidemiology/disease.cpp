@@ -34,6 +34,16 @@ double OutcomeRates::getRate(const Person& person, const WorldState* world,
   return 0.0;
 }
 
+std::string formatUnmatchedTrajectoryWarning(const std::string& disease_name,
+                                             uint64_t unmatched_count) {
+  if (unmatched_count == 0) return "";
+  return "[WARNING] trajectory selection (" + disease_name +
+         "): " + std::to_string(unmatched_count) +
+         " infection(s) matched no outcome row with a non-zero rate; they "
+         "took the first trajectory. Add a default row (blank filters) to the "
+         "outcome table.\n";
+}
+
 size_t requireKnownName(const std::string& name,
                         const std::vector<std::string>& known_names,
                         const std::string& message_prefix) {
@@ -545,6 +555,7 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
       gatherTrajectoryRates(*person, world, infection_ctx);
   applyVaccineEfficacyShift(trajectory_rates, *person, traj.infection_time,
                             total_rate);
+  if (total_rate <= 0.0) disease_->countUnmatchedTrajectorySelection();
   int selected_idx = sampleTrajectoryIndex(trajectory_rates, total_rate, rng);
 
   const auto& final_def = trajectories[selected_idx];

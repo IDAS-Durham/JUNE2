@@ -260,6 +260,9 @@ class Simulator {
   // Sum the infector-symptom lookup gaps across ranks (collective) and warn
   // once on rank 0 if any.
   void warnInfectorLookupGaps(int rank);
+  // Sum the zero-rate trajectory selections across ranks (collective) and
+  // warn once on rank 0 if any.
+  void warnUnmatchedTrajectorySelections(int rank);
 
   // End-of-day checkpoint trigger. Consults the configured cadence and, if
   // the day fires, announces on rank 0 and writes a checkpoint.
