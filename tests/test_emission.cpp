@@ -171,7 +171,7 @@ TEST_CASE("Symptom id before the first transition is the first stage") {
       makeInfectedPerson(disease, 8.0, {{9.0, kExposed}, {11.0, kMild}});
   const InfectionTrajectory& trajectory = person.infection->getTrajectory();
 
-  // Symptom 0 means recovered (ADR 0005), so it is never the pre-start answer.
+  // Symptom 0 means recovered, so it is never the pre-start answer.
   CHECK(trajectory.getCurrentSymptomId(8.0) == kExposed);
   CHECK(trajectory.getCurrentSymptomId(8.99) == kExposed);
   CHECK(trajectory.getCurrentSymptomId(9.0) == kExposed);  // at a transition

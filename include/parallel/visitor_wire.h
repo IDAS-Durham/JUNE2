@@ -15,7 +15,7 @@
 //   !is_infected   header
 //   is_infected    header + ii + deposits
 //
-// The receiver derives nothing from disease state (ADR 0014).
+// The receiver derives nothing from disease state.
 namespace june::visitor_wire {
 
 // Lengths of a visitor record's two tails. Derived from the Disease and
