@@ -75,3 +75,28 @@ TEST_CASE("a day's first slot takes seeds after the previous day's last start") 
   CHECK(workday.after_minutes == minutesAt("2024-02-01 18:00"));
   CHECK(workday.up_to_minutes == minutesAt("2024-02-02 08:00"));
 }
+
+TEST_CASE("a slot start without a leading zero gives the padded window") {
+  ScheduleConfig schedule = alternatingSchedule();
+  schedule.schedule_types[0].slots_by_day_type["workday"] =
+      slotsStartingAt({"8:00", "12:00", "21:00"});
+  WorldState world;
+  schedule.resolve(world);
+
+  CHECK(seedWindowForSlot(schedule, "2024-01-01", 0, 0).up_to_minutes ==
+        minutesAt("2024-01-01 08:00"));
+}
+
+TEST_CASE("time of day accepts one or two hour digits and nothing else") {
+  CHECK(parseTimeToMinutes("8:00") == 480);
+  CHECK(parseTimeToMinutes("08:00") == 480);
+  CHECK(parseDateTimeMinutes("2024-01-01 8:00") ==
+        parseDateTimeMinutes("2024-01-01 08:00"));
+  for (const std::string bad : {"8:5", "8:00x", "008:00", "8.00", "24:00",
+                                "-1:00", " 8:00", ""}) {
+    CAPTURE(bad);
+    CHECK_THROWS(parseTimeToMinutes(bad));
+  }
+  CHECK_THROWS_WITH(parseDateTimeMinutes("2024-1-01 08:00"),
+                    doctest::Contains("invalid date '2024-1-01 08:00'"));
+}
