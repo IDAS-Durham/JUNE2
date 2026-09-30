@@ -801,9 +801,9 @@ void Simulator::printSimulationState(const std::string& time_slot_name,
   }
 }
 
-void Simulator::applyInfectionSeeds(const std::string& current_datetime) {
-  std::vector<PersonId> newly_infected = infection_seeder_->seedInfections(
-      current_datetime, current_simulation_time_);
+void Simulator::applyInfectionSeeds(const SeedWindow& window) {
+  std::vector<PersonId> newly_infected =
+      infection_seeder_->seedInfections(window, current_simulation_time_);
   int local_count = static_cast<int>(newly_infected.size());
   int global_count = local_count;
 #ifdef USE_MPI

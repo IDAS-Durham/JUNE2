@@ -592,13 +592,6 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
            H5::PredType::NATIVE_UINT32, 0);
   writeVec(f, "/scalars/day_type_counts", day_type_counts_, I32, 0);
 
-  // applied_seeds_ (must not re-fire on resume)
-  std::vector<std::string> seeds;
-  if (infection_seeder_)
-    for (const auto& s : infection_seeder_->getAppliedSeeds())
-      seeds.push_back(s);
-  writeStrs(f, "/infection_seeder/applied_seeds", seeds);
-
   // event-log on-disk durability marker (rank-0 logger record counts)
   std::vector<int64_t> ec = {
       (int64_t)event_logger_.getInfectionCount(),

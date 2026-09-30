@@ -11,11 +11,13 @@
 
 #include "epidemiology/disease.h"
 #include "epidemiology/seeding/seed_cluster_planner.h"
+#include "epidemiology/seeding/seed_identity.h"
 #include "epidemiology/seeding/seed_offer_exchange.h"
 #include "epidemiology/seeding/seed_selector.h"
 #include "utils/deterministic_rng.h"
 #include "utils/filtered_csv.h"
 #include "utils/random.h"
+#include "utils/time_utils.h"
 
 namespace june {
 
@@ -133,22 +135,6 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
     return it == r.values.end() ? "" : it->second;
   };
 
-  struct SeedKey {
-    std::string name;
-    std::string date;
-    InfectionSeedType type;
-    std::string trajectory_key;
-    std::string start_symptom;
-    std::string infector_symptom;
-    std::string transmission_mode;
-    bool operator<(const SeedKey& o) const {
-      return std::tie(name, date, type, trajectory_key, start_symptom,
-                      infector_symptom, transmission_mode) <
-             std::tie(o.name, o.date, o.type, o.trajectory_key, o.start_symptom,
-                      o.infector_symptom, o.transmission_mode);
-    }
-  };
-
   struct SeedDraft {
     InfectionSeedEvent event;
     std::vector<std::pair<std::vector<SelectionCriterion>, size_t>> profiles;
@@ -178,7 +164,8 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
     }
   };
 
-  std::map<SeedKey, SeedDraft> drafts;
+  // Rows sharing a Seed Identity merge into one seed event.
+  std::map<SeedIdentity, SeedDraft> drafts;
 
   int row_num = 0;
   for (const auto& row : table.rows) {
@@ -193,25 +180,19 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
           "', date='" + date_val + "', type='" + type_val + "')");
     }
 
-    SeedKey key = {name_val,
-                   date_val,
-                   parseSeedType(type_val),
-                   get(row, "trajectory_key"),
-                   get(row, "start_symptom"),
-                   get(row, "infector_symptom"),
-                   get(row, "transmission_mode")};
-    auto& draft = drafts[key];
+    const SeedIdentity identity = {name_val,
+                                   date_val,
+                                   parseSeedType(type_val),
+                                   get(row, "trajectory_key"),
+                                   get(row, "start_symptom"),
+                                   get(row, "infector_symptom"),
+                                   get(row, "transmission_mode")};
+    auto& draft = drafts[identity];
     if (draft.event.name.empty()) {
-      draft.event.name = key.name;
-      draft.event.date_time = key.date;
-      draft.event.type = key.type;
-      draft.event.trajectory_key = key.trajectory_key;
-      draft.event.start_symptom = key.start_symptom;
-      draft.event.infector_symptom = key.infector_symptom;
-      draft.event.transmission_mode = key.transmission_mode;
+      identity.writeTo(draft.event);
     }
 
-    if (key.type == InfectionSeedType::UNIFORM) {
+    if (identity.type == InfectionSeedType::UNIFORM) {
       std::string pc = get(row, "cases_per_capita");
       if (!pc.empty()) {
         try {
@@ -445,7 +426,17 @@ InfectionSeeder::InfectionSeeder(WorldState& world, const Disease* disease,
       config_(config),
       event_logger_(event_logger),
       current_simulation_time_(0.0),
-      base_seed_(base_seed) {}
+      base_seed_(base_seed) {
+  requireUniqueSeedIdentities(config_.seeds);
+  for (auto& seed : config_.seeds) {
+    try {
+      seed.date_minutes = parseDateTimeMinutes(seed.date_time);
+    } catch (const std::invalid_argument& error) {
+      throw std::runtime_error("Infection seed '" + seed.name +
+                               "': " + error.what());
+    }
+  }
+}
 
 // Index of `name` in `known_names`; throws, naming the seed and value, when
 // the disease has no such name.
@@ -474,25 +465,14 @@ void InfectionSeeder::resolveConfig(const WorldState& world) {
 }
 
 std::vector<PersonId> InfectionSeeder::seedInfections(
-    const std::string& current_datetime, double simulation_time) {
+    const SeedWindow& window, double simulation_time) {
   current_simulation_time_ = simulation_time;
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
 
-  for (size_t seed_index = 0; seed_index < config_.seeds.size();
-       ++seed_index) {
-    const InfectionSeedEvent& seed = config_.seeds[seed_index];
-    // Standardized comparison: skip whitespace/case if needed,
-    // though currently matching exact string.
-    if (seed.date_time == current_datetime) {
-      // Keyed by position, not content: seeds sharing a name, or identical
-      // ones, each fire once; a repeat call at the same datetime does not.
-      const std::string seed_key = std::to_string(seed_index);
-      if (applied_seeds_.count(seed_key) > 0) {
-        continue;
-      }
-      std::vector<PersonId> infected = applySeed(seed, seed_index);
-      applied_seeds_.insert(seed_key);
+  for (const InfectionSeedEvent& seed : config_.seeds) {
+    if (window.contains(seed.date_minutes)) {
+      std::vector<PersonId> infected = applySeed(seed);
       all_infected.insert(all_infected.end(), infected.begin(), infected.end());
 
       // Per-seed message removed; global count reported by Simulator
@@ -502,14 +482,13 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   return all_infected;
 }
 
-std::vector<PersonId> InfectionSeeder::applySeed(const InfectionSeedEvent& seed,
-                                                 size_t seed_index) {
-  // Keyed by position as well as name: seeds sharing a name, as the bulk CSV
-  // groups them, would otherwise make the same draws, so two uniform rates
-  // took the larger rather than their sum, and a later structured seed took
-  // the next-best people of the same ranking.
-  const uint64_t event_base =
-      mix_seed(base_seed_, hash_name(seed.name), seed_index);
+std::vector<PersonId> InfectionSeeder::applySeed(
+    const InfectionSeedEvent& seed) {
+  // Keyed by Seed Identity, which the constructor has made unique: seeds
+  // sharing a name still draw apart, and adding, removing or reordering other
+  // seeds leaves this seed's draws unchanged. Counts are not in the identity,
+  // so raising one keeps the smaller pick.
+  const uint64_t event_base = mix_seed(base_seed_, SeedIdentity::of(seed).hash());
   switch (seed.type) {
     case InfectionSeedType::UNIFORM:
       return applyUniformSeed(seed, event_base);

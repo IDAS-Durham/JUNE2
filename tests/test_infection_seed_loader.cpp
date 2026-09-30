@@ -7,10 +7,18 @@
 #include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
+#include "epidemiology/seeding/seed_identity.h"
+#include "utils/time_utils.h"
 
 using namespace june;
 
 namespace {
+
+// The window of the slot starting at `date_time`, as the run's first slot.
+SeedWindow windowEndingAt(const std::string& date_time) {
+  const long long minutes = parseDateTimeMinutes(date_time);
+  return {minutes - 1, minutes};
+}
 
 // Writes YAML to a throwaway file and loads it, so the tests exercise the
 // loader's real public entry point rather than a parsing helper.
@@ -194,7 +202,7 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections("2020-02-01 08:00", 0.0);
+  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 }
@@ -217,7 +225,7 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections("2020-02-01 08:00", 0.0);
+  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 
@@ -344,7 +352,7 @@ TEST_CASE("bulk CSV seeds each criteria set its own count") {
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections("1348-06-02 08:00", 0.0);
+  auto infected = seeder.seedInfections(windowEndingAt("1348-06-02 08:00"), 0.0);
 
   REQUIRE(infected.size() == 14);
   int children = 0;
@@ -493,4 +501,50 @@ infection_seeds:
 )");
   REQUIRE(config.seeds.size() == 1);
   CHECK(config.seeds[0].structured_config.unit_cases[0].budgets[0].cases == 0);
+}
+
+// =============================================================================
+// Seed identity: equal identities across YAML and bulk CSV clash
+// =============================================================================
+
+TEST_CASE("a YAML seed and a bulk CSV seed with equal identity clash") {
+  std::filesystem::path csv_path =
+      std::filesystem::temp_directory_path() / "june_bulk_seed_clash.csv";
+  {
+    std::ofstream out(csv_path);
+    out << "name,date,type,geo_level,geo_unit,cases\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,U1,3\n";
+  }
+  auto config = loadYaml("bulk_csv: \"" + csv_path.string() + R"("
+infection_seeds:
+  - name: "bubonic"
+    type: "exact"
+    date: "1348-06-02 08:00"
+    parameters:
+      units:
+        "U1": 1
+)");
+  std::filesystem::remove(csv_path);
+
+  REQUIRE(config.seeds.size() == 2);
+  CHECK_THROWS_WITH(requireUniqueSeedIdentities(config.seeds),
+                    doctest::Contains("share name 'bubonic'"));
+}
+
+TEST_CASE("bulk CSV rows differing only in a context column are two seeds") {
+  std::filesystem::path csv_path =
+      std::filesystem::temp_directory_path() / "june_bulk_seed_two_modes.csv";
+  {
+    std::ofstream out(csv_path);
+    out << "name,date,type,geo_level,geo_unit,cases,transmission_mode\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,U1,3,rat_flea_bite\n"
+           "bubonic,1348-06-02 08:00,exact,MGU,U1,2,\n";
+  }
+
+  InfectionSeedConfig config;
+  InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
+  std::filesystem::remove(csv_path);
+
+  REQUIRE(config.seeds.size() == 2);
+  CHECK_NOTHROW(requireUniqueSeedIdentities(config.seeds));
 }
