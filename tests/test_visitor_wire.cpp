@@ -83,15 +83,17 @@ TEST_CASE("visitor wire: uninfected record sends the header alone") {
         visitor_wire::recordSize(makeVisitor(2, 10), tails));
 }
 
-TEST_CASE("visitor wire: pack throws when a tail's length differs from its "
-          "count") {
+TEST_CASE(
+    "visitor wire: pack throws when a tail's length differs from its "
+    "count") {
   const visitor_wire::TailCounts tails{2, 10};
   std::vector<char> buffer(visitor_wire::recordSize(makeVisitor(2, 10), tails) +
                            64);
 
   SUBCASE("infectiousness_by_mode") {
-    CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), makeVisitor(3, 10), tails),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        visitor_wire::pack(buffer.data(), makeVisitor(3, 10), tails),
+        std::runtime_error);
   }
   SUBCASE("fomite_deposits") {
     CHECK_THROWS_AS(visitor_wire::pack(buffer.data(), makeVisitor(2, 9), tails),
@@ -116,7 +118,8 @@ TEST_CASE("visitor wire: slice of records round-trips in order") {
   const int size = visitor_wire::sliceSize(sent, tails);
   std::vector<char> buffer(size);
   char* ptr = buffer.data();
-  for (const auto& visitor : sent) ptr = visitor_wire::pack(ptr, visitor, tails);
+  for (const auto& visitor : sent)
+    ptr = visitor_wire::pack(ptr, visitor, tails);
   CHECK(ptr - buffer.data() == size);
 
   std::vector<Domain::VisitorData> received;
@@ -131,29 +134,31 @@ TEST_CASE("visitor wire: slice of records round-trips in order") {
   }
 }
 
-TEST_CASE("visitor wire: unpacking a slice throws unless records end exactly "
-          "at its end") {
+TEST_CASE(
+    "visitor wire: unpacking a slice throws unless records end exactly "
+    "at its end") {
   const visitor_wire::TailCounts tails{2, 10};
   const std::vector<Domain::VisitorData> sent{makeVisitor(2, 10),
                                               makeVisitor(2, 10)};
   std::vector<char> buffer(visitor_wire::sliceSize(sent, tails));
   char* ptr = buffer.data();
-  for (const auto& visitor : sent) ptr = visitor_wire::pack(ptr, visitor, tails);
+  for (const auto& visitor : sent)
+    ptr = visitor_wire::pack(ptr, visitor, tails);
   auto ignore = [](Domain::VisitorData&&) {};
 
   SUBCASE("truncated: last record's tail cut short") {
     buffer.pop_back();
-    CHECK_THROWS_AS(visitor_wire::unpackSlice(buffer.data(),
-                                              buffer.data() + buffer.size(),
-                                              tails, ignore),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        visitor_wire::unpackSlice(buffer.data(), buffer.data() + buffer.size(),
+                                  tails, ignore),
+        std::runtime_error);
   }
   SUBCASE("leftover: bytes after the last record") {
     buffer.insert(buffer.end(), 3, '\0');
-    CHECK_THROWS_AS(visitor_wire::unpackSlice(buffer.data(),
-                                              buffer.data() + buffer.size(),
-                                              tails, ignore),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        visitor_wire::unpackSlice(buffer.data(), buffer.data() + buffer.size(),
+                                  tails, ignore),
+        std::runtime_error);
   }
 }
 

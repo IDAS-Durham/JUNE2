@@ -40,10 +40,14 @@ using SubsetIndex = int32_t;
 // Sentinel constants shared across core types and event logging.
 constexpr PersonId kInvalidPersonId = -1;
 constexpr VenueId kInvalidVenueId = -1;
-constexpr uint8_t kDefaultEncounterTypeId = 255;  // default (non-coordinated) encounter, not an error
-constexpr uint8_t kUnknownVenueTypeId = 255;  // venue type unresolvable (e.g. cross-rank lookup miss)
-constexpr uint8_t kNoSymptomId = 255;  // absent infector symptom — registries stay well under 255 entries
-constexpr uint8_t kNoModeIndex = 255;  // absent Transmission Mode — the disease loader caps modes below 255
+constexpr uint8_t kDefaultEncounterTypeId =
+    255;  // default (non-coordinated) encounter, not an error
+constexpr uint8_t kUnknownVenueTypeId =
+    255;  // venue type unresolvable (e.g. cross-rank lookup miss)
+constexpr uint8_t kNoSymptomId =
+    255;  // absent infector symptom — registries stay well under 255 entries
+constexpr uint8_t kNoModeIndex =
+    255;  // absent Transmission Mode — the disease loader caps modes below 255
 
 // =============================================================================
 // PendingInfection - Tracks infections that should be created later
@@ -183,10 +187,14 @@ struct ScheduleEntry {
 // Schedule Hop - Temporary or permanent departure from a Person's schedule
 // =============================================================================
 struct ScheduleHop {
-  int16_t hopped_schedule_id = -1;  // index into ScheduleConfig::schedule_types; -1 = no hop
-  int16_t return_schedule_id = -1;  // schedule to restore; -1 = person's original
-  int16_t temp_slot_progress = 0;   // monotonic absolute flat_slots index (not reset on day wrap)
-  int16_t repeats_remaining = 0;    // full-cycle repeats left (0 = final/only repeat)
+  int16_t hopped_schedule_id =
+      -1;  // index into ScheduleConfig::schedule_types; -1 = no hop
+  int16_t return_schedule_id =
+      -1;  // schedule to restore; -1 = person's original
+  int16_t temp_slot_progress =
+      0;  // monotonic absolute flat_slots index (not reset on day wrap)
+  int16_t repeats_remaining =
+      0;  // full-cycle repeats left (0 = final/only repeat)
 
   bool isActive() const { return hopped_schedule_id != -1; }
   // NB: no isTemporary() — temporariness is a ScheduleType property
@@ -208,7 +216,8 @@ struct ScheduleHop {
   // Effective return schedule: explicit return_schedule_id, else the person's
   // permanent schedule.
   int16_t effectiveReturnSchedule(int16_t permanent_schedule_id) const {
-    return (return_schedule_id != -1) ? return_schedule_id : permanent_schedule_id;
+    return (return_schedule_id != -1) ? return_schedule_id
+                                      : permanent_schedule_id;
   }
 
   // Advance by one slot. Returns true when the hop cycle completes (caller
@@ -228,7 +237,8 @@ struct ScheduleHop {
   void consumeSlot0() { ++temp_slot_progress; }
 
   // Begin a PERMANENT (non-auto-returning) hop: sets target, return = original.
-  // Leaves progress/repeats untouched (caller sets Person::cached_schedule_type_).
+  // Leaves progress/repeats untouched (caller sets
+  // Person::cached_schedule_type_).
   void setPermanent(int16_t hop_idx) {
     hopped_schedule_id = hop_idx;
     return_schedule_id = -1;
@@ -423,8 +433,9 @@ struct PersonLocation {
   PersonId person_id = kInvalidPersonId;
   VenueId venue_id = kInvalidVenueId;
   SubsetIndex subset_index = -1;
-  int16_t activity_index = -1;      // activity_names index
-  uint8_t encounter_type_id = kDefaultEncounterTypeId;  // encounter_type_names index
+  int16_t activity_index = -1;  // activity_names index
+  uint8_t encounter_type_id =
+      kDefaultEncounterTypeId;  // encounter_type_names index
   size_t person_array_index =
       static_cast<size_t>(-1);  // Direct access to world.people[idx]
 };

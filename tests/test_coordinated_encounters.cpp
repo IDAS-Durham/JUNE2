@@ -3136,7 +3136,8 @@ static void installFrequencyGroup(EncounterTestWorld& tw,
   tw.config.coordinated_encounters.frequency_groups[group_name] = fg;
 }
 
-TEST_CASE("freq_group — a row filter the world cannot answer is a config error") {
+TEST_CASE(
+    "freq_group — a row filter the world cannot answer is a config error") {
   auto tw = buildEncounterWorld(
       2, 0, "pub", "friendships", "romantic_encounters", true,
       "romantic_encounter", {"leisure"},

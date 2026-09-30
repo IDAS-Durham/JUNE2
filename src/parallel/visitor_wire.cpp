@@ -23,8 +23,7 @@ using june::domain_comm_detail::makeWireRecord;
 constexpr auto kVisitorWire = makeWireRecord(
     &Domain::VisitorData::person_id, &Domain::VisitorData::home_rank,
     &Domain::VisitorData::venue_id, &Domain::VisitorData::subset_idx,
-    &Domain::VisitorData::is_infected,
-    &Domain::VisitorData::immunity_level,
+    &Domain::VisitorData::is_infected, &Domain::VisitorData::immunity_level,
     &Domain::VisitorData::encounter_type_id, &Domain::VisitorData::symptom_id);
 constexpr int VISITOR_WIRE_HEADER = kVisitorWire.size();
 // Tripwire: VisitorData's trailing emission holds two std::vector<double>s,
@@ -51,9 +50,9 @@ static_assert(offsetof(Domain::VisitorData, emission) == 32,
 char* packTail(char* ptr, const std::vector<double>& tail, int count,
                const char* name) {
   if (static_cast<int>(tail.size()) != count) {
-    throw std::runtime_error(std::string("visitor_wire::pack: ") + name + " size " +
-                             std::to_string(tail.size()) + " != " +
-                             std::to_string(count));
+    throw std::runtime_error(std::string("visitor_wire::pack: ") + name +
+                             " size " + std::to_string(tail.size()) +
+                             " != " + std::to_string(count));
   }
   if (count > 0) {
     std::memcpy(ptr, tail.data(), count * sizeof(double));
@@ -84,8 +83,7 @@ char* packGatedTail(char* ptr, const std::vector<double>& tail, bool sent,
   return packTail(ptr, tail, count, name);
 }
 
-const char* unpackTail(const char* ptr, std::vector<double>& tail,
-                       int count) {
+const char* unpackTail(const char* ptr, std::vector<double>& tail, int count) {
   tail.assign(count, 0.0);
   if (count > 0) {
     std::memcpy(tail.data(), ptr, count * sizeof(double));
@@ -125,8 +123,8 @@ const char* unpack(const char* ptr, Domain::VisitorData& visitor,
                    const TailCounts& tails) {
   ptr = kVisitorWire.unpack(ptr, visitor);
   const TailCounts sent = sentTailCounts(visitor, tails);
-  ptr = unpackTail(ptr, visitor.emission.infectiousness_by_mode,
-                   sent.num_modes);
+  ptr =
+      unpackTail(ptr, visitor.emission.infectiousness_by_mode, sent.num_modes);
   return unpackTail(ptr, visitor.emission.fomite_deposits,
                     sent.fomite_sub_bins);
 }
@@ -146,8 +144,10 @@ const char* unpackWithin(const char* ptr, const char* end,
   const int size = recordSize(visitor, tails);
   if (end - ptr < size) {
     throw std::runtime_error("visitor_wire::unpackSlice: record of " +
-                             std::to_string(size) + " bytes runs past slice "
-                             "end (" + std::to_string(end - ptr) + " left)");
+                             std::to_string(size) +
+                             " bytes runs past slice "
+                             "end (" +
+                             std::to_string(end - ptr) + " left)");
   }
   const TailCounts sent = sentTailCounts(visitor, tails);
   const char* next = unpackTail(

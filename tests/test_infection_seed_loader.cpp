@@ -24,9 +24,9 @@ SeedWindow windowEndingAt(const std::string& date_time) {
 // loader's real public entry point rather than a parsing helper.
 InfectionSeedConfig loadYaml(const std::string& yaml) {
   static int counter = 0;
-  std::filesystem::path path = std::filesystem::temp_directory_path() /
-                               ("june_seed_test_" + std::to_string(counter++) +
-                                ".yaml");
+  std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("june_seed_test_" + std::to_string(counter++) + ".yaml");
   {
     std::ofstream out(path);
     out << yaml;
@@ -202,7 +202,8 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
+  auto infected =
+      seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 }
@@ -225,7 +226,8 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
+  auto infected =
+      seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 
@@ -352,7 +354,8 @@ TEST_CASE("bulk CSV seeds each criteria set its own count") {
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections(windowEndingAt("1348-06-02 08:00"), 0.0);
+  auto infected =
+      seeder.seedInfections(windowEndingAt("1348-06-02 08:00"), 0.0);
 
   REQUIRE(infected.size() == 14);
   int children = 0;

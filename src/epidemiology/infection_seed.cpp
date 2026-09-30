@@ -464,8 +464,8 @@ void InfectionSeeder::resolveConfig(const WorldState& world) {
   }
 }
 
-std::vector<PersonId> InfectionSeeder::seedInfections(
-    const SeedWindow& window, double simulation_time) {
+std::vector<PersonId> InfectionSeeder::seedInfections(const SeedWindow& window,
+                                                      double simulation_time) {
   current_simulation_time_ = simulation_time;
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
@@ -488,7 +488,8 @@ std::vector<PersonId> InfectionSeeder::applySeed(
   // sharing a name still draw apart, and adding, removing or reordering other
   // seeds leaves this seed's draws unchanged. Counts are not in the identity,
   // so raising one keeps the smaller pick.
-  const uint64_t event_base = mix_seed(base_seed_, SeedIdentity::of(seed).hash());
+  const uint64_t event_base =
+      mix_seed(base_seed_, SeedIdentity::of(seed).hash());
   switch (seed.type) {
     case InfectionSeedType::UNIFORM:
       return applyUniformSeed(seed, event_base);

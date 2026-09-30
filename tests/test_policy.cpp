@@ -47,8 +47,8 @@ WorldState buildVenueGateWorld(int num_people = 1) {
   WorldState world =
       TestWorldFactory::createMinimalWorld(num_people, kVenueTypeCount);
   world.activity_names = {"residence", "leisure", "primary_activity"};
-  world.venue_type_names = {"household",  "pub",       "grocery",
-                            "care_home",  "classroom", "office"};
+  world.venue_type_names = {"household", "pub",       "grocery",
+                            "care_home", "classroom", "office"};
   for (int i = 0; i < kVenueTypeCount; ++i) {
     world.venues[i].type_id = static_cast<uint8_t>(i);
   }
@@ -127,14 +127,13 @@ TEST_CASE("Venue gate - restrict-to fires only at listed venue types") {
   }
 
   SUBCASE("does not fire at an unlisted venue type, same activity") {
-    CHECK_FALSE(
-        runOverride(policy_manager, person, kLeisure, kGroceryVenue).has_value());
+    CHECK_FALSE(runOverride(policy_manager, person, kLeisure, kGroceryVenue)
+                    .has_value());
   }
 
   SUBCASE("absent venue (venue_id < 0) does not fire") {
-    CHECK_FALSE(
-        runOverride(policy_manager, person, kLeisure, kInvalidVenueId)
-            .has_value());
+    CHECK_FALSE(runOverride(policy_manager, person, kLeisure, kInvalidVenueId)
+                    .has_value());
   }
 
   SUBCASE("unresolvable venue id throws") {
@@ -188,12 +187,11 @@ TEST_CASE("Venue gate - multi-role venue type separates the three roles") {
 
   CHECK(runOverride(policy_manager, visitor, kLeisure, kCareHomeVenue)
             .has_value());
-  CHECK_FALSE(runOverride(policy_manager, worker, kPrimaryActivity,
-                          kCareHomeVenue)
-                  .has_value());
   CHECK_FALSE(
-      runOverride(policy_manager, resident, kResidence, kCareHomeVenue)
+      runOverride(policy_manager, worker, kPrimaryActivity, kCareHomeVenue)
           .has_value());
+  CHECK_FALSE(runOverride(policy_manager, resident, kResidence, kCareHomeVenue)
+                  .has_value());
 }
 
 TEST_CASE("Venue gate - absent means unchanged behaviour") {
@@ -206,8 +204,8 @@ TEST_CASE("Venue gate - absent means unchanged behaviour") {
 
   Person& person = world.people[0];
   CHECK(runOverride(policy_manager, person, kLeisure, kPubVenue).has_value());
-  CHECK(runOverride(policy_manager, person, kLeisure, kGroceryVenue)
-            .has_value());
+  CHECK(
+      runOverride(policy_manager, person, kLeisure, kGroceryVenue).has_value());
   CHECK(runOverride(policy_manager, person, kLeisure, kInvalidVenueId)
             .has_value());
 }
@@ -240,8 +238,8 @@ TEST_CASE("Venue gate - exempt-from is the inverse of restrict-to") {
   PolicyManager policy_manager(world);
 
   // Close all leisure except the pub.
-  TemporalPolicy close_all_but_pubs = makeClosurePolicy(
-      {"leisure"}, {"pub"}, VenueGateDirection::ExemptFrom);
+  TemporalPolicy close_all_but_pubs =
+      makeClosurePolicy({"leisure"}, {"pub"}, VenueGateDirection::ExemptFrom);
   close_all_but_pubs.resolve(world);
   policy_manager.addTemporalPolicy(close_all_but_pubs);
 
@@ -274,9 +272,9 @@ TEST_CASE("Venue gate - exempt-from is the inverse of restrict-to") {
   }
 
   SUBCASE("still ANDs with the activity mask") {
-    CHECK_FALSE(runOverride(policy_manager, person, kPrimaryActivity,
-                            kGroceryVenue)
-                    .has_value());
+    CHECK_FALSE(
+        runOverride(policy_manager, person, kPrimaryActivity, kGroceryVenue)
+            .has_value());
   }
 }
 
@@ -305,14 +303,15 @@ TEST_CASE("Venue gate - a swallowed resolve failure poisons the gate") {
 
     // Not silently ungated: still gated, and refuses to answer.
     CHECK(policy.action.hasVenueGate());
-    CHECK_THROWS_AS(policy.action.passesVenueGate(SlotVenueType::known(kPubVenueType)),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        policy.action.passesVenueGate(SlotVenueType::known(kPubVenueType)),
+        std::runtime_error);
 
     PolicyManager policy_manager(world);
     policy_manager.addTemporalPolicy(policy);
-    CHECK_THROWS_AS(runOverride(policy_manager, world.people[0], kLeisure,
-                                kPubVenue),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        runOverride(policy_manager, world.people[0], kLeisure, kPubVenue),
+        std::runtime_error);
   }
 
   SUBCASE("both directions set leaves the gate poisoned too") {
@@ -323,8 +322,9 @@ TEST_CASE("Venue gate - a swallowed resolve failure poisons the gate") {
     } catch (const std::runtime_error&) {
     }
     CHECK(policy.action.hasVenueGate());
-    CHECK_THROWS_AS(policy.action.passesVenueGate(SlotVenueType::known(kPubVenueType)),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        policy.action.passesVenueGate(SlotVenueType::known(kPubVenueType)),
+        std::runtime_error);
   }
 
   SUBCASE("an ungated action is never poisoned") {
@@ -401,9 +401,9 @@ TEST_CASE("Venue gate - the pin does not stand in for the slot venue type") {
                             kHouseholdVenue, SlotVenueType::absent())
                     .has_value());
     // Same policy, actually at the household: fires.
-    CHECK(runOverride(policy_manager, world.people[0], kLeisure,
-                      kHouseholdVenue)
-              .has_value());
+    CHECK(
+        runOverride(policy_manager, world.people[0], kLeisure, kHouseholdVenue)
+            .has_value());
   }
 
   SUBCASE("exempt-from does not fire either") {
@@ -430,8 +430,8 @@ TEST_CASE("Venue gate - an ungated policy never pays for the lookup") {
   close_leisure.resolve(world);
   policy_manager.addTemporalPolicy(close_leisure);
 
-  CHECK(runOverride(policy_manager, world.people[0], kLeisure, 9999)
-            .has_value());
+  CHECK(
+      runOverride(policy_manager, world.people[0], kLeisure, 9999).has_value());
 }
 
 // =============================================================================
@@ -469,8 +469,9 @@ TEST_CASE("Venue gate - Sticky Compliance is unaffected by the gate") {
     compliers += complies ? 1 : 0;
 
     // An intervening slot the gate blocks must not disturb the latch.
-    CHECK_FALSE(runOverride(gated_manager, gated_person, kLeisure, kGroceryVenue)
-                    .has_value());
+    CHECK_FALSE(
+        runOverride(gated_manager, gated_person, kLeisure, kGroceryVenue)
+            .has_value());
     CHECK(runOverride(gated_manager, gated_person, kLeisure, kPubVenue)
               .has_value() == complies);
 
@@ -509,9 +510,9 @@ TEST_CASE("Venue gate - gate and exemption are independent conjuncts") {
   Person& key_worker = world.people[1];      // age 21
 
   // Blocked by the exemption, at a gated venue type.
-  CHECK_FALSE(runOverride(policy_manager, key_worker, kPrimaryActivity,
-                          kClassroomVenue)
-                  .has_value());
+  CHECK_FALSE(
+      runOverride(policy_manager, key_worker, kPrimaryActivity, kClassroomVenue)
+          .has_value());
   // Blocked by the gate, exemption does not apply.
   CHECK_FALSE(runOverride(policy_manager, non_key_worker, kPrimaryActivity,
                           kOfficeVenue)
@@ -558,8 +559,8 @@ TEST_CASE("Venue gate - symptom path is gated too") {
   person.applicable_symptom_policy_mask = 1;
 
   CHECK(runOverride(policy_manager, person, kLeisure, kPubVenue).has_value());
-  CHECK_FALSE(runOverride(policy_manager, person, kLeisure, kGroceryVenue)
-                  .has_value());
+  CHECK_FALSE(
+      runOverride(policy_manager, person, kLeisure, kGroceryVenue).has_value());
 }
 
 // =============================================================================
@@ -791,12 +792,12 @@ TEST_CASE("Query and override agree on the venue gate") {
     Person& person = world.people[0];
 
     CHECK(querySuppressed(policy_manager, person, kLeisure, kPubVenue));
-    CHECK_FALSE(querySuppressed(policy_manager, person, kLeisure,
-                                kGroceryVenue));
-    CHECK_FALSE(querySuppressed(policy_manager, person, kLeisure,
-                                kInvalidVenueId));
-    CHECK_FALSE(querySuppressed(policy_manager, person, kPrimaryActivity,
-                                kPubVenue));
+    CHECK_FALSE(
+        querySuppressed(policy_manager, person, kLeisure, kGroceryVenue));
+    CHECK_FALSE(
+        querySuppressed(policy_manager, person, kLeisure, kInvalidVenueId));
+    CHECK_FALSE(
+        querySuppressed(policy_manager, person, kPrimaryActivity, kPubVenue));
     CHECK_THROWS_AS(querySuppressed(policy_manager, person, kLeisure, 9999),
                     std::runtime_error);
 
@@ -807,8 +808,8 @@ TEST_CASE("Query and override agree on the venue gate") {
   }
 
   SUBCASE("exempt-from") {
-    TemporalPolicy close_all_but_pubs = makeClosurePolicy(
-        {"leisure"}, {"pub"}, VenueGateDirection::ExemptFrom);
+    TemporalPolicy close_all_but_pubs =
+        makeClosurePolicy({"leisure"}, {"pub"}, VenueGateDirection::ExemptFrom);
     close_all_but_pubs.resolve(world);
     policy_manager.addTemporalPolicy(close_all_but_pubs);
     Person& person = world.people[0];
@@ -816,8 +817,8 @@ TEST_CASE("Query and override agree on the venue gate") {
     CHECK_FALSE(querySuppressed(policy_manager, person, kLeisure, kPubVenue));
     CHECK(querySuppressed(policy_manager, person, kLeisure, kGroceryVenue));
     // Absent occupies no venue, so it fails the filter in this direction too.
-    CHECK_FALSE(querySuppressed(policy_manager, person, kLeisure,
-                                kInvalidVenueId));
+    CHECK_FALSE(
+        querySuppressed(policy_manager, person, kLeisure, kInvalidVenueId));
     CHECK_THROWS_AS(querySuppressed(policy_manager, person, kLeisure, 9999),
                     std::runtime_error);
 
@@ -834,7 +835,8 @@ TEST_CASE("Query and override agree on the venue gate") {
     Person& person = world.people[0];
 
     CHECK(querySuppressed(policy_manager, person, kLeisure, 9999));
-    CHECK_FALSE(querySuppressed(policy_manager, person, kPrimaryActivity, 9999));
+    CHECK_FALSE(
+        querySuppressed(policy_manager, person, kPrimaryActivity, 9999));
   }
 }
 
@@ -1045,8 +1047,8 @@ TEST_CASE("Query and override agree on the symptom policy window") {
   for (double time : {4.99, 5.0, 9.99, 10.0}) {
     const bool suppressed = policy_manager.suppressesParticipation(
         person, kLeisure, SlotVenueType::known(kPubVenueType), time);
-    CHECK(suppressed == policy_manager.getSymptomPolicies()[0].window.contains(
-                            time));
+    CHECK(suppressed ==
+          policy_manager.getSymptomPolicies()[0].window.contains(time));
   }
 
   // Nothing was decided or frozen by the questions alone.
@@ -1175,7 +1177,8 @@ TEST_CASE("Window loading - each bound is stated exactly one way") {
   }
 }
 
-TEST_CASE("Window loading - an end the day before the run starts is a real day") {
+TEST_CASE(
+    "Window loading - an end the day before the run starts is a real day") {
   // 31 January is day -1 against a 1 February start. It used to collide with
   // the "no end" marker and leave the policy in force for the whole run.
   ActiveWindow window =

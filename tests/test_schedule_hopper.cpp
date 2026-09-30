@@ -47,10 +47,13 @@ TEST_CASE("hop_on_activity resolves to schedule index") {
 
   sched_config.resolveSlots(world);
 
-  const TimeSlot& resolved = sched_config.schedule_types[0].slots_by_day_type["workday"][0];
+  const TimeSlot& resolved =
+      sched_config.schedule_types[0].slots_by_day_type["workday"][0];
 
-  CHECK(resolved.hop_schedule_by_activity_idx[1] == 1);  // "work" -> "work_schedule" (idx 1)
-  CHECK(resolved.hop_schedule_by_activity_idx[0] == -1); // "residence" -> no hop
+  CHECK(resolved.hop_schedule_by_activity_idx[1] ==
+        1);  // "work" -> "work_schedule" (idx 1)
+  CHECK(resolved.hop_schedule_by_activity_idx[0] ==
+        -1);  // "residence" -> no hop
 }
 
 // =============================================================================
@@ -74,7 +77,8 @@ TEST_CASE("activity triggers immediate hop to new schedule slot 0") {
       {1, static_cast<uint32_t>(world.activity_venues.size()), 1});  // work
   world.activity_venues.push_back({0, 0});
   world.activity_meta.push_back(
-      {2, static_cast<uint32_t>(world.activity_venues.size()), 1});  // special_work
+      {2, static_cast<uint32_t>(world.activity_venues.size()),
+       1});  // special_work
   world.activity_venues.push_back({1, 0});
 
   // Schedule 0: "regular" — has a slot that hops to temp_sched on "work"
@@ -111,7 +115,8 @@ TEST_CASE("activity triggers immediate hop to new schedule slot 0") {
   // Precomputed: person 0 deterministically assigned "work" (idx 1) at venue 0
   world.num_day_types = 1;
   world.precomputed_schedules.resize(1);
-  world.precomputed_schedules[0].push_back(ScheduleEntry(1, 0, 0, true));  // work
+  world.precomputed_schedules[0].push_back(
+      ScheduleEntry(1, 0, 0, true));  // work
   world.schedule_starts.assign(1, 0);
   world.schedule_counts.assign(1, 1);
   world.people[0].schedule_computed = true;
@@ -124,9 +129,11 @@ TEST_CASE("activity triggers immediate hop to new schedule slot 0") {
   std::vector<PersonLocation> locations(1);
   manager.assignActivitiesFromSchedule(0, 0, locations);
 
-  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);   // hopped to temp_sched
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 1);   // advanced past slot 0
-  CHECK(locations[0].activity_index == 2);           // special_work (from flat_slots[0])
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id ==
+        1);  // hopped to temp_sched
+  CHECK(world.people[0].schedule_hop.temp_slot_progress ==
+        1);                                 // advanced past slot 0
+  CHECK(locations[0].activity_index == 2);  // special_work (from flat_slots[0])
 }
 
 // =============================================================================
@@ -147,7 +154,8 @@ TEST_CASE("non-triggering activity does not hop") {
       static_cast<uint32_t>(world.activity_meta.size());
   world.people[0].activity_meta_count = 2;
   world.activity_meta.push_back(
-      {0, static_cast<uint32_t>(world.activity_venues.size()), 1});  // residence
+      {0, static_cast<uint32_t>(world.activity_venues.size()),
+       1});  // residence
   world.activity_venues.push_back({0, 0});
   world.activity_meta.push_back(
       {1, static_cast<uint32_t>(world.activity_venues.size()), 1});  // work
@@ -183,7 +191,8 @@ TEST_CASE("non-triggering activity does not hop") {
   // Precomputed: person assigned "residence" (idx 0) — no hop should trigger
   world.num_day_types = 1;
   world.precomputed_schedules.resize(1);
-  world.precomputed_schedules[0].push_back(ScheduleEntry(0, 0, 0, true));  // residence
+  world.precomputed_schedules[0].push_back(
+      ScheduleEntry(0, 0, 0, true));  // residence
   world.schedule_starts.assign(1, 0);
   world.schedule_counts.assign(1, 1);
   world.people[0].schedule_computed = true;
@@ -197,7 +206,7 @@ TEST_CASE("non-triggering activity does not hop") {
   manager.assignActivitiesFromSchedule(0, 0, locations);
 
   CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);  // no hop
-  CHECK(locations[0].activity_index == 0);           // stayed at residence
+  CHECK(locations[0].activity_index == 0);  // stayed at residence
 }
 
 // =============================================================================
@@ -238,7 +247,8 @@ TEST_CASE("person on temp schedule advances through flat_slots") {
   resolveSlotIndices(slot_a2, world);
   temp_sched.flat_slots.push_back(slot_a);
   temp_sched.flat_slots.push_back(slot_b);
-  temp_sched.flat_slots.push_back(slot_a2);  // 3rd slot keeps person hopped after Call 2
+  temp_sched.flat_slots.push_back(
+      slot_a2);  // 3rd slot keeps person hopped after Call 2
 
   Config config;
   config.schedule.day_type_cycle = {"workday"};
@@ -248,7 +258,7 @@ TEST_CASE("person on temp schedule advances through flat_slots") {
   config.resolve(world);
 
   // Manually put the person in a hopped state at progress=0
-  world.people[0].schedule_hop.hopped_schedule_id = 0;   // temp_sched is index 0
+  world.people[0].schedule_hop.hopped_schedule_id = 0;  // temp_sched is index 0
   world.people[0].schedule_hop.return_schedule_id = -1;
   world.people[0].schedule_hop.temp_slot_progress = 0;
   world.people[0].schedule_computed = true;
@@ -268,15 +278,16 @@ TEST_CASE("person on temp schedule advances through flat_slots") {
 
   // Call 1: uses flat_slots[0] (task_a)
   manager.assignActivitiesFromSchedule(0, 0, locations);
-  CHECK(locations[0].activity_index == 1);                      // task_a
+  CHECK(locations[0].activity_index == 1);  // task_a
   CHECK(world.people[0].schedule_hop.temp_slot_progress == 1);
-  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 0);               // still hopped
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 0);  // still hopped
 
   // Call 2: uses flat_slots[1] (task_b), still before end
   manager.assignActivitiesFromSchedule(0, 0, locations);
-  CHECK(locations[0].activity_index == 2);                      // task_b
+  CHECK(locations[0].activity_index == 2);  // task_b
   CHECK(world.people[0].schedule_hop.temp_slot_progress == 2);
-  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 0);               // still hopped (return happens at boundary)
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id ==
+        0);  // still hopped (return happens at boundary)
 }
 
 // =============================================================================
@@ -296,7 +307,8 @@ TEST_CASE("temp schedule auto-returns to original schedule after last slot") {
       static_cast<uint32_t>(world.activity_meta.size());
   world.people[0].activity_meta_count = 2;
   world.activity_meta.push_back(
-      {0, static_cast<uint32_t>(world.activity_venues.size()), 1});  // residence
+      {0, static_cast<uint32_t>(world.activity_venues.size()),
+       1});  // residence
   world.activity_venues.push_back({0, 0});
   world.activity_meta.push_back(
       {1, static_cast<uint32_t>(world.activity_venues.size()), 1});  // task_a
@@ -340,7 +352,8 @@ TEST_CASE("temp schedule auto-returns to original schedule after last slot") {
 
   // Put person in hopped state: on temp_sched (idx 1), 1 slot remaining
   world.people[0].schedule_hop.hopped_schedule_id = 1;
-  world.people[0].schedule_hop.return_schedule_id = -1;  // default: return to original
+  world.people[0].schedule_hop.return_schedule_id =
+      -1;  // default: return to original
   world.people[0].schedule_hop.temp_slot_progress = 0;
 
   ActivityManager manager(world, config);
@@ -351,13 +364,15 @@ TEST_CASE("temp schedule auto-returns to original schedule after last slot") {
   // Executing the 1 temp slot triggers return
   manager.assignActivitiesFromSchedule(0, 0, locations);
 
-  CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);                     // returned
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 0);                      // reset
-  CHECK(world.people[0].cached_schedule_type_->name == "regular");     // back to original
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);  // returned
+  CHECK(world.people[0].schedule_hop.temp_slot_progress == 0);   // reset
+  CHECK(world.people[0].cached_schedule_type_->name ==
+        "regular");  // back to original
 }
 
 // =============================================================================
-// Cycle 6: return_schedule sends person to a specified schedule, not the original
+// Cycle 6: return_schedule sends person to a specified schedule, not the
+// original
 // =============================================================================
 
 TEST_CASE("temp schedule returns to specified return_schedule") {
@@ -372,7 +387,8 @@ TEST_CASE("temp schedule returns to specified return_schedule") {
       static_cast<uint32_t>(world.activity_meta.size());
   world.people[0].activity_meta_count = 2;
   world.activity_meta.push_back(
-      {0, static_cast<uint32_t>(world.activity_venues.size()), 1});  // residence
+      {0, static_cast<uint32_t>(world.activity_venues.size()),
+       1});  // residence
   world.activity_venues.push_back({0, 0});
   world.activity_meta.push_back(
       {1, static_cast<uint32_t>(world.activity_venues.size()), 1});  // task_a
@@ -446,11 +462,14 @@ TEST_CASE("temp schedule returns to specified return_schedule") {
 // Cycle 7: hop_repeats_remaining — multi-day event stays hopped across days
 // =============================================================================
 // NOTE: with the monotonic-progress fix, temp_slot_progress is no longer reset
-// to 0 on day-boundary wrap — it keeps incrementing so findLastNonNullVenueOnHop
-// can scan across boundaries via k % n.  Mid-hop assertions reflect this.
+// to 0 on day-boundary wrap — it keeps incrementing so
+// findLastNonNullVenueOnHop can scan across boundaries via k % n.  Mid-hop
+// assertions reflect this.
 //
 
-TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remaining > 0") {
+TEST_CASE(
+    "temp schedule repeats N times before returning when hop_repeats_remaining "
+    "> 0") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 2);
   world.activity_names = {"residence", "task_a", "none", "dead"};
   world.venue_type_names = {"home", "venue_a"};
@@ -496,31 +515,35 @@ TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remai
   world.schedule_type_names = {"regular", "temp_sched"};
   world.num_day_types = 1;
 
-  world.people[0].schedule_hop.hopped_schedule_id = 1;   // temp_sched
+  world.people[0].schedule_hop.hopped_schedule_id = 1;  // temp_sched
   world.people[0].schedule_hop.return_schedule_id = -1;
   world.people[0].schedule_hop.temp_slot_progress = 0;
-  world.people[0].schedule_hop.repeats_remaining = 2; // 2 remaining loops after first
+  world.people[0].schedule_hop.repeats_remaining =
+      2;  // 2 remaining loops after first
 
   ActivityManager manager(world, config);
   manager.assignScheduleTypes();
 
   std::vector<PersonLocation> locations(1);
 
-  // Day 1: exhausts the 1-slot schedule, hop_repeats_remaining: 2 -> 1, stays hopped
+  // Day 1: exhausts the 1-slot schedule, hop_repeats_remaining: 2 -> 1, stays
+  // hopped
   manager.assignActivitiesFromSchedule(0, 0, locations);
-  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);   // still hopped
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 1);   // monotonic: not reset
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);  // still hopped
+  CHECK(world.people[0].schedule_hop.temp_slot_progress ==
+        1);  // monotonic: not reset
   CHECK(world.people[0].schedule_hop.repeats_remaining == 1);
 
   // Day 2: decrement to 0, still loops (>0 check was pre-decrement)
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(world.people[0].schedule_hop.hopped_schedule_id == 1);
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 2);   // monotonic: not reset
+  CHECK(world.people[0].schedule_hop.temp_slot_progress ==
+        2);  // monotonic: not reset
   CHECK(world.people[0].schedule_hop.repeats_remaining == 0);
 
   // Day 3: hop_repeats_remaining is 0, so this exhaustion triggers return
   manager.assignActivitiesFromSchedule(0, 0, locations);
-  CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);   // returned
+  CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);  // returned
   CHECK(world.people[0].schedule_hop.temp_slot_progress == 0);
 }
 
@@ -531,7 +554,9 @@ TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remai
 // wrong home fallback when a policy freeze fires on a transit slot.
 // =============================================================================
 
-TEST_CASE("multi-day hop keeps monotonic temp_slot_progress across day-boundary wrap") {
+TEST_CASE(
+    "multi-day hop keeps monotonic temp_slot_progress across day-boundary "
+    "wrap") {
   // activities: residence=0, lodging=1, no_venue=2, none=3, dead=4
   WorldState world = TestWorldFactory::createMinimalWorld(1, 2);
   world.activity_names = {"residence", "lodging", "no_venue", "none", "dead"};
@@ -599,21 +624,24 @@ TEST_CASE("multi-day hop keeps monotonic temp_slot_progress across day-boundary 
   // Monotonic: progress must be 2 so findLastNonNullVenueOnHop starts at
   // k = 2-2 = 0 → s = 0 % 2 = 0 (transit, skipped) → k = -1 stop; but the
   // key correctness is the Day 2 transit slot below.
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 2);  // RED before fix (was 0)
+  CHECK(world.people[0].schedule_hop.temp_slot_progress ==
+        2);  // RED before fix (was 0)
 
   // Day 2 slot 0: transit again after wrap; progress must be 3 so that a
   // findLastNonNullVenueOnHop scan starts at k=1, s=1%2=1 (lodging) → returns
   // lodge venue (1) rather than home (bug: scan started at k=-1, empty → home).
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(locations[0].venue_id == -1);
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 3);  // RED before fix (was 1)
+  CHECK(world.people[0].schedule_hop.temp_slot_progress ==
+        3);  // RED before fix (was 1)
   CHECK(world.people[0].schedule_hop.hopped_schedule_id == 0);
 
   // Day 2 slot 1: lodging, then hop ends (repeats exhausted)
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(locations[0].venue_id == 1);
   CHECK(world.people[0].schedule_hop.hopped_schedule_id == -1);
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 0);  // reset on hop end only
+  CHECK(world.people[0].schedule_hop.temp_slot_progress ==
+        0);  // reset on hop end only
 }
 
 // =============================================================================
@@ -623,13 +651,14 @@ TEST_CASE("multi-day hop keeps monotonic temp_slot_progress across day-boundary 
 // Regression for the latent day_type_idx divergence: findLastNonNullVenueOnHop
 // used to pass day_type_idx = -1, falling back to empty participation, so for a
 // temp schedule whose overnight slot picks between two activities by day-type
-// participation it back-scanned the WRONG activity → wrong venue → policy pin at
-// a place never visited.  With both paths sharing resolveHopSlot and a real
+// participation it back-scanned the WRONG activity → wrong venue → policy pin
+// at a place never visited.  With both paths sharing resolveHopSlot and a real
 // per-slot day type, the freeze pin must land on the day-0 overnight venue.
 // =============================================================================
 
-TEST_CASE("back-scan pins the venue forward path assigned under per-day-type "
-          "participation") {
+TEST_CASE(
+    "back-scan pins the venue forward path assigned under per-day-type "
+    "participation") {
   // activities: residence=0, lodge_a=1, lodge_b=2, no_venue=3, none=4, dead=5
   WorldState world = TestWorldFactory::createMinimalWorld(1, 3);
   world.activity_names = {"residence", "lodge_a", "lodge_b",
@@ -689,7 +718,8 @@ TEST_CASE("back-scan pins the venue forward path assigned under per-day-type "
   world.people[0].schedule_hop.hopped_schedule_id = 0;
   world.people[0].schedule_hop.return_schedule_id = -1;
   world.people[0].schedule_hop.temp_slot_progress = 0;
-  world.people[0].schedule_hop.repeats_remaining = 1;  // stay hopped across day boundary
+  world.people[0].schedule_hop.repeats_remaining =
+      1;  // stay hopped across day boundary
   world.people[0].schedule_computed = true;
   world.people[0].schedule_type_id = 0;
 

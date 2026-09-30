@@ -124,9 +124,9 @@ struct OutcomeRates {
   // Context criteria are exempt from world resolution; their values must name
   // one of `symptom_names`, `mode_names` or `infectionSourceNames()`, or
   // resolving throws.
-  std::vector<std::string> resolve(const WorldState& world,
-                                   const std::vector<std::string>& symptom_names,
-                                   const std::vector<std::string>& mode_names);
+  std::vector<std::string> resolve(
+      const WorldState& world, const std::vector<std::string>& symptom_names,
+      const std::vector<std::string>& mode_names);
 };
 
 // =============================================================================

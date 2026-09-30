@@ -9,9 +9,9 @@
 
 #include "core/config.h"
 #include "core/world_state.h"
+#include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
-#include "doctest.h"
 #include "loaders/config_loader_detail.h"
 #include "loaders/policy_loader.h"
 #include "utils/filtering.h"
@@ -79,19 +79,23 @@ static SelectionCriterion xlguCriterion(const std::string& op,
 
 }  // namespace
 
-TEST_CASE("a unit name found at no level is an error unless absent units are allowed") {
+TEST_CASE(
+    "a unit name found at no level is an error unless absent units are "
+    "allowed") {
   WorldState world = buildNationWorld();
 
   SUBCASE("not allowed: resolving throws") {
     SelectionCriterion criterion = xlguCriterion("==", std::string("Atlantis"));
-    CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"), std::runtime_error);
+    CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"),
+                    std::runtime_error);
   }
 
   SUBCASE("allowed: recorded, and matches nobody") {
     SelectionCriterion criterion = xlguCriterion("==", std::string("Atlantis"));
     criterion.allow_absent_geo_units = true;
     CHECK_NOTHROW(criterion.resolveOrThrow(world, "test"));
-    CHECK(criterion.absentGeoUnitNames() == std::vector<std::string>{"Atlantis"});
+    CHECK(criterion.absentGeoUnitNames() ==
+          std::vector<std::string>{"Atlantis"});
     for (const Person& person : world.people) {
       CHECK_FALSE(criterion.evaluate(person, &world));
     }
@@ -102,21 +106,27 @@ TEST_CASE("a unit name found at no level is an error unless absent units are all
         xlguCriterion("in", std::vector<std::string>{"Atlantis", "Wales"});
     criterion.allow_absent_geo_units = true;
     criterion.resolveOrThrow(world, "test");
-    CHECK(criterion.absentGeoUnitNames() == std::vector<std::string>{"Atlantis"});
+    CHECK(criterion.absentGeoUnitNames() ==
+          std::vector<std::string>{"Atlantis"});
     CHECK_FALSE(criterion.evaluate(world.people[0], &world));
     CHECK(criterion.evaluate(world.people[2], &world));
   }
 }
 
-TEST_CASE("a unit name at a different level is an error even when absent units are allowed") {
+TEST_CASE(
+    "a unit name at a different level is an error even when absent units are "
+    "allowed") {
   WorldState world = buildNationWorld();
-  // S00000001 exists, but at SGU: that is a misspelt level, not a missing place.
+  // S00000001 exists, but at SGU: that is a misspelt level, not a missing
+  // place.
   SelectionCriterion criterion = xlguCriterion("==", std::string("S00000001"));
   criterion.allow_absent_geo_units = true;
   CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"), std::runtime_error);
 }
 
-TEST_CASE("an outcome table reports rows naming units the world lacks, and those rows match nobody") {
+TEST_CASE(
+    "an outcome table reports rows naming units the world lacks, and those "
+    "rows match nobody") {
   WorldState world = buildNationWorld();
 
   OutcomeRates rates;
@@ -150,7 +160,8 @@ TEST_CASE("an outcome table row the world cannot answer is an error") {
   CHECK_THROWS_AS(rates.resolve(world, {}, {}), std::runtime_error);
 }
 
-TEST_CASE("an infection seed attribute filter the world cannot answer is an error") {
+TEST_CASE(
+    "an infection seed attribute filter the world cannot answer is an error") {
   WorldState world = buildNationWorld();
   SelectionCriterion unknown;
   unknown.property_path = "properties.no_such_property";
@@ -182,7 +193,8 @@ TEST_CASE("geo_unit.<LEVEL> == name selects people under that ancestor") {
   CHECK_FALSE(criterion.evaluate(world.people[1]));
 }
 
-TEST_CASE("geo_unit.<LEVEL> in a list of names selects people under any of them") {
+TEST_CASE(
+    "geo_unit.<LEVEL> in a list of names selects people under any of them") {
   WorldState world = buildNationWorld();
 
   SelectionCriterion criterion;
@@ -223,7 +235,8 @@ TEST_CASE("geo_unit.<LEVEL> != excludes, and over a list means not-in") {
   }
 }
 
-TEST_CASE("geo_unit.<LEVEL> at the person's own level matches the unit itself") {
+TEST_CASE(
+    "geo_unit.<LEVEL> at the person's own level matches the unit itself") {
   WorldState world = buildNationWorld();
 
   SelectionCriterion criterion;
@@ -301,7 +314,8 @@ TEST_CASE("the no-ancestor warning fires only for units people live in") {
   }
 }
 
-TEST_CASE("a geo_unit criterion this world cannot answer fails loudly at load") {
+TEST_CASE(
+    "a geo_unit criterion this world cannot answer fails loudly at load") {
   WorldState world = buildNationWorld();
 
   auto criterionFor = [](const std::string& path, const std::string& op,
@@ -466,7 +480,8 @@ TEST_CASE("a schedules.yaml selection accepts a list of unit names") {
   CHECK(std::get<std::vector<std::string>>(criteria[0].value).size() == 2);
 }
 
-TEST_CASE("the schedule-assignment CSV filter syntax reaches ancestor geography") {
+TEST_CASE(
+    "the schedule-assignment CSV filter syntax reaches ancestor geography") {
   WorldState world = buildNationWorld();
 
   auto criteria =
@@ -478,7 +493,8 @@ TEST_CASE("the schedule-assignment CSV filter syntax reaches ancestor geography"
   CHECK_FALSE(criteria[0].evaluate(world.people[1], &world));
 }
 
-TEST_CASE("a temporal policy refuses to resolve a filter this world cannot answer") {
+TEST_CASE(
+    "a temporal policy refuses to resolve a filter this world cannot answer") {
   WorldState world = buildNationWorld();
   world.activity_names = {"residence", "primary_activity"};
   world.buildIndices();
@@ -537,7 +553,8 @@ TEST_CASE("a list value on a non-geographical property must be whole numbers") {
   }
 }
 
-TEST_CASE("the policy loader rejects the same list values as the schedule loader") {
+TEST_CASE(
+    "the policy loader rejects the same list values as the schedule loader") {
   WorldState world = buildNationWorld();
   world.activity_names = {"residence", "primary_activity"};
   world.buildIndices();

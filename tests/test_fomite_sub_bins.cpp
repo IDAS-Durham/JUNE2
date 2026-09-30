@@ -141,8 +141,8 @@ TEST_CASE("Deposits: sub-bins against hand-computed values") {
       24.0 * (1.0 + 2.0 * 0.5 * straddle_mild_days) * straddle_mild_days;
   // Sub-bin 2 is mild, time in stage [10.1667 - 10.1, 10.25 - 10.1].
   const double mild_midpoint =
-      0.5 * ((10.0 + 2 * sub_bin_days - transition_time) +
-             (10.25 - transition_time));
+      0.5 *
+      ((10.0 + 2 * sub_bin_days - transition_time) + (10.25 - transition_time));
   const double mild_sub_bin =
       24.0 * (1.0 + 2.0 * mild_midpoint) * sub_bin_days;  // ~2.4333
   // Second mode: one sub-bin, deposits only while exposed (mild has no curve).

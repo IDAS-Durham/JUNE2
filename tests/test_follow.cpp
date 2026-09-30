@@ -614,9 +614,9 @@ TEST_CASE("a venue-gated policy on the host's venue stops the mirror") {
                                               5.0) == true);
 
   // Same policy, host somewhere the gate does not name: the mirror stands.
-  CHECK(follow_detail::policySuppressesMirror(
-            &policy_manager, world.people[0], kLeisureActivity,
-            kGroceryVenueType, 5.0) == false);
+  CHECK(follow_detail::policySuppressesMirror(&policy_manager, world.people[0],
+                                              kLeisureActivity,
+                                              kGroceryVenueType, 5.0) == false);
 }
 
 TEST_CASE("the mirror gate keys on the host's venue type, not the follower's") {
@@ -641,9 +641,9 @@ TEST_CASE("an activity-only policy stops the mirror wherever the host is") {
   CHECK(follow_detail::policySuppressesMirror(&policy_manager, world.people[0],
                                               kLeisureActivity, kPubVenueType,
                                               5.0) == true);
-  CHECK(follow_detail::policySuppressesMirror(
-            &policy_manager, world.people[0], kLeisureActivity,
-            kGroceryVenueType, 5.0) == true);
+  CHECK(follow_detail::policySuppressesMirror(&policy_manager, world.people[0],
+                                              kLeisureActivity,
+                                              kGroceryVenueType, 5.0) == true);
 }
 
 TEST_CASE("with no policy manager the mirror always stands") {

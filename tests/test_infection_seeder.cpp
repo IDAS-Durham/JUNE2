@@ -249,7 +249,7 @@ TEST_CASE(
   // households by key. A comparator that let ties fall where the sort left
   // them, or any change to the key, moves these.
   const std::vector<PersonId> expected = {
-      113, 114, 115, 116, 9,  10, 11, 12, 44, 45, 46, 47, 78,
+      113, 114, 115, 116, 9,  10, 11,  12, 44, 45, 46, 47,  78,
       79,  80,  81,  34,  35, 99, 100, 76, 77, 67, 68, 120, 121};
   CHECK(infected == expected);
 }
@@ -367,8 +367,10 @@ TEST_CASE("seeds sharing a name each fire on their own date") {
 
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
 
-  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() == 1);
-  CHECK(seeder.seedInfections(windowEndingAt("2024-01-08 08:00"), 7.0).size() == 1);
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() ==
+        1);
+  CHECK(seeder.seedInfections(windowEndingAt("2024-01-08 08:00"), 7.0).size() ==
+        1);
 }
 
 TEST_CASE("seeds sharing a name and date but not a type each fire") {
@@ -394,9 +396,8 @@ TEST_CASE("seeds with equal identity are refused") {
   config.seeds.push_back(config.seeds[0]);
   config.seeds[1].structured_config.unit_cases[0].budgets[0].cases = 3;
 
-  CHECK_THROWS_WITH(
-      InfectionSeeder(world, &disease, config, nullptr, 12345),
-      doctest::Contains("share name 'ties'"));
+  CHECK_THROWS_WITH(InfectionSeeder(world, &disease, config, nullptr, 12345),
+                    doctest::Contains("share name 'ties'"));
 }
 
 TEST_CASE("seeds differing only in an optional identity field are allowed") {
@@ -435,9 +436,8 @@ TEST_CASE("a seed on a day its month lacks is refused") {
   InfectionSeedConfig config = clusteredConfig(1);
   config.seeds[0].date_time = "2023-02-29 08:00";
 
-  CHECK_THROWS_WITH(
-      InfectionSeeder(world, &disease, config, nullptr, 12345),
-      doctest::Contains("invalid date '2023-02-29 08:00'"));
+  CHECK_THROWS_WITH(InfectionSeeder(world, &disease, config, nullptr, 12345),
+                    doctest::Contains("invalid date '2023-02-29 08:00'"));
 }
 
 TEST_CASE("date-time minutes count across day and year boundaries") {
@@ -509,7 +509,8 @@ std::vector<PersonId> infectedOnFirstDate(const InfectionSeedConfig& config) {
 
 }  // namespace
 
-TEST_CASE("a seed infects the same people when a seed is inserted ahead of it") {
+TEST_CASE(
+    "a seed infects the same people when a seed is inserted ahead of it") {
   InfectionSeedConfig config = clusteredConfig(3);
   SUBCASE("uniform") {
     config.seeds[0].type = InfectionSeedType::UNIFORM;

@@ -63,7 +63,8 @@ TEST_CASE("a later slot takes seeds after the day's previous slot start") {
   CHECK(window.up_to_minutes == minutesAt("2024-01-01 21:00"));
 }
 
-TEST_CASE("a day's first slot takes seeds after the previous day's last start") {
+TEST_CASE(
+    "a day's first slot takes seeds after the previous day's last start") {
   // Day 1 is a rest day after a workday; day 2 a workday after a rest day.
   // The same windows hold for a run resumed on either day.
   const ScheduleConfig schedule = alternatingSchedule();
@@ -92,8 +93,8 @@ TEST_CASE("time of day accepts one or two hour digits and nothing else") {
   CHECK(parseTimeToMinutes("08:00") == 480);
   CHECK(parseDateTimeMinutes("2024-01-01 8:00") ==
         parseDateTimeMinutes("2024-01-01 08:00"));
-  for (const std::string bad : {"8:5", "8:00x", "008:00", "8.00", "24:00",
-                                "-1:00", " 8:00", ""}) {
+  for (const std::string bad :
+       {"8:5", "8:00x", "008:00", "8.00", "24:00", "-1:00", " 8:00", ""}) {
     CAPTURE(bad);
     CHECK_THROWS(parseTimeToMinutes(bad));
   }

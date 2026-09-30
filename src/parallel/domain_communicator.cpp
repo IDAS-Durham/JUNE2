@@ -216,8 +216,8 @@ void DomainCommunicator::performP2PVisitorExchange(
 
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
-      unpackIncomingVisitors(rbufs[r].data(),
-                             rbufs[r].data() + rbufs[r].size(), tails);
+      unpackIncomingVisitors(rbufs[r].data(), rbufs[r].data() + rbufs[r].size(),
+                             tails);
     }
   }
 
