@@ -331,8 +331,7 @@ disease:
     # Test-only: config_2021's disease switched to Stage-Driven so a fomite
     # mode can be declared. Deposition is nonzero from 'exposed' so an
     # infected-but-not-yet-infectious person deposits (the a94fe7f case).
-    # Used to check fomite output is rank-invariant
-    # (plans/visitor-emission-on-home-rank.md).
+    # Used to check fomite output is rank-invariant.
     mode: Stage-Driven
     modes:
     - name: respiratory
