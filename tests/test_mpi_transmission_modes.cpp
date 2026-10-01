@@ -15,6 +15,7 @@
 #include <mpi.h>
 
 #include <cmath>
+#include <optional>
 
 #include "core/config.h"
 #include "core/types.h"
@@ -715,7 +716,8 @@ static std::deque<Venue::DepositEvent> depositsFromOneSlot(
     const std::vector<PersonLocation>& locs, double current_time,
     double delta_hours, const std::unordered_set<PersonId>* visitor_ids,
     std::vector<PendingInfection>* pending,
-    const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    const PolicyManager* policy_manager = nullptr) {
   Venue* venue = f.world.getVenue(f.rank);
   venue->fomite_history.assign(1, {});
 
@@ -725,21 +727,44 @@ static std::deque<Venue::DepositEvent> depositsFromOneSlot(
   SimulationConfig sim;
   ParallelConfig par;
   InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
+  im.setPolicyManager(policy_manager);
   im.processTransmissions(locs, current_time, delta_hours, nullptr,
                           visitor_ids, pending, visitor_data);
   return venue->fomite_history[0];
 }
 
 // Person 0 visits rank 1 while person 1, in the same disease state, stays
-// home at the same Venue. Their deposits there must be bitwise equal.
+// home at the same Venue. Their deposits there must be bitwise equal. A
+// fomite_source_multiplier other than 1 applies a person-scoped
+// SourceInfectiousness policy on the fomite mode to both.
 static void checkVisitorDepositsLikeLocal(
     double sub_bin_time, double infection_time,
     std::vector<std::pair<double, uint16_t>> transitions, double current_time,
-    double delta_hours) {
+    double delta_hours, double fomite_source_multiplier = 1.0) {
   TwoRankFixture f;
   REQUIRE(f.size == 2);
   Disease disease = makeFomiteDisease(sub_bin_time);
   f.dm->setDisease(&disease);
+
+  std::optional<PolicyManager> policy_manager;
+  if (fomite_source_multiplier != 1.0) {
+    policy_manager.emplace(f.world);
+    TemporalPolicy policy;
+    policy.name = "fomite_source";
+    policy.action.compliance_rate = 1.0;
+    policy_manager->addTemporalPolicy(policy);
+    PolicyTransmissionEffect source_effect;
+    source_effect.policy_index = 0;
+    source_effect.scope = TransmissionEffectScope::Person;
+    source_effect.mode_name = "fomite";
+    source_effect.channel = TransmissionEffectChannel::SourceInfectiousness;
+    source_effect.multiplier = fomite_source_multiplier;
+    policy_manager->addTransmissionEffect(source_effect);
+    policy_manager->precomputePolicyApplicability(f.world.people);
+    policy_manager->initializeTransmissionModifiers(disease, 0.0);
+    f.dm->setPolicyManager(&*policy_manager);
+  }
+  const PolicyManager* policy = policy_manager ? &*policy_manager : nullptr;
 
   Person* local_person = f.world.getPerson(f.rank);
   local_person->infection =
@@ -759,16 +784,28 @@ static void checkVisitorDepositsLikeLocal(
 
   auto visitor_deposits = depositsFromOneSlot(
       f, disease, {{visitor_id, f.rank, -1, 0, 255, 0}}, current_time,
-      delta_hours, &visitor_ids, &pending, &visitor_data);
+      delta_hours, &visitor_ids, &pending, &visitor_data, policy);
   auto local_deposits = depositsFromOneSlot(
       f, disease, {{f.rank, f.rank, -1, 0, 255, 0}}, current_time,
-      delta_hours, nullptr, nullptr, nullptr);
+      delta_hours, nullptr, nullptr, nullptr, policy);
 
   REQUIRE_FALSE(local_deposits.empty());
   REQUIRE(visitor_deposits.size() == local_deposits.size());
   for (size_t k = 0; k < local_deposits.size(); ++k) {
     CHECK(visitor_deposits[k].time == local_deposits[k].time);
     CHECK(visitor_deposits[k].amount == local_deposits[k].amount);
+  }
+
+  if (policy) {
+    auto unmodified_deposits = depositsFromOneSlot(
+        f, disease, {{f.rank, f.rank, -1, 0, 255, 0}}, current_time,
+        delta_hours, nullptr, nullptr, nullptr, nullptr);
+    REQUIRE(unmodified_deposits.size() == local_deposits.size());
+    for (size_t k = 0; k < local_deposits.size(); ++k) {
+      CHECK(local_deposits[k].amount ==
+            doctest::Approx(unmodified_deposits[k].amount *
+                            fomite_source_multiplier));
+    }
   }
 }
 
@@ -788,6 +825,13 @@ TEST_CASE("H8c: Incubating Visitor alone still deposits") {
   // Infected, not infectious, and the only person at a fomite-free Venue.
   checkVisitorDepositsLikeLocal(/*sub_bin_time=*/0.0, 9.0,
                                 {{9.0, kHealthy}, {11.0, kMild}}, 10.0, 6.0);
+}
+
+TEST_CASE("H8d: Source policy scales Visitor and local deposits alike") {
+  // Home rank applies the visitor's fomite source modifier, as for locals.
+  checkVisitorDepositsLikeLocal(/*sub_bin_time=*/2.0, 9.0,
+                                {{9.0, kExposed}, {10.1, kMild}}, 10.0, 6.0,
+                                /*fomite_source_multiplier=*/0.3);
 }
 
 #endif  // USE_MPI
