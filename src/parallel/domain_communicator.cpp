@@ -113,9 +113,8 @@ june::Domain::VisitorData buildVisitorPayload(
     const auto& n_sub_per_mode = fomite_schedule.subBinsPerMode();
     int offset = 0;
     for (int local_fm = 0; local_fm < fomite_schedule.numModes(); ++local_fm) {
-      const double source_modifier =
-          sourceModifier(policy_manager, person,
-                         fomite_schedule.modes()[local_fm].mode_index);
+      const double source_modifier = sourceModifier(
+          policy_manager, person, fomite_schedule.modes()[local_fm].mode_index);
       for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
         visitor.fomite_deposition_sub[offset + k] *= source_modifier;
       }
@@ -126,8 +125,7 @@ june::Domain::VisitorData buildVisitorPayload(
       const double t1 = current_time + delta_hours / 24.0;
       for (int m = 0; m < num_modes; ++m) {
         visitor.integrated_infectiousness[m] =
-            person.infection->getIntegratedInfectiousness(m, current_time,
-                                                          t1) *
+            person.infection->getIntegratedInfectiousness(m, current_time, t1) *
             sourceModifier(policy_manager, person, static_cast<size_t>(m));
       }
     }
@@ -341,8 +339,8 @@ void DomainCommunicator::performP2PVisitorExchange(
 
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
-      unpackIncomingVisitors(rbufs[r].data(),
-                             rbufs[r].data() + rbufs[r].size(), tails);
+      unpackIncomingVisitors(rbufs[r].data(), rbufs[r].data() + rbufs[r].size(),
+                             tails);
     }
   }
 

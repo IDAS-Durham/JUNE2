@@ -24,7 +24,7 @@ namespace june::visitor_wire {
 // Lengths of a visitor record's tails. Derived from the Disease and timestep,
 // so identical on every rank and fixed for one exchange.
 struct TailCounts {
-  int num_modes;  // integrated_infectiousness, target_susceptibility
+  int num_modes;             // integrated_infectiousness, target_susceptibility
   int num_deposition_modes;  // deposition_source_multiplier
   int fomite_sub_bins;       // fomite_deposition_sub
 };

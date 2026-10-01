@@ -53,9 +53,9 @@ static_assert(offsetof(Domain::VisitorData, integrated_infectiousness) == 40,
 char* packTail(char* ptr, const std::vector<double>& tail, int count,
                const char* name) {
   if (static_cast<int>(tail.size()) != count) {
-    throw std::runtime_error(std::string("visitor_wire::pack: ") + name + " size " +
-                             std::to_string(tail.size()) + " != " +
-                             std::to_string(count));
+    throw std::runtime_error(std::string("visitor_wire::pack: ") + name +
+                             " size " + std::to_string(tail.size()) +
+                             " != " + std::to_string(count));
   }
   if (count > 0) {
     std::memcpy(ptr, tail.data(), count * sizeof(double));
@@ -86,8 +86,7 @@ char* packGatedTail(char* ptr, const std::vector<double>& tail, bool sent,
   return packTail(ptr, tail, count, name);
 }
 
-const char* unpackTail(const char* ptr, std::vector<double>& tail,
-                       int count) {
+const char* unpackTail(const char* ptr, std::vector<double>& tail, int count) {
   tail.assign(count, 0.0);
   if (count > 0) {
     std::memcpy(tail.data(), ptr, count * sizeof(double));
@@ -158,17 +157,18 @@ const char* unpackWithin(const char* ptr, const char* end,
   const int size = recordSize(visitor, tails);
   if (end - ptr < size) {
     throw std::runtime_error("visitor_wire::unpackSlice: record of " +
-                             std::to_string(size) + " bytes runs past slice "
-                             "end (" + std::to_string(end - ptr) + " left)");
+                             std::to_string(size) +
+                             " bytes runs past slice "
+                             "end (" +
+                             std::to_string(end - ptr) + " left)");
   }
   const TailCounts sent = sentTailCounts(visitor, tails);
-  const char* next = unpackTail(
-      tails_begin, visitor.integrated_infectiousness, sent.num_modes);
+  const char* next = unpackTail(tails_begin, visitor.integrated_infectiousness,
+                                sent.num_modes);
   next = unpackTail(next, visitor.target_susceptibility, tails.num_modes);
   next = unpackTail(next, visitor.deposition_source_multiplier,
                     sent.num_deposition_modes);
-  return unpackTail(next, visitor.fomite_deposition_sub,
-                    sent.fomite_sub_bins);
+  return unpackTail(next, visitor.fomite_deposition_sub, sent.fomite_sub_bins);
 }
 
 }  // namespace detail
