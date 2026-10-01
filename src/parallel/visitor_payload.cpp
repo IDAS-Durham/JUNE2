@@ -8,9 +8,8 @@ namespace june {
 
 namespace {
 
-double personModifier(const PolicyManager* policy_manager,
-                      const Person& person, size_t mode,
-                      TransmissionEffectChannel channel) {
+double personModifier(const PolicyManager* policy_manager, const Person& person,
+                      size_t mode, TransmissionEffectChannel channel) {
   return policy_manager ? policy_manager->personModifier(person, mode, channel)
                         : 1.0;
 }
@@ -55,8 +54,8 @@ Domain::VisitorData buildVisitorPayload(const PersonLocation& location,
           : 0;
   visitor.time_in_stage =
       visitor.is_infected
-          ? slot_start - stageStartTime(person.infection->getTrajectory(),
-                                        slot_start)
+          ? slot_start -
+                stageStartTime(person.infection->getTrajectory(), slot_start)
           : 0.0;
 
   const auto& modes = disease.getTransmissionParams().modes;

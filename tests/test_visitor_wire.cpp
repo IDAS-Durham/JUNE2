@@ -61,7 +61,8 @@ void checkRoundTrip(const Domain::VisitorData& sent,
   CHECK(received.symptom_id == sent.symptom_id);
   CHECK(received.time_in_stage == sent.time_in_stage);
   // Exact equality: tails must arrive bit-identical.
-  CHECK(received.emission.infectiousness_by_mode == sent.emission.infectiousness_by_mode);
+  CHECK(received.emission.infectiousness_by_mode ==
+        sent.emission.infectiousness_by_mode);
   CHECK(received.target_susceptibility == sent.target_susceptibility);
   CHECK(received.deposition_source_multiplier ==
         sent.deposition_source_multiplier);

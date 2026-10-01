@@ -57,8 +57,9 @@ void DomainCommunicator::exchangeVisitors(
                                 calculator.fomiteSchedule().totalSubBins()};
 
   auto send = [&](const PersonLocation& loc, Person& person, int target_rank) {
-    outgoing[target_rank].push_back(buildVisitorPayload(
-        loc, person, rank_, current_time, disease, policy_manager_, calculator));
+    outgoing[target_rank].push_back(
+        buildVisitorPayload(loc, person, rank_, current_time, disease,
+                            policy_manager_, calculator));
     send_counts[target_rank] +=
         visitor_wire::recordSize(outgoing[target_rank].back(), tails);
   };

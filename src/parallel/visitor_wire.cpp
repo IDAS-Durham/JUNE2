@@ -23,8 +23,7 @@ using june::domain_comm_detail::makeWireRecord;
 constexpr auto kVisitorWire = makeWireRecord(
     &Domain::VisitorData::person_id, &Domain::VisitorData::home_rank,
     &Domain::VisitorData::venue_id, &Domain::VisitorData::subset_idx,
-    &Domain::VisitorData::is_infected,
-    &Domain::VisitorData::immunity_level,
+    &Domain::VisitorData::is_infected, &Domain::VisitorData::immunity_level,
     &Domain::VisitorData::encounter_type_id, &Domain::VisitorData::symptom_id,
     &Domain::VisitorData::time_in_stage);
 constexpr int VISITOR_WIRE_HEADER = kVisitorWire.size();
@@ -126,19 +125,22 @@ char* pack(char* ptr, const Domain::VisitorData& visitor,
   ptr = packGatedTail(ptr, visitor.deposition_source_multiplier,
                       visitor.is_infected, tails.num_deposition_modes,
                       "deposition_source_multiplier");
-  return packGatedTail(ptr, visitor.emission.fomite_deposits, visitor.is_infected,
-                       tails.fomite_sub_bins, "fomite_deposits");
+  return packGatedTail(ptr, visitor.emission.fomite_deposits,
+                       visitor.is_infected, tails.fomite_sub_bins,
+                       "fomite_deposits");
 }
 
 const char* unpack(const char* ptr, Domain::VisitorData& visitor,
                    const TailCounts& tails) {
   ptr = kVisitorWire.unpack(ptr, visitor);
   const TailCounts sent = sentTailCounts(visitor, tails);
-  ptr = unpackTail(ptr, visitor.emission.infectiousness_by_mode, sent.num_modes);
+  ptr =
+      unpackTail(ptr, visitor.emission.infectiousness_by_mode, sent.num_modes);
   ptr = unpackTail(ptr, visitor.target_susceptibility, tails.num_modes);
   ptr = unpackTail(ptr, visitor.deposition_source_multiplier,
                    sent.num_deposition_modes);
-  return unpackTail(ptr, visitor.emission.fomite_deposits, sent.fomite_sub_bins);
+  return unpackTail(ptr, visitor.emission.fomite_deposits,
+                    sent.fomite_sub_bins);
 }
 
 namespace detail {
@@ -162,12 +164,13 @@ const char* unpackWithin(const char* ptr, const char* end,
                              std::to_string(end - ptr) + " left)");
   }
   const TailCounts sent = sentTailCounts(visitor, tails);
-  const char* next = unpackTail(tails_begin, visitor.emission.infectiousness_by_mode,
-                                sent.num_modes);
+  const char* next = unpackTail(
+      tails_begin, visitor.emission.infectiousness_by_mode, sent.num_modes);
   next = unpackTail(next, visitor.target_susceptibility, tails.num_modes);
   next = unpackTail(next, visitor.deposition_source_multiplier,
                     sent.num_deposition_modes);
-  return unpackTail(next, visitor.emission.fomite_deposits, sent.fomite_sub_bins);
+  return unpackTail(next, visitor.emission.fomite_deposits,
+                    sent.fomite_sub_bins);
 }
 
 }  // namespace detail

@@ -44,11 +44,11 @@ class TransmissionModifierTable {
 
   void reset(size_t num_modes) {
     if (num_modes > kMaxModes)
-      throw std::runtime_error(
-          "TransmissionModifierTable: disease has " +
-          std::to_string(num_modes) + " transmission modes, table holds " +
-          std::to_string(kMaxModes) +
-          "; raise TransmissionModifierTable::kMaxModes");
+      throw std::runtime_error("TransmissionModifierTable: disease has " +
+                               std::to_string(num_modes) +
+                               " transmission modes, table holds " +
+                               std::to_string(kMaxModes) +
+                               "; raise TransmissionModifierTable::kMaxModes");
     num_modes_ = num_modes;
     sets_.clear();
     ids_.clear();

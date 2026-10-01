@@ -227,9 +227,9 @@ bool InteractionManager::gatherMemberInfectiousnessByMode(
   const Person* source = visitor ? nullptr : person;
   for (int m = 0; m < num_emitted; ++m) {
     inf_by_mode[m] =
-        emitted[m] *
-        personTransmissionModifier(
-            source, nullptr, m, TransmissionEffectChannel::SourceInfectiousness);
+        emitted[m] * personTransmissionModifier(
+                         source, nullptr, m,
+                         TransmissionEffectChannel::SourceInfectiousness);
     total += inf_by_mode[m];
   }
   return total > 0.0;
@@ -625,7 +625,8 @@ double InteractionManager::effectiveTargetSusceptibility(
     double base_susceptibility, size_t mode) const {
   if (visitor && !visitor->target_susceptibility.empty()) {
     return personTransmissionModifier(
-        nullptr, visitor, mode, TransmissionEffectChannel::TargetSusceptibility);
+        nullptr, visitor, mode,
+        TransmissionEffectChannel::TargetSusceptibility);
   }
   const double value = base_susceptibility *
                        personTransmissionModifier(
