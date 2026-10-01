@@ -779,8 +779,8 @@ TEST_CASE("A frozen person is suppressed whatever venue type is asked about") {
 
 TEST_CASE("Query and override agree on the venue gate") {
   // Only the writes were removed; the verdict is the same sentence. The gate
-  // ordering and the ADR-0008 throw live in actionApplies, shared by both, and
-  // this is what catches them drifting apart.
+  // ordering and the unresolvable-venue throw live in actionApplies, shared
+  // by both, and this is what catches them drifting apart.
   WorldState world = buildVenueGateWorld();
   PolicyManager policy_manager(world);
 
