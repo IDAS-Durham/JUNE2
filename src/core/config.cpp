@@ -531,13 +531,17 @@ bool SelectionCriterion::evaluate(
 bool SelectionCriterion::evaluate(const Venue& venue,
                                   const WorldState* world) const {
   if (!world) return false;
+  resolveSyntax();
+  // The resolved operator is cached: operator_type must not change after use.
+  assert(operator_type == resolved_operator_type);
   if (comparesAgainstUnitNames(property_path)) {
     const size_t slot = geoMaskSlot(venue.geo_unit_id);
     if (slot >= geo_ancestor_mask.size() || geo_ancestor_mask[slot] == 2)
       return false;
-    if (operator_type == "==" || operator_type == "in")
+    if (cached_operator == Operator::EQUAL || cached_operator == Operator::IN)
       return geo_ancestor_mask[slot] == 1;
-    return operator_type == "!=" && geo_ancestor_mask[slot] == 0;
+    return cached_operator == Operator::NOT_EQUAL &&
+           geo_ancestor_mask[slot] == 0;
   }
 
   PropertyValue actual;
@@ -570,15 +574,15 @@ bool SelectionCriterion::evaluate(const Venue& venue,
     return false;
   }
 
-  if (operator_type == "==") return actual == value;
-  if (operator_type == "!=") return actual != value;
-  if (operator_type == "contains" &&
+  if (cached_operator == Operator::EQUAL) return actual == value;
+  if (cached_operator == Operator::NOT_EQUAL) return actual != value;
+  if (cached_operator == Operator::CONTAINS &&
       std::holds_alternative<std::string>(actual) &&
       std::holds_alternative<std::string>(value)) {
     return std::get<std::string>(actual).find(std::get<std::string>(value)) !=
            std::string::npos;
   }
-  if (operator_type == "in" &&
+  if (cached_operator == Operator::IN &&
       std::holds_alternative<std::vector<int32_t>>(value) &&
       std::holds_alternative<int32_t>(actual)) {
     const auto& values = std::get<std::vector<int32_t>>(value);
@@ -598,10 +602,10 @@ bool SelectionCriterion::evaluate(const Venue& venue,
   };
   double lhs = 0.0, rhs = 0.0;
   if (!number(actual, lhs) || !number(value, rhs)) return false;
-  if (operator_type == ">") return lhs > rhs;
-  if (operator_type == "<") return lhs < rhs;
-  if (operator_type == ">=") return lhs >= rhs;
-  if (operator_type == "<=") return lhs <= rhs;
+  if (cached_operator == Operator::GREATER) return lhs > rhs;
+  if (cached_operator == Operator::LESS) return lhs < rhs;
+  if (cached_operator == Operator::GREATER_EQUAL) return lhs >= rhs;
+  if (cached_operator == Operator::LESS_EQUAL) return lhs <= rhs;
   return false;
 }
 
@@ -1195,11 +1199,8 @@ void SelectionCriterion::resolveVenueOrThrow(const WorldState& world,
     throw std::runtime_error(context + ": property '" + property_path +
                              "' is not available on venues");
   }
-  static const std::array<const char*, 8> kOperators = {
-      ">", "<", ">=", "<=", "==", "!=", "in", "contains"};
-  if (std::find_if(kOperators.begin(), kOperators.end(), [&](const char* op) {
-        return operator_type == op;
-      }) == kOperators.end()) {
+  resolveSyntax();
+  if (cached_operator == Operator::UNSUPPORTED) {
     throw std::runtime_error(context + ": unsupported operator '" +
                              operator_type + "'");
   }
