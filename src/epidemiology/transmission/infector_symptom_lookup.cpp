@@ -15,8 +15,7 @@ uint8_t InfectorSymptomLookup::resolve(
   // narrowing here, once, is lossless.
   if (infector && infector->infection) {
     return static_cast<uint8_t>(
-        infector->infection->getTrajectory().getCurrentSymptomId(
-            current_time));
+        infector->infection->getTrajectory().getCurrentSymptomId(current_time));
   }
   if (!infector && visitor_data) {
     auto visitor = visitor_data->find(infector_id);

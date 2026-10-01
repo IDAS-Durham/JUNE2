@@ -45,15 +45,15 @@ size_t requireKnownName(const std::string& name,
   for (const std::string& known : known_names) {
     known_list += (known_list.empty() ? "" : ", ") + known;
   }
-  throw std::runtime_error(message_prefix + " '" + name +
-                           "' is not one this disease defines. Known: " +
-                           known_list);
+  throw std::runtime_error(
+      message_prefix + " '" + name +
+      "' is not one this disease defines. Known: " + known_list);
 }
 
 // Throw unless every value `criterion` names is one of `known_names`.
-static void requireKnownContextValue(const SelectionCriterion& criterion,
-                                     const std::vector<std::string>& known_names,
-                                     const std::string& row_label) {
+static void requireKnownContextValue(
+    const SelectionCriterion& criterion,
+    const std::vector<std::string>& known_names, const std::string& row_label) {
   // A non-string value gets a placeholder no disease defines, so it throws.
   const std::string* value = std::get_if<std::string>(&criterion.value);
   requireKnownName(value ? *value : std::string("<not a single name>"),

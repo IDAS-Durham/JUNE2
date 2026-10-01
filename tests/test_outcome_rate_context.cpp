@@ -62,8 +62,8 @@ static OutcomeRow rowWith(SelectionCriterion criterion) {
 
 TEST_CASE("an outcome row filtering on a known transmission mode resolves") {
   WorldState world = buildOnePersonWorld();
-  Disease disease =
-      buildDisease({rowWith(contextCriterion("transmission_mode", "respiratory"))});
+  Disease disease = buildDisease(
+      {rowWith(contextCriterion("transmission_mode", "respiratory"))});
   CHECK_NOTHROW(disease.resolve(world));
 }
 
@@ -74,12 +74,15 @@ TEST_CASE("an outcome row filtering on a known infector symptom resolves") {
   CHECK_NOTHROW(disease.resolve(world));
 }
 
-TEST_CASE("an outcome row naming a transmission mode the disease lacks is refused, naming the row and value") {
+TEST_CASE(
+    "an outcome row naming a transmission mode the disease lacks is refused, "
+    "naming the row and value") {
   WorldState world = buildOnePersonWorld();
   OutcomeRow default_row;
   default_row.probabilities = {{"mild", 1.0}};
   Disease disease = buildDisease(
-      {default_row, rowWith(contextCriterion("transmission_mode", "rat_flee_bite"))});
+      {default_row,
+       rowWith(contextCriterion("transmission_mode", "rat_flee_bite"))});
   std::string message;
   try {
     disease.resolve(world);
@@ -90,7 +93,9 @@ TEST_CASE("an outcome row naming a transmission mode the disease lacks is refuse
   CHECK(message.find("rat_flee_bite") != std::string::npos);
 }
 
-TEST_CASE("an outcome row naming a symptom the disease lacks is refused, naming the row and value") {
+TEST_CASE(
+    "an outcome row naming a symptom the disease lacks is refused, naming the "
+    "row and value") {
   WorldState world = buildOnePersonWorld();
   Disease disease = buildDisease(
       {rowWith(contextCriterion("infector_symptom", "primary_pneumonik"))});
@@ -108,13 +113,16 @@ TEST_CASE("a context filter outside an outcome table is still refused") {
   WorldState world = buildOnePersonWorld();
   InfectionSeedEvent seed;
   seed.name = "seed_filtering_on_mode";
-  seed.attribute_filters = {contextCriterion("transmission_mode", "respiratory")};
+  seed.attribute_filters = {
+      contextCriterion("transmission_mode", "respiratory")};
   InfectionSeedConfig config;
   config.seeds = {seed};
   CHECK_THROWS_AS(config.resolve(world), std::runtime_error);
 }
 
-TEST_CASE("the plague outcome table, filtered on mode and infector symptom, resolves") {
+TEST_CASE(
+    "the plague outcome table, filtered on mode and infector symptom, "
+    "resolves") {
   WorldState world = buildOnePersonWorld();
   Disease disease =
       DiseaseLoader::loadFromYAML("configs/config_plague/disease_plague.yaml");

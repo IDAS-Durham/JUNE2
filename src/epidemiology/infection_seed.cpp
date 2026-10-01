@@ -479,8 +479,7 @@ std::vector<PersonId> InfectionSeeder::seedInfections(
   std::vector<PersonId> all_infected;
   seed_shortfalls_.clear();
 
-  for (size_t seed_index = 0; seed_index < config_.seeds.size();
-       ++seed_index) {
+  for (size_t seed_index = 0; seed_index < config_.seeds.size(); ++seed_index) {
     const InfectionSeedEvent& seed = config_.seeds[seed_index];
     // Standardized comparison: skip whitespace/case if needed,
     // though currently matching exact string.
