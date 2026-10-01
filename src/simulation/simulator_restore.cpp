@@ -352,12 +352,6 @@ void Simulator::restoreCheckpointStateFile(const fs::path& cp) {
   if (!ng.empty()) next_encounter_group_id_ = ng[0];
   auto dtc = readVec<int32_t>(f, "/scalars/day_type_counts", I32);
   day_type_counts_.assign(dtc.begin(), dtc.end());
-
-  if (infection_seeder_) {
-    auto seeds = readStrs(f, "/infection_seeder/applied_seeds");
-    std::set<std::string> s(seeds.begin(), seeds.end());
-    infection_seeder_->setAppliedSeeds(s);
-  }
 }
 
 void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {

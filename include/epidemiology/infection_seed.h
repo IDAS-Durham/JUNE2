@@ -5,7 +5,6 @@
 #include <memory>
 #include <numeric>
 #include <random>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -203,16 +202,6 @@ class InfectionSeeder {
   // disease; an unknown name throws. Called after the world is fully loaded.
   void resolveConfig(const WorldState& world);
 
-  // --- Checkpoint serialization ---
-  // applied_seeds_ holds the SeedIdentity key of each seed event already fired.
-  // It MUST be saved and restored across a checkpoint, otherwise a resume
-  // re-fires already-applied seeds and double-infects. Keys from older
-  // checkpoints (index or name based) never match and are ignored.
-  const std::set<std::string>& getAppliedSeeds() const {
-    return applied_seeds_;
-  }
-  void setAppliedSeeds(const std::set<std::string>& s) { applied_seeds_ = s; }
-
  private:
   WorldState& world_;
   const Disease* disease_;
@@ -222,9 +211,6 @@ class InfectionSeeder {
   uint64_t base_seed_ = 0;
   const SeedOfferExchange* seed_offer_exchange_ = nullptr;
   std::vector<SeedShortfall> seed_shortfalls_;
-
-  // Seed Identity of each seed already applied
-  std::set<std::string> applied_seeds_;
 
   // Apply a single seed event, its draws keyed by its Seed Identity
   std::vector<PersonId> applySeed(const InfectionSeedEvent& seed);

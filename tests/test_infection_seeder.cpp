@@ -8,7 +8,6 @@
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
 #include "epidemiology/infectiousness_curves.h"
-#include "epidemiology/seeding/seed_identity.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/time_utils.h"
 
@@ -470,38 +469,28 @@ TEST_CASE("a slot start fires seeds dated after the previous start, up to it") {
   CHECK(seeder.seedInfections(slot_at_noon, 0.0).size() == 2);
 }
 
-TEST_CASE("a seed fires once when its datetime is seeded twice") {
-  WorldState world = makeHouseholdWorld();
-  Disease disease = makeDisease();
-  InfectionSeeder seeder(world, &disease, clusteredConfig(1), nullptr, 12345);
-
-  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() == 1);
-  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).empty());
-}
-
-TEST_CASE("an applied seed stays applied when a seed is inserted ahead of it") {
-  // Restored applied set names seed A; a config edit then shifts A's position.
+TEST_CASE("consecutive slot windows fire each seed exactly once") {
   WorldState world = makeHouseholdWorld();
   Disease disease = makeDisease();
   InfectionSeedConfig config = clusteredConfig(1);
-  const InfectionSeedEvent applied_seed = config.seeds[0];
-  InfectionSeedEvent later_seed = applied_seed;
-  later_seed.name = "later";
-  later_seed.type = InfectionSeedType::EXACT;
-  config.seeds.push_back(later_seed);
-  InfectionSeedEvent inserted_seed = applied_seed;
-  inserted_seed.name = "inserted";
-  inserted_seed.type = InfectionSeedType::EXACT;
-  config.seeds.insert(config.seeds.begin(), inserted_seed);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds.push_back(config.seeds[0]);
+  config.seeds[0].date_time = "2024-01-01 08:00";
+  config.seeds[1].date_time = "2024-01-01 12:00";
+  config.seeds[2].date_time = "2024-01-01 15:30";
 
   InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
-  seeder.setAppliedSeeds({SeedIdentity::of(applied_seed).key()});
+  const std::vector<std::string> slot_starts = {
+      "2024-01-01 07:59", "2024-01-01 08:00", "2024-01-01 12:00",
+      "2024-01-01 21:00"};
+  size_t total_infected = 0;
+  for (size_t i = 1; i < slot_starts.size(); ++i) {
+    const SeedWindow slot{parseDateTimeMinutes(slot_starts[i - 1]),
+                          parseDateTimeMinutes(slot_starts[i])};
+    total_infected += seeder.seedInfections(slot, 0.0).size();
+  }
 
-  CHECK(seeder.seedInfections(windowEndingAt("2024-01-01 08:00"), 0.0).size() == 2);
-  CHECK(seeder.getAppliedSeeds() ==
-        std::set<std::string>{SeedIdentity::of(inserted_seed).key(),
-                              SeedIdentity::of(applied_seed).key(),
-                              SeedIdentity::of(later_seed).key()});
+  CHECK(total_infected == 3);
 }
 
 namespace {
