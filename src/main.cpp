@@ -555,7 +555,8 @@ int main(int argc, char* argv[]) {
         Simulator simulator(world, config, nullptr, infection_seeds_file,
                             output_path);
 
-        if (!restart_from.empty()) simulator.restoreFromCheckpoint(restart_from);
+        if (!restart_from.empty())
+          simulator.restoreFromCheckpoint(restart_from);
 
         // Start CPU profiling
 #ifdef USE_GPERFTOOLS

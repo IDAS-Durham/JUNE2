@@ -37,8 +37,12 @@ std::string describeOptionalFields(const SeedIdentity& identity) {
 }  // namespace
 
 SeedIdentity SeedIdentity::of(const InfectionSeedEvent& seed) {
-  return {seed.name,          seed.date_time,        seed.type,
-          seed.trajectory_key, seed.start_symptom,   seed.infector_symptom,
+  return {seed.name,
+          seed.date_time,
+          seed.type,
+          seed.trajectory_key,
+          seed.start_symptom,
+          seed.infector_symptom,
           seed.transmission_mode};
 }
 
@@ -53,7 +57,7 @@ void SeedIdentity::writeTo(InfectionSeedEvent& seed) const {
 }
 
 std::array<std::string, 7> SeedIdentity::fields() const {
-  return {name,           date_time,     seedTypeName(type), trajectory_key,
+  return {name,          date_time,        seedTypeName(type), trajectory_key,
           start_symptom, infector_symptom, transmission_mode};
 }
 
@@ -84,11 +88,11 @@ void requireUniqueSeedIdentities(const std::vector<InfectionSeedEvent>& seeds) {
   for (const auto& seed : seeds) {
     const SeedIdentity identity = SeedIdentity::of(seed);
     if (!seen.insert(identity.key()).second) {
-      throw std::runtime_error(
-          "Infection seeds share name '" + identity.name + "', date '" +
-          identity.date_time + "', type '" + seedTypeName(identity.type) +
-          "'" + describeOptionalFields(identity) +
-          ": give each seed event its own name");
+      throw std::runtime_error("Infection seeds share name '" + identity.name +
+                               "', date '" + identity.date_time + "', type '" +
+                               seedTypeName(identity.type) + "'" +
+                               describeOptionalFields(identity) +
+                               ": give each seed event its own name");
     }
   }
 }

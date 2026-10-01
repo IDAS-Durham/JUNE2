@@ -637,8 +637,8 @@ void Simulator::warnUnmatchedTrajectorySelections(int rank) {
   uint64_t global_unmatched = local_unmatched;
 #ifdef USE_MPI
   if (domain_mgr_) {
-    MPI_Allreduce(&local_unmatched, &global_unmatched, 1, MPI_UINT64_T,
-                  MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_unmatched, &global_unmatched, 1, MPI_UINT64_T, MPI_SUM,
+                  MPI_COMM_WORLD);
   }
 #endif
   if (rank == 0 && disease_) {
