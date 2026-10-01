@@ -202,8 +202,9 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
 
   double expected_integrated = 0.0;
   if (f.rank == 0) {
-    expected_integrated = f.world.people[0].infection->getIntegratedInfectiousness(
-        0, 0.0, 1.0 / 24.0);
+    expected_integrated =
+        f.world.people[0].infection->getIntegratedInfectiousness(0, 0.0,
+                                                                 1.0 / 24.0);
   }
   MPI_Bcast(&expected_integrated, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
@@ -728,8 +729,8 @@ static std::deque<Venue::DepositEvent> depositsFromOneSlot(
   ParallelConfig par;
   InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
   im.setPolicyManager(policy_manager);
-  im.processTransmissions(locs, current_time, delta_hours, nullptr,
-                          visitor_ids, pending, visitor_data);
+  im.processTransmissions(locs, current_time, delta_hours, nullptr, visitor_ids,
+                          pending, visitor_data);
   return venue->fomite_history[0];
 }
 
@@ -767,8 +768,7 @@ static void checkVisitorDepositsLikeLocal(
   const PolicyManager* policy = policy_manager ? &*policy_manager : nullptr;
 
   Person* local_person = f.world.getPerson(f.rank);
-  local_person->infection =
-      makeInfection(disease, infection_time, transitions);
+  local_person->infection = makeInfection(disease, infection_time, transitions);
 
   f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, current_time,
                          delta_hours);
@@ -786,8 +786,8 @@ static void checkVisitorDepositsLikeLocal(
       f, disease, {{visitor_id, f.rank, -1, 0, 255, 0}}, current_time,
       delta_hours, &visitor_ids, &pending, &visitor_data, policy);
   auto local_deposits = depositsFromOneSlot(
-      f, disease, {{f.rank, f.rank, -1, 0, 255, 0}}, current_time,
-      delta_hours, nullptr, nullptr, nullptr, policy);
+      f, disease, {{f.rank, f.rank, -1, 0, 255, 0}}, current_time, delta_hours,
+      nullptr, nullptr, nullptr, policy);
 
   REQUIRE_FALSE(local_deposits.empty());
   REQUIRE(visitor_deposits.size() == local_deposits.size());

@@ -74,8 +74,8 @@ int InteractionManager::processVenueTransmissions(
 
   std::vector<double> lambda_fomite_by_mode = binMembersAndPrepareBuffers(
       members, venue, *bin_structure, num_bins_needed, num_modes,
-      fomite_schedule, current_time, delta_hours, encounter_type_id,
-      venue_type, venue_type_id, visitor_data);
+      fomite_schedule, current_time, delta_hours, encounter_type_id, venue_type,
+      venue_type_id, visitor_data);
 
   if (venueHasNoTransmissionPossible(num_bins_needed, comp_uptake_modes,
                                      lambda_fomite_by_mode, actual_venue_id,

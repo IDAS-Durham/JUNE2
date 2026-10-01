@@ -418,8 +418,7 @@ class InteractionManager {
       const std::vector<PartialPresenceSubBin>& sub_bins,
       const std::vector<std::vector<const RuntimeGroupMember*>>& susc_by_bin,
       const Venue* venue, uint8_t venue_type_id,
-      const ContactMatrix& bin_structure,
-      int num_bins_needed, int num_modes,
+      const ContactMatrix& bin_structure, int num_bins_needed, int num_modes,
       const TransmissionParams& trans_params,
       PartialPresenceLambdaResult& result) const;
 
@@ -695,9 +694,8 @@ class InteractionManager {
   bool processOneVenueSusceptible(
       const SusceptibleMember& susc_mem,
       const std::vector<double>& lambda_by_mode, int susc_bin,
-      uint64_t time_bits, double current_time,
-      VenueId actual_venue_id, Venue* venue, uint8_t venue_type_id,
-      const ParentAggregate* parent_agg,
+      uint64_t time_bits, double current_time, VenueId actual_venue_id,
+      Venue* venue, uint8_t venue_type_id, const ParentAggregate* parent_agg,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
       std::unordered_set<PersonId>* active_infections,
       std::vector<PendingInfection>* pending_infections);
@@ -751,9 +749,8 @@ class InteractionManager {
   // Append a cross-rank visitor's per-mode infectiousness (pre-computed on
   // the sending rank) into bins_buffer_[bin_index]. Caller has already
   // confirmed visitor->is_infectious. Uses im_scratch_buffer_ as scratch.
-  void accumulateVisitorInfectiousness(const VisitorInfo* visitor,
-                                       PersonId pid, int bin_index,
-                                       int num_modes);
+  void accumulateVisitorInfectiousness(const VisitorInfo* visitor, PersonId pid,
+                                       int bin_index, int num_modes);
 
   // Append a local infectious person's per-mode integrated infectiousness
   // into bins_buffer_[bin_index]. Caller has already confirmed
@@ -859,7 +856,8 @@ class InteractionManager {
   // susceptibility, missed roll) returns false.
   bool processOnePartialSusceptible(
       PersonId susc_id, const std::unordered_map<PersonId, double>& susc_lambda,
-      const std::unordered_map<PersonId, std::vector<double>>& susc_lambda_by_mode,
+      const std::unordered_map<PersonId, std::vector<double>>&
+          susc_lambda_by_mode,
       std::unordered_map<PersonId, std::vector<PartialPresenceAccumSource>>&
           susc_sources,
       double current_time, Venue* venue, uint8_t venue_type_id,

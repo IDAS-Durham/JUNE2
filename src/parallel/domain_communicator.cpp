@@ -72,8 +72,8 @@ char* packTail(char* ptr, const std::vector<double>& tail, int count,
                const char* name) {
   if (static_cast<int>(tail.size()) != count) {
     throw std::runtime_error(std::string("packVisitor: ") + name + " size " +
-                             std::to_string(tail.size()) + " != " +
-                             std::to_string(count));
+                             std::to_string(tail.size()) +
+                             " != " + std::to_string(count));
   }
   if (count > 0) {
     std::memcpy(ptr, tail.data(), count * sizeof(double));
@@ -82,8 +82,7 @@ char* packTail(char* ptr, const std::vector<double>& tail, int count,
   return ptr;
 }
 
-const char* unpackTail(const char* ptr, std::vector<double>& tail,
-                       int count) {
+const char* unpackTail(const char* ptr, std::vector<double>& tail, int count) {
   tail.assign(count, 0.0);
   if (count > 0) {
     std::memcpy(tail.data(), ptr, count * sizeof(double));
@@ -202,10 +201,10 @@ june::Domain::VisitorData buildVisitorPayload(
     // Same product as InteractionManager::addFomiteDeposits for locals.
     const auto& n_sub_per_mode = fomite_schedule->subBinsPerMode();
     int offset = 0;
-    for (int local_fm = 0; local_fm < fomite_schedule->numModes();
-         ++local_fm) {
-      const double source_modifier = sourceModifier(
-          policy_manager, person, fomite_schedule->modes()[local_fm].mode_index);
+    for (int local_fm = 0; local_fm < fomite_schedule->numModes(); ++local_fm) {
+      const double source_modifier =
+          sourceModifier(policy_manager, person,
+                         fomite_schedule->modes()[local_fm].mode_index);
       for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
         visitor.fomite_deposition_sub[offset + k] *= source_modifier;
       }
@@ -370,7 +369,7 @@ void DomainCommunicator::exchangeAllToAll(
     char* ptr = sbuf.data() + sdisp[r];
     for (const auto& v : outgoing[r]) {
       ptr = packVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                       tails.fomite_sub_bins);
+                        tails.fomite_sub_bins);
     }
   }
 
@@ -388,7 +387,7 @@ void DomainCommunicator::exchangeAllToAll(
     for (int i = 0; i < recv_counts[r]; ++i) {
       Domain::VisitorData v;
       ptr = unpackVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                       tails.fomite_sub_bins);
+                          tails.fomite_sub_bins);
       if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
     }
   }
@@ -443,7 +442,7 @@ void DomainCommunicator::performP2PVisitorExchange(
       char* ptr = sbufs[r].data();
       for (const auto& v : outgoing[r]) {
         ptr = packVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                       tails.fomite_sub_bins);
+                          tails.fomite_sub_bins);
       }
       MPI_Request req;
       MPI_Isend(sbufs[r].data(), sbufs[r].size(), MPI_BYTE, r, 101,
@@ -461,7 +460,7 @@ void DomainCommunicator::performP2PVisitorExchange(
       for (int i = 0; i < recv_counts[r]; ++i) {
         Domain::VisitorData v;
         ptr = unpackVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                       tails.fomite_sub_bins);
+                            tails.fomite_sub_bins);
         if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
       }
     }
