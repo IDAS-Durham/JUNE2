@@ -377,14 +377,12 @@ bool SelectionCriterion::evaluate(
       auto activity_venues =
           world->getActivityVenues(person, cached_activity_name);
       for (const auto& av : activity_venues) {
-        if (av.first >= 0 && av.first < (int)world->venues.size()) {
-          const auto& v = world->venues[av.first];
-          int32_t v_type_code = static_cast<int32_t>(v.type_id);
-          if (cached_operator == Operator::EQUAL) {
-            if (v_type_code == target_code) return true;
-          } else if (cached_operator == Operator::NOT_EQUAL) {
-            if (v_type_code != target_code) return true;
-          }
+        const int32_t v_type_code =
+            static_cast<int32_t>(world->getVenueTypeId(av.first));
+        if (cached_operator == Operator::EQUAL) {
+          if (v_type_code == target_code) return true;
+        } else if (cached_operator == Operator::NOT_EQUAL) {
+          if (v_type_code != target_code) return true;
         }
       }
       // True if none matched and looking for !=
@@ -434,12 +432,10 @@ bool SelectionCriterion::evaluate(
       auto activity_venues =
           world->getActivityVenues(person, cached_activity_name);
       for (const auto& av : activity_venues) {
-        if (av.first >= 0 && av.first < (int)world->venues.size()) {
-          const auto& v = world->venues[av.first];
-          if (v.type_id < world->venue_type_names.size()) {
-            person_values.push_back(
-                PropertyValue(world->venue_type_names[v.type_id]));
-          }
+        const uint8_t venue_type = world->getVenueTypeId(av.first);
+        if (venue_type < world->venue_type_names.size()) {
+          person_values.push_back(
+              PropertyValue(world->venue_type_names[venue_type]));
         }
       }
       break;
