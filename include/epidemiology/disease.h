@@ -127,6 +127,12 @@ struct OutcomeRates {
   std::vector<std::string> resolve(
       const WorldState& world, const std::vector<std::string>& symptom_names,
       const std::vector<std::string>& mode_names);
+
+  // Backward-compatible standalone resolution for callers that do not have a
+  // Disease's symptom/mode registries. Context values are checked for valid
+  // operators and types by SelectionCriterion, but name validation is only
+  // available through the overload above.
+  std::vector<std::string> resolve(const WorldState& world);
 };
 
 // =============================================================================

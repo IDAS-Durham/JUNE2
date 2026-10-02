@@ -87,6 +87,27 @@ std::vector<std::string> OutcomeRates::resolve(
   return absent;
 }
 
+std::vector<std::string> OutcomeRates::resolve(const WorldState& world) {
+  std::vector<std::string> absent;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const std::string row_label =
+        "disease outcome rates row " + std::to_string(i);
+    for (auto& c : rows[i].criteria) {
+      // A standalone OutcomeRates has no disease registries with which to
+      // validate context names. Keep the historical world-only behavior; the
+      // Disease::resolve wrapper uses the strict overload above.
+      if (filtering::isInfectionContextCriterion(c)) continue;
+      c.allow_absent_geo_units = true;
+      c.resolveOrThrow(world, row_label);
+      for (const std::string& name : c.absentGeoUnitNames()) {
+        absent.push_back("row " + std::to_string(i) +
+                         ": no geographical unit named '" + name + "'");
+      }
+    }
+  }
+  return absent;
+}
+
 // =============================================================================
 // Disease Implementation
 // =============================================================================
