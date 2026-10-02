@@ -44,16 +44,17 @@ class DomainManager {
   int getNumRanks() const { return num_ranks_; }
   void setMPI(int rank, int num_ranks);  // For tests
 
-  void setDisease(const Disease* disease);
   void setPolicyManager(const PolicyManager* policy_manager);
 
   // Delegated exchanges
   void exchangeVisitors(const std::vector<PersonLocation>& locations,
-                        double current_time, double delta_hours = 0.0,
+                        const Disease& disease, double current_time,
+                        double delta_hours,
                         const RuntimeGroupAllocator* alloc = nullptr);
   std::unordered_set<PersonId> getVisitorIds() const;
   std::vector<PendingInfection> receivePendingInfections(
-      const std::vector<PendingInfection>& pending_infections);
+      const std::vector<PendingInfection>& pending_infections,
+      const Disease& disease);
 
   // Cross-rank coordinated encounter exchange
   void exchangeEncounterProposals(

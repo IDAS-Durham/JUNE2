@@ -2,122 +2,24 @@
 
 #include "parallel/domain_communicator.h"
 
-#include <cstddef>
-#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "epidemiology/fomite/fomite_sub_bins.h"
 #include "epidemiology/policy.h"
-#include "parallel/domain_communicator_detail.h"
 #include "parallel/domain_manager.h"
 #include "parallel/mpi_utils.h"
+#include "parallel/visitor_wire.h"
 #include "utils/profiler.h"
 
 namespace {
 
-using june::domain_comm_detail::makeWireRecord;
-using june::domain_comm_detail::packField;
-using june::domain_comm_detail::unpackField;
-
-// Fixed header of the visitor wire format (everything before the
-// mode-specific payloads); the variable-length per-mode payloads and the
-// per-fomite-sub-bin deposits are appended manually after this, outside
-// WireRecord.
-// Total wire size = VISITOR_WIRE_HEADER +
-//   (2 * num_modes + num_deposition_modes + total_sub_bins) * sizeof(double).
-constexpr auto kVisitorWire = makeWireRecord(
-    &june::Domain::VisitorData::person_id,
-    &june::Domain::VisitorData::home_rank, &june::Domain::VisitorData::venue_id,
-    &june::Domain::VisitorData::subset_idx,
-    &june::Domain::VisitorData::is_infected,
-    &june::Domain::VisitorData::is_infectious,
-    &june::Domain::VisitorData::immunity_level,
-    &june::Domain::VisitorData::encounter_type_id,
-    &june::Domain::VisitorData::symptom_id,
-    &june::Domain::VisitorData::time_in_stage);
-constexpr int VISITOR_WIRE_HEADER = kVisitorWire.size();
-// Tripwire: VisitorData's trailing vectors (integrated_infectiousness through
-// fomite_deposition_sub) are std::vector<double>s packed manually as
-// count-known-elsewhere tails (not via WireRecord), and fields after them
-// (newly_infected etc.) are pure return data never on the wire, so
-// sizeof(VisitorData) isn't a useful proxy here.
-// offsetof(integrated_infectiousness) instead marks where the fixed header
-// covered by kVisitorWire ends - it moves if a field is added/removed/resized
-// anywhere before the tails.
-// offsetof is only standard-guaranteed for standard-layout types; guard that
-// assumption explicitly so a future member (e.g. a std::set) that breaks it
-// fails loudly here rather than degrading to a silent -Winvalid-offsetof.
-static_assert(std::is_standard_layout_v<june::Domain::VisitorData>,
-              "VisitorData must stay standard-layout for the offsetof check "
-              "below to be well-defined");
-static_assert(offsetof(june::Domain::VisitorData, integrated_infectiousness) ==
-                  40,
-              "VisitorData's fixed-header region changed - check kVisitorWire "
-              "covers every field, then update this literal");
-inline int visitorWireSize(int num_modes, int num_deposition_modes,
-                           int total_sub_bins) {
-  return VISITOR_WIRE_HEADER +
-         (2 * num_modes + num_deposition_modes + total_sub_bins) *
-             static_cast<int>(sizeof(double));
-}
-
-// Tails are exactly `count` long; sender and receiver agree on the counts from
-// the Disease and timestep, which every rank loads identically. A mismatch is
-// a config bug, caught loud rather than papered over.
-char* packTail(char* ptr, const std::vector<double>& tail, int count,
-               const char* name) {
-  if (static_cast<int>(tail.size()) != count) {
-    throw std::runtime_error(std::string("packVisitor: ") + name + " size " +
-                             std::to_string(tail.size()) +
-                             " != " + std::to_string(count));
-  }
-  if (count > 0) {
-    std::memcpy(ptr, tail.data(), count * sizeof(double));
-    ptr += count * sizeof(double);
-  }
-  return ptr;
-}
-
-const char* unpackTail(const char* ptr, std::vector<double>& tail, int count) {
-  tail.assign(count, 0.0);
-  if (count > 0) {
-    std::memcpy(tail.data(), ptr, count * sizeof(double));
-    ptr += count * sizeof(double);
-  }
-  return ptr;
-}
-
-char* packVisitor(char* ptr, const june::Domain::VisitorData& v, int num_modes,
-                  int num_deposition_modes, int total_sub_bins) {
-  ptr = kVisitorWire.pack(ptr, v);
-  ptr = packTail(ptr, v.integrated_infectiousness, num_modes,
-                 "integrated_infectiousness");
-  ptr = packTail(ptr, v.target_susceptibility, num_modes,
-                 "target_susceptibility");
-  ptr = packTail(ptr, v.deposition_source_multiplier, num_deposition_modes,
-                 "deposition_source_multiplier");
-  return packTail(ptr, v.fomite_deposition_sub, total_sub_bins,
-                  "fomite_deposition_sub");
-}
-
-const char* unpackVisitor(const char* ptr, june::Domain::VisitorData& v,
-                          int num_modes, int num_deposition_modes,
-                          int total_sub_bins) {
-  ptr = kVisitorWire.unpack(ptr, v);
-  ptr = unpackTail(ptr, v.integrated_infectiousness, num_modes);
-  ptr = unpackTail(ptr, v.target_susceptibility, num_modes);
-  ptr = unpackTail(ptr, v.deposition_source_multiplier, num_deposition_modes);
-  return unpackTail(ptr, v.fomite_deposition_sub, total_sub_bins);
-}
-
-int countDepositionModes(const june::Disease* disease) {
-  if (!disease) return 0;
+int countDepositionModes(const june::Disease& disease) {
   int count = 0;
-  for (const auto& mode : disease->getTransmissionParams().modes) {
+  for (const auto& mode : disease.getTransmissionParams().modes) {
     if (mode.type == june::TransmissionModeType::Fomite ||
         mode.type == june::TransmissionModeType::CompartmentalDeposition) {
       ++count;
@@ -140,14 +42,15 @@ double sourceModifier(const june::PolicyManager* policy_manager,
 // deposit per sub-bin using the SAME code paths and source modifiers as
 // local people (getIntegratedInfectiousness,
 // FomiteSubBinSchedule::integrateDeposits) so FP results are bit-identical
-// regardless of where a person is processed. All tails are always full
-// length (zero-filled for people who emit nothing); the wire format expects
-// exactly that many doubles.
+// regardless of where a person is processed. target_susceptibility is always
+// filled; each source tail only when its header gate sends it (ii when
+// infectious, deposition_source_multiplier and deposits when infected) and
+// left empty otherwise; see visitor_wire.h.
 june::Domain::VisitorData buildVisitorPayload(
     const june::PersonLocation& loc, const june::Person& person, int home_rank,
-    double current_time, double delta_hours, int num_modes,
-    const june::Disease* disease, const june::PolicyManager* policy_manager,
-    const june::FomiteSubBinSchedule* fomite_schedule) {
+    double current_time, double delta_hours, const june::Disease& disease,
+    const june::PolicyManager* policy_manager,
+    const june::FomiteSubBinSchedule& fomite_schedule) {
   june::Domain::VisitorData visitor;
   visitor.person_id = loc.person_id;
   visitor.home_rank = home_rank;
@@ -157,12 +60,8 @@ june::Domain::VisitorData buildVisitorPayload(
   visitor.is_infectious =
       visitor.is_infected && person.infection->isInfectious(current_time);
 
-  double susceptibility = 1.0;
-  if (disease) {
-    susceptibility = person.getSusceptibility(current_time, disease->getName());
-  } else {
-    susceptibility = 1.0 - person.immunity.natural_level;
-  }
+  const double susceptibility =
+      person.getSusceptibility(current_time, disease.getName());
   visitor.immunity_level = static_cast<float>(1.0 - susceptibility);
 
   visitor.encounter_type_id = loc.encounter_type_id;
@@ -171,10 +70,8 @@ june::Domain::VisitorData buildVisitorPayload(
 
   visitor.symptom_id = 0;
   visitor.time_in_stage = 0.0;
-  visitor.integrated_infectiousness.assign(num_modes, 0.0);
+  const int num_modes = disease.numModes();
   visitor.target_susceptibility.assign(num_modes, susceptibility);
-  visitor.deposition_source_multiplier.assign(countDepositionModes(disease),
-                                              1.0);
   for (int m = 0; m < num_modes; ++m) {
     const double target_multiplier =
         policy_manager
@@ -183,33 +80,6 @@ june::Domain::VisitorData buildVisitorPayload(
                   june::TransmissionEffectChannel::TargetSusceptibility)
             : 1.0;
     visitor.target_susceptibility[m] = susceptibility * target_multiplier;
-  }
-  size_t deposition_index = 0;
-  if (disease) {
-    for (size_t m = 0; m < disease->getTransmissionParams().modes.size(); ++m) {
-      const auto mode_type = disease->getTransmissionParams().modes[m].type;
-      if (mode_type != june::TransmissionModeType::Fomite &&
-          mode_type != june::TransmissionModeType::CompartmentalDeposition)
-        continue;
-      visitor.deposition_source_multiplier[deposition_index++] =
-          sourceModifier(policy_manager, person, m);
-    }
-  }
-  if (fomite_schedule) {
-    fomite_schedule->integrateDeposits(person.infection.get(), current_time,
-                                       visitor.fomite_deposition_sub);
-    // Same product as InteractionManager::addFomiteDeposits for locals.
-    const auto& n_sub_per_mode = fomite_schedule->subBinsPerMode();
-    int offset = 0;
-    for (int local_fm = 0; local_fm < fomite_schedule->numModes(); ++local_fm) {
-      const double source_modifier =
-          sourceModifier(policy_manager, person,
-                         fomite_schedule->modes()[local_fm].mode_index);
-      for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
-        visitor.fomite_deposition_sub[offset + k] *= source_modifier;
-      }
-      offset += n_sub_per_mode[local_fm];
-    }
   }
   if (visitor.is_infected) {
     const june::InfectionTrajectory& traj = person.infection->getTrajectory();
@@ -226,8 +96,33 @@ june::Domain::VisitorData buildVisitorPayload(
     visitor.symptom_id = cur_symptom_id;
     visitor.time_in_stage = current_time - stage_start_time;
 
-    if (visitor.is_infectious && disease) {
-      double t1 = current_time + delta_hours / 24.0;
+    visitor.deposition_source_multiplier.assign(countDepositionModes(disease),
+                                                1.0);
+    size_t deposition_index = 0;
+    for (size_t m = 0; m < disease.getTransmissionParams().modes.size(); ++m) {
+      const auto mode_type = disease.getTransmissionParams().modes[m].type;
+      if (mode_type != june::TransmissionModeType::Fomite &&
+          mode_type != june::TransmissionModeType::CompartmentalDeposition)
+        continue;
+      visitor.deposition_source_multiplier[deposition_index++] =
+          sourceModifier(policy_manager, person, m);
+    }
+    fomite_schedule.integrateDeposits(person.infection.get(), current_time,
+                                      visitor.fomite_deposition_sub);
+    // Same product as InteractionManager::addFomiteDeposits for locals.
+    const auto& n_sub_per_mode = fomite_schedule.subBinsPerMode();
+    int offset = 0;
+    for (int local_fm = 0; local_fm < fomite_schedule.numModes(); ++local_fm) {
+      const double source_modifier = sourceModifier(
+          policy_manager, person, fomite_schedule.modes()[local_fm].mode_index);
+      for (int k = 0; k < n_sub_per_mode[local_fm]; ++k) {
+        visitor.fomite_deposition_sub[offset + k] *= source_modifier;
+      }
+      offset += n_sub_per_mode[local_fm];
+    }
+    if (visitor.is_infectious) {
+      visitor.integrated_infectiousness.assign(num_modes, 0.0);
+      const double t1 = current_time + delta_hours / 24.0;
       for (int m = 0; m < num_modes; ++m) {
         visitor.integrated_infectiousness[m] =
             person.infection->getIntegratedInfectiousness(m, current_time, t1) *
@@ -244,36 +139,35 @@ namespace june {
 
 DomainCommunicator::DomainCommunicator(WorldState& world, const Config& config,
                                        Domain& domain)
-    : world_(world), config_(config), domain_(domain), disease_(nullptr) {
+    : world_(world), config_(config), domain_(domain) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank_);
   MPI_Comm_size(MPI_COMM_WORLD, &num_ranks_);
 }
 
 void DomainCommunicator::exchangeVisitors(
-    const std::vector<PersonLocation>& locations, const DomainManager& dm,
-    double current_time, double delta_hours,
+    const std::vector<PersonLocation>& locations, const Disease& disease,
+    const DomainManager& dm, double current_time, double delta_hours,
     const RuntimeGroupAllocator* alloc) {
   domain_.clearVisitors();
   std::vector<std::vector<Domain::VisitorData>> outgoing(num_ranks_);
+  // Bytes bound for each rank: records vary in length, so every exchange path
+  // sizes buffers and slices in bytes, not records.
   std::vector<int> send_counts(num_ranks_, 0);
   // Tail lengths are fixed for the exchange (Disease YAML and timestep).
   // Derive them once here so the same values size every visitor's payload
   // below and every wire buffer in the exchange helpers.
-  const int num_modes =
-      (disease_ && disease_->numModes() > 0) ? disease_->numModes() : 1;
-  std::optional<FomiteSubBinSchedule> fomite_schedule;
-  if (disease_) {
-    fomite_schedule.emplace(disease_->getTransmissionParams(), delta_hours);
-  }
-  const VisitorTailCounts tails{
-      num_modes, countDepositionModes(disease_),
-      fomite_schedule ? fomite_schedule->totalSubBins() : 0};
+  const FomiteSubBinSchedule fomite_schedule(disease.getTransmissionParams(),
+                                             delta_hours);
+  const VisitorTailCounts tails{disease.numModes(),
+                                countDepositionModes(disease),
+                                fomite_schedule.totalSubBins()};
 
   auto send = [&](const PersonLocation& loc, Person& person, int target_rank) {
-    outgoing[target_rank].push_back(buildVisitorPayload(
-        loc, person, rank_, current_time, delta_hours, num_modes, disease_,
-        policy_manager_, fomite_schedule ? &*fomite_schedule : nullptr));
-    send_counts[target_rank]++;
+    outgoing[target_rank].push_back(
+        buildVisitorPayload(loc, person, rank_, current_time, delta_hours,
+                            disease, policy_manager_, fomite_schedule));
+    send_counts[target_rank] +=
+        visitor_wire::recordSize(outgoing[target_rank].back(), tails);
   };
 
   for (const auto& loc : locations) {
@@ -346,6 +240,13 @@ void DomainCommunicator::dispatchVisitorExchange(
     exchangePointToPointVerySparse(outgoing, send_counts, tails);
 }
 
+void DomainCommunicator::unpackIncomingVisitors(
+    const char* begin, const char* end, const VisitorTailCounts& tails) {
+  visitor_wire::unpackSlice(begin, end, tails, [&](Domain::VisitorData&& v) {
+    if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(std::move(v));
+  });
+}
+
 void DomainCommunicator::exchangeAllToAll(
     const std::vector<std::vector<Domain::VisitorData>>& outgoing,
     const std::vector<int>& send_counts_in, const VisitorTailCounts& tails) {
@@ -354,13 +255,10 @@ void DomainCommunicator::exchangeAllToAll(
   MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
                MPI_COMM_WORLD);
 
-  const int wire_size = visitorWireSize(
-      tails.num_modes, tails.num_deposition_modes, tails.fomite_sub_bins);
-
   std::vector<int> sdisp, rdisp;
   int stotal, rtotal;
-  mpi_utils::computeByteDisplacements(send_counts, wire_size, sdisp, stotal);
-  mpi_utils::computeByteDisplacements(recv_counts, wire_size, rdisp, rtotal);
+  mpi_utils::computeByteDisplacements(send_counts, 1, sdisp, stotal);
+  mpi_utils::computeByteDisplacements(recv_counts, 1, rdisp, rtotal);
 
   std::vector<char> sbuf(stotal);
   std::vector<char> rbuf(rtotal);
@@ -368,28 +266,17 @@ void DomainCommunicator::exchangeAllToAll(
   for (int r = 0; r < num_ranks_; ++r) {
     char* ptr = sbuf.data() + sdisp[r];
     for (const auto& v : outgoing[r]) {
-      ptr = packVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                        tails.fomite_sub_bins);
+      ptr = visitor_wire::pack(ptr, v, tails);
     }
   }
 
-  std::vector<int> sc(num_ranks_), rc(num_ranks_);
-  for (int i = 0; i < num_ranks_; ++i) {
-    sc[i] = send_counts[i] * wire_size;
-    rc[i] = recv_counts[i] * wire_size;
-  }
-
-  MPI_Alltoallv(sbuf.data(), sc.data(), sdisp.data(), MPI_BYTE, rbuf.data(),
-                rc.data(), rdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+  MPI_Alltoallv(sbuf.data(), send_counts.data(), sdisp.data(), MPI_BYTE,
+                rbuf.data(), recv_counts.data(), rdisp.data(), MPI_BYTE,
+                MPI_COMM_WORLD);
 
   for (int r = 0; r < num_ranks_; ++r) {
-    const char* ptr = rbuf.data() + rdisp[r];
-    for (int i = 0; i < recv_counts[r]; ++i) {
-      Domain::VisitorData v;
-      ptr = unpackVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                          tails.fomite_sub_bins);
-      if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
-    }
+    const char* slice = rbuf.data() + rdisp[r];
+    unpackIncomingVisitors(slice, slice + recv_counts[r], tails);
   }
 }
 
@@ -411,13 +298,10 @@ void DomainCommunicator::performP2PVisitorExchange(
   std::vector<MPI_Request> sreqs, rreqs;
   std::vector<std::vector<char>> rbufs(num_ranks_);
 
-  const int wire_size = visitorWireSize(
-      tails.num_modes, tails.num_deposition_modes, tails.fomite_sub_bins);
-
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
       try {
-        rbufs[r].resize(recv_counts[r] * wire_size);
+        rbufs[r].resize(recv_counts[r]);
       } catch (const std::exception& e) {
         std::cerr << "[MPI] rbufs resize failed: recv_counts[r]="
                   << recv_counts[r] << " error: " << e.what() << std::endl;
@@ -433,7 +317,7 @@ void DomainCommunicator::performP2PVisitorExchange(
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && send_counts[r] > 0) {
       try {
-        sbufs[r].resize(send_counts[r] * wire_size);
+        sbufs[r].resize(send_counts[r]);
       } catch (const std::exception& e) {
         std::cerr << "[MPI] sbufs resize failed: send_counts[r]="
                   << send_counts[r] << " error: " << e.what() << std::endl;
@@ -441,8 +325,7 @@ void DomainCommunicator::performP2PVisitorExchange(
       }
       char* ptr = sbufs[r].data();
       for (const auto& v : outgoing[r]) {
-        ptr = packVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                          tails.fomite_sub_bins);
+        ptr = visitor_wire::pack(ptr, v, tails);
       }
       MPI_Request req;
       MPI_Isend(sbufs[r].data(), sbufs[r].size(), MPI_BYTE, r, 101,
@@ -456,13 +339,8 @@ void DomainCommunicator::performP2PVisitorExchange(
 
   for (int r = 0; r < num_ranks_; ++r) {
     if (r != rank_ && recv_counts[r] > 0) {
-      const char* ptr = rbufs[r].data();
-      for (int i = 0; i < recv_counts[r]; ++i) {
-        Domain::VisitorData v;
-        ptr = unpackVisitor(ptr, v, tails.num_modes, tails.num_deposition_modes,
-                            tails.fomite_sub_bins);
-        if (domain_.ownsVenue(v.venue_id)) domain_.addIncomingVisitor(v);
-      }
+      unpackIncomingVisitors(rbufs[r].data(), rbufs[r].data() + rbufs[r].size(),
+                             tails);
     }
   }
 

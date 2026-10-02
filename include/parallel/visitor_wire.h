@@ -1,0 +1,71 @@
+#pragma once
+
+#ifdef USE_MPI
+
+#include <utility>
+#include <vector>
+
+#include "parallel/domain.h"
+
+// Wire format of one Visitor record: a fixed header (WireRecord over
+// VisitorData's plain fields) followed by four count-known-elsewhere tails:
+// integrated_infectiousness, target_susceptibility,
+// deposition_source_multiplier, fomite_deposition_sub. A source tail travels
+// only when the header says it can be nonzero, and arrives empty otherwise;
+// target_susceptibility always travels, since any visitor can be a target:
+//
+//   !is_infected                    header + ts
+//   is_infected && !is_infectious   header + ts + dsm + deposits
+//   is_infectious                   header + ii + ts + dsm + deposits
+//
+// The receiver derives nothing from disease state.
+namespace june::visitor_wire {
+
+// Lengths of a visitor record's tails. Derived from the Disease and timestep,
+// so identical on every rank and fixed for one exchange.
+struct TailCounts {
+  int num_modes;             // integrated_infectiousness, target_susceptibility
+  int num_deposition_modes;  // deposition_source_multiplier
+  int fomite_sub_bins;       // fomite_deposition_sub
+};
+
+// Bytes `visitor` occupies on the wire; depends on its header bools.
+int recordSize(const Domain::VisitorData& visitor, const TailCounts& tails);
+
+// Writes `visitor` at `ptr`, returns the end of the record. Throws if a sent
+// tail's length differs from its count in `tails`, or if a skipped tail is
+// not empty or all zero.
+char* pack(char* ptr, const Domain::VisitorData& visitor,
+           const TailCounts& tails);
+
+// Reads one record at `ptr` into `visitor`, returns the end of the record.
+// Skipped tails come back empty.
+const char* unpack(const char* ptr, Domain::VisitorData& visitor,
+                   const TailCounts& tails);
+
+// Bytes `visitors` occupy on the wire, packed back to back.
+int sliceSize(const std::vector<Domain::VisitorData>& visitors,
+              const TailCounts& tails);
+
+namespace detail {
+// unpack(), but throws if the record would run past `end`.
+const char* unpackWithin(const char* ptr, const char* end,
+                         Domain::VisitorData& visitor, const TailCounts& tails);
+}  // namespace detail
+
+// Unpacks every record in [begin, end), passing each to `sink` as an rvalue.
+// Throws if the records don't end exactly at `end`.
+template <typename Sink>
+void unpackSlice(const char* begin, const char* end, const TailCounts& tails,
+                 Sink&& sink) {
+  const char* ptr = begin;
+  while (ptr < end) {
+    Domain::VisitorData visitor;
+    ptr = detail::unpackWithin(ptr, end, visitor, tails);
+    sink(std::move(visitor));
+  }
+}
+
+}  // namespace june::visitor_wire
+
+#endif  // USE_MPI

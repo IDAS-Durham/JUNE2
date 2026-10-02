@@ -219,7 +219,8 @@ if(MPI_FOUND)
        src/parallel/seed_offer_exchange_mpi.cpp
        src/parallel/geography_partitioner.cpp
        src/parallel/domain_communicator.cpp
-       src/parallel/domain_communicator_encounters.cpp)
+       src/parallel/domain_communicator_encounters.cpp
+       src/parallel/visitor_wire.cpp)
 endif()
 
 # Create the library
@@ -320,8 +321,13 @@ if(BUILD_TESTING)
     add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   endmacro()
 
-  # Macro to add MPI-enabled tests
+  # Macro to add MPI-enabled tests. Optional third argument: rank count
+  # (default 2).
   macro(add_june_mpi_test name sources)
+    set(_june_mpi_num_ranks 2)
+    if(${ARGC} GREATER 2)
+      set(_june_mpi_num_ranks ${ARGV2})
+    endif()
     add_executable(${name} ${sources})
     target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests)
     target_link_libraries(${name} PRIVATE june_core)
@@ -332,13 +338,14 @@ if(BUILD_TESTING)
     endif()
 
     if(MPIEXEC_EXECUTABLE)
-      add_test(NAME ${name} COMMAND ${MPIEXEC_EXECUTABLE} -np 2 --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+      add_test(NAME ${name} COMMAND ${MPIEXEC_EXECUTABLE} -np ${_june_mpi_num_ranks} --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     else()
       message(FATAL_ERROR "MPI execution command (mpirun/mpiexec) not found, but MPI tests are enabled. Cannot configure ${name}.")
     endif()
   endmacro()
 
   add_june_test(test_domain_communicator_detail "tests/test_domain_communicator_detail.cpp")
+  add_june_test(test_visitor_wire "tests/test_visitor_wire.cpp")
   add_june_test(test_run_dir "tests/test_run_dir.cpp")
   add_june_test(test_world_state "tests/test_world_state.cpp")
   add_june_test(test_selection_criterion_geography "tests/test_selection_criterion_geography.cpp")
@@ -408,6 +415,7 @@ if(BUILD_TESTING)
     add_june_mpi_test(test_mpi_communication "tests/test_mpi_communication.cpp")
     add_june_mpi_test(test_mpi_advanced "tests/test_mpi_advanced.cpp")
     add_june_mpi_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp")
+    add_june_mpi_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" 4)
 
     if(MPIEXEC_EXECUTABLE)
       # End-to-end disease_sim reproducibility: runs disease_sim at

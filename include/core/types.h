@@ -83,7 +83,8 @@ struct VisitorInfo {
   bool has_deposition_source_multiplier = false;
 
   // Fomite deposit per (fomite mode, sub-bin), flat in FomiteSubBinSchedule
-  // order, source modifier applied (from sending rank)
+  // order, source modifier applied (from sending rank). Empty unless
+  // is_infected.
   std::vector<double> fomite_deposition_sub;
 };
 

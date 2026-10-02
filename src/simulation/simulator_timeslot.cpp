@@ -3,6 +3,7 @@
 // simulator.cpp (declared in simulation/simulator.h).
 #include <algorithm>
 #include <iostream>
+#include <utility>
 #include <vector>
 
 #include "simulation/simulator.h"
@@ -168,7 +169,7 @@ void Simulator::receivePendingAndApply(
   if (domain_mgr_ == nullptr) return;
   try {
     auto mpi_infected =
-        domain_mgr_->receivePendingInfections(pending_infections);
+        domain_mgr_->receivePendingInfections(pending_infections, *disease_);
     for (const auto& applied : mpi_infected) {
       epidemiology_->trackInfection(applied.person_id);
       event_logger_.logInfection(
@@ -193,8 +194,9 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
   }
   try {
     ScopedTimer timer("02_MPI_VisitorExchange");
-    domain_mgr_->exchangeVisitors(locations_, current_simulation_time_,
-                                  delta_hours, runtime_group_allocator_.get());
+    domain_mgr_->exchangeVisitors(locations_, *disease_,
+                                  current_simulation_time_, delta_hours,
+                                  runtime_group_allocator_.get());
 
     Domain& domain = domain_mgr_->getDomain();
 
@@ -280,7 +282,7 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       }
       info.has_deposition_source_multiplier = deposition_index > 0;
       info.fomite_deposition_sub = visitor.fomite_deposition_sub;
-      visitor_data_map[visitor.person_id] = info;
+      visitor_data_map[visitor.person_id] = std::move(info);
     }
   } catch (const std::exception& e) {
     std::cerr << "[Step 2 MPI] Fatal error: " << e.what() << std::endl;

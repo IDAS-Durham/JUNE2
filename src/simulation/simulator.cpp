@@ -493,12 +493,9 @@ Simulator::Simulator(WorldState& world, Config& config,
   }
   interaction_manager_->setPolicyManager(policy_manager_.get());
 
-  // Set disease in domain manager (if in parallel mode)
+  // Set policy manager in domain manager (if in parallel mode)
 #ifdef USE_MPI
-  if (domain_mgr_) {
-    domain_mgr_->setDisease(disease_.get());
-    domain_mgr_->setPolicyManager(policy_manager_.get());
-  }
+  if (domain_mgr_) domain_mgr_->setPolicyManager(policy_manager_.get());
 #endif
 
   // Initialize locations (everyone starts at residence)

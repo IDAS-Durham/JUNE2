@@ -17,6 +17,7 @@
 #include "core/world_state.h"
 #include "domain.h"
 #include "epidemiology/disease.h"
+#include "parallel/visitor_wire.h"
 
 namespace june {
 class DomainManager;
@@ -30,15 +31,14 @@ class DomainCommunicator {
  public:
   DomainCommunicator(WorldState& world, const Config& config, Domain& domain);
 
-  void setDisease(const Disease* disease) { disease_ = disease; }
   void setPolicyManager(const PolicyManager* policy_manager) {
     policy_manager_ = policy_manager;
   }
 
   // Exchange visitors across ranks
   void exchangeVisitors(const std::vector<PersonLocation>& locations,
-                        const DomainManager& dm, double current_time,
-                        double delta_hours = 0.0,
+                        const Disease& disease, const DomainManager& dm,
+                        double current_time, double delta_hours,
                         const RuntimeGroupAllocator* alloc = nullptr);
 
   // Exchange pending infections across ranks. Returns the PendingInfection
@@ -46,7 +46,8 @@ class DomainCommunicator {
   // created on the home rank), so the caller can log InfectionEvents on the
   // owning rank.
   std::vector<PendingInfection> receivePendingInfections(
-      const std::vector<PendingInfection>& pending_infections);
+      const std::vector<PendingInfection>& pending_infections,
+      const Disease& disease);
 
   // Cross-rank coordinated encounter exchange
   void exchangeEncounterProposals(
@@ -62,14 +63,7 @@ class DomainCommunicator {
       std::vector<CoordinatedEncounter>& finalized_for_this_rank);
 
  private:
-  // Lengths of a visitor record's count-known-elsewhere tails. Derived from
-  // the Disease and timestep, so identical on every rank and fixed for one
-  // exchange.
-  struct VisitorTailCounts {
-    int num_modes;  // integrated_infectiousness, target_susceptibility
-    int num_deposition_modes;  // deposition_source_multiplier
-    int fomite_sub_bins;       // fomite_deposition_sub
-  };
+  using VisitorTailCounts = visitor_wire::TailCounts;
 
   void exchangeAllToAll(
       const std::vector<std::vector<Domain::VisitorData>>& outgoing,
@@ -80,6 +74,10 @@ class DomainCommunicator {
   void exchangePointToPointVerySparse(
       const std::vector<std::vector<Domain::VisitorData>>& outgoing,
       const std::vector<int>& send_counts, const VisitorTailCounts& tails);
+
+  // Adds every record in one received byte slice whose venue this rank owns.
+  void unpackIncomingVisitors(const char* begin, const char* end,
+                              const VisitorTailCounts& tails);
 
   // Shared P2P logic for visitor exchange
   void performP2PVisitorExchange(
@@ -106,19 +104,17 @@ class DomainCommunicator {
   // the vector of newly-applied records.
   std::vector<PendingInfection> unpackAndApplyIncoming(
       const std::vector<char>& rbuf, const std::vector<int>& rd,
-      const std::vector<int>& recv_counts);
+      const std::vector<int>& recv_counts, const Disease& disease);
 
   // Construct the local Infection for one successfully-unpacked pending
   // record and return the resulting PendingInfection. Returns std::nullopt
-  // if the record was skipped (person not owned, already infected, or no
-  // disease loaded).
+  // if the record was skipped (person not owned or already infected).
   std::optional<PendingInfection> applyOnePendingInfection(
-      const PendingInfection& pending);
+      const PendingInfection& pending, const Disease& disease);
 
   WorldState& world_;
   const Config& config_;
   Domain& domain_;
-  const Disease* disease_;
   const PolicyManager* policy_manager_ = nullptr;
   int rank_, num_ranks_;
 };
