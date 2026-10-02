@@ -60,6 +60,68 @@ TEST_CASE("Disease trajectory progression") {
   }
 }
 
+TEST_CASE("Trajectory carries infection time without a person") {
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+
+  TrajectoryDefinition td;
+  td.selection_key = "general_population";
+  td.stages.push_back({"mild", {"constant", {{"value", 5.0}}}});
+
+  SymptomTag healthy;
+  healthy.name = "healthy";
+  healthy.id = 0;
+  healthy.value = -1;
+  SymptomTag mild;
+  mild.name = "mild";
+  mild.id = 1;
+  mild.value = 1;
+
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"healthy"};
+
+  Disease disease("TestFlu", {healthy, mild}, stage_settings, {td}, {}, trans);
+
+  // Null person takes the warning path, which builds no transitions; the first
+  // stage start is still the infection time.
+  Infection infection(&disease, 7.5, nullptr, 123);
+  CHECK(infection.getTrajectory().infection_time == 7.5);
+}
+
+TEST_CASE("Integrated infectiousness splits at a stage transition") {
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto mild_curve = std::make_shared<ConstantCurve>(1.0);
+  auto severe_curve = std::make_shared<ConstantCurve>(3.0);
+  trans.stage_curves["mild"] = mild_curve;
+  trans.stage_curves["severe"] = severe_curve;
+  trans.symptom_id_curves = {nullptr, mild_curve, severe_curve};
+
+  TrajectoryDefinition td;
+  td.selection_key = "general_population";
+  td.stages.push_back({"mild", {"constant", {{"value", 2.0}}}});
+  td.stages.push_back({"severe", {"constant", {{"value", 5.0}}}});
+  td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
+
+  SymptomTag healthy{.name = "healthy", .value = -1, .id = 0};
+  SymptomTag mild{.name = "mild", .value = 1, .id = 1};
+  SymptomTag severe{.name = "severe", .value = 2, .id = 2};
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"healthy"};
+  Disease disease("TestFlu", {healthy, mild, severe}, stage_settings, {td}, {},
+                  trans);
+
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 0);
+  Infection infection(&disease, 0.0, &world.people[0], 123, nullptr, "office",
+                      0);
+  REQUIRE(infection.getTrajectory().getCurrentSymptomId(1.0) == 1);
+  REQUIRE(infection.getTrajectory().getCurrentSymptomId(3.0) == 2);
+
+  // Mild (1) over [1, 2], severe (3) over [2, 4]: 1 + 6 = 7 days → 168 hours.
+  CHECK(infection.getIntegratedInfectiousness(0, 1.0, 4.0) ==
+        doctest::Approx(168.0));
+}
+
 TEST_CASE("Sentinel venue_id=-1 filtered by processTransmissions") {
   WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
   Venue& venue = world.venues[0];
