@@ -381,8 +381,8 @@ struct Venue {
   uint8_t type_id;        // ID into type_names
   GeoUnitId geo_unit_id;  // Where venue is located
   uint32_t transmission_modifier_set_id = 0;
-  VenueId
-      parent_id;  // -1 if no parent (e.g., school has classrooms as children)
+  VenueId parent_id =
+      -1;  // -1 if no parent (e.g., school has classrooms as children)
   float latitude;
   float longitude;
   bool is_residence;
