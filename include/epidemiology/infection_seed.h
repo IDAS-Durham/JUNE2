@@ -5,7 +5,6 @@
 #include <memory>
 #include <numeric>
 #include <random>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -14,6 +13,7 @@
 #include "core/types.h"
 #include "core/world_state.h"
 #include "epidemiology/seeding/seed_shortfall.h"
+#include "epidemiology/seeding/seed_window.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/filtering.h"
 
@@ -113,6 +113,8 @@ struct InfectionSeedEvent {
   std::string name;
   InfectionSeedType type;
   std::string date_time;  // ISO format: "2025-08-28 09:00"
+  // date_time as minutes since the Julian Day epoch; set by InfectionSeeder.
+  long long date_minutes = 0;
 
   // Type-specific configuration
   StructuredSeedConfig structured_config;  // For EXACT/CLUSTERED
@@ -176,9 +178,9 @@ class InfectionSeeder {
                   const InfectionSeedConfig& config,
                   EventLogger* event_logger = nullptr, uint64_t base_seed = 0);
 
-  // Seed infections for a given simulation time
-  // Returns IDs of people infected
-  std::vector<PersonId> seedInfections(const std::string& current_datetime,
+  // Apply every seed whose Seed Date falls in `window`; returns the people
+  // infected.
+  std::vector<PersonId> seedInfections(const SeedWindow& window,
                                        double simulation_time);
 
   // Structured seeds are counted globally: the seeder offers its local
@@ -200,15 +202,6 @@ class InfectionSeeder {
   // disease; an unknown name throws. Called after the world is fully loaded.
   void resolveConfig(const WorldState& world);
 
-  // --- Checkpoint serialization ---
-  // applied_seeds_ tracks which seed events have already fired. It MUST be
-  // saved and restored across a checkpoint, otherwise a resume re-fires
-  // already-applied seeds and double-infects.
-  const std::set<std::string>& getAppliedSeeds() const {
-    return applied_seeds_;
-  }
-  void setAppliedSeeds(const std::set<std::string>& s) { applied_seeds_ = s; }
-
  private:
   WorldState& world_;
   const Disease* disease_;
@@ -219,12 +212,8 @@ class InfectionSeeder {
   const SeedOfferExchange* seed_offer_exchange_ = nullptr;
   std::vector<SeedShortfall> seed_shortfalls_;
 
-  // Track which seeds have been applied
-  std::set<std::string> applied_seeds_;
-
-  // Apply a single seed event, its draws keyed by its position in the config
-  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed,
-                                  size_t seed_index);
+  // Apply a single seed event, its draws keyed by its Seed Identity
+  std::vector<PersonId> applySeed(const InfectionSeedEvent& seed);
 
   // Type-specific seeding methods; event_base keys every draw of the event
   std::vector<PersonId> applyUniformSeed(const InfectionSeedEvent& seed,

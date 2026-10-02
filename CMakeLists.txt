@@ -166,6 +166,8 @@ set(JUNE_CORE_SOURCES
     src/epidemiology/seeding/seed_selector.cpp
     src/epidemiology/seeding/seed_shortfall.cpp
     src/epidemiology/seeding/seed_cluster_planner.cpp
+    src/epidemiology/seeding/seed_identity.cpp
+    src/epidemiology/seeding/seed_window.cpp
     src/epidemiology/fomite/fomite_sub_bins.cpp
     src/epidemiology/emission/emission.cpp
     src/epidemiology/transmission/infection_context.cpp
@@ -417,6 +419,7 @@ if(BUILD_TESTING)
   add_june_test(test_transmission_modes "tests/test_transmission_modes.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_deterministic_rng "tests/test_deterministic_rng.cpp")
   add_june_test(test_infection_seeder "tests/test_infection_seeder.cpp")
+  add_june_test(test_seed_window "tests/test_seed_window.cpp")
   add_june_test(test_transmission_determinism "tests/test_transmission_determinism.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_sibling_mixing "tests/test_sibling_mixing.cpp;src/loaders/disease_loader.cpp")

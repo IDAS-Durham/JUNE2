@@ -346,3 +346,37 @@ TEST_CASE(
     }
   }
 }
+
+TEST_CASE(
+    "an infection no outcome row matches counts one unmatched selection; a "
+    "matched one counts none") {
+  WorldState world = buildOnePersonWorld();
+  OutcomeRow bite_row =
+      rowWith(contextCriterion("transmission_mode", "animal_bite"));
+  bite_row.probabilities = {{"bite", 1.0}};
+  Disease disease = buildDisease({bite_row},
+                                 {trajectoryInto("bite", "primary_pneumonic")});
+  REQUIRE(disease.resolve(world).empty());
+  const uint8_t animal_bite = 0;
+
+  Infection matched(
+      &disease, 0.0, &world.people[0], 42,
+      TransmissionRecord{InfectionSource::Seed, kNoSymptomId, animal_bite},
+      &world);
+  CHECK(disease.unmatchedTrajectorySelectionCount() == 0);
+
+  Infection unmatched(
+      &disease, 0.0, &world.people[0], 42,
+      TransmissionRecord{InfectionSource::Seed, kNoSymptomId, kNoModeIndex},
+      &world);
+  CHECK(disease.unmatchedTrajectorySelectionCount() == 1);
+}
+
+TEST_CASE(
+    "the unmatched-selection warning is empty at zero and names the disease "
+    "and count otherwise") {
+  CHECK(formatUnmatchedTrajectoryWarning("Plague", 0).empty());
+  const std::string warning = formatUnmatchedTrajectoryWarning("Plague", 7);
+  CHECK(warning.find("Plague") != std::string::npos);
+  CHECK(warning.find("7") != std::string::npos);
+}

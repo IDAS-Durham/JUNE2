@@ -13,18 +13,25 @@ namespace june {
 // Time Utilities
 // =============================================================================
 
-// Parse "HH:MM" string to minutes since midnight
+// Parse "H:MM" or "HH:MM" to minutes since midnight. The one time-of-day
+// parser: schedule slots and seed dates both go through it.
 inline int parseTimeToMinutes(const std::string& time_str) {
-  int hours, minutes;
-  char colon;
-  std::istringstream ss(time_str);
-
-  if (!(ss >> hours >> colon >> minutes) || colon != ':') {
+  const auto is_digit = [](char character) {
+    return character >= '0' && character <= '9';
+  };
+  const size_t colon = time_str.find(':');
+  const bool well_formed =
+      (colon == 1 || colon == 2) && time_str.size() == colon + 3 &&
+      is_digit(time_str[0]) && is_digit(time_str[colon - 1]) &&
+      is_digit(time_str[colon + 1]) && is_digit(time_str[colon + 2]);
+  if (!well_formed) {
     throw std::runtime_error("Invalid time format: " + time_str +
                              " (expected HH:MM)");
   }
 
-  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+  const int hours = std::stoi(time_str.substr(0, colon));
+  const int minutes = std::stoi(time_str.substr(colon + 1));
+  if (hours > 23 || minutes > 59) {
     throw std::runtime_error("Invalid time values: " + time_str);
   }
 
@@ -89,6 +96,39 @@ inline std::tm julianDayToTm(long long jd) {
   result.tm_mon = static_cast<int>(m + 3 - 12 * (m / 10)) - 1;
   result.tm_year = static_cast<int>(100 * b + d - 4800 + m / 10) - 1900;
   return result;
+}
+
+// Parse "YYYY-MM-DD HH:MM" (hour may drop its leading zero) to minutes since
+// the Julian Day epoch, so any two such moments compare and subtract
+// directly, pre-1970 included. Throws on any other format or on an
+// impossible date or time.
+inline long long parseDateTimeMinutes(const std::string& date_time) {
+  const auto refuse = [&]() {
+    throw std::invalid_argument("invalid date '" + date_time +
+                                "' (expected YYYY-MM-DD HH:MM)");
+  };
+  const std::string date_pattern = "dddd-dd-dd ";
+  if (date_time.size() <= date_pattern.size()) refuse();
+  for (size_t i = 0; i < date_pattern.size(); ++i) {
+    const bool is_digit = date_time[i] >= '0' && date_time[i] <= '9';
+    if (date_pattern[i] == 'd' ? !is_digit : date_time[i] != date_pattern[i])
+      refuse();
+  }
+  const int year = std::stoi(date_time.substr(0, 4));
+  const int month = std::stoi(date_time.substr(5, 2));
+  const int day = std::stoi(date_time.substr(8, 2));
+  if (month < 1 || month > 12 || day < 1) refuse();
+  const long long julian_day = toJulianDay(year, month, day);
+  // A day past the month's end rolls into the next month; refuse it.
+  if (julianDayToTm(julian_day).tm_mday != day) refuse();
+  int minutes_since_midnight = 0;
+  try {
+    minutes_since_midnight =
+        parseTimeToMinutes(date_time.substr(date_pattern.size()));
+  } catch (const std::runtime_error&) {
+    refuse();
+  }
+  return julian_day * 1440 + minutes_since_midnight;
 }
 
 inline bool isPreEpoch(const std::tm& date) {

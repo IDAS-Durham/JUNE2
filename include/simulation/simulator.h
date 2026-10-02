@@ -56,8 +56,8 @@ class Simulator {
   // Run the full simulation
   void run();
 
-  // Apply configured infection seeds at a specific time
-  void applyInfectionSeeds(const std::string& current_datetime);
+  // Apply the infection seeds whose Seed Dates fall in `window`
+  void applyInfectionSeeds(const SeedWindow& window);
 
   // Get event logger for external access
   EventLogger* getEventLogger() { return &event_logger_; }
@@ -260,6 +260,9 @@ class Simulator {
   // Sum the infector-symptom lookup gaps across ranks (collective) and warn
   // once on rank 0 if any.
   void warnInfectorLookupGaps(int rank);
+  // Sum the zero-rate trajectory selections across ranks (collective) and
+  // warn once on rank 0 if any.
+  void warnUnmatchedTrajectorySelections(int rank);
 
   // End-of-day checkpoint trigger. Consults the configured cadence and, if
   // the day fires, announces on rank 0 and writes a checkpoint.
@@ -274,9 +277,9 @@ class Simulator {
                                 int comp);
 
   // Read the global / scalar restore state from state.h5 into class members
-  // (current_simulation_time_, next_encounter_group_id_, day_type_counts_,
-  // and the infection_seeder's applied_seeds). Per-rank manager state
-  // (lpt, frozen_states) is overlaid from the shards, not from here.
+  // (current_simulation_time_, next_encounter_group_id_, day_type_counts_).
+  // Per-rank manager state (lpt, frozen_states) is overlaid from the shards,
+  // not from here.
   void restoreCheckpointStateFile(const std::filesystem::path& cp);
 
   // Throw if --days / end_date leaves nothing to simulate after a resume.
@@ -286,10 +289,10 @@ class Simulator {
   void validateResumeBounds(int completed_day) const;
 
   // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
-  // (completed_day, current_simulation_time_, next_encounter_group_id_, …),
-  // the infection_seeder's applied_seeds, and the rank-0 event-log buffered
-  // record counts. Per-rank manager state (lpt, frozen_states) lives in
-  // each shard, not here, so the checkpoint stays rank-count-independent.
+  // (completed_day, current_simulation_time_, next_encounter_group_id_, …)
+  // and the rank-0 event-log buffered record counts. Per-rank manager state
+  // (lpt, frozen_states) lives in each shard, not here, so the checkpoint
+  // stays rank-count-independent.
   void writeCheckpointStateFile(const std::filesystem::path& tmp,
                                 int completed_day, int nranks);
 

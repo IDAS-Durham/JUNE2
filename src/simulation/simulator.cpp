@@ -613,6 +613,7 @@ void Simulator::run() {
 
   writeFinalEventsAndLookups(rank);
   warnInfectorLookupGaps(rank);
+  warnUnmatchedTrajectorySelections(rank);
 
   if (rank == 0) printRunSummary();
 }
@@ -628,6 +629,22 @@ void Simulator::warnInfectorLookupGaps(int rank) {
   }
 #endif
   if (rank == 0) std::cerr << formatInfectorLookupGapWarning(global_gaps);
+}
+
+void Simulator::warnUnmatchedTrajectorySelections(int rank) {
+  uint64_t local_unmatched =
+      disease_ ? disease_->unmatchedTrajectorySelectionCount() : 0;
+  uint64_t global_unmatched = local_unmatched;
+#ifdef USE_MPI
+  if (domain_mgr_) {
+    MPI_Allreduce(&local_unmatched, &global_unmatched, 1, MPI_UINT64_T, MPI_SUM,
+                  MPI_COMM_WORLD);
+  }
+#endif
+  if (rank == 0 && disease_) {
+    std::cerr << formatUnmatchedTrajectoryWarning(disease_->getName(),
+                                                  global_unmatched);
+  }
 }
 
 void Simulator::runOneDay(int day, int rank) {
@@ -806,9 +823,9 @@ void Simulator::printSimulationState(const std::string& time_slot_name,
   }
 }
 
-void Simulator::applyInfectionSeeds(const std::string& current_datetime) {
-  std::vector<PersonId> newly_infected = infection_seeder_->seedInfections(
-      current_datetime, current_simulation_time_);
+void Simulator::applyInfectionSeeds(const SeedWindow& window) {
+  std::vector<PersonId> newly_infected =
+      infection_seeder_->seedInfections(window, current_simulation_time_);
   int local_count = static_cast<int>(newly_infected.size());
   int global_count = local_count;
 #ifdef USE_MPI
