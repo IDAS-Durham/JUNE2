@@ -288,11 +288,7 @@ inline void finalizeContactMatrices(
 inline void finalizeContactMatrices(ContactMatrixConfig& cm,
                                     const WorldState& world,
                                     const Disease& disease) {
-  std::vector<std::string> mode_names;
-  for (const auto& mode : disease.getTransmissionParams().modes) {
-    mode_names.push_back(mode.name);
-  }
-  finalizeContactMatrices(cm, world, mode_names);
+  finalizeContactMatrices(cm, world, disease.getModeNames());
 }
 
 }  // namespace june

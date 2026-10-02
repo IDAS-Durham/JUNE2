@@ -1,13 +1,13 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include "epidemiology/policy.h"
-
-#include "doctest.h"
 #include <fstream>
 
+#include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/epidemiology.h"
+#include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
 #include "test_utils.h"
+#include "transmission_fixtures.h"
 
 using namespace june;
 
@@ -553,6 +553,7 @@ TEST_CASE("Venue gate - symptom path is gated too") {
 
   Person& person = world.people[0];
   person.infection = std::make_unique<Infection>(&disease, 0.0, &person, 42,
+                                                 kNoTransmissionContext,
                                                  nullptr, "household", 0);
   person.applicable_symptom_policy_mask = 1;
 
@@ -640,6 +641,7 @@ Person& makeSickPerson(WorldState& world, Disease& disease,
                        size_t person_idx = 0) {
   Person& person = world.people[person_idx];
   person.infection = std::make_unique<Infection>(&disease, 0.0, &person, 42,
+                                                 kNoTransmissionContext,
                                                  nullptr, "household", 0);
   person.applicable_symptom_policy_mask = 1;
   return person;
@@ -777,8 +779,8 @@ TEST_CASE("A frozen person is suppressed whatever venue type is asked about") {
 
 TEST_CASE("Query and override agree on the venue gate") {
   // Only the writes were removed; the verdict is the same sentence. The gate
-  // ordering and the ADR-0008 throw live in actionApplies, shared by both, and
-  // this is what catches them drifting apart.
+  // ordering and the unresolvable-venue throw live in actionApplies, shared
+  // by both, and this is what catches them drifting apart.
   WorldState world = buildVenueGateWorld();
   PolicyManager policy_manager(world);
 

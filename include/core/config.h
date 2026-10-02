@@ -24,8 +24,8 @@ struct WorldState;
 ///
 /// Carries per-infection metadata that cannot be derived from the Person struct
 /// alone, specifically information about the transmission event that created
-/// the infection. Used when evaluating `filter.infector_symptom` and
-/// `filter.transmission_mode` CSV columns.
+/// the infection. Used when evaluating `filter.infector_symptom`,
+/// `filter.transmission_mode` and `filter.infection_source` CSV columns.
 struct InfectionContext {
   std::string
       infector_symptom;  ///< Symptom-tag name of the infector at the moment of
@@ -35,6 +35,9 @@ struct InfectionContext {
   std::string transmission_mode;  ///< Name of the transmission mode that caused
                                   ///< the infection (e.g. "animal_bite",
                                   ///< "respiratory"). Empty for seeds.
+  std::string infection_source;   ///< What infected the Person: "person",
+                                  ///< "fomite", "compartmental" or "seed".
+                                  ///< Empty only in a default-built context.
 };
 
 // =============================================================================
@@ -49,7 +52,8 @@ struct SelectionCriterion {
   PropertyValue value;  // Can be int, double, string, or vector
 
   // Evaluate this criterion against a person. `infection_context` answers
-  // infector_symptom and transmission_mode; without one, those match nobody.
+  // infector_symptom, transmission_mode and infection_source; without one,
+  // those match nobody.
   bool evaluate(const Person& person, const WorldState* world = nullptr,
                 const Person* partner = nullptr,
                 const InfectionContext* infection_context = nullptr) const;

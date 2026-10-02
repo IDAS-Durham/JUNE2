@@ -55,12 +55,13 @@ struct WorldState;
 /// |-------------------------------|-----------------------------------------|-----------------------|
 /// | `filter.infector_symptom`     | symptom-tag name of the infector        |
 /// String (exact match)  | | `filter.transmission_mode`    | transmission mode
-/// that caused infection | String (exact match)  |
+/// that caused infection | String (exact match)  | | `filter.infection_source`
+/// | source of infection | String (exact match) |
 ///
-/// For `filter.infector_symptom` and `filter.transmission_mode`, a non-empty
-/// filter cell **fails** when the corresponding context field is empty (i.e.
-/// for seeded infections with no explicit infector). Rows that should match
-/// seeds must leave those cells blank.
+/// For `filter.infector_symptom`, `filter.transmission_mode` and
+/// `filter.infection_source`, a non-empty filter cell **fails** when the
+/// corresponding context field is empty. Rows that should match absent facts
+/// must leave those cells blank.
 ///
 /// ## Value formats
 ///
@@ -109,25 +110,30 @@ std::vector<SelectionCriterion> parseCriterionFromKeyValue(
 /// `person`.
 ///
 /// Criteria are evaluated conjunctively (AND). An empty criteria list matches
-/// all persons. Criteria with `property_path == "infector_symptom"` or
-/// `"transmission_mode"` are matched against the corresponding field of `ctx`
-/// rather than person attributes; a non-empty criterion on either field fails
-/// when the context field is empty (e.g. seeded infections).
+/// all persons. Criteria with `property_path` `"infector_symptom"`,
+/// `"transmission_mode"` or `"infection_source"` are matched against the
+/// corresponding field of `ctx` rather than person attributes. An empty
+/// context field is an absent fact: any criterion on it, `==` or `!=`, fails,
+/// so only rows that don't ask for that fact match.
 ///
 /// Args:
 ///   person:   The person being evaluated.
 ///   world:    Pointer to WorldState, used for property lookups. May be null
 ///             if no world-dependent properties are needed.
 ///   criteria: The list of criteria to evaluate (typically from
-///   parseCriteriaFromRow). ctx:      Infection-event context (infector
-///   symptom, transmission mode).
-///             Defaults to empty strings (no context).
+///             parseCriteriaFromRow).
+///   ctx:      Infection-event context (infector symptom, transmission mode,
+///             infection source). Defaults to empty strings (no context).
 ///
 /// Returns:
 ///   True if all criteria pass; false if any criterion fails.
 bool matchesCriteria(const Person& person, const WorldState* world,
                      const std::vector<SelectionCriterion>& criteria,
                      const InfectionContext& ctx = {});
+
+/// True when `criterion` filters on an Infection Context fact rather than a
+/// Person property. Only outcome-rate tables may carry such criteria.
+bool isInfectionContextCriterion(const SelectionCriterion& criterion);
 
 /// Scans CSV headers and returns (column_index, property_path) for every
 /// column whose header begins with `"filter."`.

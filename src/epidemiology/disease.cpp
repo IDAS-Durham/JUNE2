@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <stdexcept>
 #include <unordered_set>
 
 #include "epidemiology/trajectory/stage_curve_integral.h"
+#include "epidemiology/transmission/infection_context.h"
 #include "utils/filtering.h"
 #ifdef USE_MPI
 #include <mpi.h>
@@ -32,12 +34,71 @@ double OutcomeRates::getRate(const Person& person, const WorldState* world,
   return 0.0;
 }
 
+size_t requireKnownName(const std::string& name,
+                        const std::vector<std::string>& known_names,
+                        const std::string& message_prefix) {
+  auto it = std::find(known_names.begin(), known_names.end(), name);
+  if (it != known_names.end()) {
+    return static_cast<size_t>(it - known_names.begin());
+  }
+  std::string known_list;
+  for (const std::string& known : known_names) {
+    known_list += (known_list.empty() ? "" : ", ") + known;
+  }
+  throw std::runtime_error(
+      message_prefix + " '" + name +
+      "' is not one this disease defines. Known: " + known_list);
+}
+
+// Throw unless every value `criterion` names is one of `known_names`.
+static void requireKnownContextValue(
+    const SelectionCriterion& criterion,
+    const std::vector<std::string>& known_names, const std::string& row_label) {
+  // A non-string value gets a placeholder no disease defines, so it throws.
+  const std::string* value = std::get_if<std::string>(&criterion.value);
+  requireKnownName(value ? *value : std::string("<not a single name>"),
+                   known_names, row_label + ": " + criterion.property_path);
+}
+
+std::vector<std::string> OutcomeRates::resolve(
+    const WorldState& world, const std::vector<std::string>& symptom_names,
+    const std::vector<std::string>& mode_names) {
+  std::vector<std::string> absent;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const std::string row_label =
+        "disease outcome rates row " + std::to_string(i);
+    for (auto& c : rows[i].criteria) {
+      if (filtering::isInfectionContextCriterion(c)) {
+        const std::vector<std::string>& known_names =
+            c.property_path == "infector_symptom"    ? symptom_names
+            : c.property_path == "transmission_mode" ? mode_names
+                                                     : infectionSourceNames();
+        requireKnownContextValue(c, known_names, row_label);
+        continue;
+      }
+      c.allow_absent_geo_units = true;
+      c.resolveOrThrow(world, row_label);
+      for (const std::string& name : c.absentGeoUnitNames()) {
+        absent.push_back("row " + std::to_string(i) +
+                         ": no geographical unit named '" + name + "'");
+      }
+    }
+  }
+  return absent;
+}
+
 std::vector<std::string> OutcomeRates::resolve(const WorldState& world) {
   std::vector<std::string> absent;
   for (size_t i = 0; i < rows.size(); ++i) {
+    const std::string row_label =
+        "disease outcome rates row " + std::to_string(i);
     for (auto& c : rows[i].criteria) {
+      // A standalone OutcomeRates has no disease registries with which to
+      // validate context names. Keep the historical world-only behavior; the
+      // Disease::resolve wrapper uses the strict overload above.
+      if (filtering::isInfectionContextCriterion(c)) continue;
       c.allow_absent_geo_units = true;
-      c.resolveOrThrow(world, "disease outcome rates row " + std::to_string(i));
+      c.resolveOrThrow(world, row_label);
       for (const std::string& name : c.absentGeoUnitNames()) {
         absent.push_back("row " + std::to_string(i) +
                          ": no geographical unit named '" + name + "'");
@@ -90,6 +151,14 @@ const std::string& Disease::getModeName(uint8_t index) const {
 
 int Disease::numModes() const {
   return static_cast<int>(transmission_params_.modes.size());
+}
+
+std::vector<std::string> Disease::getModeNames() const {
+  std::vector<std::string> mode_names;
+  for (const auto& mode : transmission_params_.modes) {
+    mode_names.push_back(mode.name);
+  }
+  return mode_names;
 }
 
 uint16_t Disease::getSymptomId(const std::string& name) const {
@@ -204,12 +273,11 @@ double Disease::evaluateStageDrivenInfectiousness(int mode_index,
 
 Infection::Infection(const Disease* disease, double infection_time,
                      const Person* person, unsigned int random_seed,
+                     const TransmissionRecord& transmission,
                      const WorldState* world, const std::string& venue_type,
                      int venue_id, float severity_factor,
-                     uint16_t infector_symptom_id,
                      const std::string& trajectory_key_override,
-                     const std::string& start_symptom_override,
-                     uint8_t transmission_mode_index)
+                     const std::string& start_symptom_override)
     : disease_(disease), infection_time_(infection_time) {
   SplitMix64 rng(random_seed);
 
@@ -221,9 +289,8 @@ Infection::Infection(const Disease* disease, double infection_time,
 
   // Generate trajectory
   trajectory_ = generateTrajectoryFromRates(
-      rng, person, world, venue_type, venue_id, severity_factor,
-      infector_symptom_id, trajectory_key_override, start_symptom_override,
-      transmission_mode_index);
+      rng, person, world, transmission, venue_type, venue_id, severity_factor,
+      trajectory_key_override, start_symptom_override);
 
   if (disease_->getTransmissionParams().mode ==
           InfectiousnessMode::TRAJECTORY_DRIVEN &&
@@ -461,10 +528,10 @@ std::optional<InfectionTrajectory> Infection::tryBuildForcedTrajectory(
 
 InfectionTrajectory Infection::generateTrajectoryFromRates(
     SplitMix64& rng, const Person* person, const WorldState* world,
-    const std::string& venue_type, int venue_id, float severity_factor,
-    uint16_t infector_symptom_id, const std::string& trajectory_key_override,
-    const std::string& start_symptom_override,
-    uint8_t transmission_mode_index) {
+    const TransmissionRecord& transmission, const std::string& venue_type,
+    int venue_id, float severity_factor,
+    const std::string& trajectory_key_override,
+    const std::string& start_symptom_override) {
   if (!person) {
     std::cerr
         << "WARNING: person pointer is null in generateTrajectoryFromRates"
@@ -493,9 +560,8 @@ InfectionTrajectory Infection::generateTrajectoryFromRates(
               << std::endl;
   }
 
-  InfectionContext infection_ctx{
-      disease_->getSymptomName(infector_symptom_id),
-      disease_->getModeName(transmission_mode_index)};
+  InfectionContext infection_ctx =
+      buildInfectionContext(transmission, *disease_);
   auto [trajectory_rates, total_rate] =
       gatherTrajectoryRates(*person, world, infection_ctx);
   applyVaccineEfficacyShift(trajectory_rates, *person, traj.infection_time,

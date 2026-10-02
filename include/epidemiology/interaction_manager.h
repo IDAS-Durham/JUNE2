@@ -13,6 +13,8 @@
 #include "disease.h"
 #include "epidemiology/emission/emission.h"
 #include "epidemiology/fomite/fomite_sub_bins.h"
+#include "epidemiology/transmission/infector_symptom_lookup.h"
+#include "epidemiology/transmission/partial_presence_sources.h"
 #include "policy.h"
 #include "transmission_modifiers.h"
 #include "utils/age_utils.h"
@@ -221,6 +223,18 @@ class InteractionManager {
 
   PerformanceStats& getStats() { return stats_; }
 
+  // Applied infections on this rank whose Person infector had no symptom found;
+  // each was judged with its infector symptom absent.
+  uint64_t infectorLookupGapCount() const {
+    return infector_symptom_lookup_.gapCount();
+  }
+
+  // Counts a gap for an infection applied outside this manager: a visitor's
+  // pending infection, applied on their home rank.
+  void countInfectorLookupGap(const TransmissionRecord& transmission) {
+    infector_symptom_lookup_.countIfGap(transmission);
+  }
+
   // The sibling-mixing aggregate for `parent_id` from the last
   // processTransmissions call, or nullptr if no child of it was occupied.
   const ParentAggregate* getParentAggregate(VenueId parent_id) const {
@@ -268,11 +282,7 @@ class InteractionManager {
   // by processPartialPresenceVenue's Bernoulli step. Exposed publicly so
   // engine tests can assert the FOI math without driving the stochastic
   // infection draw.
-  struct PartialPresenceAccumSource {
-    int mode;
-    PersonId infector;
-    double weighted;
-  };
+  using PartialPresenceAccumSource = june::PartialPresenceAccumSource;
   struct PartialPresenceLambdaResult {
     std::unordered_map<PersonId, double> susc_lambda;
     std::unordered_map<PersonId, std::vector<double>> susc_lambda_by_mode;
@@ -735,9 +745,8 @@ class InteractionManager {
   // but takes the susc_mem encounter_type_id and the venue-FOI InfectionSource.
   void applyVenueInfection(
       const SusceptibleMember& susc_mem, PersonId infector_id,
-      InfectionSource infection_source, uint8_t transmission_mode_index,
-      uint16_t infector_symptom_id, double current_time, uint8_t venue_type_id,
-      VenueId actual_venue_id, uint64_t venue_key,
+      const TransmissionRecord& transmission, double current_time,
+      uint8_t venue_type_id, VenueId actual_venue_id, uint64_t venue_key,
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
       std::unordered_set<PersonId>* active_infections,
       std::vector<PendingInfection>* pending_infections);
@@ -837,22 +846,6 @@ class InteractionManager {
   std::vector<PersonId> orderSusceptibles(
       const std::unordered_map<PersonId, double>& susc_lambda) const;
 
-  // Weight-sample one (mode, infector) from accumulated AccumSource entries.
-  // Sorts in place by (mode, infector) for deterministic order, builds the
-  // cumulative weights, and draws one sample with the given RNG. Returns
-  // mode=0, infector=-1 when the source list is empty / all-zero-weight.
-  std::pair<int, PersonId> sampleInfectorFromAccumSources(
-      std::vector<PartialPresenceAccumSource>& srcs,
-      const std::vector<double>& target_modifiers, SplitMix64& rng) const;
-
-  // Look up the infector's current symptom id. For local persons reads from
-  // Infection::getTrajectory(); for cross-rank visitors reads from
-  // VisitorInfo::symptom_id. Returns 0 if infector_id is negative or neither
-  // a local infection nor a visitor record exists.
-  uint16_t resolveInfectorSymptomId(
-      PersonId infector_id, double current_time,
-      const std::unordered_map<PersonId, VisitorInfo>* visitor_data) const;
-
   // Compute susceptibility for either a local Person or a cross-rank
   // VisitorInfo. Returns 0.0 if both are null. Local persons go through
   // Person::getSusceptibility(current_time, disease_name); visitors use
@@ -895,7 +888,7 @@ class InteractionManager {
   // resolvePartialPresenceInfections.
   void recordPartialPresenceCandidate(PersonId susc_id, PersonId infector_id,
                                       uint8_t transmission_mode_index,
-                                      uint16_t infector_symptom_id,
+                                      uint8_t infector_symptom_id,
                                       double current_time,
                                       uint8_t venue_type_id,
                                       VenueId actual_venue_id);
@@ -929,6 +922,7 @@ class InteractionManager {
       uint8_t encounter_type_id, const CompartmentalModelManager* comp_model);
 
   PerformanceStats stats_;
+  InfectorSymptomLookup infector_symptom_lookup_{world_};
 
   // Optimization buffers (reused across calls to avoid allocation)
   std::vector<PersonLocation> active_locations_buffer_;

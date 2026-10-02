@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "epidemiology/emission/emission_record.h"
+#include "epidemiology/transmission/transmission_record.h"
 #include "epidemiology/vaccine.h"
 #include "variant.h"
 
@@ -44,7 +45,9 @@ constexpr uint8_t kDefaultEncounterTypeId =
 constexpr uint8_t kUnknownVenueTypeId =
     255;  // venue type unresolvable (e.g. cross-rank lookup miss)
 constexpr uint8_t kNoSymptomId =
-    255;  // "not applicable" — registries stay well under 255 entries
+    255;  // absent infector symptom — registries stay well under 255 entries
+constexpr uint8_t kNoModeIndex =
+    255;  // absent Transmission Mode — the disease loader caps modes below 255
 
 // =============================================================================
 // PendingInfection - Tracks infections that should be created later
@@ -59,7 +62,8 @@ struct PendingInfection {
   int32_t home_array_index = -1;  // For lookup on home rank
   uint8_t infector_symptom_id =
       kNoSymptomId;  // Symptom ID of the infector at time of transmission
-  uint8_t transmission_mode_index = 0;  // Transmission mode index
+  uint8_t transmission_mode_index = kNoModeIndex;    // Transmission mode index
+  InfectionSource source = InfectionSource::Person;  // What infected them
 };
 
 // =============================================================================
