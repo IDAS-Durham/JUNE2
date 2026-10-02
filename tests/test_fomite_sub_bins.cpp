@@ -172,9 +172,9 @@ TEST_CASE("Deposits: no infection gives an all-zero tail of full length") {
   CHECK(deposits == std::vector<double>{0.0, 0.0, 0.0, 0.0});
 }
 
-TEST_CASE("Deposits: infected but not yet infectious still deposits") {
+TEST_CASE("Deposits: an incubating Person still deposits") {
   // Deposition is keyed by symptom, so an incubating Person ("healthy" stage,
-  // not infectious) deposits wherever that symptom's curve is nonzero.
+  // no direct curve) deposits wherever that symptom's curve is nonzero.
   Disease disease = makeDisease({
       makeFomiteMode("fomite", 0.0,
                      {std::make_shared<ConstantCurve>(3.0), nullptr, nullptr}),
@@ -182,7 +182,6 @@ TEST_CASE("Deposits: infected but not yet infectious still deposits") {
   FomiteSubBinSchedule schedule(disease.getTransmissionParams(), 6.0);
   auto infection =
       makeInfection(disease, 9.0, {{9.0, kHealthy}, {11.0, kMild}});
-  REQUIRE_FALSE(infection->isInfectious(10.0));
 
   std::vector<double> deposits;
   schedule.integrateDeposits(infection.get(), 10.0, deposits);

@@ -167,6 +167,7 @@ set(JUNE_CORE_SOURCES
     src/epidemiology/seeding/seed_shortfall.cpp
     src/epidemiology/seeding/seed_cluster_planner.cpp
     src/epidemiology/fomite/fomite_sub_bins.cpp
+    src/epidemiology/emission/emission.cpp
     src/epidemiology/trajectory/stage_curve_integral.cpp
     src/epidemiology/disease.cpp
     src/loaders/disease_loader.cpp
@@ -221,7 +222,8 @@ if(MPI_FOUND)
        src/parallel/geography_partitioner.cpp
        src/parallel/domain_communicator.cpp
        src/parallel/domain_communicator_encounters.cpp
-       src/parallel/visitor_wire.cpp)
+       src/parallel/visitor_wire.cpp
+       src/parallel/visitor_payload.cpp)
 endif()
 
 # Create the library
@@ -347,6 +349,7 @@ if(BUILD_TESTING)
 
   add_june_test(test_domain_communicator_detail "tests/test_domain_communicator_detail.cpp")
   add_june_test(test_visitor_wire "tests/test_visitor_wire.cpp")
+  add_june_test(test_visitor_payload "tests/test_visitor_payload.cpp")
   add_june_test(test_run_dir "tests/test_run_dir.cpp")
   add_june_test(test_world_state "tests/test_world_state.cpp")
   add_june_test(test_selection_criterion_geography "tests/test_selection_criterion_geography.cpp")
@@ -359,6 +362,7 @@ if(BUILD_TESTING)
   add_june_test(test_follow "tests/test_follow.cpp")
   add_june_test(test_fomite_transmission "tests/test_fomite_transmission.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_fomite_sub_bins "tests/test_fomite_sub_bins.cpp")
+  add_june_test(test_emission "tests/test_emission.cpp")
   add_june_test(test_stage_curve_integral "tests/test_stage_curve_integral.cpp")
   add_june_test(test_compartmental_disease_mode "tests/test_compartmental_disease_mode.cpp;src/loaders/disease_loader.cpp")
   add_june_test(test_compartmental_coupling_matrix "tests/test_compartmental_coupling_matrix.cpp")

@@ -38,12 +38,17 @@ struct PolicyTransmissionEffect {
 class TransmissionModifierTable {
  public:
   using ModeValues = std::array<double, 4>;
-  using Set = std::array<ModeValues, VisitorInfo::MAX_MODES>;
+  // Fixed width keeps Set hashable for interning; not a cap on emission.
+  static constexpr size_t kMaxModes = 8;
+  using Set = std::array<ModeValues, kMaxModes>;
 
   void reset(size_t num_modes) {
-    if (num_modes > VisitorInfo::MAX_MODES)
-      throw std::runtime_error(
-          "too many transmission modes for modifier table");
+    if (num_modes > kMaxModes)
+      throw std::runtime_error("TransmissionModifierTable: disease has " +
+                               std::to_string(num_modes) +
+                               " transmission modes, table holds " +
+                               std::to_string(kMaxModes) +
+                               "; raise TransmissionModifierTable::kMaxModes");
     num_modes_ = num_modes;
     sets_.clear();
     ids_.clear();

@@ -147,14 +147,6 @@ bool Disease::isICUStage(const std::string& symptom_name) const {
   return isInCategory(symptom_name, stage_settings_.intensive_care_stages);
 }
 
-bool Disease::isInfectiousStage(const std::string& symptom_name) const {
-  // Infectious if not healthy, recovered, or dead
-  if (symptom_name == "healthy") return false;
-  if (isRecoveredStage(symptom_name)) return false;
-  if (isFatalStage(symptom_name)) return false;
-  return true;
-}
-
 double Disease::evaluateStageDrivenInfectiousness(int mode_index,
                                                   uint16_t symptom_id,
                                                   float time_in_stage) const {
@@ -274,11 +266,6 @@ std::unique_ptr<Infection> Infection::fromCheckpoint(
 std::string Infection::getCurrentSymptom(double current_time) const {
   uint16_t id = trajectory_.getCurrentSymptomId(current_time);
   return disease_->getSymptomName(id);
-}
-
-bool Infection::isInfectious(double current_time) const {
-  uint16_t id = trajectory_.getCurrentSymptomId(current_time);
-  return disease_->isInfectiousStage(disease_->getSymptomName(id));
 }
 
 bool Infection::isSymptomatic(double current_time) const {
@@ -684,7 +671,10 @@ double Infection::getIntegratedInfectiousness(int mode_index, double t0,
   const auto& trans_params = disease_->getTransmissionParams();
 
   // TRAJECTORY-DRIVEN: no per-stage curve; use point-eval midpoint fallback.
+  // The profile ignores stage, so a Person recovered or dead at t0 (not yet
+  // cleared by the post-transmission update) is zeroed explicitly.
   if (trans_params.mode == InfectiousnessMode::TRAJECTORY_DRIVEN) {
+    if (isRecovered(t0) || isDead(t0)) return 0.0;
     return getInfectiousness(mode_index, 0.5 * (t0 + t1)) * (t1 - t0) * 24.0;
   }
 

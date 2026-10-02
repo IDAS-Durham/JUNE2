@@ -9,14 +9,13 @@
 
 // Wire format of one Visitor record: a fixed header (WireRecord over
 // VisitorData's plain fields) followed by four count-known-elsewhere tails:
-// integrated_infectiousness, target_susceptibility,
-// deposition_source_multiplier, fomite_deposition_sub. A source tail travels
-// only when the header says it can be nonzero, and arrives empty otherwise;
+// emission.infectiousness_by_mode, target_susceptibility,
+// deposition_source_multiplier, emission.fomite_deposits. Source tails travel
+// only when the Visitor is infected, and arrive empty otherwise;
 // target_susceptibility always travels, since any visitor can be a target:
 //
-//   !is_infected                    header + ts
-//   is_infected && !is_infectious   header + ts + dsm + deposits
-//   is_infectious                   header + ii + ts + dsm + deposits
+//   !is_infected   header + ts
+//   is_infected    header + ii + ts + dsm + deposits
 //
 // The receiver derives nothing from disease state.
 namespace june::visitor_wire {
@@ -24,9 +23,9 @@ namespace june::visitor_wire {
 // Lengths of a visitor record's tails. Derived from the Disease and timestep,
 // so identical on every rank and fixed for one exchange.
 struct TailCounts {
-  int num_modes;             // integrated_infectiousness, target_susceptibility
+  int num_modes;             // infectiousness_by_mode, target_susceptibility
   int num_deposition_modes;  // deposition_source_multiplier
-  int fomite_sub_bins;       // fomite_deposition_sub
+  int fomite_sub_bins;       // emission.fomite_deposits
 };
 
 // Bytes `visitor` occupies on the wire; depends on its header bools.

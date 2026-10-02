@@ -145,6 +145,7 @@ void InteractionManager::buildParentAggregates(
 
   int num_modes = disease_->numModes();
   if (num_modes == 0) num_modes = 1;
+  const EmissionCalculator emission_calculator(*disease_, delta_hours);
 
   // Walk venue groups in the SAME order the main loop uses, so debug
   // output and any FP accumulations line up.
@@ -160,8 +161,9 @@ void InteractionManager::buildParentAggregates(
       i++;
     }
 
-    aggregateOneVenueGroupForParent(group_start, i, current_time, delta_hours,
-                                    num_modes, visitor_data);
+    aggregateOneVenueGroupForParent(group_start, i, current_time,
+                                    emission_calculator, num_modes,
+                                    visitor_data);
   }
 
   dumpParentAggregatesDebug(current_time, delta_hours);
@@ -200,32 +202,35 @@ std::vector<PersonLocation> InteractionManager::buildPersonIdSortedMembers(
   return mem_sorted;
 }
 
+const Emission* InteractionManager::memberEmission(
+    const Person* person, const VisitorInfo* visitor, double current_time,
+    const EmissionCalculator& emission_calculator, Emission& emission_scratch) {
+  if (visitor) return &visitor->emission;
+  if (!person) return nullptr;
+  emission_calculator.emit(*person, current_time, emission_scratch);
+  return &emission_scratch;
+}
+
 bool InteractionManager::gatherMemberInfectiousnessByMode(
     const Person* person, const VisitorInfo* visitor, double current_time,
-    double delta_hours, int num_modes, std::vector<double>& inf_by_mode) const {
+    const EmissionCalculator& emission_calculator, int num_modes,
+    Emission& emission_scratch, std::vector<double>& inf_by_mode) const {
   inf_by_mode.assign(num_modes, 0.0);
+  const Emission* emission = memberEmission(
+      person, visitor, current_time, emission_calculator, emission_scratch);
+  if (!emission) return false;
+  const std::vector<double>& emitted = emission->infectiousness_by_mode;
+  if (emitted.empty()) return false;
+  const int num_emitted = std::min(num_modes, static_cast<int>(emitted.size()));
   double total = 0.0;
-  if (visitor) {
-    if (!visitor->is_infectious) return false;
-    for (int m = 0; m < num_modes; ++m) {
-      inf_by_mode[m] = (m < VisitorInfo::MAX_MODES)
-                           ? visitor->integrated_infectiousness[m]
-                           : 0.0;
-      total += inf_by_mode[m];
-    }
-  } else if (person && person->infection &&
-             person->infection->isInfectious(current_time)) {
-    const double t1 = current_time + delta_hours / 24.0;
-    for (int m = 0; m < num_modes; ++m) {
-      inf_by_mode[m] =
-          person->infection->getIntegratedInfectiousness(m, current_time, t1) *
-          personTransmissionModifier(
-              person, nullptr, m,
-              TransmissionEffectChannel::SourceInfectiousness);
-      total += inf_by_mode[m];
-    }
-  } else {
-    return false;
+  // Visitors' Emission arrives source-multiplied: scale locals only.
+  const Person* source = visitor ? nullptr : person;
+  for (int m = 0; m < num_emitted; ++m) {
+    inf_by_mode[m] =
+        emitted[m] * personTransmissionModifier(
+                         source, nullptr, m,
+                         TransmissionEffectChannel::SourceInfectiousness);
+    total += inf_by_mode[m];
   }
   return total > 0.0;
 }
@@ -253,7 +258,7 @@ ParentAggregate& InteractionManager::ensureParentAggregateInitialised(
 
 void InteractionManager::aggregateOneVenueGroupForParent(
     size_t group_start, size_t group_end, double current_time,
-    double delta_hours, int num_modes,
+    const EmissionCalculator& emission_calculator, int num_modes,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data) {
   const auto& first = active_locations_buffer_[group_start];
 
@@ -286,11 +291,12 @@ void InteractionManager::aggregateOneVenueGroupForParent(
       buildPersonIdSortedMembers(group_start, group_end);
 
   std::vector<double> inf_by_mode;
+  Emission emission;
   for (const auto& loc : mem_sorted) {
-    accumulateOneMemberIntoParent(loc, venue, &parent_bin_structure,
-                                  parent_num_bins, agg, csize, cinf,
-                                  first.venue_id, current_time, delta_hours,
-                                  num_modes, visitor_data, inf_by_mode);
+    accumulateOneMemberIntoParent(
+        loc, venue, &parent_bin_structure, parent_num_bins, agg, csize, cinf,
+        first.venue_id, current_time, emission_calculator, num_modes,
+        visitor_data, emission, inf_by_mode);
   }
 }
 
@@ -298,8 +304,10 @@ void InteractionManager::accumulateOneMemberIntoParent(
     const PersonLocation& loc, Venue* venue, const ContactMatrix* parent_matrix,
     int parent_num_bins, ParentAggregate& agg, std::vector<int>& csize,
     std::vector<std::vector<double>>& cinf, VenueId child_venue_id,
-    double current_time, double delta_hours, int num_modes,
+    double current_time, const EmissionCalculator& emission_calculator,
+    int num_modes,
     const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    Emission& emission_scratch,
     std::vector<double>& inf_by_mode_scratch) const {
   PersonId pid = loc.person_id;
   Person* person = nullptr;
@@ -318,8 +326,8 @@ void InteractionManager::accumulateOneMemberIntoParent(
   csize[parent_bin]++;
 
   if (gatherMemberInfectiousnessByMode(person, visitor, current_time,
-                                       delta_hours, num_modes,
-                                       inf_by_mode_scratch)) {
+                                       emission_calculator, num_modes,
+                                       emission_scratch, inf_by_mode_scratch)) {
     for (int m = 0; m < num_modes; ++m) {
       agg.total_inf_by_bin_mode[parent_bin][m] += inf_by_mode_scratch[m];
       cinf[parent_bin][m] += inf_by_mode_scratch[m];
@@ -598,16 +606,11 @@ double InteractionManager::personTransmissionModifier(
     const Person* person, const VisitorInfo* visitor, size_t mode,
     TransmissionEffectChannel channel) const {
   if (visitor) {
-    if (mode >= VisitorInfo::MAX_MODES) return 1.0;
-    const double value =
+    const std::vector<double>& values =
         channel == TransmissionEffectChannel::TargetSusceptibility
-            ? (visitor->has_target_susceptibility
-                   ? visitor->target_susceptibility[mode]
-                   : 1.0)
-            : (visitor->has_deposition_source_multiplier
-                   ? visitor->deposition_source_multiplier[mode]
-                   : 1.0);
-    return value;
+            ? visitor->target_susceptibility
+            : visitor->deposition_source_multiplier;
+    return mode < values.size() ? values[mode] : 1.0;
   }
   if (person && policy_manager_) {
     const double value =
@@ -620,10 +623,10 @@ double InteractionManager::personTransmissionModifier(
 double InteractionManager::effectiveTargetSusceptibility(
     const Person* person, const VisitorInfo* visitor,
     double base_susceptibility, size_t mode) const {
-  if (visitor && visitor->has_target_susceptibility &&
-      mode < VisitorInfo::MAX_MODES) {
-    const double value = visitor->target_susceptibility[mode];
-    return value;
+  if (visitor && !visitor->target_susceptibility.empty()) {
+    return personTransmissionModifier(
+        nullptr, visitor, mode,
+        TransmissionEffectChannel::TargetSusceptibility);
   }
   const double value = base_susceptibility *
                        personTransmissionModifier(

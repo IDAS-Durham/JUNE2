@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "epidemiology/emission/emission_record.h"
 #include "epidemiology/vaccine.h"
 #include "variant.h"
 
@@ -67,25 +68,20 @@ struct PendingInfection {
 struct VisitorInfo {
   PersonId person_id;
   bool is_infected;
-  bool is_infectious;
   float immunity_level;
   int32_t home_array_index = -1;  // For lookup on home rank
   uint16_t symptom_id = 0;
   double time_in_stage = 0.0;  // Compartmental deposition writeback only
 
-  // Pre-computed integrated infectiousness per mode (from sending rank)
-  static constexpr int MAX_MODES = 8;
-  double integrated_infectiousness[MAX_MODES] = {};
-  double target_susceptibility[MAX_MODES] = {};
-  // Fomite entries unused: fomite_deposition_sub arrives pre-multiplied.
-  double deposition_source_multiplier[MAX_MODES] = {};
-  bool has_target_susceptibility = false;
-  bool has_deposition_source_multiplier = false;
+  // What this Visitor emits this slot, computed on the sending rank, source
+  // modifier applied.
+  Emission emission;
 
-  // Fomite deposit per (fomite mode, sub-bin), flat in FomiteSubBinSchedule
-  // order, source modifier applied (from sending rank). Empty unless
-  // is_infected.
-  std::vector<double> fomite_deposition_sub;
+  // Per mode, target modifier applied (from sending rank). Empty: none.
+  std::vector<double> target_susceptibility;
+  // Per mode; fomite entries unused (fomite deposits arrive pre-multiplied).
+  // Empty: none.
+  std::vector<double> deposition_source_multiplier;
 };
 
 // Special venue ID for infection seed events

@@ -50,10 +50,11 @@ std::optional<int> InteractionManager::dispatchPartialPresenceIfApplicable(
 
 void InteractionManager::accumulateOneGroup(
     const std::vector<RuntimeGroupMember>& group, float slot_duration_min,
-    double current_time, double delta_hours, int num_modes, int num_bins_needed,
-    uint8_t venue_type_id, const Venue* venue,
-    const ContactMatrix& bin_structure, const TransmissionParams& trans_params,
-    std::vector<PartialPresenceSubBin>& sub_bins,
+    double current_time, const EmissionCalculator& emission_calculator,
+    int num_modes, int num_bins_needed, uint8_t venue_type_id,
+    const Venue* venue, const ContactMatrix& bin_structure,
+    const TransmissionParams& trans_params,
+    std::vector<PartialPresenceSubBin>& sub_bins, Emission& emission_scratch,
     PartialPresenceLambdaResult& result) const {
   std::vector<float> events =
       collectSubIntervalEventTimes(group, slot_duration_min);
@@ -73,7 +74,8 @@ void InteractionManager::accumulateOneGroup(
         num_bins_needed);
 
     classifyMembersInSubInterval(group, t0, t1, scale, current_time,
-                                 delta_hours, num_modes, sub_bins, susc_by_bin);
+                                 emission_calculator, num_modes, sub_bins,
+                                 emission_scratch, susc_by_bin);
 
     accumulatePartialLambdaContributions(
         sub_bins, susc_by_bin, venue, venue_type_id, bin_structure,
@@ -156,8 +158,9 @@ void InteractionManager::accumulatePartialLambdaContributions(
 
 void InteractionManager::classifyMembersInSubInterval(
     const std::vector<RuntimeGroupMember>& group, float t0, float t1,
-    double scale, double current_time, double delta_hours, int num_modes,
-    std::vector<PartialPresenceSubBin>& sub_bins,
+    double scale, double current_time,
+    const EmissionCalculator& emission_calculator, int num_modes,
+    std::vector<PartialPresenceSubBin>& sub_bins, Emission& emission_scratch,
     std::vector<std::vector<const RuntimeGroupMember*>>& susc_by_bin) const {
   for (const auto& m : group) {
     // Present iff [eff_board, eff_alight) covers [t0, t1).
@@ -167,35 +170,20 @@ void InteractionManager::classifyMembersInSubInterval(
     const bool dead = (m.person && m.person->is_dead);
     if (!dead) sub_bins[bin].total_size++;
 
-    // Infectious?
-    bool added_inf = false;
-    if (m.visitor && m.visitor->is_infectious) {
+    // Infectious? Fomite deposits are ignored: partial presence makes none.
+    const Emission* emission =
+        memberEmission(m.person, m.visitor, current_time, emission_calculator,
+                       emission_scratch);
+    const std::vector<double>* infectiousness =
+        emission ? &emission->infectiousness_by_mode : nullptr;
+    if (infectiousness && !infectiousness->empty()) {
+      const int num_emitted = static_cast<int>(infectiousness->size());
+      bool added_inf = false;
       for (int mode = 0; mode < num_modes; ++mode) {
-        double inf_full = (mode < VisitorInfo::MAX_MODES)
-                              ? m.visitor->integrated_infectiousness[mode]
-                              : 0.0;
-        // f_I: this infectious rider's presence cap (1.0 unless over-long).
-        double inf_sub = inf_full * scale * m.f_presence;
-        if (inf_sub > 0.0) {
-          if (!added_inf) {
-            sub_bins[bin].infectious_ids.push_back(m.pid);
-            added_inf = true;
-          }
-          sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
-          sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
-        } else if (added_inf) {
-          // Keep arrays aligned across modes.
-          sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
-        }
-      }
-    } else if (m.person && m.person->infection &&
-               m.person->infection->isInfectious(current_time)) {
-      const double t_end_d = current_time + delta_hours / 24.0;
-      for (int mode = 0; mode < num_modes; ++mode) {
-        double inf_full = m.person->infection->getIntegratedInfectiousness(
-            mode, current_time, t_end_d);
+        double inf_full = (mode < num_emitted) ? (*infectiousness)[mode] : 0.0;
+        // Visitors' Emission arrives source-multiplied: scale locals only.
         inf_full *= personTransmissionModifier(
-            m.person, nullptr, mode,
+            m.visitor ? nullptr : m.person, nullptr, mode,
             TransmissionEffectChannel::SourceInfectiousness);
         // f_I: this infectious rider's presence cap (1.0 unless over-long).
         double inf_sub = inf_full * scale * m.f_presence;
@@ -207,6 +195,7 @@ void InteractionManager::classifyMembersInSubInterval(
           sub_bins[bin].inf_per_person_by_mode[mode].push_back(inf_sub);
           sub_bins[bin].total_inf_by_mode[mode] += inf_sub;
         } else if (added_inf) {
+          // Keep arrays aligned across modes.
           sub_bins[bin].inf_per_person_by_mode[mode].push_back(0.0);
         }
       }
@@ -349,6 +338,7 @@ InteractionManager::computePartialPresenceLambda(
 
   const float slot_duration_min = static_cast<float>(delta_hours * 60.0);
   if (!(slot_duration_min > 0.0f)) return result;
+  const EmissionCalculator emission_calculator(*disease_, delta_hours);
 
   // Presence windows + per-rider caps f_p live on the allocator. It computes
   // them on each rider's home rank (raw line-local windows; f_p from the full
@@ -365,13 +355,15 @@ InteractionManager::computePartialPresenceLambda(
   // Per-matrix-bin scratch reused across sub-intervals (cleared per
   // sub-interval).
   std::vector<PartialPresenceSubBin> sub_bins(num_bins_needed);
+  Emission emission;
 
   for (uint16_t c = 0; c < num_groups; ++c) {
     const auto& group = groups[c];
     if (group.empty()) continue;
-    accumulateOneGroup(group, slot_duration_min, current_time, delta_hours,
-                       num_modes, num_bins_needed, venue_type_id, venue,
-                       bin_structure, trans_params, sub_bins, result);
+    accumulateOneGroup(group, slot_duration_min, current_time,
+                       emission_calculator, num_modes, num_bins_needed,
+                       venue_type_id, venue, bin_structure, trans_params,
+                       sub_bins, emission, result);
   }
 
   return result;

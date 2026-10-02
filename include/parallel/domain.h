@@ -12,6 +12,7 @@
 
 #include "core/types.h"
 #include "core/world_state.h"
+#include "epidemiology/emission/emission_record.h"
 
 namespace june {
 
@@ -52,7 +53,6 @@ class Domain {
 
     // Infection state (for transmission calculations)
     bool is_infected;
-    bool is_infectious;
     float immunity_level;
     uint8_t encounter_type_id;  // Coordinated encounter type (ID in registry)
 
@@ -61,12 +61,10 @@ class Domain {
     uint16_t symptom_id = 0;     // Current symptom ID at packing time
     double time_in_stage = 0.0;  // Time in current stage at packing time
 
-    // Pre-computed integrated infectiousness per mode (computed on sending
-    // rank using the same code path as locals, ensuring bit-identical FP).
-    // Sized at runtime to disease->numModes() at the visitor-build site
-    // (DomainCommunicator::buildOutgoing) when is_infectious, else empty.
-    // See parallel/visitor_wire.h.
-    std::vector<double> integrated_infectiousness;
+    // Computed on the sending rank by EmissionCalculator::emit, the same
+    // code path as locals (bit-identical FP), then scaled by the source
+    // modifier as locals are. See parallel/visitor_wire.h.
+    Emission emission;
 
     // Effective target susceptibility per transmission mode, computed on the
     // home rank. Visitor modifier-set IDs are rank-local, so the values—not
@@ -75,15 +73,9 @@ class Domain {
 
     // Source multipliers for deposition modes. Compartmental deposition is
     // reconstructed on the venue rank, so its source effect must be sent
-    // separately from integrated_infectiousness. Fomite entries are unused:
-    // fomite_deposition_sub already carries the source modifier.
+    // separately from the emission. Fomite entries are unused:
+    // emission.fomite_deposits already carries the source modifier.
     std::vector<double> deposition_source_multiplier;
-
-    // Fomite deposit per (fomite mode, sub-bin), flat in
-    // FomiteSubBinSchedule order, computed on the sending rank by the same
-    // integration and source modifier as locals.
-    // FomiteSubBinSchedule::totalSubBins() long when is_infected, else empty.
-    std::vector<double> fomite_deposition_sub;
 
     // Return data: infection status changes
     bool newly_infected;
