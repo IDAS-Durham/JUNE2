@@ -74,6 +74,52 @@ struct AdvancedMPIFixture {
 };
 
 TEST_CASE_FIXTURE(AdvancedMPIFixture,
+                  "SelectionCriterion: global venue types are rank independent") {
+  REQUIRE(num_ranks >= 2);
+
+  world.activity_names = {"residence"};
+  world.venue_type_names = {"household", "hospital"};
+
+  Person& person = world.people.emplace_back();
+  person.id = rank;
+  person.activity_meta_start = 0;
+  person.activity_meta_count = 1;
+  world.activity_meta.push_back({0, 0, 1});
+  world.activity_venues.push_back({1, 0});
+
+  // The same global venue ID is at local index 1 on both ranks, but rank 0's
+  // local index 1 is a different venue. The old implementation indexed the
+  // rank-local vector with the global ID, so the two ranks disagreed.
+  Venue first;
+  first.id = 0;
+  first.type_id = 0;
+  Venue second;
+  second.id = rank == 0 ? 2 : 1;
+  second.type_id = rank == 0 ? 0 : 1;
+  world.venues = {first, second};
+  world.buildIndices();
+  world.setGlobalVenueType(1, 1);
+
+  SelectionCriterion criterion;
+  criterion.property_path = "activities.residence.venue_type";
+  criterion.operator_type = "==";
+  criterion.value = std::string("hospital");
+  criterion.resolveOrThrow(world, "test");
+
+  const int local_match = criterion.evaluate(person, &world) ? 1 : 0;
+  int minimum_match = 0;
+  int maximum_match = 0;
+  MPI_Allreduce(&local_match, &minimum_match, 1, MPI_INT, MPI_MIN,
+                MPI_COMM_WORLD);
+  MPI_Allreduce(&local_match, &maximum_match, 1, MPI_INT, MPI_MAX,
+                MPI_COMM_WORLD);
+
+  CHECK(local_match == 1);
+  CHECK(minimum_match == 1);
+  CHECK(maximum_match == 1);
+}
+
+TEST_CASE_FIXTURE(AdvancedMPIFixture,
                   "GeographyPartitioner: metadata loading and hierarchical "
                   "parent resolution") {
   setupMockGeographyFiles();

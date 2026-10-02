@@ -77,6 +77,90 @@ static SelectionCriterion xlguCriterion(const std::string& op,
   return criterion;
 }
 
+TEST_CASE("activity venue criteria resolve global venue IDs") {
+  WorldState world;
+  world.activity_names = {"residence"};
+  world.venue_type_names = {"household", "hospital"};
+
+  Person& person = world.people.emplace_back();
+  person.id = 7;
+  person.age = 40;
+  person.sex = Sex::FEMALE;
+  person.activity_meta_start = 0;
+  person.activity_meta_count = 1;
+  world.activity_meta.push_back({0, 0, 1});
+
+  // Venue 200 is a global venue that is not present in this rank's local
+  // venue vector. This is the MPI ownership shape that exposed the bug.
+  world.activity_venues.push_back({200, 0});
+  world.buildIndices();
+  world.setGlobalVenueType(200, 1);
+
+  SelectionCriterion criterion;
+  criterion.property_path = "activities.residence.venue_type";
+  criterion.operator_type = "==";
+  criterion.value = std::string("hospital");
+  criterion.resolveOrThrow(world, "test");
+
+  CHECK(criterion.evaluate(world.people.front(), &world));
+}
+
+TEST_CASE("activity venue criteria select the matching outcome row globally") {
+  WorldState world;
+  world.activity_names = {"residence"};
+  world.venue_type_names = {"household", "hospital"};
+
+  Person& person = world.people.emplace_back();
+  person.id = 7;
+  person.activity_meta_start = 0;
+  person.activity_meta_count = 1;
+  world.activity_meta.push_back({0, 0, 1});
+  world.activity_venues.push_back({200, 0});
+  world.buildIndices();
+  world.setGlobalVenueType(200, 1);
+
+  SelectionCriterion hospital;
+  hospital.property_path = "activities.residence.venue_type";
+  hospital.operator_type = "==";
+  hospital.value = std::string("hospital");
+
+  OutcomeRow hospital_row;
+  hospital_row.criteria = {hospital};
+  hospital_row.probabilities = {{"symptomatic", 1.0}};
+
+  OutcomeRow fallback_row;
+  fallback_row.probabilities = {{"asymptomatic", 1.0}};
+
+  OutcomeRates rates;
+  rates.rows = {hospital_row, fallback_row};
+  rates.resolve(world);
+
+  CHECK(rates.getRate(person, &world, "symptomatic") == doctest::Approx(1.0));
+}
+
+TEST_CASE("activity venue string operators see global venue types") {
+  WorldState world;
+  world.activity_names = {"residence"};
+  world.venue_type_names = {"household", "hospital"};
+
+  Person& person = world.people.emplace_back();
+  person.id = 7;
+  person.activity_meta_start = 0;
+  person.activity_meta_count = 1;
+  world.activity_meta.push_back({0, 0, 1});
+  world.activity_venues.push_back({200, 0});
+  world.buildIndices();
+  world.setGlobalVenueType(200, 1);
+
+  SelectionCriterion criterion;
+  criterion.property_path = "activities.residence.venue_type";
+  criterion.operator_type = "contains";
+  criterion.value = std::string("hosp");
+  criterion.resolveOrThrow(world, "test");
+
+  CHECK(criterion.evaluate(person, &world));
+}
+
 }  // namespace
 
 TEST_CASE("a unit name found at no level is an error unless absent units are allowed") {
