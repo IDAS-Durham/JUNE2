@@ -279,6 +279,7 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
             visitor.deposition_source_multiplier[deposition_index++];
       }
       info.has_deposition_source_multiplier = deposition_index > 0;
+      info.fomite_deposition_sub = visitor.fomite_deposition_sub;
       visitor_data_map[visitor.person_id] = info;
     }
   } catch (const std::exception& e) {

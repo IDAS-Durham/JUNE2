@@ -5,7 +5,7 @@
 //
 // Tests cover stage-driven and trajectory-driven infectiousness propagation
 // across rank boundaries, pending infection routing, multi-mode dispatch,
-// immunity, and bidirectional exchange.
+// immunity, bidirectional exchange, and visitor/local fomite deposit parity.
 
 #define DOCTEST_CONFIG_IMPLEMENT  // custom main so we can wrap MPI
                                   // init/finalize
@@ -15,6 +15,7 @@
 #include <mpi.h>
 
 #include <cmath>
+#include <optional>
 
 #include "core/config.h"
 #include "core/types.h"
@@ -118,6 +119,30 @@ static PersonLocation makeRemoteLocation(int rank) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: the receiving rank's VisitorInfo for an incoming visitor, as
+// Simulator builds it, plus a home_array_index mapping back to the person
+// ---------------------------------------------------------------------------
+static VisitorInfo toVisitorInfo(const Domain::VisitorData& vis) {
+  VisitorInfo vi;
+  vi.person_id = vis.person_id;
+  vi.is_infected = vis.is_infected;
+  vi.is_infectious = vis.is_infectious;
+  vi.immunity_level = vis.immunity_level;
+  vi.home_array_index = vis.person_id;
+  vi.symptom_id = vis.symptom_id;
+  vi.time_in_stage = vis.time_in_stage;
+  std::copy(std::begin(vis.integrated_infectiousness),
+            std::end(vis.integrated_infectiousness),
+            std::begin(vi.integrated_infectiousness));
+  vi.has_target_susceptibility = !vis.target_susceptibility.empty();
+  std::copy(std::begin(vis.target_susceptibility),
+            std::end(vis.target_susceptibility),
+            std::begin(vi.target_susceptibility));
+  vi.fomite_deposition_sub = vis.fomite_deposition_sub;
+  return vi;
+}
+
+// ---------------------------------------------------------------------------
 // H1: Stage-driven visitor infects local susceptible
 // ---------------------------------------------------------------------------
 TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
@@ -177,8 +202,9 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
 
   double expected_integrated = 0.0;
   if (f.rank == 0) {
-    expected_integrated = f.world.people[0].infection->getIntegratedInfectiousness(
-        0, 0.0, 1.0 / 24.0);
+    expected_integrated =
+        f.world.people[0].infection->getIntegratedInfectiousness(0, 0.0,
+                                                                 1.0 / 24.0);
   }
   MPI_Bcast(&expected_integrated, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
@@ -194,20 +220,7 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
 
     // Build visitor data map
     std::unordered_map<PersonId, VisitorInfo> visitor_data;
-    VisitorInfo vi;
-    vi.person_id = vis.person_id;
-    vi.is_infected = vis.is_infected;
-    vi.is_infectious = vis.is_infectious;
-    vi.immunity_level = vis.immunity_level;
-    vi.home_array_index = vis.person_id;  // maps back
-    vi.symptom_id = vis.symptom_id;
-    vi.time_in_stage = vis.time_in_stage;
-    std::copy(std::begin(vis.integrated_infectiousness),
-              std::end(vis.integrated_infectiousness),
-              std::begin(vi.integrated_infectiousness));
-    vi.has_target_susceptibility = true;
-    vi.target_susceptibility[0] = vis.target_susceptibility[0];
-    visitor_data[vis.person_id] = vi;
+    visitor_data[vis.person_id] = toVisitorInfo(vis);
 
     std::unordered_set<PersonId> visitor_ids = {vis.person_id};
 
@@ -277,18 +290,7 @@ TEST_CASE("H2: Trajectory-driven visitor infects local susceptible") {
     const auto& vis = domain.incoming_visitors[0];
 
     std::unordered_map<PersonId, VisitorInfo> visitor_data;
-    VisitorInfo vi;
-    vi.person_id = vis.person_id;
-    vi.is_infected = vis.is_infected;
-    vi.is_infectious = vis.is_infectious;
-    vi.immunity_level = vis.immunity_level;
-    vi.home_array_index = vis.person_id;
-    vi.symptom_id = vis.symptom_id;
-    vi.time_in_stage = vis.time_in_stage;
-    std::copy(std::begin(vis.integrated_infectiousness),
-              std::end(vis.integrated_infectiousness),
-              std::begin(vi.integrated_infectiousness));
-    visitor_data[vis.person_id] = vi;
+    visitor_data[vis.person_id] = toVisitorInfo(vis);
 
     std::unordered_set<PersonId> visitor_ids = {vis.person_id};
 
@@ -362,18 +364,7 @@ TEST_CASE("H3: Local infector infects visitor, pending routed back") {
     const auto& vis = domain.incoming_visitors[0];
 
     std::unordered_map<PersonId, VisitorInfo> visitor_data;
-    VisitorInfo vi;
-    vi.person_id = vis.person_id;
-    vi.is_infected = vis.is_infected;
-    vi.is_infectious = vis.is_infectious;
-    vi.immunity_level = vis.immunity_level;
-    vi.home_array_index = vis.person_id;
-    vi.symptom_id = vis.symptom_id;
-    vi.time_in_stage = vis.time_in_stage;
-    std::copy(std::begin(vis.integrated_infectiousness),
-              std::end(vis.integrated_infectiousness),
-              std::begin(vi.integrated_infectiousness));
-    visitor_data[vis.person_id] = vi;
+    visitor_data[vis.person_id] = toVisitorInfo(vis);
 
     std::unordered_set<PersonId> visitor_ids = {vis.person_id};
 
@@ -454,15 +445,11 @@ TEST_CASE("H4: Multi-mode stage-driven infectiousness across ranks") {
   if (f.rank == 1) {
     const auto& vis = f.dm->getDomain().incoming_visitors[0];
 
-    // Verify that the receiving rank can reconstruct per-mode infectiousness
-    // from symptom_id and time_in_stage
-    double resp_inf = disease.evaluateStageDrivenInfectiousness(
-        0, vis.symptom_id, vis.time_in_stage);
-    double bite_inf = disease.evaluateStageDrivenInfectiousness(
-        1, vis.symptom_id, vis.time_in_stage);
-
-    CHECK(resp_inf == doctest::Approx(2.0));
-    CHECK(bite_inf == doctest::Approx(0.8));
+    // Each mode's infectiousness arrives integrated over the 1 h slot:
+    // 24 * rate * (1 / 24) d = rate.
+    REQUIRE(vis.integrated_infectiousness.size() == 2);
+    CHECK(vis.integrated_infectiousness[0] == doctest::Approx(2.0));
+    CHECK(vis.integrated_infectiousness[1] == doctest::Approx(0.8));
   }
 }
 
@@ -586,18 +573,7 @@ TEST_CASE("H6: Immune visitor resists cross-rank infection") {
     CHECK(vis.immunity_level == doctest::Approx(1.0).epsilon(0.01));
 
     std::unordered_map<PersonId, VisitorInfo> visitor_data;
-    VisitorInfo vi;
-    vi.person_id = vis.person_id;
-    vi.is_infected = vis.is_infected;
-    vi.is_infectious = vis.is_infectious;
-    vi.immunity_level = vis.immunity_level;
-    vi.home_array_index = vis.person_id;
-    vi.symptom_id = vis.symptom_id;
-    vi.time_in_stage = vis.time_in_stage;
-    std::copy(std::begin(vis.integrated_infectiousness),
-              std::end(vis.integrated_infectiousness),
-              std::begin(vi.integrated_infectiousness));
-    visitor_data[vis.person_id] = vi;
+    visitor_data[vis.person_id] = toVisitorInfo(vis);
 
     std::unordered_set<PersonId> visitor_ids = {vis.person_id};
 
@@ -673,6 +649,189 @@ TEST_CASE("H7: Bidirectional cross-rank transmission") {
   const auto& vis = domain.incoming_visitors[0];
   CHECK(vis.is_infectious == true);
   CHECK(vis.integrated_infectiousness[0] > 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// H8: a Visitor deposits exactly what an identical local would
+// ---------------------------------------------------------------------------
+// Symptom ids: 0 = healthy, 1 = exposed, 2 = mild. Healthy is infected but
+// not infectious (incubation).
+static constexpr uint16_t kHealthy = 0;
+static constexpr uint16_t kExposed = 1;
+static constexpr uint16_t kMild = 2;
+
+// Direct mode 0 plus fomite mode 1, sub-binned at `sub_bin_time` hours. Each
+// symptom deposits on a different curve; mild ramps, so a deposit depends on
+// the exact time in stage.
+static Disease makeFomiteDisease(double sub_bin_time) {
+  TransmissionParams tp;
+  tp.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto curve = std::make_shared<ConstantCurve>(5.0);
+  tp.symptom_id_curves = {nullptr, curve, curve};
+
+  TransmissionMode direct;
+  direct.name = "direct";
+  direct.symptom_curves = tp.symptom_id_curves;
+  tp.modes.push_back(std::move(direct));
+
+  TransmissionMode fomite;
+  fomite.name = "fomite";
+  fomite.type = TransmissionModeType::Fomite;
+  fomite.symptom_curves = {nullptr, nullptr, nullptr};
+  FomiteConfig fomite_config;
+  fomite_config.mode_index = 1;
+  fomite_config.max_age = 2.0;
+  fomite_config.sub_bin_time = sub_bin_time;
+  fomite_config.infectiousness_curve = std::make_shared<ConstantCurve>(1.0);
+  fomite_config.deposition_by_symptom = {
+      std::make_shared<ConstantCurve>(0.7),
+      std::make_shared<ConstantCurve>(2.0),
+      std::make_shared<LinearRampCurve>(1.0, 3.0, 1.0)};
+  fomite.config = std::move(fomite_config);
+  tp.modes.push_back(std::move(fomite));
+
+  std::vector<SymptomTag> stags = {
+      {"healthy", -1, kHealthy}, {"exposed", 0, kExposed}, {"mild", 1, kMild}};
+  TrajectoryDefinition td;
+  td.selection_key = "general";
+  td.severity = 1.0;
+  td.stages.push_back({"mild", {"constant", {{"value", 100.0}}}});
+  return Disease("FomiteFlu", stags, {}, {td}, {}, tp);
+}
+
+// An Infection following exactly `transitions` (time, symptom id).
+static std::unique_ptr<Infection> makeInfection(
+    const Disease& disease, double infection_time,
+    std::vector<std::pair<double, uint16_t>> transitions) {
+  InfectionTrajectory trajectory;
+  trajectory.infection_time = infection_time;
+  trajectory.transitions = std::move(transitions);
+  return Infection::fromCheckpoint(&disease, infection_time, trajectory, 1.0,
+                                   1.0, 1.0, 0.0, /*last_checked_time=*/-1.0,
+                                   kHealthy, infection_time);
+}
+
+// Fomite deposits made at `f`'s own venue by one slot over `locs`.
+static std::deque<Venue::DepositEvent> depositsFromOneSlot(
+    TwoRankFixture& f, Disease& disease,
+    const std::vector<PersonLocation>& locs, double current_time,
+    double delta_hours, const std::unordered_set<PersonId>* visitor_ids,
+    std::vector<PendingInfection>* pending,
+    const std::unordered_map<PersonId, VisitorInfo>* visitor_data,
+    const PolicyManager* policy_manager = nullptr) {
+  Venue* venue = f.world.getVenue(f.rank);
+  venue->fomite_history.assign(1, {});
+
+  ContactMatrixConfig cm;
+  cm.allow_default_matrix = true;
+  finalizeContactMatrices(cm, f.world, disease);
+  SimulationConfig sim;
+  ParallelConfig par;
+  InteractionManager im(f.world, cm, sim, par, &disease, nullptr);
+  im.setPolicyManager(policy_manager);
+  im.processTransmissions(locs, current_time, delta_hours, nullptr, visitor_ids,
+                          pending, visitor_data);
+  return venue->fomite_history[0];
+}
+
+// Person 0 visits rank 1 while person 1, in the same disease state, stays
+// home at the same Venue. Their deposits there must be bitwise equal. A
+// fomite_source_multiplier other than 1 applies a person-scoped
+// SourceInfectiousness policy on the fomite mode to both.
+static void checkVisitorDepositsLikeLocal(
+    double sub_bin_time, double infection_time,
+    std::vector<std::pair<double, uint16_t>> transitions, double current_time,
+    double delta_hours, double fomite_source_multiplier = 1.0) {
+  TwoRankFixture f;
+  REQUIRE(f.size == 2);
+  Disease disease = makeFomiteDisease(sub_bin_time);
+  f.dm->setDisease(&disease);
+
+  std::optional<PolicyManager> policy_manager;
+  if (fomite_source_multiplier != 1.0) {
+    policy_manager.emplace(f.world);
+    TemporalPolicy policy;
+    policy.name = "fomite_source";
+    policy.action.compliance_rate = 1.0;
+    policy_manager->addTemporalPolicy(policy);
+    PolicyTransmissionEffect source_effect;
+    source_effect.policy_index = 0;
+    source_effect.scope = TransmissionEffectScope::Person;
+    source_effect.mode_name = "fomite";
+    source_effect.channel = TransmissionEffectChannel::SourceInfectiousness;
+    source_effect.multiplier = fomite_source_multiplier;
+    policy_manager->addTransmissionEffect(source_effect);
+    policy_manager->precomputePolicyApplicability(f.world.people);
+    policy_manager->initializeTransmissionModifiers(disease, 0.0);
+    f.dm->setPolicyManager(&*policy_manager);
+  }
+  const PolicyManager* policy = policy_manager ? &*policy_manager : nullptr;
+
+  Person* local_person = f.world.getPerson(f.rank);
+  local_person->infection = makeInfection(disease, infection_time, transitions);
+
+  f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, current_time,
+                         delta_hours);
+  if (f.rank != 1) return;
+
+  const auto& incoming = f.dm->getDomain().incoming_visitors;
+  REQUIRE(incoming.size() == 1);
+  const PersonId visitor_id = incoming[0].person_id;
+  std::unordered_map<PersonId, VisitorInfo> visitor_data = {
+      {visitor_id, toVisitorInfo(incoming[0])}};
+  std::unordered_set<PersonId> visitor_ids = {visitor_id};
+  std::vector<PendingInfection> pending;
+
+  auto visitor_deposits = depositsFromOneSlot(
+      f, disease, {{visitor_id, f.rank, -1, 0, 255, 0}}, current_time,
+      delta_hours, &visitor_ids, &pending, &visitor_data, policy);
+  auto local_deposits = depositsFromOneSlot(
+      f, disease, {{f.rank, f.rank, -1, 0, 255, 0}}, current_time, delta_hours,
+      nullptr, nullptr, nullptr, policy);
+
+  REQUIRE_FALSE(local_deposits.empty());
+  REQUIRE(visitor_deposits.size() == local_deposits.size());
+  for (size_t k = 0; k < local_deposits.size(); ++k) {
+    CHECK(visitor_deposits[k].time == local_deposits[k].time);
+    CHECK(visitor_deposits[k].amount == local_deposits[k].amount);
+  }
+
+  if (policy) {
+    auto unmodified_deposits = depositsFromOneSlot(
+        f, disease, {{f.rank, f.rank, -1, 0, 255, 0}}, current_time,
+        delta_hours, nullptr, nullptr, nullptr, nullptr);
+    REQUIRE(unmodified_deposits.size() == local_deposits.size());
+    for (size_t k = 0; k < local_deposits.size(); ++k) {
+      CHECK(local_deposits[k].amount ==
+            doctest::Approx(unmodified_deposits[k].amount *
+                            fomite_source_multiplier));
+    }
+  }
+}
+
+TEST_CASE("H8: Visitor fomite deposit equals identical local's") {
+  // Mild, part-way up the ramp; one sub-bin per slot.
+  checkVisitorDepositsLikeLocal(/*sub_bin_time=*/0.0, -0.37,
+                                {{-0.37, kExposed}, {-0.11, kMild}}, 0.3, 1.0);
+}
+
+TEST_CASE("H8b: Visitor fomite deposit equals local's across sub-bins") {
+  // Three 2 h sub-bins; exposed -> mild inside the second.
+  checkVisitorDepositsLikeLocal(/*sub_bin_time=*/2.0, 9.0,
+                                {{9.0, kExposed}, {10.1, kMild}}, 10.0, 6.0);
+}
+
+TEST_CASE("H8c: Incubating Visitor alone still deposits") {
+  // Infected, not infectious, and the only person at a fomite-free Venue.
+  checkVisitorDepositsLikeLocal(/*sub_bin_time=*/0.0, 9.0,
+                                {{9.0, kHealthy}, {11.0, kMild}}, 10.0, 6.0);
+}
+
+TEST_CASE("H8d: Source policy scales Visitor and local deposits alike") {
+  // Home rank applies the visitor's fomite source modifier, as for locals.
+  checkVisitorDepositsLikeLocal(/*sub_bin_time=*/2.0, 9.0,
+                                {{9.0, kExposed}, {10.1, kMild}}, 10.0, 6.0,
+                                /*fomite_source_multiplier=*/0.3);
 }
 
 #endif  // USE_MPI
