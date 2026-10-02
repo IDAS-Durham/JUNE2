@@ -6,6 +6,7 @@
 #include <numeric>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -14,8 +15,19 @@
 #include "core/world_state.h"
 #include "epidemiology/seeding/seed_shortfall.h"
 #include "utils/event_logging/event_logger.h"
+#include "utils/filtering.h"
 
 namespace june {
+
+inline void rejectInfectionContextSeedFilter(
+    const SelectionCriterion& criterion, const std::string& location) {
+  if (filtering::isInfectionContextCriterion(criterion)) {
+    throw std::runtime_error(
+        location + " cannot use infection context filter '" +
+        criterion.property_path + "'; context filters are only valid for "
+                                  "outcome-rate tables");
+  }
+}
 
 // =============================================================================
 // Infection Seed Types and Configuration
@@ -52,6 +64,7 @@ struct SeedTargetGroup {
 
   void resolve(const WorldState& world) {
     for (auto& c : criteria) {
+      rejectInfectionContextSeedFilter(c, "infection seed target group");
       c.resolveOrThrow(world, "infection seed target group");
     }
   }
@@ -137,6 +150,8 @@ struct InfectionSeedConfig {
   void resolve(const WorldState& world) {
     for (auto& seed : seeds) {
       for (auto& filter : seed.attribute_filters) {
+        rejectInfectionContextSeedFilter(
+            filter, "infection seed '" + seed.name + "' attribute filter");
         filter.resolveOrThrow(
             world, "infection seed '" + seed.name + "' attribute filter");
       }
