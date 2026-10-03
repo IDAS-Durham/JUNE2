@@ -53,10 +53,10 @@ std::vector<SeedOffer> poolSeedOffers(
   }
 
   std::vector<SeedOffer> pooled(total_bytes / offer_bytes);
-  MPI_Allgatherv(
-      local_offers.empty() ? nullptr : local_offers.data(), local_bytes,
-      MPI_BYTE, pooled.empty() ? nullptr : pooled.data(), all_bytes.data(),
-      displacements.data(), MPI_BYTE, MPI_COMM_WORLD);
+  MPI_Allgatherv(local_offers.empty() ? nullptr : local_offers.data(),
+                 local_bytes, MPI_BYTE,
+                 pooled.empty() ? nullptr : pooled.data(), all_bytes.data(),
+                 displacements.data(), MPI_BYTE, MPI_COMM_WORLD);
   return pooled;
 }
 #else
@@ -636,13 +636,14 @@ std::vector<PersonId> InfectionSeeder::applyExactSeed(
     // makes the overlap below countable.
     std::vector<LocalCandidate> candidates;
     std::vector<int> overlapping_per_budget(unit.targets.size(), 0);
-    const auto geo_unit = std::find_if(
-        world_.geo_units.begin(), world_.geo_units.end(), [&](const auto& unit) {
-          return unit.name == unit_case.unit_id &&
-                 unit.level_id < world_.geo_level_names.size() &&
-                 world_.geo_level_names[unit.level_id] ==
-                     seed.structured_config.geo_level;
-        });
+    const auto geo_unit =
+        std::find_if(world_.geo_units.begin(), world_.geo_units.end(),
+                     [&](const auto& unit) {
+                       return unit.name == unit_case.unit_id &&
+                              unit.level_id < world_.geo_level_names.size() &&
+                              world_.geo_level_names[unit.level_id] ==
+                                  seed.structured_config.geo_level;
+                     });
     if (geo_unit == world_.geo_units.end()) continue;
     for (Person* person : world_.getPeopleInUnit(geo_unit->id)) {
       if (person->infection != nullptr) continue;
@@ -815,13 +816,14 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
 
     const uint64_t unit_hash = hash_name(unit_case.unit_id);
     std::map<VenueId, LocalHousehold> households;
-    const auto geo_unit = std::find_if(
-        world_.geo_units.begin(), world_.geo_units.end(), [&](const auto& unit) {
-          return unit.name == unit_case.unit_id &&
-                 unit.level_id < world_.geo_level_names.size() &&
-                 world_.geo_level_names[unit.level_id] ==
-                     seed.structured_config.geo_level;
-        });
+    const auto geo_unit =
+        std::find_if(world_.geo_units.begin(), world_.geo_units.end(),
+                     [&](const auto& unit) {
+                       return unit.name == unit_case.unit_id &&
+                              unit.level_id < world_.geo_level_names.size() &&
+                              world_.geo_level_names[unit.level_id] ==
+                                  seed.structured_config.geo_level;
+                     });
     if (geo_unit == world_.geo_units.end()) continue;
     for (Person* person : world_.getPeopleInUnit(geo_unit->id)) {
       if (person->infection != nullptr) continue;

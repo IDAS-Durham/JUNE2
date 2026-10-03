@@ -45,9 +45,9 @@ bool hdf5ObjectExists(H5::H5File& file, const std::string& path,
                       H5O_type_t wanted_type) {
   if (H5Lexists(file.getId(), path.c_str(), H5P_DEFAULT) <= 0) return false;
 
-  H5O_info2_t info;
-  if (H5Oget_info_by_name3(file.getId(), path.c_str(), &info, H5O_INFO_BASIC,
-                           H5P_DEFAULT) < 0)
+  H5O_info_t info;
+  if (H5Oget_info_by_name(file.getId(), path.c_str(), &info, H5O_INFO_BASIC,
+                          H5P_DEFAULT) < 0)
     return false;
   return info.type == wanted_type;
 }
