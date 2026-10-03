@@ -218,7 +218,7 @@ endif()
 target_link_libraries(june_core PUBLIC dl)
 
 target_link_libraries(june_core PUBLIC yaml-cpp::yaml-cpp)
-target_link_libraries(june_core PRIVATE hdf5::hdf5_cpp hdf5::hdf5)
+target_link_libraries(june_core PUBLIC hdf5::hdf5_cpp hdf5::hdf5)
 
 if(MPI_FOUND)
   target_link_libraries(june_core PUBLIC MPI::MPI_CXX)
