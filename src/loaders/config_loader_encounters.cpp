@@ -88,35 +88,46 @@ FrequencyGroup parseFrequencyGroup(const std::string& name,
   return fg;
 }
 
-// Parse a `{type, mean|p|count}` YAML node into an InviteDistribution.
-// Strict variant used by `invite_distribution`: both the `type` key and the
-// distribution-specific parameter are required (throws on absence). The
-// `enc_name` is woven into error messages to identify the offending encounter.
-void parseInviteDistributionStrict(const YAML::Node& dist_node,
-                                   InviteDistribution& dist,
-                                   const std::string& enc_name) {
-  if (!dist_node["type"])
+enum class InviteDistributionMode { REQUIRED, OPTIONAL };
+
+// Parse a `{type, mean|p|count}` YAML node into an InviteDistribution. The
+// required mode is used by `invite_distribution`; optional mode preserves the
+// defaults used by `daily_max_distribution`.
+void parseInviteDistribution(const YAML::Node& dist_node,
+                             InviteDistribution& dist,
+                             const std::string& enc_name,
+                             InviteDistributionMode mode) {
+  if (dist_node["type"]) {
+    dist.type = parseDistributionType(dist_node["type"].as<std::string>());
+  } else if (mode == InviteDistributionMode::REQUIRED) {
     throw std::runtime_error(
         "Coordinated encounter '" + enc_name +
         "' invite_distribution missing required field: type");
-  dist.type = parseDistributionType(dist_node["type"].as<std::string>());
-
-  if (dist.type == DistributionType::POISSON) {
-    if (!dist_node["mean"])
-      throw std::runtime_error("Poisson invite_distribution for '" + enc_name +
-                               "' requires 'mean' parameter.");
-    dist.mean = dist_node["mean"].as<double>();
-  } else if (dist.type == DistributionType::BINOMIAL) {
-    if (!dist_node["p"])
-      throw std::runtime_error("Binomial invite_distribution for '" + enc_name +
-                               "' requires 'p' parameter.");
-    dist.p = dist_node["p"].as<double>();
-  } else if (dist.type == DistributionType::FIXED) {
-    if (!dist_node["count"])
-      throw std::runtime_error("Fixed invite_distribution for '" + enc_name +
-                               "' requires 'count' parameter.");
-    dist.count = dist_node["count"].as<int>();
   }
+
+  const char* parameter = dist.type == DistributionType::POISSON    ? "mean"
+                          : dist.type == DistributionType::BINOMIAL ? "p"
+                                                                    : "count";
+
+  if (!dist_node[parameter]) {
+    if (mode == InviteDistributionMode::REQUIRED) {
+      const char* distribution =
+          dist.type == DistributionType::POISSON    ? "Poisson"
+          : dist.type == DistributionType::BINOMIAL ? "Binomial"
+                                                    : "Fixed";
+      throw std::runtime_error(std::string(distribution) +
+                               " invite_distribution for '" + enc_name +
+                               "' requires '" + parameter + "' parameter.");
+    }
+    return;
+  }
+
+  if (dist.type == DistributionType::POISSON)
+    dist.mean = dist_node[parameter].as<double>();
+  else if (dist.type == DistributionType::BINOMIAL)
+    dist.p = dist_node[parameter].as<double>();
+  else
+    dist.count = dist_node[parameter].as<int>();
 }
 
 // Parse the required scalar/list fields of a coordinated-encounter entry
@@ -192,29 +203,11 @@ void parseEncounterRateSource(
   }
 }
 
-// Lenient counterpart to parseInviteDistributionStrict, used for
-// `daily_max_distribution` blocks. Every key is optional: missing `type`
-// leaves the existing default in place, and a missing distribution-specific
-// parameter is silently skipped. No throws.
-void parseDailyMaxDistribution(const YAML::Node& dmd_node,
-                               InviteDistribution& dist) {
-  if (dmd_node["type"]) {
-    dist.type = parseDistributionType(dmd_node["type"].as<std::string>());
-  }
-  if (dist.type == DistributionType::POISSON && dmd_node["mean"]) {
-    dist.mean = dmd_node["mean"].as<double>();
-  } else if (dist.type == DistributionType::BINOMIAL && dmd_node["p"]) {
-    dist.p = dmd_node["p"].as<double>();
-  } else if (dist.type == DistributionType::FIXED && dmd_node["count"]) {
-    dist.count = dmd_node["count"].as<int>();
-  }
-}
-
 // Parse one entry from `coordinated_encounters.encounters[]`. Dispatches
 // through the smaller per-section helpers (required fields, invite
 // distribution, rate source, daily-max distribution) and reads the optional
 // scalar/list fields (acceptance_probability, is_virtual /
-// virtual_contact_matrix, min_attendees, priority, network_partner_filter).
+// virtual_contact_matrix, min_attendees, priority).
 CoordinatedEncounterDef parseEncounter(
     const YAML::Node& enc_node,
     const std::unordered_map<std::string, FrequencyGroup>& frequency_groups) {
@@ -232,8 +225,9 @@ CoordinatedEncounterDef parseEncounter(
   if (!enc_node["invite_distribution"])
     throw std::runtime_error("Coordinated encounter '" + enc_def.name +
                              "' missing required field: invite_distribution");
-  parseInviteDistributionStrict(enc_node["invite_distribution"],
-                                enc_def.invite_distribution, enc_def.name);
+  parseInviteDistribution(enc_node["invite_distribution"],
+                          enc_def.invite_distribution, enc_def.name,
+                          InviteDistributionMode::REQUIRED);
 
   // acceptance_probability is optional. When absent, defaults to 1.0
   // (no refusal), which is appropriate whenever a frequency CSV is the
@@ -262,17 +256,13 @@ CoordinatedEncounterDef parseEncounter(
   if (enc_node["priority"]) {
     enc_def.priority = enc_node["priority"].as<int>();
   }
-  if (enc_node["network_partner_filter"]) {
-    enc_def.network_partner_filter =
-        enc_node["network_partner_filter"].as<std::string>();
-  }
-
   parseEncounterRateSource(enc_node, enc_def, frequency_groups,
                            has_proposal_prob);
 
   if (enc_node["daily_max_distribution"]) {
-    parseDailyMaxDistribution(enc_node["daily_max_distribution"],
-                              enc_def.daily_max_distribution);
+    parseInviteDistribution(enc_node["daily_max_distribution"],
+                            enc_def.daily_max_distribution, enc_def.name,
+                            InviteDistributionMode::OPTIONAL);
   }
 
   return enc_def;
@@ -301,10 +291,6 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
   if (ce_node["enabled"]) {
     config.enabled = ce_node["enabled"].as<bool>();
   }
-  if (ce_node["log_commitments"]) {
-    config.log_commitments = ce_node["log_commitments"].as<bool>();
-  }
-
   // Optional: frequency_groups block. Each group specifies a CSV whose
   // per-person rate overrides the scalar proposal_probability for any
   // encounter that declares `frequency_group: "<name>"`.

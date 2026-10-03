@@ -19,6 +19,8 @@ std::string trim(const std::string& s) {
   return s.substr(first, last - first + 1);
 }
 
+}  // namespace
+
 std::vector<std::string> splitCSVLine(const std::string& line) {
   std::vector<std::string> fields;
   std::istringstream lss(line);
@@ -28,8 +30,6 @@ std::vector<std::string> splitCSVLine(const std::string& line) {
   }
   return fields;
 }
-
-}  // namespace
 
 FilteredTable loadFilteredCSV(std::istream& input,
                               const std::string& source_name) {

@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <string>
 #include <vector>
 
@@ -112,8 +111,9 @@ TEST_CASE("Shortfall report: a clustered budget names the earlier declaration") 
 }
 
 TEST_CASE("Shortfall report: more contested people than the gap does not underflow") {
-  // A budget asking one case can be offered ten contested people. Only the gap
-  // could ever have been filled from them, so the clauses still sum to it.
+  // This budget requests one case but receives ten contested offers. The
+  // shortfall can lose at most one person to another budget, so the reported
+  // loss counts must still sum to the requested gap.
   std::vector<SeedShortfall> shortfalls = {
       {"february_2020", "LGU", "E06000005", 0, "0-17", 1, 0, 10, false}};
 

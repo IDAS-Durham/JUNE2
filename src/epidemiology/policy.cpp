@@ -1,8 +1,11 @@
 #include "epidemiology/policy.h"
 
+#include <algorithm>
 #include <cmath>
+#include <random>
 
 #include "epidemiology/disease.h"
+#include "utils/deterministic_rng.h"
 #include "utils/filtering.h"
 
 namespace june {

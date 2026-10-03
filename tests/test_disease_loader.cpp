@@ -1,8 +1,5 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
-#include <atomic>
 #include <filesystem>
-#include <fstream>
 #include <stdexcept>
 #include <string>
 
@@ -18,24 +15,17 @@ namespace fs = std::filesystem;
 namespace {
 
 struct WideDiseaseFixture {
-  fs::path directory;
+  ScopedTestFiles files{"june_disease_loader_wide_test"};
   fs::path yaml;
 
   explicit WideDiseaseFixture(const std::string& rates) {
-    static std::atomic<unsigned> counter{0};
-    directory =
-        fs::temp_directory_path() / ("june_disease_loader_wide_test_" +
-                                     std::to_string(counter.fetch_add(1)));
-    fs::create_directories(directory);
+    files.write(
+        "rates.csv",
+        "gp_mild_male,gp_severe_male,gp_mild_female,gp_severe_female,"
+        "ch_mild_male,ch_severe_male,ch_mild_female,ch_severe_female\n" +
+            rates + "\n");
 
-    std::ofstream csv(directory / "rates.csv");
-    csv << "gp_mild_male,gp_severe_male,gp_mild_female,gp_severe_female,"
-           "ch_mild_male,ch_severe_male,ch_mild_female,ch_severe_female\n"
-        << rates << "\n";
-
-    yaml = directory / "disease.yaml";
-    std::ofstream config(yaml);
-    config << R"(disease:
+    yaml = files.write("disease.yaml", R"(disease:
   name: wide_test
   outcome_rates_csv:
     file: rates.csv
@@ -52,10 +42,8 @@ struct WideDiseaseFixture {
         symptom_tag: mild
       severe:
         symptom_tag: severe
-)";
+)");
   }
-
-  ~WideDiseaseFixture() { fs::remove_all(directory); }
 };
 
 }  // namespace

@@ -17,7 +17,7 @@
 
 #include "core/config.h"
 #include "core/world_state.h"
-#include "loaders/domain_loader_internals.h"
+#include "domain_loader_internals.h"
 #include "loaders/hdf5_loader.h"
 #include "utils/memory_utils.h"
 
@@ -26,28 +26,16 @@ namespace june {
 WorldState HDF5Loader::load(const std::string& filename, const Config& config) {
   // Load entire world using chunked loading
 
-  // First, load geography to get all geo_unit IDs
-  HDF5Loader temp_loader(filename, config);
-  temp_loader.loadGeography();
-
-  // Collect all geo_unit IDs into a set
-  std::unordered_set<GeoUnitId> all_geo_units;
-  for (const auto& gu : temp_loader.world_.geo_units) {
-    all_geo_units.insert(gu.id);
-  }
-
-  MemoryUtils::logMemory("Start of loadDomainChunked");
+  memory::logMemory("Start of loadDomainChunked");
 
   // Performance note: chunk_size for serial loading is fixed
   size_t chunk_size = 1000;
-  return loadDomainChunked(filename, all_geo_units, chunk_size, config);
+  return loadDomainChunked(filename, nullptr, chunk_size, config);
 }
 
 WorldState HDF5Loader::loadGeographyOnly(const std::string& filename) {
   // This method does not need config, as it only loads geography.
-  // The HDF5Loader constructor used here will default-construct config_
-  // which is fine as it's not used by loadGeography().
-  HDF5Loader loader(filename, Config());
+  HDF5Loader loader(filename);
 
   // Load registries first (needed for geo level name resolution)
   loader.loadRegistries();
@@ -93,16 +81,6 @@ void HDF5Loader::loadRegistries() {
     }
   }
 
-  if (groupExists("/metadata/registries/geography_properties")) {
-    auto prop_names =
-        getDatasetNames("/metadata/registries/geography_properties");
-    world_.geo_unit_property_names = prop_names;
-    for (const auto& name : prop_names) {
-      world_.geo_unit_property_value_registries[name] = readStringDataset(
-          "/metadata/registries/geography_properties/" + name);
-    }
-  }
-
   // 6. Subset types
   if (datasetExists("/metadata/registries/subset_names")) {
     world_.subset_type_names =
@@ -145,61 +123,13 @@ void HDF5Loader::loadGeography() {
     world_.geo_units[i].latitude = latitudes.empty() ? 0.0f : latitudes[i];
     world_.geo_units[i].longitude = longitudes.empty() ? 0.0f : longitudes[i];
   }
-
-  // Load geography properties if they exist
-  if (groupExists("/geography/properties")) {
-    auto property_names = getDatasetNames("/geography/properties");
-    world_.geo_unit_property_names = property_names;
-
-    std::vector<std::vector<PropertyValue>> property_columns;
-    for (const auto& prop_name : property_names) {
-      property_columns.push_back(readPropertyDatasetRange(
-          "/geography/properties/" + prop_name, 0, count, prop_name));
-    }
-
-    for (size_t i = 0; i < count; ++i) {
-      world_.geo_units[i].properties_start =
-          static_cast<uint32_t>(world_.geo_unit_properties.size());
-      world_.geo_units[i].properties_count =
-          static_cast<uint8_t>(property_columns.size());
-
-      for (size_t k = 0; k < property_columns.size(); ++k) {
-        const auto& prop_name = property_names[k];
-        const auto& prop_val = property_columns[k][i];
-
-        int32_t interned_val = -1;
-        if (std::holds_alternative<int32_t>(prop_val)) {
-          interned_val = std::get<int32_t>(prop_val);
-        } else if (std::holds_alternative<double>(prop_val)) {
-          interned_val = static_cast<int32_t>(std::get<double>(prop_val));
-        } else if (std::holds_alternative<bool>(prop_val)) {
-          interned_val = std::get<bool>(prop_val) ? 1 : 0;
-        } else if (std::holds_alternative<std::string>(prop_val)) {
-          const std::string& s = std::get<std::string>(prop_val);
-          if (!s.empty()) {
-            auto& registry =
-                world_.geo_unit_property_value_registries[prop_name];
-            auto it = std::find(registry.begin(), registry.end(), s);
-            if (it == registry.end()) {
-              interned_val = static_cast<int32_t>(registry.size());
-              registry.push_back(s);
-            } else {
-              interned_val =
-                  static_cast<int32_t>(std::distance(registry.begin(), it));
-            }
-          }
-        }
-        world_.geo_unit_properties.push_back(interned_val);
-      }
-    }
-  }
 }
 
 WorldState HDF5Loader::loadDomainChunked(
     const std::string& filename,
-    const std::unordered_set<GeoUnitId>& owned_geo_units, size_t chunk_size,
+    const std::unordered_set<GeoUnitId>* owned_geo_units, size_t chunk_size,
     const Config& config) {
-  HDF5Loader loader(filename, config);
+  HDF5Loader loader(filename);
 
   int mpi_rank = 0;
 #ifdef USE_MPI
@@ -209,10 +139,18 @@ WorldState HDF5Loader::loadDomainChunked(
   loader.loadRegistries();
   loader.loadGeography();
 
-  // Convert owned_geo_units to a sorted vector for chunking
-  std::vector<GeoUnitId> geo_units_vec(owned_geo_units.begin(),
-                                       owned_geo_units.end());
+  // A null ownership set means serial loading owns every geography unit.
+  std::vector<GeoUnitId> geo_units_vec;
+  if (owned_geo_units) {
+    geo_units_vec.assign(owned_geo_units->begin(), owned_geo_units->end());
+  } else {
+    geo_units_vec.reserve(loader.world_.geo_units.size());
+    for (const auto& geo_unit : loader.world_.geo_units)
+      geo_units_vec.push_back(geo_unit.id);
+  }
   std::sort(geo_units_vec.begin(), geo_units_vec.end());
+  const std::unordered_set<GeoUnitId> owned_geo_units_for_subsets(
+      geo_units_vec.begin(), geo_units_vec.end());
   size_t num_geo_units = geo_units_vec.size();
   size_t num_chunks = (num_geo_units + chunk_size - 1) / chunk_size;
 
@@ -271,8 +209,7 @@ WorldState HDF5Loader::loadDomainChunked(
     size_t end_idx = std::min(start_idx + chunk_size, num_geo_units);
     size_t people_before_chunk = loader.world_.people.size();
 
-    MemoryUtils::logMemory("Before GeoUnit Chunk " +
-                           std::to_string(chunk_idx + 1));
+    memory::logMemory("Before GeoUnit Chunk " + std::to_string(chunk_idx + 1));
 
     auto pop_spans = detail::detectChunkSpans(pop_partition_map, geo_units_vec,
                                               start_idx, end_idx);
@@ -313,12 +250,12 @@ WorldState HDF5Loader::loadDomainChunked(
     loader.world_.venue_index[loader.world_.venues[i].id] = i;
   }
 
-  detail::loadVenueSubsets(loader, owned_geo_units);
+  detail::loadVenueSubsets(loader, owned_geo_units_for_subsets);
   detail::buildGlobalVenueMaps(loader);
 
-  MemoryUtils::logMemory("After loading all chunks, before indexing");
+  memory::logMemory("After loading all chunks, before indexing");
   loader.world_.buildIndices();
-  MemoryUtils::logMemory("After indexing final state");
+  memory::logMemory("After indexing final state");
 
   if (mpi_rank == 0) {
     std::cout << "  Domain loaded: " << loader.world_.people.size()

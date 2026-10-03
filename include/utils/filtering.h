@@ -21,7 +21,7 @@ struct WorldState;
 /// infection events) that satisfy *all* non-empty filter cells on that row.
 /// Rows are evaluated top-to-bottom; the first matching row wins.
 ///
-/// An empty filter cell is silently skipped (no constraint imposed). A row with
+/// An empty filter cell adds no constraint. A row with
 /// all filter cells empty matches every person unconditionally and acts as a
 /// catch-all default.
 ///
@@ -95,7 +95,7 @@ namespace filtering {
 /// A numeric range string such as `"18-60"` produces two criteria (`>= 18` AND
 /// `<= 60`). Comparison prefixes (`>`, `>=`, `<`, `<=`) produce one criterion.
 /// Plain integers, booleans, and strings produce an `==` criterion. The legacy
-/// alias `"age_groups"` is silently mapped to `"age"`.
+/// alias `"age_groups"` is mapped to `"age"`.
 ///
 /// Args:
 ///   key: The property path (everything after `filter.` in the CSV header).
@@ -146,32 +146,6 @@ bool isInfectionContextCriterion(const SelectionCriterion& criterion);
 ///   the substring after `"filter."` (e.g. `"age"`, `"transmission_mode"`).
 std::vector<std::pair<int, std::string>> findFilterColumns(
     const std::vector<std::string>& headers);
-
-/// Parses an AND-conjunctive expression string into a list of criteria.
-///
-/// Format: `<key><op><value> [AND <key><op><value> ...]`
-///   - Tokens are separated by literal " AND " (case-sensitive, surrounding
-///     spaces required).
-///   - Operators: `==`, `=`, `>=`, `<=`, `>`, `<`. (`!=` not supported.)
-///   - Keys may carry a `filter.` prefix (stripped before parsing) or be a
-///     bare path such as `is_alive` or a person property name.
-///   - Values follow the same conventions as CSV cells: bool (`true`/`false`),
-///     int, range (`16-59`), comparison (carried in val for `>=`/`<=`/`>`/`<`).
-///
-/// The criteria within one expression are evaluated conjunctively (AND).
-/// To express OR, use a list of expressions and call matchesAnyGroup.
-///
-/// Throws std::runtime_error on malformed input.
-std::vector<SelectionCriterion> parseConjunctiveExpression(
-    const std::string& expr);
-
-/// Returns true if `criteria_groups` is empty, or if any group fully matches.
-/// Each group is itself AND-conjunctive (matchesCriteria semantics); the
-/// outer combinator is OR. Used for eligibility-style filters where today's
-/// logic depends on a partner-state-conditional choice between flag sets.
-bool matchesAnyGroup(
-    const Person& person, const WorldState* world,
-    const std::vector<std::vector<SelectionCriterion>>& criteria_groups);
 
 /// Builds a list of SelectionCriterion from the filter columns of a single CSV
 /// row.

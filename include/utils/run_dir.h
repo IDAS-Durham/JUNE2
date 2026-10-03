@@ -7,9 +7,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <set>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #ifdef USE_MPI
@@ -22,20 +22,24 @@
 
 namespace june::run_dir {
 
+inline std::string formatUtc(std::time_t time, const char* format) {
+  std::tm utc{};
+#ifdef _WIN32
+  gmtime_s(&utc, &time);
+#else
+  gmtime_r(&time, &utc);
+#endif
+  std::ostringstream oss;
+  oss << std::put_time(&utc, format);
+  return oss.str();
+}
+
 // Generate a UTC timestamp run id of the form "YYYYMMDD-HHMMSS".
 // Rank 0 should call this and broadcast the result so all ranks agree.
 inline std::string generateRunIdUtc() {
   using namespace std::chrono;
-  auto now = system_clock::to_time_t(system_clock::now());
-  std::tm utc{};
-#ifdef _WIN32
-  gmtime_s(&utc, &now);
-#else
-  gmtime_r(&now, &utc);
-#endif
-  std::ostringstream oss;
-  oss << std::put_time(&utc, "%Y%m%d-%H%M%S");
-  return oss.str();
+  return formatUtc(system_clock::to_time_t(system_clock::now()),
+                   "%Y%m%d-%H%M%S");
 }
 
 // Broadcast the run id from rank 0 to all other MPI ranks. No-op without MPI.
@@ -58,8 +62,8 @@ inline void broadcastRunId(std::string& run_id) {
 }
 
 // Broadcast the resolved RNG seed from rank 0 to all ranks. No-op without MPI.
-// Ensures every rank (and any future checkpoint resume) uses the identical
-// stream even when the seed was auto-generated on rank 0.
+// Ensures every rank and every checkpoint resume uses the identical stream,
+// even when the seed was auto-generated on rank 0.
 inline void broadcastSeed(unsigned int& seed) {
 #ifdef USE_MPI
   int initialized = 0;
@@ -71,57 +75,12 @@ inline void broadcastSeed(unsigned int& seed) {
 #endif
 }
 
-// Extract a CSV path referenced *inside* a top-level YAML so the snapshot
-// captures data files the authoritative loaders read but never surface as
-// Config fields. Resolution must match the owning loader exactly:
-//   disease.yaml -> disease.outcome_rates_csv, resolved relative to the
-//   disease.yaml directory (see disease_loader.cpp:273-275); may be a scalar
-//   path or a {file: ...} mapping.
-// Best-effort: a malformed YAML or absent key is left for the authoritative
-// loader to report with its proper diagnostics; we only contribute a path when
-// one can be read. snapshotRun() still hard-throws if the resolved path is
-// missing, so a present-but-broken reference cannot silently drop the file.
-inline std::string nestedDiseaseOutcomeCsv(const std::string& disease_yaml) {
-  if (disease_yaml.empty()) return "";
-  try {
-    YAML::Node root = YAML::LoadFile(disease_yaml);
-    if (!root["disease"]) return "";
-    YAML::Node node = root["disease"]["outcome_rates_csv"];
-    if (!node) return "";
-    std::string rel;
-    if (node.IsScalar()) {
-      rel = node.as<std::string>();
-    } else if (node["file"]) {
-      rel = node["file"].as<std::string>();
-    }
-    if (rel.empty()) return "";
-    return (std::filesystem::path(disease_yaml).parent_path() / rel).string();
-  } catch (const std::exception&) {
-    return "";
-  }
-}
-
-// Extract the bulk-seed CSV referenced inside infection_seeds.yaml. Unlike the
-// disease outcome CSV, the infection-seed loader passes bulk_csv verbatim to
-// the CSV reader (infection_seed.cpp:256), i.e. it is CWD-relative, so we
-// must NOT prefix it with the YAML's directory.
-inline std::string nestedBulkSeedCsv(const std::string& seeds_yaml) {
-  if (seeds_yaml.empty()) return "";
-  try {
-    YAML::Node root = YAML::LoadFile(seeds_yaml);
-    if (!root["bulk_csv"]) return "";
-    return root["bulk_csv"].as<std::string>();
-  } catch (const std::exception&) {
-    return "";
-  }
-}
-
 // Collect every config / data file path referenced by a loaded Config plus
 // the simulation.yaml that anchors it. Order is stable; duplicates removed.
 inline std::vector<std::string> collectConfigPaths(
     const Config& config, const std::string& sim_yaml_path) {
   std::vector<std::string> out;
-  std::set<std::string> seen;
+  std::unordered_set<std::string> seen;
   auto push = [&](const std::string& p) {
     if (p.empty()) return;
     if (!seen.insert(p).second) return;
@@ -156,12 +115,9 @@ inline std::vector<std::string> collectConfigPaths(
     push(fg.csv_path);
   }
 
-  // Data CSVs nested inside top-level YAMLs that the loaders never expose as
-  // Config fields. Without these the manifest's "everything needed to
-  // reproduce or resume" guarantee is false: a replayed run would silently
-  // differ (no seeded infections / wrong outcome severities).
-  push(nestedDiseaseOutcomeCsv(sim.disease_file));
-  push(nestedBulkSeedCsv(sim.infection_seeds_file));
+  // Nested data files are recorded by the authoritative loaders while they
+  // read them. Do not parse those YAML files a second time here.
+  for (const auto& path : sim.referenced_paths) push(path);
 
   return out;
 }
@@ -211,19 +167,9 @@ inline void snapshotRun(const std::filesystem::path& run_dir,
   manifest << YAML::Key << "run_id" << YAML::Value
            << run_dir.filename().string();
   manifest << YAML::Key << "started_utc" << YAML::Value;
-  {
-    using namespace std::chrono;
-    auto now = system_clock::to_time_t(system_clock::now());
-    std::tm utc{};
-#ifdef _WIN32
-    gmtime_s(&utc, &now);
-#else
-    gmtime_r(&now, &utc);
-#endif
-    std::ostringstream oss;
-    oss << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
-    manifest << oss.str();
-  }
+  manifest << formatUtc(std::chrono::system_clock::to_time_t(
+                            std::chrono::system_clock::now()),
+                        "%Y-%m-%dT%H:%M:%SZ");
   manifest << YAML::Key << "mpi_size" << YAML::Value << mpi_size;
 
   // Hostname (best-effort).

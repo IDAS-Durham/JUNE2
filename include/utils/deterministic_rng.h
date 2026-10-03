@@ -115,11 +115,4 @@ class SplitMix64 {
   uint64_t state_;
 };
 
-// Convenience: create a ready-to-use RNG from entity context.
-// Usage: auto rng = make_rng(base_seed, person_id, timestep_bits);
-inline SplitMix64 make_rng(uint64_t base, uint64_t key1, uint64_t key2 = 0,
-                           uint64_t key3 = 0) {
-  return SplitMix64(mix_seed(base, key1, key2, key3));
-}
-
 }  // namespace june

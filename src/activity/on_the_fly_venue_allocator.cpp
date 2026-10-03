@@ -18,12 +18,8 @@ const std::vector<VenueId> OnTheFlyVenueAllocator::empty_pool_{};
 OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const std::string& config_path)
     : OnTheFlyVenueAllocator(YAML::LoadFile(config_path)) {}
 
-OnTheFlyVenueAllocator OnTheFlyVenueAllocator::fromString(
-    std::string_view yaml) {
-  return OnTheFlyVenueAllocator(YAML::Load(std::string(yaml)));
-}
-
 OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const YAML::Node& root) {
+  std::unordered_map<std::string, RuleConfig> parsed_rules;
   const auto& rules_node = root["rules"];
   for (const auto& entry : rules_node) {
     const std::string rule_name = entry.first.as<std::string>();
@@ -57,13 +53,18 @@ OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const YAML::Node& root) {
       rule.geo_unit_level = cfg["geo_unit_level"].as<std::string>();
     }
 
-    rules_[rule_name] = std::move(rule);
+    parsed_rules[rule_name] = std::move(rule);
   }
 
   const auto& activity_rules_node = root["activity_rules"];
   for (const auto& entry : activity_rules_node) {
-    activity_to_rule_[entry.first.as<std::string>()] =
-        entry.second.as<std::string>();
+    const std::string activity_name = entry.first.as<std::string>();
+    const std::string rule_name = entry.second.as<std::string>();
+    auto rule_it = parsed_rules.find(rule_name);
+    if (rule_it == parsed_rules.end()) {
+      throw std::runtime_error("Unknown OTF rule: " + rule_name);
+    }
+    rules_[activity_name] = rule_it->second;
   }
 }
 
@@ -72,7 +73,7 @@ OnTheFlyVenueAllocator::OnTheFlyVenueAllocator(const YAML::Node& root) {
 // ---------------------------------------------------------------------------
 
 void OnTheFlyVenueAllocator::checkConsistency(const WorldState& world) const {
-  for (const auto& [rule_name, rule] : rules_) {
+  for (const auto& [activity_name, rule] : rules_) {
     if (rule.geo_unit_level.empty()) continue;
     bool found = false;
     for (const auto& level : world.geo_level_names) {
@@ -88,7 +89,7 @@ void OnTheFlyVenueAllocator::checkConsistency(const WorldState& world) const {
         known += '"' + level + '"';
       }
       throw std::runtime_error(
-          "OTF rule '" + rule_name + "' specifies geo_unit_level '" +
+          "OTF activity '" + activity_name + "' specifies geo_unit_level '" +
           rule.geo_unit_level +
           "' which is not a known geo level. Known levels: " + known + ".");
     }
@@ -96,25 +97,22 @@ void OnTheFlyVenueAllocator::checkConsistency(const WorldState& world) const {
 }
 
 bool OnTheFlyVenueAllocator::hasRule(std::string_view activity_name) const {
-  return activity_to_rule_.count(activity_name) > 0;
+  return rules_.count(activity_name) > 0;
 }
 
 bool OnTheFlyVenueAllocator::isFixed(std::string_view activity_name) const {
-  auto rule_it = activity_to_rule_.find(activity_name);
-  if (rule_it == activity_to_rule_.end()) return false;
-  auto cfg_it = rules_.find(rule_it->second);
-  if (cfg_it == rules_.end()) return false;
-  return cfg_it->second.venue_stability == VenueStability::fixed;
+  auto rule_it = rules_.find(activity_name);
+  return rule_it != rules_.end() &&
+         rule_it->second.venue_stability == VenueStability::fixed;
 }
 
 const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
     std::string_view activity_name, const VenueResolveContext& context,
     const WorldState& world) {
-  auto rule_it = activity_to_rule_.find(activity_name);
-  if (rule_it == activity_to_rule_.end()) return empty_pool_;
-
-  const std::string& rule_name = rule_it->second;
-  const RuleConfig& rule = rules_.at(rule_name);
+  auto rule_it = rules_.find(activity_name);
+  if (rule_it == rules_.end()) return empty_pool_;
+  const std::string& activity_key = rule_it->first;
+  const RuleConfig& rule = rule_it->second;
 
   GeoUnitId geo_unit_id;
   if (rule.strategy == Strategy::hosting_geo_unit) {
@@ -126,7 +124,7 @@ const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
       GeoUnitId ancestor =
           world.ancestorAtLevel(geo_unit_id, rule.geo_unit_level);
       if (ancestor == -1) {
-        std::cerr << "[OTF] Warning: rule '" << rule_name
+        std::cerr << "[OTF] Warning: activity '" << activity_name
                   << "': no ancestor at level '" << rule.geo_unit_level
                   << "' for geo_unit_id " << geo_unit_id
                   << ". Returning empty pool.\n";
@@ -136,29 +134,30 @@ const std::vector<VenueId>& OnTheFlyVenueAllocator::resolve(
     }
   }
 
-  CacheKeyView probe_key{rule_name, geo_unit_id};
-  auto cache_it = cache_.find(probe_key);
-  if (cache_it != cache_.end()) return cache_it->second;
+  auto rule_cache_it = cache_.find(activity_key);
+  if (rule_cache_it != cache_.end()) {
+    auto cache_it = rule_cache_it->second.find(geo_unit_id);
+    if (cache_it != rule_cache_it->second.end()) return cache_it->second;
+  }
 
   // After sealing, the global venue maps have been freed, so every real query
-  // must already be cached. A miss means precomputeAllPools() failed to cover
-  // this (rule, geo) — fail loud rather than silently assign no venue.
+  // must already be cached. A miss means precomputeAllPools() did not cover
+  // this (rule, geo); throw instead of returning an empty venue pool.
   if (sealed_)
     throw std::runtime_error(
-        "OnTheFlyVenueAllocator: pool not precomputed for rule '" + rule_name +
-        "' geo_unit " + std::to_string(geo_unit_id) +
-        " (global venue maps already freed)");
+        "OnTheFlyVenueAllocator: pool not precomputed for activity '" +
+        std::string(activity_name) + "' geo_unit " +
+        std::to_string(geo_unit_id) + " (global venue maps already freed)");
 
   auto pool = world.getVenuesInGeoUnit(geo_unit_id, rule.venue_type);
-  CacheKey key{rule_name, geo_unit_id};
-  auto [inserted_it, _] = cache_.emplace(std::move(key), std::move(pool));
+  auto& rule_cache = cache_[activity_key];
+  auto [inserted_it, _] = rule_cache.emplace(geo_unit_id, std::move(pool));
   return inserted_it->second;
 }
 
 void OnTheFlyVenueAllocator::precomputeAllPools(
     const WorldState& world, const std::vector<GeoUnitId>& hosting_geo_units) {
-  for (const auto& [activity, rule_name] : activity_to_rule_) {
-    const RuleConfig& rule = rules_.at(rule_name);
+  for (const auto& [activity, rule] : rules_) {
     if (rule.strategy == Strategy::hosting_geo_unit) {
       for (GeoUnitId g : hosting_geo_units) {
         VenueResolveContext ctx;

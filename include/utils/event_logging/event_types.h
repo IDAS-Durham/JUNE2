@@ -1,12 +1,23 @@
 #pragma once
 
+#include <algorithm>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/types.h"
 #include "epidemiology/transmission/transmission_record.h"
 
 namespace june {
+
+template <size_t N>
+inline void copyFixedField(char (&destination)[N], std::string_view source) {
+  static_assert(N > 0, "fixed-width fields must have room for a terminator");
+  const size_t length = std::min(source.size(), N - 1);
+  std::memset(destination, 0, N);
+  std::memcpy(destination, source.data(), length);
+}
 
 // Shared fallback strings for unresolvable/inapplicable HDF5 lookup-table
 // values. Single point of definition so every writer/merger call site stays

@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "core/config.h"
 #include "doctest.h"
 #include "epidemiology/disease.h"
@@ -14,7 +13,6 @@ TEST_CASE("Disease trajectory progression") {
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
 
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;
@@ -131,7 +129,6 @@ TEST_CASE("Sentinel venue_id=-1 filtered by processTransmissions") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["infectious"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;
@@ -216,7 +213,6 @@ TEST_CASE("Large venue transmission statistical correctness") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["infectious"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;
@@ -279,7 +275,7 @@ TEST_CASE("Large venue transmission statistical correctness") {
   // Allow wide tolerance for stochastic test
   CHECK(avg > 2.0);
   CHECK(avg < 30.0);
-  // Verify not all susceptible got infected (would indicate a bug)
+  // The stochastic setup must leave some susceptible people uninfected.
   CHECK(avg < num_susceptible);
   MESSAGE("Average infections per trial (100 people, 50 infectious): ", avg);
 }
@@ -292,7 +288,6 @@ TEST_CASE("InteractionManager basic transmission") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["infectious"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <iostream>
 #include <set>
 
 #include "core/types.h"
@@ -23,32 +22,6 @@ enum class ReplyStatus : uint8_t {
   REJECTED_DECLINED
 };
 
-// For logging/debugging only. Not used in hot paths
-inline const char* replyStatusToString(ReplyStatus s) {
-  switch (s) {
-    case ReplyStatus::ACCEPTED:
-      return "ACCEPTED";
-    case ReplyStatus::REJECTED_NOT_FOUND:
-      return "REJECTED_NOT_FOUND";
-    case ReplyStatus::REJECTED_DEAD:
-      return "REJECTED_DEAD";
-    case ReplyStatus::REJECTED_ALREADY_COMMITTED:
-      return "REJECTED_ALREADY_COMMITTED";
-    case ReplyStatus::REJECTED_NO_MATCHING_DEF:
-      return "REJECTED_NO_MATCHING_DEF";
-    case ReplyStatus::REJECTED_SCHEDULE_CONFLICT:
-      return "REJECTED_SCHEDULE_CONFLICT";
-    case ReplyStatus::REJECTED_DECLINED:
-      return "REJECTED_DECLINED";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-inline std::ostream& operator<<(std::ostream& os, ReplyStatus s) {
-  return os << replyStatusToString(s);
-}
-
 struct EncounterProposal {
   int encounter_id;
   PersonId host_id;
@@ -57,7 +30,7 @@ struct EncounterProposal {
 
   // Geometry & Routing Data
   VenueId venue_id;
-  int venue_owner_rank;  // Resolves the "Ghost Host" bug for MPI routing
+  int venue_owner_rank;  // Rank that owns venue_id and routes the proposal.
   int venue_type_id;     // Tells InteractionManager which matrix to use
 
   // Temporal Data
@@ -65,7 +38,6 @@ struct EncounterProposal {
   uint8_t encounter_type_id;
 };
 
-// The reply sent from the invitee back to the host rank
 struct EncounterReply {
   int encounter_id;
   PersonId host_id;
@@ -78,7 +50,6 @@ struct EncounterReply {
   ReplyStatus status;
 };
 
-// The finalized event distributed to all participants' ranks
 struct CoordinatedEncounter {
   int encounter_id;
   PersonId host_id;
@@ -86,10 +57,10 @@ struct CoordinatedEncounter {
   int venue_type_id;
   int slot;
   uint8_t encounter_type_id;
-  // Host's subset at venue_id, resolved on the host's rank at finalize. Every
-  // injected participant adopts it so they bin as the host's subgroup rather
-  // than by the subset_index of the venue they were scheduled to. -1 on
-  // virtual venues (no subsets).
+  // Host's subset at venue_id, resolved on the host's rank at finalize. The
+  // host's subset is copied to every injected participant so all participants
+  // use the host's subgroup during binning. Virtual venues have no subset, so
+  // the sentinel remains -1.
   SubsetIndex host_subset_index = -1;
 
   std::set<PersonId> participants;

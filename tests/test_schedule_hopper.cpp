@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "activity/activity_manager.h"
 #include "core/config.h"
 #include "doctest.h"
@@ -445,10 +444,8 @@ TEST_CASE("temp schedule returns to specified return_schedule") {
 // =============================================================================
 // Cycle 7: hop_repeats_remaining — multi-day event stays hopped across days
 // =============================================================================
-// NOTE: with the monotonic-progress fix, temp_slot_progress is no longer reset
-// to 0 on day-boundary wrap — it keeps incrementing so findLastNonNullVenueOnHop
-// can scan across boundaries via k % n.  Mid-hop assertions reflect this.
-//
+// temp_slot_progress remains monotonic across day-boundary wraps so
+// findLastNonNullVenueOnHop can scan across boundaries via k % n.
 
 TEST_CASE("temp schedule repeats N times before returning when hop_repeats_remaining > 0") {
   WorldState world = TestWorldFactory::createMinimalWorld(1, 2);
@@ -599,14 +596,14 @@ TEST_CASE("multi-day hop keeps monotonic temp_slot_progress across day-boundary 
   // Monotonic: progress must be 2 so findLastNonNullVenueOnHop starts at
   // k = 2-2 = 0 → s = 0 % 2 = 0 (transit, skipped) → k = -1 stop; but the
   // key correctness is the Day 2 transit slot below.
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 2);  // RED before fix (was 0)
+  CHECK(world.people[0].schedule_hop.temp_slot_progress == 2);
 
   // Day 2 slot 0: transit again after wrap; progress must be 3 so that a
   // findLastNonNullVenueOnHop scan starts at k=1, s=1%2=1 (lodging) → returns
-  // lodge venue (1) rather than home (bug: scan started at k=-1, empty → home).
+  // lodge venue (1) rather than the home venue.
   manager.assignActivitiesFromSchedule(0, 0, locations);
   CHECK(locations[0].venue_id == -1);
-  CHECK(world.people[0].schedule_hop.temp_slot_progress == 3);  // RED before fix (was 1)
+  CHECK(world.people[0].schedule_hop.temp_slot_progress == 3);
   CHECK(world.people[0].schedule_hop.hopped_schedule_id == 0);
 
   // Day 2 slot 1: lodging, then hop ends (repeats exhausted)
@@ -711,7 +708,6 @@ TEST_CASE("back-scan pins the venue forward path assigned under per-day-type "
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto curve = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["sick"] = curve;
   trans.symptom_id_curves = {nullptr, curve};
   std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"sick", 1, 1}};
   DiseaseStageSettings stage_settings;

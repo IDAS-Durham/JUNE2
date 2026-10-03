@@ -98,7 +98,6 @@ EpiSlotStats Simulator::updateEpidemiologyAfterTransmission(
     double delta_hours) {
   EpiSlotStats epi_stats;
   try {
-    ScopedTimer timer("04_InfectionStateUpdates");
     epi_stats = epidemiology_->updateInfectionStates(current_simulation_time_,
                                                      locations_);
   } catch (const std::exception& e) {
@@ -122,7 +121,6 @@ int Simulator::runSlotTransmission(
     std::unordered_map<PersonId, VisitorInfo>* visitor_data_map) {
   int local_new_infections = 0;
   try {
-    ScopedTimer timer("03_TransmissionProcessing");
     if (interaction_manager_) {
       interaction_manager_->setCurrentDayTypeIdx(day_type_idx);
     }
@@ -197,7 +195,6 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
     return;
   }
   try {
-    ScopedTimer timer("02_MPI_VisitorExchange");
     domain_mgr_->exchangeVisitors(locations_, *disease_,
                                   current_simulation_time_, delta_hours,
                                   runtime_group_allocator_.get());
@@ -305,7 +302,6 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   // Step 1: Assign people to activities using pre-computed schedules
   // Update current time for policy checks
   {
-    ScopedTimer timer("01_ActivityAssignment");
     activity_manager_.setCurrentTime(current_simulation_time_);
     activity_manager_.assignActivitiesFromSchedule(time_slot_index,
                                                    day_type_idx, locations_);

@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <map>
 #include <set>
@@ -22,7 +23,10 @@
 #include "epidemiology/transmission/infector_symptom_lookup.h"
 #include "loaders/calendar_event_loader.h"
 #include "loaders/catchment_rule_loader.h"
-#include "utils/event_logging/event_writer.h"
+#include "loaders/disease_loader.h"
+#include "loaders/policy_loader.h"
+#include "utils/memory_utils.h"
+#include "utils/time_utils.h"
 
 namespace june {
 
@@ -347,9 +351,6 @@ Simulator::Simulator(WorldState& world, Config& config,
           std::make_unique<RuntimeGroupAllocator>(world, config)),
       current_day_num_(0),
       current_simulation_time_(0.0) {
-  // GlobalRNG is seeded in main.cpp before any components are created
-  // This ensures Domain, ActivityManager, etc. can use RNG during construction
-
   // Checkpointing is incompatible with the compartmental-model plugin: the
   // external ODE plugin's internal state is opaque to the engine, so a
   // resume would silently diverge. Fail fast on all ranks.
@@ -387,7 +388,8 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Load disease configuration
   try {
     disease_ = std::make_unique<Disease>(DiseaseLoader::loadFromYAML(
-        config_.simulation.disease_file, config_.simulation.verbose));
+        config_.simulation.disease_file, config_.simulation.verbose,
+        &config_.simulation.referenced_paths));
   } catch (const std::exception& e) {
     std::cerr << "FATAL: Failed to load disease: " << e.what() << std::endl;
     throw;
@@ -434,14 +436,6 @@ Simulator::Simulator(WorldState& world, Config& config,
   infection_seeder_ = std::make_unique<InfectionSeeder>(
       world_, disease_.get(), seed_config, &event_logger_,
       config_.simulation.random_seed);
-#ifdef USE_MPI
-  // A structured seed's count is global, so its candidates are pooled across
-  // ranks before the winners are chosen.
-  if (domain_mgr_) {
-    infection_seeder_->setOfferExchange(&seed_offer_exchange_);
-  }
-#endif
-
   if (getRank() == 0) {
     printStartupAudit(*disease_, config_.simulation.disease_file, seed_config);
   }
@@ -506,12 +500,6 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Assign schedule types to people based on selection criteria
   activity_manager_.assignScheduleTypes();
 
-#ifdef USE_MPI
-  if (domain_mgr_) {
-    domain_mgr_->exchangeScheduleTypes();
-  }
-#endif
-
   // Set policy manager in activity manager
   activity_manager_.setPolicyManager(policy_manager_.get());
 
@@ -536,13 +524,24 @@ Simulator::Simulator(WorldState& world, Config& config,
 
   // Load calendar events (optional — no-op if paths are empty)
   if (!config_.simulation.calendar_event_catchment_rules_file.empty()) {
-    catchment_rules_ = CatchmentRuleLoader::load(
-        config_.simulation.calendar_event_catchment_rules_file);
+    const std::string& path =
+        config_.simulation.calendar_event_catchment_rules_file;
+    std::ifstream file(path);
+    if (!file.is_open()) {
+      throw std::runtime_error("CatchmentRuleLoader: cannot open '" + path +
+                               "'");
+    }
+    catchment_rules_ = CatchmentRuleLoader::parse(file, path);
   }
   if (!config_.simulation.calendar_events_file.empty()) {
-    auto events = CalendarEventLoader::load(
-        config_.simulation.calendar_events_file, world_,
-        config_.simulation.start_date, total_days_);
+    const std::string& path = config_.simulation.calendar_events_file;
+    std::ifstream file(path);
+    if (!file.is_open()) {
+      throw std::runtime_error("CalendarEventLoader: cannot open '" + path +
+                               "'");
+    }
+    auto events = CalendarEventLoader::parse(
+        file, world_, config_.simulation.start_date, total_days_, path);
     calendar_event_manager_ = CalendarEventManager(std::move(events));
     activity_manager_.setCalendarEventManager(&calendar_event_manager_);
   }
@@ -584,7 +583,7 @@ Simulator::Simulator(WorldState& world, Config& config,
   compartmental_model_manager_ = std::make_unique<CompartmentalModelManager>(
       config_.simulation.compartmental_model_sidecar, domain_mgr_);
 
-  MemoryUtils::logGlobalMemoryStats("Simulator Initialized");
+  memory::logGlobalMemoryStats("Simulator Initialized");
 }
 
 void Simulator::run() {
@@ -593,9 +592,6 @@ void Simulator::run() {
   if (rank == 0) {
     std::cout << "\n=== Starting Simulation ===" << std::endl;
     std::cout << std::string(50, '=') << std::endl;
-
-    // Enable wall-clock profiling for high-level phases
-    Profiler::instance().enable();
 
     // Checkpoint cadence: validate + announce the active mode once.
     announceCheckpointMode(config_.simulation.checkpoint,
@@ -655,7 +651,7 @@ void Simulator::runOneDay(int day, int rank) {
     std::cout << "\nDay " << day << " (" << formatDate(current_date_) << ")"
               << std::endl;
   }
-  MemoryUtils::logGlobalMemoryStats("Start of Day " + std::to_string(day));
+  memory::logGlobalMemoryStats("Start of Day " + std::to_string(day));
 
   // 0. Update simulation time for start of day
   current_simulation_time_ = static_cast<double>(day);
@@ -666,15 +662,7 @@ void Simulator::runOneDay(int day, int rank) {
     vaccination_manager_->update(current_simulation_time_);
   }
 
-  // 2. Sync death flags across ranks so relationship dissolution can
-  //    detect partners who died on a remote rank during the previous day.
-#ifdef USE_MPI
-  if (domain_mgr_) {
-    domain_mgr_->exchangeDeathFlags();
-  }
-#endif
-
-  // 2.5. Trigger calendar events (schedule hops for fairs, etc.)
+  // 2. Trigger calendar events (schedule hops for fairs, etc.)
   calendar_event_manager_.triggerEventsForDay(day, world_, world_.people,
                                               config_.simulation.random_seed,
                                               catchment_rules_);
@@ -718,7 +706,6 @@ void Simulator::maybeWriteCheckpoint(int day, int rank) {
               << ", mode=" << (cp.usesDates() ? "on_dates" : "every_n_days")
               << std::endl;
   }
-  ScopedTimer timer("06_Checkpoint");
   writeCheckpoint(day, formatDate(current_date_));
 }
 
@@ -743,7 +730,6 @@ void Simulator::writeFinalEventsAndLookups(int rank) {
 
   // saveToHDF5WithLookups handles appending if file exists (from previous
   // flushes)
-  ScopedTimer timer("05_FinalHDF5Save");
   event_logger_.saveToHDF5WithLookups(
       events_filename_, world_, config_,
       remaining_ids.empty() &&
@@ -753,9 +739,6 @@ void Simulator::writeFinalEventsAndLookups(int rank) {
 }
 
 void Simulator::printRunSummary() {
-  // Print wall-clock summary AFTER everything is done
-  Profiler::instance().printDetailedResults();
-
   // Print optimization stats
   activity_manager_.getStats().print();
   if (interaction_manager_) {
@@ -808,7 +791,7 @@ void Simulator::simulateDay(int day_num) {
     // Granular memory check after each time slot
     std::string mem_label = "Day " + std::to_string(current_day_num_) +
                             " Slot " + std::to_string(slot_idx);
-    MemoryUtils::logGlobalMemoryStats(mem_label);
+    memory::logGlobalMemoryStats(mem_label);
 
     // Granular flush check (triggers max_event_buffer_size mid-day)
     checkAndFlushEvents(false);
@@ -886,15 +869,12 @@ void Simulator::checkAndFlushEvents(bool is_day_end) {
       }
     }
 
-    {
-      ScopedTimer timer("05_HDF5_Flushing");
-      event_logger_.flush(
-          events_filename_, config_, world_,
-          newly_infected.empty() &&
-                  config_.simulation.save_full_person_details == "infected_only"
-              ? nullptr
-              : &newly_infected);
-    }
+    event_logger_.flush(
+        events_filename_, config_, world_,
+        newly_infected.empty() &&
+                config_.simulation.save_full_person_details == "infected_only"
+            ? nullptr
+            : &newly_infected);
   }
 }
 void Simulator::initFomiteState() {

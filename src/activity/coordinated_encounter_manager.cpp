@@ -1,7 +1,6 @@
 #include "activity/coordinated_encounter_manager.h"
 
 #include <algorithm>
-#include <iomanip>
 #include <iostream>
 #include <random>
 #include <stdexcept>
@@ -97,20 +96,6 @@ bool isInviteeSlotBlocked(
   return !(matched_def.is_virtual && hasMutualProposal(proposal_set, prop));
 }
 
-// Populates the proposal-derived fields of a reply (all but status, which
-// is set by the per-proposal decision logic).
-EncounterReply makeReplySkeleton(const EncounterProposal& prop) {
-  EncounterReply reply;
-  reply.encounter_id = prop.encounter_id;
-  reply.host_id = prop.host_id;
-  reply.invitee_id = prop.invitee_id;
-  reply.venue_id = prop.venue_id;
-  reply.venue_type_id = prop.venue_type_id;
-  reply.slot = prop.slot;
-  reply.encounter_type_id = prop.encounter_type_id;
-  return reply;
-}
-
 }  // namespace
 
 size_t CoordinatedEncounterManager::ProposalKeyHash::operator()(
@@ -151,15 +136,6 @@ static uint64_t hashGroupName(const std::string& name) {
     h *= 1099511628211ULL;
   }
   return h;
-}
-
-int CoordinatedEncounterManager::getVirtualVenueTypeId(
-    const std::string& matrix_name) const {
-  auto it = config_.contact_matrices.matrix_name_to_id.find(matrix_name);
-  if (it != config_.contact_matrices.matrix_name_to_id.end()) {
-    return it->second;
-  }
-  return 255;  // Default catch-all
 }
 
 // =============================================================================
@@ -267,9 +243,6 @@ void CoordinatedEncounterManager::logEncounterConfig(
   std::cout << "  accept=" << enc_def.acceptance_probability
             << "  priority=" << enc_def.priority << "  network='"
             << enc_def.network << "'";
-  if (!enc_def.network_partner_filter.empty()) {
-    std::cout << "  filter='" << enc_def.network_partner_filter << "'";
-  }
   std::cout << std::endl;
 }
 
@@ -573,7 +546,14 @@ void CoordinatedEncounterManager::processProposals(
 EncounterReply CoordinatedEncounterManager::replyForOneProposal(
     const EncounterProposal& prop, int day_type_idx,
     const ProposalSet& proposal_set) {
-  EncounterReply reply = makeReplySkeleton(prop);
+  EncounterReply reply;
+  reply.encounter_id = prop.encounter_id;
+  reply.host_id = prop.host_id;
+  reply.invitee_id = prop.invitee_id;
+  reply.venue_id = prop.venue_id;
+  reply.venue_type_id = prop.venue_type_id;
+  reply.slot = prop.slot;
+  reply.encounter_type_id = prop.encounter_type_id;
 
   auto it = world_.person_index.find(prop.invitee_id);
   if (it == world_.person_index.end()) {

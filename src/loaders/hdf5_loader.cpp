@@ -11,25 +11,79 @@
 #include <iostream>
 #include <stdexcept>
 
+namespace {
+
+template <typename ReadFn>
+std::vector<std::string> readStringValues(H5::DataSet& dataset,
+                                          H5::DataSpace& reclaim_space,
+                                          size_t count, ReadFn&& read) {
+  std::vector<std::string> result(count);
+  if (count == 0) return result;
+
+  H5::StrType str_type = dataset.getStrType();
+  if (str_type.isVariableStr()) {
+    std::vector<char*> data(count);
+    read(data.data(), str_type);
+    for (size_t i = 0; i < count; ++i) {
+      if (data[i]) result[i] = data[i];
+    }
+    H5::DataSet::vlenReclaim(data.data(), str_type, reclaim_space);
+  } else {
+    const size_t string_size = str_type.getSize();
+    std::vector<char> data(count * string_size);
+    read(data.data(), str_type);
+    for (size_t i = 0; i < count; ++i) {
+      result[i] = std::string(&data[i * string_size], string_size);
+      const size_t null_pos = result[i].find('\0');
+      if (null_pos != std::string::npos) result[i].resize(null_pos);
+    }
+  }
+  return result;
+}
+
+bool hdf5ObjectExists(H5::H5File& file, const std::string& path,
+                      H5O_type_t wanted_type) {
+  if (H5Lexists(file.getId(), path.c_str(), H5P_DEFAULT) <= 0) return false;
+
+#if H5_VERSION_GE(1, 12, 0)
+  H5O_info2_t info;
+  if (H5Oget_info_by_name3(file.getId(), path.c_str(), &info, H5O_INFO_BASIC,
+                           H5P_DEFAULT) < 0)
+#else
+  H5O_info_t info;
+  if (H5Oget_info_by_name(file.getId(), path.c_str(), &info, H5P_DEFAULT) < 0)
+#endif
+    return false;
+  return info.type == wanted_type;
+}
+
+std::vector<std::string> listChildNames(H5::H5File& file,
+                                        const std::string& group_path,
+                                        H5G_obj_t wanted_type) {
+  std::vector<std::string> names;
+  try {
+    H5::Group group = file.openGroup(group_path);
+    hsize_t num_objects = group.getNumObjs();
+    for (hsize_t i = 0; i < num_objects; ++i) {
+      if (group.getObjTypeByIdx(i) == wanted_type) {
+        names.push_back(group.getObjnameByIdx(i));
+      }
+    }
+  } catch (...) {
+  }
+  return names;
+}
+
+}  // namespace
+
 namespace june {
 
-HDF5Loader::HDF5Loader(const std::string& filename, const Config& config)
-    : file_(filename, H5F_ACC_RDONLY), config_(config) {}
+HDF5Loader::HDF5Loader(const std::string& filename)
+    : file_(filename, H5F_ACC_RDONLY) {}
 
 bool HDF5Loader::datasetExists(const std::string& path) {
   if (dataset_cache_.count(path)) return true;
-  H5E_auto2_t old_func;
-  void* old_data;
-  H5Eget_auto(H5E_DEFAULT, &old_func, &old_data);
-  H5Eset_auto(H5E_DEFAULT, NULL, NULL);
-  try {
-    getDataSet(path);
-    H5Eset_auto(H5E_DEFAULT, old_func, old_data);
-    return true;
-  } catch (...) {
-    H5Eset_auto(H5E_DEFAULT, old_func, old_data);
-    return false;
-  }
+  return hdf5ObjectExists(file_, path, H5O_TYPE_DATASET);
 }
 
 H5::DataSet& HDF5Loader::getDataSet(const std::string& path) {
@@ -43,56 +97,17 @@ H5::DataSet& HDF5Loader::getDataSet(const std::string& path) {
 }
 
 bool HDF5Loader::groupExists(const std::string& path) {
-  H5E_auto2_t old_func;
-  void* old_data;
-  H5Eget_auto(H5E_DEFAULT, &old_func, &old_data);
-  H5Eset_auto(H5E_DEFAULT, NULL, NULL);
-  try {
-    file_.openGroup(path);
-    H5Eset_auto(H5E_DEFAULT, old_func, old_data);
-    return true;
-  } catch (...) {
-    H5Eset_auto(H5E_DEFAULT, old_func, old_data);
-    return false;
-  }
+  return hdf5ObjectExists(file_, path, H5O_TYPE_GROUP);
 }
 
 std::vector<std::string> HDF5Loader::getDatasetNames(
     const std::string& groupPath) {
-  std::vector<std::string> names;
-  try {
-    H5::Group group = file_.openGroup(groupPath);
-    hsize_t numObjs = group.getNumObjs();
-    for (hsize_t i = 0; i < numObjs; ++i) {
-      std::string objName = group.getObjnameByIdx(i);
-      H5G_obj_t objType = group.getObjTypeByIdx(i);
-      if (objType == H5G_DATASET) {
-        names.push_back(objName);
-      }
-    }
-  } catch (...) {
-    // Group doesn't exist or error - return empty
-  }
-  return names;
+  return listChildNames(file_, groupPath, H5G_DATASET);
 }
 
 std::vector<std::string> HDF5Loader::getGroupNames(
     const std::string& groupPath) {
-  std::vector<std::string> names;
-  try {
-    H5::Group group = file_.openGroup(groupPath);
-    hsize_t numObjs = group.getNumObjs();
-    for (hsize_t i = 0; i < numObjs; ++i) {
-      std::string objName = group.getObjnameByIdx(i);
-      H5G_obj_t objType = group.getObjTypeByIdx(i);
-      if (objType == H5G_GROUP) {
-        names.push_back(objName);
-      }
-    }
-  } catch (...) {
-    // Group doesn't exist or error - return empty
-  }
-  return names;
+  return listChildNames(file_, groupPath, H5G_GROUP);
 }
 
 std::vector<std::string> HDF5Loader::readStringDataset(
@@ -103,43 +118,10 @@ std::vector<std::string> HDF5Loader::readStringDataset(
   hsize_t dims[1];
   dataspace.getSimpleExtentDims(dims);
   size_t count = dims[0];
-
-  std::vector<std::string> result(count);
-
-  if (count == 0) return result;
-
-  // Handle variable-length strings
-  H5::StrType strType = dataset.getStrType();
-
-  if (strType.isVariableStr()) {
-    std::vector<char*> rdata(count);
-    dataset.read(rdata.data(), strType);
-
-    for (size_t i = 0; i < count; ++i) {
-      if (rdata[i]) {
-        result[i] = rdata[i];
-      }
-    }
-
-    // Reclaim memory
-    H5::DataSet::vlenReclaim(rdata.data(), strType, dataspace);
-  } else {
-    // Fixed-length strings
-    size_t strSize = strType.getSize();
-    std::vector<char> buffer(count * strSize);
-    dataset.read(buffer.data(), strType);
-
-    for (size_t i = 0; i < count; ++i) {
-      result[i] = std::string(&buffer[i * strSize], strSize);
-      // Trim null characters
-      size_t pos = result[i].find('\0');
-      if (pos != std::string::npos) {
-        result[i].resize(pos);
-      }
-    }
-  }
-
-  return result;
+  return readStringValues(dataset, dataspace, count,
+                          [&dataset](void* data, const H5::DataType& type) {
+                            dataset.read(data, type);
+                          });
 }
 
 std::vector<std::string> HDF5Loader::readStringDatasetRange(
@@ -155,41 +137,11 @@ std::vector<std::string> HDF5Loader::readStringDatasetRange(
   // Define memory space
   H5::DataSpace memspace(1, read_count);
 
-  std::vector<std::string> result(count);
-
-  if (count == 0) return result;
-
-  H5::StrType strType = dataset.getStrType();
-
-  if (strType.isVariableStr()) {
-    std::vector<char*> rdata(count);
-    dataset.read(rdata.data(), strType, memspace, dataspace);
-
-    for (size_t i = 0; i < count; ++i) {
-      if (rdata[i]) {
-        result[i] = rdata[i];
-      }
-    }
-
-    // Reclaim memory
-    H5::DataSet::vlenReclaim(rdata.data(), strType, memspace);
-  } else {
-    // Fixed-length strings
-    size_t strSize = strType.getSize();
-    std::vector<char> buffer(count * strSize);
-    dataset.read(buffer.data(), strType, memspace, dataspace);
-
-    for (size_t i = 0; i < count; ++i) {
-      result[i] = std::string(&buffer[i * strSize], strSize);
-      // Trim null characters
-      size_t pos = result[i].find('\0');
-      if (pos != std::string::npos) {
-        result[i].resize(pos);
-      }
-    }
-  }
-
-  return result;
+  return readStringValues(
+      dataset, memspace, count,
+      [&dataset, &memspace, &dataspace](void* data, const H5::DataType& type) {
+        dataset.read(data, type, memspace, dataspace);
+      });
 }
 
 std::vector<PropertyValue> HDF5Loader::readPropertyDatasetRange(
@@ -222,9 +174,6 @@ std::vector<PropertyValue> HDF5Loader::readPropertyDatasetRange(
         } else if (path.find("/venues/") != std::string::npos) {
           if (world_.venue_property_value_registries.count(prop_name))
             registry = &world_.venue_property_value_registries.at(prop_name);
-        } else if (path.find("/geography/") != std::string::npos) {
-          if (world_.geo_unit_property_value_registries.count(prop_name))
-            registry = &world_.geo_unit_property_value_registries.at(prop_name);
         }
 
         if (registry && !registry->empty()) {
@@ -234,7 +183,7 @@ std::vector<PropertyValue> HDF5Loader::readPropertyDatasetRange(
                       << " has out-of-range codes (max=" << *max_it
                       << ", reg_size=" << registry->size() << ")" << std::endl;
 
-            // Reliability fallback: mark invalid codes as -1 (null)
+            // Replace invalid registry codes with -1, the null sentinel.
             for (auto& val : ints) {
               if (val >= (int32_t)registry->size() || val < -1) val = -1;
             }

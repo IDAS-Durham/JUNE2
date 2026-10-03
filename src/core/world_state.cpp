@@ -2,8 +2,9 @@
 
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <unordered_map>
+
+#include "utils/filtered_csv.h"
 
 namespace june {
 
@@ -110,18 +111,6 @@ const GeographicalUnit* WorldState::getGeoUnit(GeoUnitId id) const {
   return (it != geo_unit_index.end()) ? &geo_units[it->second] : nullptr;
 }
 
-std::vector<Venue*> WorldState::getVenuesByType(const std::string& type) {
-  std::vector<Venue*> result;
-  auto it = venues_by_type.find(type);
-  if (it != venues_by_type.end()) {
-    result.reserve(it->second.size());
-    for (uint32_t idx : it->second) {
-      result.push_back(&venues[idx]);
-    }
-  }
-  return result;
-}
-
 std::vector<VenueId> WorldState::getVenuesInGeoUnit(
     GeoUnitId hosting_geo_unit_id, const std::string& venue_type_name) const {
   std::vector<VenueId> result;
@@ -189,19 +178,6 @@ std::vector<Person*> WorldState::getPeopleInUnit(GeoUnitId id) {
   return result;
 }
 
-std::vector<Person*> WorldState::getPeopleInUnit(const std::string& level,
-                                                 const std::string& name) {
-  for (const auto& unit : geo_units) {
-    std::string unit_level = (unit.level_id < geo_level_names.size())
-                                 ? geo_level_names[unit.level_id]
-                                 : "unknown";
-    if (unit_level == level && unit.name == name) {
-      return getPeopleInUnit(unit.id);
-    }
-  }
-  return {};
-}
-
 void WorldState::printSummary() const {
   std::cout << "WorldState Summary:" << std::endl;
   std::cout << "  People: " << people.size() << std::endl;
@@ -229,15 +205,12 @@ void WorldState::loadRegionalRiskFactors(const std::string& csv_path) {
   std::unordered_map<std::string, std::pair<float, float>> factors;
   while (std::getline(file, line)) {
     if (line.empty()) continue;
-    std::stringstream ss(line);
-    std::string name, trans_str, sever_str;
-    if (std::getline(ss, name, ',') && std::getline(ss, trans_str, ',') &&
-        std::getline(ss, sever_str, ',')) {
-      try {
-        factors[name] = {std::stof(trans_str), std::stof(sever_str)};
-      } catch (...) {
-        continue;
-      }
+    const auto fields = csv::splitCSVLine(line);
+    if (fields.size() < 3) continue;
+    try {
+      factors[fields[0]] = {std::stof(fields[1]), std::stof(fields[2])};
+    } catch (...) {
+      continue;
     }
   }
 

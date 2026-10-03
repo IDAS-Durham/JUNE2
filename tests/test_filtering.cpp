@@ -127,16 +127,6 @@ TEST_CASE("ancestor geography honours == != and in") {
       world));
 }
 
-TEST_CASE("a != expression parsed from text excludes the named value") {
-  WorldState world = buildSinglePersonWorld();
-  std::vector<SelectionCriterion> criteria =
-      filtering::parseConjunctiveExpression("age>=18 AND sex!=female");
-  for (SelectionCriterion& criterion : criteria)
-    criterion.resolveOrThrow(world, "test");
-  CHECK_FALSE(
-      filtering::matchesCriteria(world.people.front(), &world, criteria));
-}
-
 namespace {
 
 // Two outcome rows keyed on infection context, then a catch-all on age.

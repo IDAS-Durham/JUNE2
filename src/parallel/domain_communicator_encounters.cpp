@@ -332,15 +332,13 @@ void exchangeRoutedRecords(const std::vector<T>& local_records,
 
   std::vector<int> sd, rd;
   int total_send, total_recv;
-  june::mpi_utils::computeByteDisplacements(send_counts, wire_size, sd,
-                                            total_send);
-  june::mpi_utils::computeByteDisplacements(recv_counts, wire_size, rd,
-                                            total_recv);
+  june::mpi_utils::computeDisplacements(send_counts, sd, total_send, wire_size);
+  june::mpi_utils::computeDisplacements(recv_counts, rd, total_recv, wire_size);
 
   if (total_send < 0 || total_recv < 0) {
     std::cerr << "[Rank " << rank << "] FATAL: " << kind
               << " byte totals negative after "
-                 "computeByteDisplacements: total_send="
+                 "scaled displacement calculation: total_send="
               << total_send << " total_recv=" << total_recv << std::endl;
     MPI_Abort(MPI_COMM_WORLD, total_neg_abort);
   }
@@ -477,8 +475,8 @@ std::vector<PendingInfection> DomainCommunicator::receivePendingInfections(
   const int INFECTION_SIZE = kInfectionWire.size();
   std::vector<int> sd, rd;
   int stotal, rtotal;
-  mpi_utils::computeByteDisplacements(send_counts, INFECTION_SIZE, sd, stotal);
-  mpi_utils::computeByteDisplacements(recv_counts, INFECTION_SIZE, rd, rtotal);
+  mpi_utils::computeDisplacements(send_counts, sd, stotal, INFECTION_SIZE);
+  mpi_utils::computeDisplacements(recv_counts, rd, rtotal, INFECTION_SIZE);
 
   std::vector<char> sbuf(stotal);
   std::vector<char> rbuf(rtotal);

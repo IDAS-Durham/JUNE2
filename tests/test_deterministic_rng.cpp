@@ -1,12 +1,10 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include "doctest.h"
-
 #include <algorithm>
 #include <random>
 #include <set>
 #include <vector>
 
 #include "../include/utils/deterministic_rng.h"
+#include "doctest.h"
 
 using namespace june;
 
@@ -207,9 +205,9 @@ TEST_CASE("shuffle_det produces a fixed permutation") {
                                20, 33, 1,  4,  38, 32, 13, 26, 6,  16}));
 }
 
-TEST_CASE("make_rng convenience function") {
-  auto rng1 = make_rng(42, 100, 200);
-  auto rng2 = make_rng(42, 100, 200);
+TEST_CASE("mix_seed initializes SplitMix64 deterministically") {
+  SplitMix64 rng1(mix_seed(42, 100, 200));
+  SplitMix64 rng2(mix_seed(42, 100, 200));
   for (int i = 0; i < 100; ++i) {
     CHECK(rng1() == rng2());
   }
@@ -236,16 +234,16 @@ TEST_CASE("Per-entity RNG independence: order of creation does not matter") {
   uint64_t base = 42;
 
   // Rank 0 processes person 10, then person 20
-  auto rng_r0_p10 = make_rng(base, 10, 0);
-  auto rng_r0_p20 = make_rng(base, 20, 0);
+  SplitMix64 rng_r0_p10(mix_seed(base, 10, 0));
+  SplitMix64 rng_r0_p20(mix_seed(base, 20, 0));
   double val_r0_p10 =
       std::uniform_real_distribution<double>(0.0, 1.0)(rng_r0_p10);
   double val_r0_p20 =
       std::uniform_real_distribution<double>(0.0, 1.0)(rng_r0_p20);
 
   // Rank 1 processes person 20 first, then person 10
-  auto rng_r1_p20 = make_rng(base, 20, 0);
-  auto rng_r1_p10 = make_rng(base, 10, 0);
+  SplitMix64 rng_r1_p20(mix_seed(base, 20, 0));
+  SplitMix64 rng_r1_p10(mix_seed(base, 10, 0));
   double val_r1_p20 =
       std::uniform_real_distribution<double>(0.0, 1.0)(rng_r1_p20);
   double val_r1_p10 =

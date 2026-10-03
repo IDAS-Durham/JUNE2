@@ -1,7 +1,5 @@
 #include "activity/activity_manager.h"
 
-#include <iomanip>
-
 #include "activity/on_the_fly_venue_allocator.h"
 #include "epidemiology/calendar_event.h"
 #include "epidemiology/policy.h"
@@ -58,8 +56,8 @@ void ActivityManager::assignScheduleTypeForPerson(Person& person) {
         person.schedule_type_id < world_.schedule_type_names.size()
             ? world_.schedule_type_names[person.schedule_type_id]
             : "unknown";
-    // BUG FIX 1: Set cached schedule type pointer correctly when loaded from
-    // state
+    // A loaded schedule id must resolve its cached schedule pointer before
+    // returning.
     person.cached_schedule_type_ = findScheduleTypeByName(type_name);
     return;
   }
@@ -219,11 +217,13 @@ void ActivityManager::assignActivities(const TimeSlot& slot, int day_type_idx,
   ensureIndicesCached();
   // Assign each person to an activity
   for (size_t i = 0; i < world_.people.size(); ++i) {
-    const Person& person = world_.people[i];
+    Person& person = world_.people[i];
 
     // Hopped person: bypass normal slot
     if (person.schedule_hop.isActive()) {
-      assignHoppedSingleSlot(person, i, slot, day_type_idx, locations);
+      assignHoppedSlot(person, i, &slot, -1, day_type_idx,
+                       static_cast<uint64_t>(current_simulation_time_ * 1000),
+                       locations);
       continue;
     }
 
@@ -357,8 +357,8 @@ void ActivityManager::assignActivitiesFromSchedule(
 
     // Hopped person: bypass precomputed schedule
     if (person.schedule_hop.isActive()) {
-      assignHoppedScheduleSlot(person, i, time_slot_index, day_type_idx,
-                               time_key, locations);
+      assignHoppedSlot(person, i, nullptr, time_slot_index, day_type_idx,
+                       time_key, locations);
       continue;
     }
 
@@ -610,13 +610,13 @@ int16_t ActivityManager::resolvePropertyDispatchedHopIdx(
   const auto& dispatch = dispatch_it->second;
   auto prop = world_.getPersonProperty(person, dispatch.property_name);
   if (!prop) return -1;
-  int32_t value = getOr<int32_t>(*prop, 0);
-  if (value <= 0) return -1;
+  const auto* value = std::get_if<int32_t>(&*prop);
+  if (!value || *value <= 0) return -1;
   std::string sched_name = dispatch.schedule_name_template;
   const std::string placeholder = "{value}";
   size_t pos = sched_name.find(placeholder);
   if (pos != std::string::npos) {
-    sched_name.replace(pos, placeholder.size(), std::to_string(value));
+    sched_name.replace(pos, placeholder.size(), std::to_string(*value));
   }
   return static_cast<int16_t>(world_.getScheduleTypeIndex(sched_name));
 }
@@ -640,31 +640,40 @@ const TimeSlot* ActivityManager::lookupCurrentSlot(
   return &slots[time_slot_index];
 }
 
-void ActivityManager::assignHoppedSingleSlot(
-    const Person& person, size_t person_array_idx, const TimeSlot& slot,
-    int day_type_idx, std::vector<PersonLocation>& locations) {
+void ActivityManager::assignHoppedSlot(Person& person, size_t person_array_idx,
+                                       const TimeSlot* supplied_slot,
+                                       int time_slot_index, int day_type_idx,
+                                       uint64_t time_key,
+                                       std::vector<PersonLocation>& locations) {
   const size_t i = person_array_idx;
-  Person& mutable_person = const_cast<Person&>(person);
   const ScheduleType& hopped_sched =
       config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
-  uint64_t time_key_hop =
-      static_cast<uint64_t>(current_simulation_time_ * 1000);
 
   if (hopped_sched.is_temporary) {
-    advanceHoppedSchedule(mutable_person, locations[i], i);
+    advanceHoppedSchedule(person, locations[i], i);
   } else {
-    // Non-temporary hop: execute normal day-type slots
+    // Non-temporary hop: execute the caller's slot or the indexed hopped
+    // schedule slot, depending on which assignment path invoked us.
     if (day_type_idx <
             static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
         hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
-      // assignActivities is called with a single slot; use it directly
-      int16_t act = selectActivity(person, slot, 0, &hopped_sched, day_type_idx,
-                                   time_key_hop);
-      auto [v, s] = selectVenue(person, act, slot, time_key_hop);
-      locations[i].venue_id = v;
-      locations[i].subset_index = s;
-      locations[i].activity_index = act;
-      locations[i].encounter_type_id = 255;
+      const auto& slots = *hopped_sched.slots_by_day_type_idx[day_type_idx];
+      const TimeSlot* hop_slot = supplied_slot;
+      int selection_slot_index = 0;
+      if (hop_slot == nullptr && time_slot_index >= 0 &&
+          time_slot_index < static_cast<int>(slots.size())) {
+        hop_slot = &slots[time_slot_index];
+        selection_slot_index = time_slot_index;
+      }
+      if (hop_slot != nullptr) {
+        int16_t act = selectActivity(person, *hop_slot, selection_slot_index,
+                                     &hopped_sched, day_type_idx, time_key);
+        auto [v, s] = selectVenue(person, act, *hop_slot, time_key);
+        locations[i].venue_id = v;
+        locations[i].subset_index = s;
+        locations[i].activity_index = act;
+        locations[i].encounter_type_id = 255;
+      }
     }
   }
 
@@ -675,61 +684,6 @@ void ActivityManager::assignHoppedSingleSlot(
         SlotVenueType::fromVenue(locations[i].venue_id);
     VenueId effective_venue = locations[i].venue_id;
     SubsetIndex effective_subset = locations[i].subset_index;
-    if (effective_venue < 0 && hopped_sched.is_temporary) {
-      auto [lv, ls] = findLastNonNullVenueOnHop(mutable_person);
-      effective_venue = lv;
-      effective_subset = ls;
-    }
-    applyPolicyOverride(locations[i], mutable_person,
-                        locations[i].activity_index, effective_venue,
-                        effective_subset, slot_venue_type, -1);
-  }
-
-  locations[i].person_id = person.id;
-  locations[i].person_array_index = i;
-}
-
-void ActivityManager::assignHoppedScheduleSlot(
-    Person& person, size_t person_array_idx, int time_slot_index,
-    int day_type_idx, uint64_t time_key,
-    std::vector<PersonLocation>& locations) {
-  const size_t i = person_array_idx;
-  const ScheduleType& hopped_sched =
-      config_.schedule.schedule_types[person.schedule_hop.hopped_schedule_id];
-
-  if (hopped_sched.is_temporary) {
-    advanceHoppedSchedule(person, locations[i], i);
-  } else {
-    // Non-temporary hop (e.g. freeze_in_place): execute normal day-type
-    // slots
-    if (day_type_idx <
-            static_cast<int>(hopped_sched.slots_by_day_type_idx.size()) &&
-        hopped_sched.slots_by_day_type_idx[day_type_idx] != nullptr) {
-      const auto& slots = *hopped_sched.slots_by_day_type_idx[day_type_idx];
-      if (time_slot_index >= 0 &&
-          time_slot_index < static_cast<int>(slots.size())) {
-        const TimeSlot& hop_slot = slots[time_slot_index];
-        int16_t act = selectActivity(person, hop_slot, time_slot_index,
-                                     &hopped_sched, day_type_idx, time_key);
-        auto [v, s] = selectVenue(person, act, hop_slot, time_key);
-        locations[i].venue_id = v;
-        locations[i].subset_index = s;
-        locations[i].activity_index = act;
-        locations[i].encounter_type_id = 255;
-      }
-    }
-  }
-
-  // Apply policy overrides (e.g. sick traveller freeze / unfreeze)
-  if (policy_manager_ != nullptr) {
-    // Read before the substitution below: that venue is the pin, this is the
-    // venue the person actually occupies this slot.
-    const SlotVenueType slot_venue_type =
-        SlotVenueType::fromVenue(locations[i].venue_id);
-    VenueId effective_venue = locations[i].venue_id;
-    SubsetIndex effective_subset = locations[i].subset_index;
-    // If in transit (no_venue), resolve last real overnight venue so the
-    // policy can pin the person there instead of at home
     if (effective_venue < 0 && hopped_sched.is_temporary) {
       auto [lv, ls] = findLastNonNullVenueOnHop(person);
       effective_venue = lv;

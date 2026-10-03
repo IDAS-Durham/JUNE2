@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <iostream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -98,8 +97,7 @@ class VaccineTrajectory {
   }
 
   // Works out the total protection from all doses combined.
-  // If they've had multiple, we just take the best (max) protection currently
-  // active.
+  // When multiple doses are active, return the maximum efficacy across doses.
   double getEfficacy(double current_time, const std::string& disease_name,
                      float age, bool for_symptoms = false) const {
     double max_efficacy = 0.0;

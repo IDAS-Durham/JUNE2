@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
 #include "activity/activity_manager.h"
 #include "activity/on_the_fly_venue_allocator.h"
@@ -12,15 +11,6 @@
 using namespace june;
 
 namespace {
-
-void resolveSlotIndices(TimeSlot& slot, const WorldState& world) {
-  slot.allowed_activity_indices.clear();
-  for (const auto& act : slot.allowed_activities) {
-    int idx = world.getActivityIndex(act);
-    if (idx >= 0)
-      slot.allowed_activity_indices.push_back(static_cast<int16_t>(idx));
-  }
-}
 
 struct FairHopFixture {
   WorldState world;
@@ -38,7 +28,10 @@ FairHopFixture buildFairHopFixture() {
   f.world.venues[1].type_id = 1;
   f.world.venues[2].type_id = 1;
   f.world.geo_level_names = {"sgu"};
-  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  GeographicalUnit gu;
+  gu.id = 0;
+  gu.parent_id = -1;
+  gu.level_id = 0;
   f.world.geo_units.push_back(gu);
   f.world.people[0].geo_unit_id = 0;
   f.world.buildIndices();
@@ -54,12 +47,15 @@ FairHopFixture buildFairHopFixture() {
   f.world.activity_venues.push_back({1, 0});
   f.world.activity_venues.push_back({2, 0});
 
-  ScheduleType regular; regular.name = "regular";
+  ScheduleType regular;
+  regular.name = "regular";
   ScheduleType fair_temp;
-  fair_temp.name = "fair_1day"; fair_temp.is_temporary = true;
-  TimeSlot fair_slot; fair_slot.name = "fair_day";
+  fair_temp.name = "fair_1day";
+  fair_temp.is_temporary = true;
+  TimeSlot fair_slot;
+  fair_slot.name = "fair_day";
   fair_slot.allowed_activities = {"Fair_accommodation"};
-  resolveSlotIndices(fair_slot, f.world);
+  resolveCalendarEventSlotIndices(fair_slot, f.world);
   fair_temp.flat_slots.push_back(fair_slot);
 
   f.config.schedule.day_type_cycle = {"day"};
@@ -104,16 +100,21 @@ TEST_CASE("selectVenue is unaffected when no calendar-event manager is set") {
 // CalendarEventManager state persistence
 // =============================================================================
 
-TEST_CASE("active-event map round-trips through snapshot_for_checkpoint/restore") {
+TEST_CASE(
+    "active-event map round-trips through snapshot_for_checkpoint/restore") {
   WorldState world;
   world.geo_level_names = {"sgu"};
-  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  GeographicalUnit gu;
+  gu.id = 0;
+  gu.parent_id = -1;
+  gu.level_id = 0;
   world.geo_units.push_back(gu);
   world.venue_type_names = {"fair"};
   world.activity_names = {"Fair_accommodation"};
   world.schedule_type_names = {"regular", "Fair_day_trip"};
   Person& p = world.people.emplace_back();
-  p.id = 0; p.geo_unit_id = 0;
+  p.id = 0;
+  p.geo_unit_id = 0;
   world.buildIndices();
 
   CalendarEvent event;
@@ -143,24 +144,35 @@ TEST_CASE("OTF fixed-stability rule assigns same venue across days of a hop") {
   // same venue each day regardless of current_sim_day_.
   WorldState world;
   world.geo_level_names = {"sgu"};
-  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  GeographicalUnit gu;
+  gu.id = 0;
+  gu.parent_id = -1;
+  gu.level_id = 0;
   world.geo_units.push_back(gu);
   world.venue_type_names = {"guest_house"};
   for (VenueId vid : {10, 11, 12}) {
-    Venue v; v.id = vid; v.type_id = 0; v.geo_unit_id = 0;
+    Venue v;
+    v.id = vid;
+    v.type_id = 0;
+    v.geo_unit_id = 0;
     world.venues.push_back(v);
   }
   world.activity_names = {"residence", "fair_lodging", "none", "dead",
-                           "no_venue"};
+                          "no_venue"};
   world.schedule_type_names = {"regular", "fair_hop"};
 
   Person& person = world.people.emplace_back();
-  person.id = 0; person.geo_unit_id = 0;
+  person.id = 0;
+  person.geo_unit_id = 0;
   world.buildIndices();
 
-  ScheduleType regular; regular.name = "regular";
-  ScheduleType fair_hop; fair_hop.name = "fair_hop"; fair_hop.is_temporary = true;
-  TimeSlot fair_slot; fair_slot.name = "fair_slot";
+  ScheduleType regular;
+  regular.name = "regular";
+  ScheduleType fair_hop;
+  fair_hop.name = "fair_hop";
+  fair_hop.is_temporary = true;
+  TimeSlot fair_slot;
+  fair_slot.name = "fair_slot";
   fair_slot.allowed_activities = {"fair_lodging"};
   for (const auto& act : fair_slot.allowed_activities) {
     int idx = world.getActivityIndex(act);
@@ -205,7 +217,8 @@ rules:
 activity_rules:
   fair_lodging: lodging_rule
 )";
-  auto otf_allocator = OnTheFlyVenueAllocator::fromString(kFixedYaml);
+  auto otf_allocator =
+      allocatorFromYaml(kFixedYaml, "calendar_otf_test_");
 
   ActivityManager activity_manager(world, config);
   activity_manager.setCalendarEventManager(&calendar_manager);
@@ -230,34 +243,47 @@ activity_rules:
   CHECK(day2_venue == day0_venue);
 }
 
-TEST_CASE("OTF daily-stability: backward re-resolution uses original logical day") {
+TEST_CASE(
+    "OTF daily-stability: backward re-resolution uses original logical day") {
   // Schedule: 1 flat slot (n=1), OTF daily rule, 5 guest-house venues.
   // k=0 runs on day 0 → v_forward. k=1 runs on day 1 (temp_slot_progress=2).
   // findLastNonNullVenueOnHop on day 1 scans k=0:
   //   hop_start_day = hopStartDay(1,1,1) = 0; logical_day = 0+0 = 0.
-  //   With fix:    seed uses day 0 → v_forward.
-  //   Without fix: seed uses current_sim_day_=1 → different venue (RED).
+  // The seed must use the hop's logical day (day 0), not the current
+  // simulation day (day 1), when re-resolving the prior slot.
   WorldState world;
   world.geo_level_names = {"sgu"};
-  GeographicalUnit gu; gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
+  GeographicalUnit gu;
+  gu.id = 0;
+  gu.parent_id = -1;
+  gu.level_id = 0;
   world.geo_units.push_back(gu);
   world.venue_type_names = {"guest_house"};
   for (VenueId vid : {10, 11, 12, 13, 14}) {
-    Venue v; v.id = vid; v.type_id = 0; v.geo_unit_id = 0;
+    Venue v;
+    v.id = vid;
+    v.type_id = 0;
+    v.geo_unit_id = 0;
     world.venues.push_back(v);
   }
-  world.activity_names = {"residence", "fair_lodging", "none", "dead", "no_venue"};
+  world.activity_names = {"residence", "fair_lodging", "none", "dead",
+                          "no_venue"};
   world.schedule_type_names = {"regular", "fair_hop"};
 
   Person& person = world.people.emplace_back();
-  person.id = 0; person.geo_unit_id = 0;
+  person.id = 0;
+  person.geo_unit_id = 0;
   world.buildIndices();
 
-  ScheduleType regular; regular.name = "regular";
-  ScheduleType fair_hop; fair_hop.name = "fair_hop"; fair_hop.is_temporary = true;
-  TimeSlot fair_slot; fair_slot.name = "fair_slot";
+  ScheduleType regular;
+  regular.name = "regular";
+  ScheduleType fair_hop;
+  fair_hop.name = "fair_hop";
+  fair_hop.is_temporary = true;
+  TimeSlot fair_slot;
+  fair_slot.name = "fair_slot";
   fair_slot.allowed_activities = {"fair_lodging"};
-  resolveSlotIndices(fair_slot, world);
+  resolveCalendarEventSlotIndices(fair_slot, world);
   fair_hop.flat_slots.push_back(fair_slot);
 
   Config config;
@@ -275,9 +301,12 @@ TEST_CASE("OTF daily-stability: backward re-resolution uses original logical day
   person.schedule_type_id = 0;
 
   CalendarEvent event;
-  event.calendar_event_id = 1; event.start_day = 0;
-  event.schedule_type_idx = 1; event.compliance_rate = 1.0f;
-  event.catchment_rule_id = -1; event.hosting_geo_unit_id = 0;
+  event.calendar_event_id = 1;
+  event.start_day = 0;
+  event.schedule_type_idx = 1;
+  event.compliance_rate = 1.0f;
+  event.catchment_rule_id = -1;
+  event.hosting_geo_unit_id = 0;
   CalendarEventManager calendar_manager({{event}});
   CalendarEventManager::Snapshot snap;
   snap.active_event[person.id] = 1;
@@ -292,7 +321,8 @@ rules:
 activity_rules:
   fair_lodging: lodging_rule
 )";
-  auto otf_allocator = OnTheFlyVenueAllocator::fromString(kDailyYaml);
+  auto otf_allocator =
+      allocatorFromYaml(kDailyYaml, "calendar_otf_test_");
 
   ActivityManager activity_manager(world, config);
   activity_manager.setCalendarEventManager(&calendar_manager);

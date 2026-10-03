@@ -2,9 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
-#include <memory>
-#include <string>
 #include <vector>
 
 namespace june {
@@ -17,7 +14,6 @@ class InfectiousnessCurve {
  public:
   virtual ~InfectiousnessCurve() = default;
   virtual double evaluate(double t) const = 0;
-  virtual std::unique_ptr<InfectiousnessCurve> clone() const = 0;
 
   // Precompute antiderivative table F[i] = ∫₀^{i·dt} I(τ)dτ over [0, t_max]
   // using the midpoint rule with n_points intervals. After calling this,
@@ -72,10 +68,6 @@ class ConstantCurve : public InfectiousnessCurve {
 
   double evaluate(double /*t*/) const override { return value_; }
 
-  std::unique_ptr<InfectiousnessCurve> clone() const override {
-    return std::make_unique<ConstantCurve>(value_);
-  }
-
  private:
   double value_;
 };
@@ -117,14 +109,9 @@ class GammaCurve : public InfectiousnessCurve {
     return max_inf_ * std::exp(log_pdf - log_peak_);
   }
 
-  // Returns the old (pre-fix) peak value: max_inf * PDF(t_mode).
-  // Multiply the old max_infectiousness by this factor to preserve
-  // previous infectiousness magnitudes after the normalisation fix.
+  // Returns the PDF value at the mode before peak normalization. The loader
+  // uses this factor when reporting the scale associated with max_inf.
   double peakScalingFactor() const { return std::exp(log_peak_); }
-
-  std::unique_ptr<InfectiousnessCurve> clone() const override {
-    return std::make_unique<GammaCurve>(max_inf_, shape_, rate_, shift_);
-  }
 
  private:
   double max_inf_;
@@ -149,10 +136,6 @@ class ExponentialDecayCurve : public InfectiousnessCurve {
     double relative_t = t - delay_;
     if (relative_t <= 0.0) return initial_;
     return initial_ * std::exp(-decay_ * relative_t);
-  }
-
-  std::unique_ptr<InfectiousnessCurve> clone() const override {
-    return std::make_unique<ExponentialDecayCurve>(initial_, decay_, delay_);
   }
 
  private:
@@ -187,12 +170,8 @@ class LognormalCurve : public InfectiousnessCurve {
     return max_inf_ * std::exp(log_val - log_peak_);
   }
 
-  // Returns the old (pre-fix) peak value: max_inf * PDF(t_mode).
+  // Returns the PDF value at the mode before peak normalization.
   double peakScalingFactor() const { return std::exp(log_peak_); }
-
-  std::unique_ptr<InfectiousnessCurve> clone() const override {
-    return std::make_unique<LognormalCurve>(max_inf_, mu_, sigma_);
-  }
 
  private:
   double max_inf_;
@@ -243,12 +222,8 @@ class BetaCurve : public InfectiousnessCurve {
     return max_inf_ * std::exp(log_val - log_peak_);
   }
 
-  // Returns the old (pre-fix) peak value: max_inf * PDF(t_mode).
+  // Returns the PDF value at the mode before peak normalization.
   double peakScalingFactor() const { return std::exp(log_peak_); }
-
-  std::unique_ptr<InfectiousnessCurve> clone() const override {
-    return std::make_unique<BetaCurve>(max_inf_, alpha_, beta_, duration_);
-  }
 
  private:
   double max_inf_;
@@ -272,10 +247,6 @@ class LinearRampCurve : public InfectiousnessCurve {
     if (t <= 0.0) return start_;
     if (t >= duration_) return end_;
     return start_ + (end_ - start_) * (t / duration_);
-  }
-
-  std::unique_ptr<InfectiousnessCurve> clone() const override {
-    return std::make_unique<LinearRampCurve>(start_, end_, duration_);
   }
 
  private:

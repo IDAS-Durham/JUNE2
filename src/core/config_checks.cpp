@@ -60,7 +60,8 @@ void checkConfigConsistency(const Config& config, const WorldState& world) {
     }
   }
 
-  // --- BUG-S05: all schedule types must share the same slot structure ---
+  // All non-temporary schedule types must share the reference schedule's
+  // slot boundaries and count.
   // The simulator uses schedule_types[0] as the reference for time-slot
   // boundaries. If other schedule types define different slot counts or
   // boundaries, persons assigned to them will be processed with incorrect

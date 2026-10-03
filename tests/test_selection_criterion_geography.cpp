@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <yaml-cpp/yaml.h>
 
 #include <cstdio>
@@ -162,6 +161,32 @@ TEST_CASE("activity venue string operators see global venue types") {
 }
 
 }  // namespace
+
+TEST_CASE("activity venue criteria use global types for cross-rank venues") {
+  WorldState world;
+  world.activity_names = {"residence"};
+  world.venue_type_names = {"household", "hospital"};
+
+  Person& person = world.people.emplace_back();
+  person.id = 7;
+  person.age = 40;
+  person.sex = Sex::FEMALE;
+  person.activity_meta_start = 0;
+  person.activity_meta_count = 1;
+  world.activity_meta.push_back({0, 0, 1});
+  // Venue 200 is deliberately absent from this rank's local venues.
+  world.activity_venues.push_back({200, 0});
+  world.buildIndices();
+  world.setGlobalVenueType(200, 1);
+
+  SelectionCriterion criterion;
+  criterion.property_path = "activities.residence.venue_type";
+  criterion.operator_type = "==";
+  criterion.value = std::string("hospital");
+  criterion.resolveOrThrow(world, "test");
+
+  CHECK(criterion.evaluate(world.people.front(), &world));
+}
 
 TEST_CASE("a unit name found at no level is an error unless absent units are allowed") {
   WorldState world = buildNationWorld();
@@ -548,18 +573,6 @@ TEST_CASE("a schedules.yaml selection accepts a list of unit names") {
   REQUIRE(criteria.size() == 1);
   REQUIRE(std::holds_alternative<std::vector<std::string>>(criteria[0].value));
   CHECK(std::get<std::vector<std::string>>(criteria[0].value).size() == 2);
-}
-
-TEST_CASE("the schedule-assignment CSV filter syntax reaches ancestor geography") {
-  WorldState world = buildNationWorld();
-
-  auto criteria =
-      filtering::parseConjunctiveExpression("filter.geo_unit.XLGU==Scotland");
-  REQUIRE(criteria.size() == 1);
-  criteria[0].resolveOrThrow(world, "test");
-
-  CHECK(criteria[0].evaluate(world.people[0], &world));
-  CHECK_FALSE(criteria[0].evaluate(world.people[1], &world));
 }
 
 TEST_CASE("a temporal policy refuses to resolve a filter this world cannot answer") {

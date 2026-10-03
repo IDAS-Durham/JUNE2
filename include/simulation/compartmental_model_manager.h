@@ -17,20 +17,12 @@ class PolicyManager;
 
 // ---------------------------------------------------------------------------
 // Coupling matrix: per-venue-type, per-person-bin scalar weights.
-// Mirrors ContactMatrix bin resolution (age_to_bin, bin_by_subset_type, etc.).
 // ---------------------------------------------------------------------------
 
 struct CouplingMatrix {
   float default_value = 0.001f;
   std::vector<std::string> bins;
   std::vector<float> values;
-
-  // Pre-resolved bin lookup arrays (filled by CouplingMatrixConfig::resolve)
-  int age_to_bin[100] = {};
-  bool has_age_bins = false;
-  std::vector<int> bin_by_subset_type;
-  int male_bin = -1;
-  int female_bin = -1;
 
   // Returns values[bin_idx] if in range, else default_value.
   float getValue(int bin_idx) const {
@@ -116,11 +108,10 @@ struct PluginSidecarConfig {
   std::unordered_map<std::string, float> human_to_compartmental_model_input;
   float default_human_to_compartmental_model_input = 0.001f;
 
-  // Per-venue-type FOI scaling applied at the interaction site (not to the
-  // buffer). bins follow the same definition as ContactMatrices and Fomite
-  // infections, as defined in the contact matrices .yaml file; currently
-  // bin_idx=0. Default (1.0) = no scaling, matching the old global scalar
-  // default.
+  // Per-venue-type FOI scaling applied at the interaction site, not to the
+  // buffer. Each venue type may provide one value per ContactMatrices/Fomite
+  // bin; an omitted value falls back to default_value. The default 1.0 means
+  // no scaling.
   CouplingMatrixConfig output_foi_matrix = []() noexcept {
     CouplingMatrixConfig c;
     c.default_value = 1.0f;
@@ -156,7 +147,8 @@ struct CompartmentalModelSteps {
 // ---------------------------------------------------------------------------
 // Owns the plugin .so handle and the ICompartmentalModel instance.
 // When no plugin is configured (sidecar_path empty at construction), all
-// methods are no-ops: no virtual dispatch or heap activity on the hot path.
+// methods are no-ops, so the simulation performs no virtual dispatch or heap
+// allocation for this manager.
 // ---------------------------------------------------------------------------
 
 class CompartmentalModelManager {
@@ -185,9 +177,6 @@ class CompartmentalModelManager {
 
   const CouplingMatrixConfig& getCouplingMatrix() const {
     return coupling_matrix_;
-  }
-  const std::unordered_map<VenueId, int>& getVenueToNodeMap() const {
-    return venue_to_local_node_;
   }
 
   float getOutputFOIScale(int venue_type_id, int bin_idx = 0) const;

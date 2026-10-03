@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <vector>
 
 #include "../include/epidemiology/seeding/seed_cluster_planner.h"
@@ -137,10 +136,9 @@ TEST_CASE("Planner: an offer naming a budget the unit lacks is discarded") {
 }
 
 TEST_CASE("Planner: the last budget's slot is one past the budget count") {
-  // The boundary the encoding's plus-one puts in an awkward place: with two
-  // budgets the valid slots are 0, 1 and 2, and slot 2 is budget 1. A bound
-  // borrowed from the exact path, where the slot is the index itself, would
-  // read this as out of range and quietly starve the last budget declared.
+  // The encoding adds one to the budget index. With two budgets, slots 0, 1,
+  // and 2 are valid, and slot 2 names budget 1. Reusing the exact-path bound
+  // would reject slot 2 and leave the last budget unfilled.
   const std::vector<SeedOffer> offers = {{0x30ULL, 1, 2}};
 
   ClusterPlan plan = planClusteredSeed({offers}, {1, 1});

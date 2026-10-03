@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <memory>
 #include <vector>
 
@@ -31,7 +30,6 @@ static Disease makeDiseaseWithFomite(double deposition_rate = 1.0,
 
   // Direct mode curves: mild has constant infectiousness = 1.0
   auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = constant_curve;
   trans.symptom_id_curves = {nullptr, constant_curve};
 
   // Mode 0: "direct" — Standard mode
@@ -212,7 +210,7 @@ TEST_CASE("Fomite Max Age Pruning") {
 
   // current_time = 5.0 days → age of old event = 5.0 days > max_age(2 days)
   // age of recent event = 0.5 days < max_age(2 days)
-  epi.updateVenueFomites(5.0, 1.0);
+  epi.updateVenueFomites(5.0);
 
   // Old event should be pruned, recent should remain
   CHECK(world.venues[0].fomite_history[0].size() == 1);

@@ -1,9 +1,6 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
 #include <doctest.h>
 
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -14,6 +11,7 @@
 #include "epidemiology/policy.h"
 #include "epidemiology/transmission_modifiers.h"
 #include "loaders/policy_loader.h"
+#include "test_utils.h"
 
 using namespace june;
 
@@ -86,51 +84,29 @@ PolicyTransmissionEffect personEffect(uint16_t policy_index,
   return effect;
 }
 
-std::filesystem::path writeTempFile(const std::string& suffix,
-                                    const std::string& contents) {
-  static int serial = 0;
-  const auto path =
-      std::filesystem::temp_directory_path() /
-      ("june2_transmission_modifier_" + std::to_string(++serial) + suffix);
-  std::ofstream file(path);
-  REQUIRE(file.is_open());
-  file << contents;
-  file.close();
-  return path;
-}
-
-struct TempFiles {
-  std::filesystem::path csv;
-  std::filesystem::path yaml;
-  ~TempFiles() {
-    std::error_code ec;
-    std::filesystem::remove(csv, ec);
-    std::filesystem::remove(yaml, ec);
-  }
-};
-
 }  // namespace
 
 TEST_CASE(
     "transmission modifier CSV filters arbitrary person and venue properties") {
   Fixture f;
-  TempFiles files;
-  files.csv = writeTempFile(
-      ".csv",
+  ScopedTestFiles files("june_transmission_modifier_test");
+  const auto csv = files.write(
+      "effects.csv",
       "filter.properties.role,filter.properties.cleanliness,scope,"
       "transmission_mode,effect_channel,multiplier\n"
       "worker,,person,direct,target_susceptibility,0.60\n"
       ",dirty,venue,fomite,environmental_risk,0.50\n");
-  files.yaml = writeTempFile(".yaml",
-                             "policies:\n"
-                             "  temporal_policies:\n"
-                             "    - name: controls\n"
-                             "      compliance_rate: 1.0\n"
-                             "      transmission_effects_file: " +
-                                 files.csv.string() + "\n");
+  const auto yaml = files.write(
+      "policies.yaml",
+      "policies:\n"
+      "  temporal_policies:\n"
+      "    - name: controls\n"
+      "      compliance_rate: 1.0\n"
+      "      transmission_effects_file: " +
+          csv.string() + "\n");
 
   PolicyManager manager(f.world);
-  PolicyLoader::loadPolicies(manager, files.yaml.string(), "2020-01-01");
+  PolicyLoader::loadPolicies(manager, yaml.string(), "2020-01-01");
   manager.precomputePolicyApplicability(f.world.people);
   manager.initializeTransmissionModifiers(f.disease, 0.0);
 
@@ -152,56 +128,58 @@ TEST_CASE(
 
 TEST_CASE("transmission modifier CSV rejects duplicate matching definitions") {
   Fixture f;
-  TempFiles files;
-  files.csv = writeTempFile(
-      ".csv",
+  ScopedTestFiles files("june_transmission_modifier_test");
+  const auto csv = files.write(
+      "effects.csv",
       "filter.properties.role,scope,transmission_mode,effect_channel,"
       "multiplier\n"
       "worker,person,direct,target_susceptibility,0.60\n"
       "worker,person,direct,target_susceptibility,0.70\n");
-  files.yaml = writeTempFile(".yaml",
-                             "policies:\n"
-                             "  temporal_policies:\n"
-                             "    - name: duplicate\n"
-                             "      transmission_effects_file: " +
-                                 files.csv.string() + "\n");
+  const auto yaml = files.write(
+      "policies.yaml",
+      "policies:\n"
+      "  temporal_policies:\n"
+      "    - name: duplicate\n"
+      "      transmission_effects_file: " +
+          csv.string() + "\n");
 
   PolicyManager manager(f.world);
   CHECK_THROWS_WITH(
-      PolicyLoader::loadPolicies(manager, files.yaml.string(), "2020-01-01"),
+      PolicyLoader::loadPolicies(manager, yaml.string(), "2020-01-01"),
       doctest::Contains("duplicate matching transmission effect"));
 }
 
 TEST_CASE("venue effects require fully compliant temporal policies") {
   Fixture f;
-  TempFiles files;
-  files.csv =
-      writeTempFile(".csv",
-                    "scope,transmission_mode,effect_channel,multiplier\n"
-                    "venue,fomite,environmental_risk,0.50\n");
-  files.yaml = writeTempFile(".yaml",
-                             "policies:\n"
-                             "  temporal_policies:\n"
-                             "    - name: partial-cleaning\n"
-                             "      compliance_rate: 0.5\n"
-                             "      transmission_effects_file: " +
-                                 files.csv.string() + "\n");
+  ScopedTestFiles files("june_transmission_modifier_test");
+  const auto csv = files.write(
+      "effects.csv",
+      "scope,transmission_mode,effect_channel,multiplier\n"
+      "venue,fomite,environmental_risk,0.50\n");
+  const auto yaml = files.write(
+      "policies.yaml",
+      "policies:\n"
+      "  temporal_policies:\n"
+      "    - name: partial-cleaning\n"
+      "      compliance_rate: 0.5\n"
+      "      transmission_effects_file: " +
+          csv.string() + "\n");
   PolicyManager manager(f.world);
   CHECK_THROWS_WITH(
-      PolicyLoader::loadPolicies(manager, files.yaml.string(), "2020-01-01"),
+      PolicyLoader::loadPolicies(manager, yaml.string(), "2020-01-01"),
       doctest::Contains("venue effects require a temporal policy"));
 
-  TempFiles symptom_files;
-  symptom_files.yaml = writeTempFile(".yaml",
-                                     "policies:\n"
-                                     "  symptom_policies:\n"
-                                     "    - name: symptomatic-cleaning\n"
-                                     "      symptoms: [cough]\n"
-                                     "      transmission_effects_file: " +
-                                         files.csv.string() + "\n");
+  const auto symptom_yaml = files.write(
+      "symptom_policies.yaml",
+      "policies:\n"
+      "  symptom_policies:\n"
+      "    - name: symptomatic-cleaning\n"
+      "      symptoms: [cough]\n"
+      "      transmission_effects_file: " +
+          csv.string() + "\n");
   PolicyManager symptom_manager(f.world);
   CHECK_THROWS_WITH(
-      PolicyLoader::loadPolicies(symptom_manager, symptom_files.yaml.string(),
+      PolicyLoader::loadPolicies(symptom_manager, symptom_yaml.string(),
                                  "2020-01-01"),
       doctest::Contains("venue effects require a temporal policy"));
 }

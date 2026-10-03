@@ -1,10 +1,6 @@
 #include "utils/event_logging/event_logger.h"
 
-#include <cstring>
 #include <iostream>
-
-#include "utils/event_logging/event_merger.h"
-#include "utils/event_logging/event_writer.h"
 
 namespace june {
 
@@ -19,10 +15,6 @@ EventLogger::EventLogger() {
   vaccinations_.reserve(5000);
   relationships_.reserve(10000);
   coordinated_encounters_.reserve(100000);
-}
-
-EventLogger::~EventLogger() {
-  // Nothing to clean up
 }
 
 void EventLogger::logInfection(PersonId person_id, PersonId infector_id,
@@ -67,8 +59,7 @@ void EventLogger::logVaccination(PersonId person_id,
                                  int dose_index, double time) {
   VaccinationEvent event;
   event.person_id = person_id;
-  strncpy(event.vaccine_type, vaccine_type.c_str(), 63);
-  event.vaccine_type[63] = '\0';
+  copyFixedField(event.vaccine_type, vaccine_type);
   event.dose_index = dose_index;
   event.time = time;
   vaccinations_.push_back(event);
@@ -82,8 +73,7 @@ void EventLogger::logRelationship(PersonId person_a, PersonId person_b,
   event.person_b = person_b;
   event.time = time;
   event.dissolution_time = dissolution_time;
-  strncpy(event.tie_tag, tie_tag.c_str(), 31);
-  event.tie_tag[31] = '\0';
+  copyFixedField(event.tie_tag, tie_tag);
   relationships_.push_back(event);
 }
 
@@ -140,13 +130,9 @@ void EventLogger::printEncounterStats(
 void EventLogger::saveToHDF5WithLookups(
     const std::string& filename, const WorldState& world, const Config& config,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  EventWriter::saveToHDF5WithLookups(*this, filename, world, config,
-                                     person_ids_filter);
-}
-
-void EventLogger::mergeEventFiles(const std::vector<std::string>& input_files,
-                                  const std::string& output_file) {
-  EventMerger::mergeEventFiles(input_files, output_file);
+  event_writer::saveToHDF5WithLookups(*this, filename, world, config,
+                                      getInfectedPersonIds(),
+                                      person_ids_filter);
 }
 
 void EventLogger::flush(const std::string& filename, const Config& config,
@@ -155,8 +141,7 @@ void EventLogger::flush(const std::string& filename, const Config& config,
   if (getTotalRecordCount() == 0) return;
 
   // Save current buffers and update lookups incrementally.
-  EventWriter::saveToHDF5WithLookups(*this, filename, world, config,
-                                     person_ids_filter);
+  saveToHDF5WithLookups(filename, world, config, person_ids_filter);
 
   // Clear buffers after successful flush
   clear();

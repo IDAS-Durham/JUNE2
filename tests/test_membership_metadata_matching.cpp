@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT
 #include "core/types.h"
 #include "core/world_state.h"
 #include "doctest.h"
@@ -7,12 +6,6 @@
 
 using namespace june;
 using namespace june::detail;
-
-int main(int argc, char** argv) {
-  doctest::Context context;
-  context.applyCommandLine(argc, argv);
-  return context.run();
-}
 
 // =============================================================================
 // matchMembershipRowToFlatIndex: matches a membership-metadata side-table

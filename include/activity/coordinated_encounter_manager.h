@@ -102,9 +102,6 @@ class CoordinatedEncounterManager {
 
   std::unordered_map<std::string, FreqGroupStats> freq_group_stats_;
 
-  // Helper to get virtual venue type ID from the string name
-  int getVirtualVenueTypeId(const std::string& matrix_name) const;
-
   // --- generateProposals helpers ---
 
   // Logs encounter definition config on Day 0, Rank 0 only

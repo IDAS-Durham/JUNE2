@@ -1,52 +1,39 @@
 #include "loaders/catchment_rule_loader.h"
 
-#include <fstream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 
+#include "utils/filtered_csv.h"
+
 namespace june {
 
-namespace {
-
 constexpr int kExpectedColumns = 2;
-
-std::string trim(const std::string& s) {
-  size_t b = s.find_first_not_of(" \t\r\n");
-  if (b == std::string::npos) return "";
-  size_t e = s.find_last_not_of(" \t\r\n");
-  return s.substr(b, e - b + 1);
-}
-
-}  // namespace
 
 std::unordered_map<int32_t, std::vector<GeoUnitId>> CatchmentRuleLoader::parse(
     std::istream& input, const std::string& source_name) {
   std::unordered_map<int32_t, std::vector<GeoUnitId>> rules;
 
-  std::string line;
-  int line_number = 0;
-  while (std::getline(input, line)) {
-    ++line_number;
-    std::string trimmed = trim(line);
-    if (trimmed.empty()) continue;
-    if (line_number == 1 && trimmed.rfind("catchment_rule_id", 0) == 0)
-      continue;
+  const csv::FilteredTable table = csv::loadFilteredCSV(input, source_name);
+  if (static_cast<int>(table.value_columns.size()) != kExpectedColumns ||
+      table.value_columns[0] != "catchment_rule_id" ||
+      table.value_columns[1] != "geo_unit_id") {
+    throw std::runtime_error(source_name +
+                             ": expected columns catchment_rule_id, "
+                             "geo_unit_id");
+  }
 
-    std::vector<std::string> fields;
-    std::stringstream ss(line);
-    std::string field;
-    while (std::getline(ss, field, ',')) fields.push_back(trim(field));
-
-    if (static_cast<int>(fields.size()) != kExpectedColumns) {
-      throw std::runtime_error(source_name + ":" + std::to_string(line_number) +
-                               ": expected 2 columns, got " +
-                               std::to_string(fields.size()));
-    }
-
+  for (size_t i = 0; i < table.rows.size(); ++i) {
+    const int line_number = static_cast<int>(i) + 2;
+    const auto& row = table.rows[i];
     try {
-      int32_t rule_id = std::stoi(fields[0]);
-      GeoUnitId geo_unit_id = static_cast<GeoUnitId>(std::stoi(fields[1]));
+      const auto rule_it = row.values.find("catchment_rule_id");
+      const auto geo_unit_it = row.values.find("geo_unit_id");
+      if (rule_it == row.values.end() || geo_unit_it == row.values.end()) {
+        throw std::runtime_error("expected 2 columns");
+      }
+      int32_t rule_id = std::stoi(rule_it->second);
+      GeoUnitId geo_unit_id =
+          static_cast<GeoUnitId>(std::stoi(geo_unit_it->second));
       rules[rule_id].push_back(geo_unit_id);
     } catch (const std::exception& e) {
       throw std::runtime_error(source_name + ":" + std::to_string(line_number) +
@@ -55,15 +42,6 @@ std::unordered_map<int32_t, std::vector<GeoUnitId>> CatchmentRuleLoader::parse(
   }
 
   return rules;
-}
-
-std::unordered_map<int32_t, std::vector<GeoUnitId>> CatchmentRuleLoader::load(
-    const std::string& path) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
-    throw std::runtime_error("CatchmentRuleLoader: cannot open '" + path + "'");
-  }
-  return parse(file, path);
 }
 
 }  // namespace june

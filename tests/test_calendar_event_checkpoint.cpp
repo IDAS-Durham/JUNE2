@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
 #include "core/types.h"
 #include "core/world_state.h"
@@ -9,23 +8,6 @@
 using namespace june;
 
 namespace {
-
-WorldState buildCatchmentWorld() {
-  WorldState world;
-  world.geo_level_names = {"sgu"};
-  GeographicalUnit gu;
-  gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
-  world.geo_units.push_back(gu);
-  world.venue_type_names = {"fair"};
-  Venue v; v.id = 0; v.type_id = 0; v.geo_unit_id = 0;
-  world.venues.push_back(v);
-  world.activity_names = {"Fair_accommodation"};
-  world.schedule_type_names = {"regular", "Fair_day_trip"};
-  Person& p = world.people.emplace_back();
-  p.id = 0; p.geo_unit_id = 0;
-  world.buildIndices();
-  return world;
-}
 
 CalendarEventManager makeManager(int16_t duration = 3) {
   CalendarEvent e;
@@ -44,7 +26,7 @@ CalendarEventManager makeManager(int16_t duration = 3) {
 // Venue resolution after restore is verified via getActiveHostingGeoUnit,
 // which is what the OTF allocator reads to build the VenueResolveContext.
 TEST_CASE("round-trip: active event and hosting geo-unit preserved after restore") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   CalendarEventManager original = makeManager(/*duration=*/3);
   original.triggerEventsForDay(0, world, world.people, 999, {{0, {0}}});
 
@@ -64,7 +46,7 @@ TEST_CASE("round-trip: active event and hosting geo-unit preserved after restore
 }
 
 TEST_CASE("restore on empty snapshot leaves manager idle") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   CalendarEventManager manager = makeManager();
   CalendarEventManager::Snapshot empty_snap;
   manager.restore(std::move(empty_snap));
@@ -72,7 +54,7 @@ TEST_CASE("restore on empty snapshot leaves manager idle") {
 }
 
 TEST_CASE("snapshot_for_checkpoint on idle manager is empty") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   CalendarEventManager manager = makeManager();
   auto snap = manager.snapshot_for_checkpoint();
   CHECK(snap.active_event.empty());

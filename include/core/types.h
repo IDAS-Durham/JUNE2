@@ -1,23 +1,29 @@
 #pragma once
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <deque>
 #include <memory>
-#include <optional>
-#include <span>
 #include <string>
-#include <tuple>
-#include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include "epidemiology/emission/emission_record.h"
 #include "epidemiology/transmission/transmission_record.h"
 #include "epidemiology/vaccine.h"
-#include "variant.h"
 
 namespace june {
+
+// Variant type for dynamic properties
+using PropertyValue =
+    std::variant<std::monostate,       // None/null
+                 bool,                 // Boolean
+                 int32_t,              // Integer
+                 double,               // Double
+                 std::string,          // String
+                 std::vector<int32_t>,     // List of ints (e.g. social_contacts)
+                 std::vector<std::string>  // List of strings (e.g. unit names)
+                 >;
 
 // Forward declarations
 struct Person;
@@ -135,10 +141,6 @@ struct GeographicalUnit {
   GeoUnitId parent_id;  // -1 if root
   float latitude;
   float longitude;
-
-  // Dynamic properties: start index into WorldState::geo_unit_properties
-  uint32_t properties_start = 0;
-  uint8_t properties_count = 0;
 
   // Regional risk factors
   float transmission_factor = 1.0f;

@@ -13,7 +13,6 @@
 #include "parallel/mpi_utils.h"
 #include "parallel/visitor_payload.h"
 #include "parallel/visitor_wire.h"
-#include "utils/profiler.h"
 
 namespace {
 
@@ -151,8 +150,8 @@ void DomainCommunicator::exchangeAllToAll(
 
   std::vector<int> sdisp, rdisp;
   int stotal, rtotal;
-  mpi_utils::computeByteDisplacements(send_counts, 1, sdisp, stotal);
-  mpi_utils::computeByteDisplacements(recv_counts, 1, rdisp, rtotal);
+  mpi_utils::computeDisplacements(send_counts, sdisp, stotal, 1);
+  mpi_utils::computeDisplacements(recv_counts, rdisp, rtotal, 1);
 
   std::vector<char> sbuf(stotal);
   std::vector<char> rbuf(rtotal);

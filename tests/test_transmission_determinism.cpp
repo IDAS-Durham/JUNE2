@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <algorithm>
 #include <memory>
 #include <numeric>
@@ -20,7 +19,6 @@ static Disease makeTestDisease() {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["infectious"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;

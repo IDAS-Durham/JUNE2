@@ -60,7 +60,6 @@ class GeographyPartitioner {
   WorldState& world_;
   const Config& config_;
   std::unordered_map<std::string, GeoUnitData> geo_data_;
-  int rank_;
 };
 
 }  // namespace june

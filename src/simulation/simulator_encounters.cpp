@@ -2,6 +2,7 @@
 // + local-rank logging. Split from simulator.cpp (declared in
 // simulation/simulator.h).
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -72,7 +73,8 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
   if (!domain_mgr) return global_eligible_map;
   // Collect (encounter_id, local_eligible) for encounters with any remote
   // participants; these are the only ones that need exchange.
-  std::vector<int> local_pairs;  // flat array: [eid, count, eid, count, ...]
+  std::vector<int32_t>
+      local_pairs;  // flat array: [eid, count, eid, count, ...]
   for (const auto& ee : slot_encounters) {
     const auto& enc = daily_encounters[ee.encounter_idx];
     bool has_remote = false;
@@ -83,30 +85,16 @@ std::unordered_map<int, int> exchangeGlobalEligibility(
       }
     }
     if (has_remote) {
-      local_pairs.push_back(enc.encounter_id);
-      local_pairs.push_back(ee.local_eligible);
+      local_pairs.push_back(static_cast<int32_t>(enc.encounter_id));
+      local_pairs.push_back(static_cast<int32_t>(ee.local_eligible));
     }
   }
 
-  int local_count = static_cast<int>(local_pairs.size());
-  int num_ranks = domain_mgr->getNumRanks();
-  std::vector<int> all_counts(num_ranks);
-  MPI_Allgather(&local_count, 1, MPI_INT, all_counts.data(), 1, MPI_INT,
-                MPI_COMM_WORLD);
+  std::vector<int32_t> all_pairs = mpi_utils::allgathervInt32(local_pairs);
 
-  std::vector<int> displs(num_ranks, 0);
-  int total = 0;
-  for (int r = 0; r < num_ranks; ++r) {
-    displs[r] = total;
-    total += all_counts[r];
-  }
-
-  std::vector<int> all_pairs(total);
-  MPI_Allgatherv(local_pairs.data(), local_count, MPI_INT, all_pairs.data(),
-                 all_counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
-
-  for (int i = 0; i < total; i += 2) {
-    global_eligible_map[all_pairs[i]] += all_pairs[i + 1];
+  for (size_t i = 0; i < all_pairs.size(); i += 2) {
+    global_eligible_map[static_cast<int>(all_pairs[i])] +=
+        static_cast<int>(all_pairs[i + 1]);
   }
 #else
   (void)slot_encounters;
@@ -146,9 +134,9 @@ void applyEncounterInjection(
     for (size_t array_idx : ee.eligible_indices) {
       locations[array_idx].venue_id = enc.venue_id;
       locations[array_idx].encounter_type_id = enc.encounter_type_id;
-      // Bug #13: adopt the host's subset so every participant bins as the
-      // host's subgroup, not by the stale subset_index of the venue they were
-      // scheduled to. -1 on virtual venues (no subsets), so left untouched.
+      // Copy the host's subset so every participant is binned in the host's
+      // subgroup rather than using the scheduled venue's subset. Virtual
+      // venues have no subset and retain -1.
       if (enc.host_subset_index >= 0)
         locations[array_idx].subset_index = enc.host_subset_index;
     }
@@ -356,9 +344,9 @@ bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
                       uint8_t host_venue_type, int16_t follower_activity) {
   // Every rank types every Venue, and the host is known to have one, so an
   // unresolvable type here can only be an id naming no Venue at all — a defect
-  // under every configuration, gated rule or not. Unconditional deliberately:
-  // arming it on venue_exceptions would warn a gated rule its world is corrupt
-  // while silently mirroring an ungated follower into an unnameable venue.
+  // under every configuration, gated rule or not. Keep this check independent
+  // of venue_exceptions. Otherwise an invalid venue type could reach the
+  // mirroring code without a valid venue-based policy decision.
   if (host_venue_type == kUnknownVenueTypeId)
     throw std::runtime_error(
         "follow: host venue type is unresolvable at the mirror gate");
@@ -567,28 +555,11 @@ std::pair<int, int> enrolFollowHosts(
 namespace {
 
 #ifdef USE_MPI
-// Allgatherv a flat int array; every rank receives all ranks' contributions
-// concatenated in rank order.
-std::vector<int> allgathervInts(const std::vector<int>& local) {
-  int nr;
-  MPI_Comm_size(MPI_COMM_WORLD, &nr);
-  int local_n = static_cast<int>(local.size());
-  std::vector<int> sizes(nr);
-  MPI_Allgather(&local_n, 1, MPI_INT, sizes.data(), 1, MPI_INT, MPI_COMM_WORLD);
-  std::vector<int> displs;
-  int total = 0;
-  mpi_utils::computeDisplacements(sizes, displs, total);
-  std::vector<int> all(total);
-  MPI_Allgatherv(const_cast<int*>(local.data()), local_n, MPI_INT, all.data(),
-                 sizes.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
-  return all;
-}
-
 // Gather the union of a per-rank id set so every rank sees the same global set.
 std::unordered_set<PersonId> allgathervPersonSet(
     const std::unordered_set<PersonId>& local_set) {
-  std::vector<int> local(local_set.begin(), local_set.end());
-  std::vector<int> all = allgathervInts(local);
+  std::vector<int32_t> local(local_set.begin(), local_set.end());
+  std::vector<int32_t> all = mpi_utils::allgathervInt32(local);
   return std::unordered_set<PersonId>(all.begin(), all.end());
 }
 
@@ -601,13 +572,13 @@ void applyFollowInvites(
     WorldState& world, std::unordered_map<PersonId, PersonId>& follower_host,
     std::unordered_map<PersonId, PersonId>* new_follows,
     const std::unordered_set<PersonId>& follower_excl) {
-  std::vector<int> local;
+  std::vector<int32_t> local;
   local.reserve(invites.size() * 2);
   for (const auto& [f, h] : invites) {
-    local.push_back(static_cast<int>(f));
-    local.push_back(static_cast<int>(h));
+    local.push_back(f);
+    local.push_back(h);
   }
-  std::vector<int> all = allgathervInts(local);
+  std::vector<int32_t> all = mpi_utils::allgathervInt32(local);
   for (size_t i = 0; i + 1 < all.size(); i += 2) {
     PersonId f = all[i], h = all[i + 1];
     if (follower_excl.count(f)) continue;  // claimed by an earlier rule
@@ -629,13 +600,13 @@ void applyFollowInvites(
 void activateRemoteCriteriaHosts(
     const std::vector<std::pair<PersonId, PersonId>>& picks, WorldState& world,
     std::unordered_set<PersonId>& active_hosts) {
-  std::vector<int> local;
+  std::vector<int32_t> local;
   local.reserve(picks.size() * 2);
   for (const auto& [f, h] : picks) {
-    local.push_back(static_cast<int>(f));
-    local.push_back(static_cast<int>(h));
+    local.push_back(f);
+    local.push_back(h);
   }
-  std::vector<int> all = allgathervInts(local);
+  std::vector<int32_t> all = mpi_utils::allgathervInt32(local);
   for (size_t i = 0; i + 1 < all.size(); i += 2) {
     PersonId h = all[i + 1];
     if (world.person_index.count(h)) active_hosts.insert(h);
@@ -658,18 +629,18 @@ void broadcastHostLocations(WorldState& world,
                             const std::vector<PersonLocation>& locations,
                             std::unordered_map<PersonId, HostSlot>& host_loc,
                             std::unordered_set<PersonId>& active_now) {
-  std::vector<int> local;
+  std::vector<int32_t> local;
   for (PersonId h : active_now) {
     auto hi = world.person_index.find(h);
     if (hi == world.person_index.end()) continue;
     const PersonLocation& hl = locations[hi->second];
-    local.push_back(static_cast<int>(h));
-    local.push_back(static_cast<int>(hl.venue_id));
-    local.push_back(static_cast<int>(hl.subset_index));
-    local.push_back(static_cast<int>(hl.activity_index));
-    local.push_back(static_cast<int>(world.getVenueTypeId(hl.venue_id)));
+    local.push_back(h);
+    local.push_back(hl.venue_id);
+    local.push_back(hl.subset_index);
+    local.push_back(hl.activity_index);
+    local.push_back(world.getVenueTypeId(hl.venue_id));
   }
-  std::vector<int> all = allgathervInts(local);
+  std::vector<int32_t> all = mpi_utils::allgathervInt32(local);
   for (size_t i = 0; i + kHostLocationInts <= all.size();
        i += kHostLocationInts) {
     PersonId h = all[i];

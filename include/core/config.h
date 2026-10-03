@@ -1,14 +1,11 @@
 #pragma once
 
-#include <algorithm>
-#include <chrono>
 #include <map>
 #include <optional>
 #include <random>
-#include <stdexcept>
+#include <ranges>
 #include <string>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include "types.h"
@@ -69,8 +66,7 @@ struct SelectionCriterion {
   // instead of as the config error it is. `context` names the offending config
   // block in the error message.
   void resolveOrThrow(const WorldState& world, const std::string& context);
-  void resolveVenueOrThrow(const WorldState& world,
-                           const std::string& context);
+  void resolveVenueOrThrow(const WorldState& world, const std::string& context);
 
   // True for the property paths whose `value` is a geographical unit name (or
   // a list of them) rather than a number: `geo_unit.<LEVEL>` and nothing else.
@@ -125,7 +121,8 @@ struct SelectionCriterion {
   // WorldState it may not have been handed.
   mutable std::vector<GeoUnitId> geo_mask_unit_ids;
   // Recorded rather than thrown: evaluate resolves lazily and must not throw
-  // from the hot path, so resolveOrThrow is what turns this into an error.
+  // during criterion evaluation, so resolveOrThrow converts this state into an
+  // error.
   mutable std::string geo_resolve_error;
 
   void buildGeoAncestorMask(const WorldState& world) const;
@@ -162,6 +159,16 @@ struct SelectionCriterion {
   mutable int cached_venue_prop_idx = -1;
   mutable int32_t target_code = -1;  // Interned code for comparison
 };
+
+inline bool matchesAllCriteria(const Person& person,
+                               const std::vector<SelectionCriterion>& criteria,
+                               const WorldState* world = nullptr,
+                               const Person* partner = nullptr) {
+  return std::ranges::all_of(
+      criteria, [&](const SelectionCriterion& criterion) {
+        return criterion.evaluate(person, world, partner);
+      });
+}
 
 // =============================================================================
 // CSV-based schedule assignment
@@ -304,18 +311,7 @@ struct ScheduleType {
   // Check if this schedule type applies to a person
   bool appliesTo(const Person& person,
                  const WorldState* world = nullptr) const {
-    // Empty criteria = matches everyone (fallback schedule)
-    if (selection_criteria.empty()) {
-      return true;
-    }
-
-    // All criteria must match
-    for (const auto& criterion : selection_criteria) {
-      if (!criterion.evaluate(person, world)) {
-        return false;
-      }
-    }
-    return true;
+    return matchesAllCriteria(person, selection_criteria, world);
   }
 
   void resolve(const WorldState& world) {
@@ -478,15 +474,7 @@ struct ContactMatrix {
   // Bin names (e.g., ["residents", "workers"])
   std::vector<std::string> bins;
 
-  // Get number of contacts between two bins
-  double getContacts(size_t from_bin, size_t to_bin) const {
-    if (from_bin < contacts.size() && to_bin < contacts[from_bin].size()) {
-      return contacts[from_bin][to_bin];
-    }
-    return 0.0;
-  }
-
-  // Find bin index by name (kept for non-hot-path usage)
+  // Find a bin index by name for setup and diagnostic code.
   int findBinIndex(const std::string& bin_name) const {
     for (size_t i = 0; i < bins.size(); ++i) {
       if (bins[i] == bin_name) {
@@ -505,11 +493,6 @@ struct ContactMatrix {
 
   // Pre-computed age -> bin index lookup table (ages 0-99, -1 = no mapping)
   int age_to_bin[100] = {};
-  // True if at least one bin name was parsed as an age range
-  bool has_age_bins = false;
-
-  // Resolve internal bin names
-  void resolve(const WorldState& world) {}
 };
 
 struct ContactMatrixConfig {
@@ -550,17 +533,6 @@ struct ContactMatrixConfig {
   std::unordered_map<std::string,
                      std::unordered_map<std::string, ContactMatrix>>
       mode_matrices;
-
-  // Get contact matrix for a venue type
-  const ContactMatrix* getMatrix(const std::string& venue_type) const {
-    auto it = matrices.find(venue_type);
-    if (it != matrices.end()) {
-      return &it->second;
-    }
-    return nullptr;
-  }
-
-  int numModes() const { return static_cast<int>(mode_names.size()); }
 
   /// The bin structure of a venue type: which strata its occupants are divided
   /// into for contact counting. Bins are a property of the venue type and are
@@ -630,8 +602,8 @@ struct ContactMatrixConfig {
       const std::vector<std::string>& disease_mode_names);
 
   /// Resolves every (venue type, mode) and (encounter type, mode) pair the
-  /// world can present into a concrete matrix, once, so the hot path is a
-  /// direct read with no fallback chain to walk.
+  /// world can present into a concrete matrix, once, so runtime lookups read a
+  /// resolved entry directly without walking a fallback chain.
   ///
   /// Two things are enforced here rather than discovered at run time:
   /// a venue type's bins must agree across every mode (bins describe who the
@@ -672,7 +644,7 @@ struct ContactMatrixConfig {
   [[noreturn]] void throwUnresolved(const char* what, int id,
                                     int mode_index = -1) const;
 
-  // Built by finalizeResolvedMatrices and read by every hot-path lookup.
+  // Built by finalizeResolvedMatrices and read by runtime lookups.
   // [venue_type_id][disease_mode_index] and [encounter_type_id][mode]; both
   // are fully populated for every id the world registered, so a null entry
   // means the id came from somewhere other than a world registry.
@@ -694,15 +666,6 @@ struct ContactMatrixConfig {
 // Simulation Configuration
 // =============================================================================
 
-struct AgeGroup {
-  std::string name;
-  int min_age;
-  int max_age;
-
-  // Helper method to check if an age is in this group
-  bool contains(int age) const { return age >= min_age && age <= max_age; }
-};
-
 struct SimulationConfig {
   // Time settings
   std::string start_date;  // "YYYY-MM-DD"
@@ -717,6 +680,11 @@ struct SimulationConfig {
   std::string parallel_file;
   std::string policies_file;
   std::string infection_seeds_file;
+
+  // Paths discovered while authoritative loaders read nested data files.
+  // Run-directory snapshotting consumes this list after configuration and
+  // loader construction, so it never needs to parse those files again.
+  std::vector<std::string> referenced_paths;
   // Optional path to a compartmental model plugin sidecar YAML.
   // Empty = no plugin; simulation runs with zero overhead.
   std::string compartmental_model_sidecar;
@@ -793,7 +761,7 @@ struct SimulationConfig {
   // Number of bins is emergent, derived at slot time from the global rider
   // count and the per-venue-type `target_group_size`. There is no hard
   // capacity; groups differ in size by at most 1 (round-robin deal). Empty
-  // map (default) = feature inactive, zero hot-path overhead.
+  // map (default) = feature inactive, with no runtime allocation work.
   struct PartialPresenceConfig {
     // YAML-declared: type name → target group size.
     // Example: {"train_line": 100, "tube_line": 100, "bus_line": 50}.
@@ -805,7 +773,8 @@ struct SimulationConfig {
     uint64_t enabled_venue_type_mask = 0;
 
     // Resolved at world-load time. Indexed by venue type id; entries for
-    // non-partial-presence types are 0. Lookup-by-id is the hot path.
+    // non-partial-presence types are 0. Runtime allocation uses this vector by
+    // venue type id.
     std::vector<int> target_group_size_by_type_id;
 
     int getTargetGroupSize(uint8_t type_id) const {
@@ -827,7 +796,6 @@ struct SimulationConfig {
 enum class DistributionType : uint8_t { POISSON = 0, BINOMIAL, FIXED };
 
 DistributionType parseDistributionType(const std::string& s);
-const char* distributionTypeToString(DistributionType t);
 struct InviteDistribution {
   DistributionType type = DistributionType::FIXED;
   double mean = 1.0;  // For poisson: λ (expected number of invites)
@@ -838,8 +806,6 @@ struct InviteDistribution {
 struct CoordinatedEncounterDef {
   std::string name;
   std::string network;
-  std::string network_partner_filter = "";  // Only invite partners with this
-                                            // tie_tag (empty = no filter)
   std::vector<std::string> trigger_slots;   // e.g., ["leisure", "social"]
   std::vector<std::string> allowed_venues;  // e.g., ["pub", "restaurant"]
 
@@ -901,7 +867,7 @@ struct FrequencyGroup {
 };
 
 // A follower is placed wherever a host ends up, every slot they are bound. The
-// subsystem has three independent knobs: which pool a host's followers come
+// subsystem has three independent settings: which pool a host's followers come
 // from, how the binding forms (establishment), and how long it lasts (span).
 
 struct FollowConfig {
@@ -958,7 +924,8 @@ struct FollowConfig {
   // school-age child follows a parent around, but when the child's own day says
   // school, school wins, whether the parent is at work, at home or out. Without
   // it the host's location always overwrites the follower's, so a child bound
-  // to a parent who has no primary activity would silently never reach school.
+  // to a parent who has no primary activity would overwrite the child's
+  // location and prevent the child from reaching school.
   std::vector<std::string> activity_exceptions;
   std::vector<std::string> venue_exceptions;
   std::vector<std::string> follower_activity_exceptions;
@@ -980,7 +947,6 @@ struct FollowConfig {
 
 struct CoordinatedEncounterConfig {
   bool enabled = false;
-  bool log_commitments = false;
   std::vector<CoordinatedEncounterDef> encounters;
   std::unordered_map<std::string, FrequencyGroup> frequency_groups;
   // Follow rules, resolved in list order. A scenario writes either a single
@@ -1011,11 +977,7 @@ struct PreferenceProfile {
     // Must match activity name
     if (!activity.empty() && activity != activity_name) return false;
 
-    if (selection_criteria.empty()) return true;
-    for (const auto& criterion : selection_criteria) {
-      if (!criterion.evaluate(person, world)) return false;
-    }
-    return true;
+    return matchesAllCriteria(person, selection_criteria, world);
   }
 
   void resolve(const WorldState& world);
@@ -1075,9 +1037,6 @@ struct PerformanceConfig {
   // If empty, all activities not in deterministic_activities are stochastic
   std::vector<std::string> stochastic_activities;
 
-  // Active infection tracking
-  bool track_active_infections_only = true;
-
   // Pre-resolved bitmasks (populated by resolve())
   ActivityMask deterministic_mask = 0;
   ActivityMask hybrid_mask = 0;
@@ -1090,12 +1049,6 @@ struct PerformanceConfig {
       return (hybrid_mask >> activity_idx) & 1;
     }
     return false;
-  }
-
-  // Helper: Check if activity is hybrid (string path, kept for compatibility)
-  bool isHybrid(const std::string& activity) const {
-    return std::find(hybrid_activities.begin(), hybrid_activities.end(),
-                     activity) != hybrid_activities.end();
   }
 
   // Helper: Check if activity should be pre-computed by index (fast path)
@@ -1118,54 +1071,7 @@ struct PerformanceConfig {
     return true;
   }
 
-  // Helper: Check if activity should be pre-computed (string path, kept for
-  // compatibility)
-  bool isDeterministic(const std::string& activity,
-                       const TimeSlot* slot = nullptr) const {
-    if (isHybrid(activity)) return false;
-    if (slot && slot->specified_activity.has_value()) {
-      const auto& spec_act = slot->specified_activity.value();
-      if (spec_act.type == activity && spec_act.venue_type.has_value()) {
-        return true;
-      }
-    }
-    if (!deterministic_activities.empty()) {
-      return std::find(deterministic_activities.begin(),
-                       deterministic_activities.end(),
-                       activity) != deterministic_activities.end();
-    }
-    if (!stochastic_activities.empty()) {
-      return std::find(stochastic_activities.begin(),
-                       stochastic_activities.end(),
-                       activity) == stochastic_activities.end();
-    }
-    return true;
-  }
-
   void resolve(const WorldState& world);
-};
-
-// =============================================================================
-// Output Configuration
-// =============================================================================
-
-struct OutputConfig {
-  // HDF5 compression level (0-9, where 0=none, 6=balanced, 9=max)
-  int compression_level = 6;
-
-  // Person data saving modes: "all", "infected_only", "none"
-  std::string save_full_person_details = "infected_only";
-
-  // Population summary: minimal demographic data for all people (for
-  // denominators)
-  bool save_population_summary = true;
-
-  // Person activities saving modes: "all", "infected_only", "none"
-  std::string save_person_activities = "none";
-
-  // Streaming settings
-  int flush_interval_days = 0;
-  int max_event_buffer_size = 100000;
 };
 
 // =============================================================================
@@ -1188,16 +1094,6 @@ struct ParallelConfig {
       100000;  // Process person metadata in chunks of N people
   size_t geo_unit_chunk_size =
       500;  // Process domain loading in chunks of N geo_units (parallel)
-
-  // Communication
-  int buffer_size_mb = 256;
-
-  // Output
-  bool save_partition = true;
-  std::string partition_file = "output/partition.json";
-  bool report_load_balance = true;
-  bool report_communication = false;
-  int report_interval_days = 1;
 };
 
 // =============================================================================
@@ -1210,7 +1106,6 @@ struct Config {
   ContactMatrixConfig contact_matrices;
   ActivityPreferenceConfig activity_preferences;
   PerformanceConfig performance;
-  OutputConfig output;
   ParallelConfig parallel;
   VaccinationConfig vaccination;
   CoordinatedEncounterConfig coordinated_encounters;

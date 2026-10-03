@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -24,32 +25,25 @@ std::string resolveEncTypeName(uint8_t type_id, const WorldState& world) {
 
 // Sums the local vector into `global` across MPI_COMM_WORLD when running
 // under MPI with more than one rank. Otherwise leaves `global` equal to its
-// caller-supplied copy of the local vector. Two overloads: one for int and
-// one for long long (the only types the encounter summary reduces).
-void allReduceIfMulti(const std::vector<int>& local, std::vector<int>& global) {
+// caller-supplied copy of the local vector.
+template <typename T>
+void allReduceIfMulti(const std::vector<T>& local, std::vector<T>& global) {
 #ifdef USE_MPI
   if (local.empty()) return;
   int world_size = 1;
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   if (world_size > 1) {
+    MPI_Datatype mpi_type;
+    if constexpr (std::is_same_v<T, int>) {
+      mpi_type = MPI_INT;
+    } else if constexpr (std::is_same_v<T, long long>) {
+      mpi_type = MPI_LONG_LONG;
+    } else {
+      static_assert(std::is_same_v<T, int> || std::is_same_v<T, long long>,
+                    "unsupported MPI reduction type");
+    }
     MPI_Allreduce(local.data(), global.data(), static_cast<int>(local.size()),
-                  MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-  }
-#else
-  (void)local;
-  (void)global;
-#endif
-}
-
-void allReduceIfMulti(const std::vector<long long>& local,
-                      std::vector<long long>& global) {
-#ifdef USE_MPI
-  if (local.empty()) return;
-  int world_size = 1;
-  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-  if (world_size > 1) {
-    MPI_Allreduce(local.data(), global.data(), static_cast<int>(local.size()),
-                  MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+                  mpi_type, MPI_SUM, MPI_COMM_WORLD);
   }
 #else
   (void)local;

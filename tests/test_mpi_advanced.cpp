@@ -172,31 +172,6 @@ TEST_CASE_FIXTURE(
   }
 }
 
-TEST_CASE_FIXTURE(AdvancedMPIFixture,
-                  "DomainManager: Registry Sync and Empty Rank robustness") {
-  DomainManager manager(world, config);
-  manager.setMPI(rank, num_ranks);
-
-  // Explicitly set max_person_id for the test
-  manager.setMaxPersonId(num_ranks);
-
-  Person p;
-  p.id = rank;
-  p.schedule_type_id = (uint16_t)(rank + 10);
-
-  // Mock ownership manually since we are skipping full initialization
-  manager.getDomain().resident_set.insert(p.id);
-
-  world.people.push_back(std::move(p));
-
-  manager.setPersonRank(rank, rank);
-  manager.exchangeScheduleTypes();
-
-  for (int r = 0; r < num_ranks; ++r) {
-    CHECK(manager.getGlobalScheduleType(r) == (uint16_t)(r + 10));
-  }
-}
-
 TEST_CASE_FIXTURE(
     AdvancedMPIFixture,
     "DomainManager: Ownership of venues above partition level (Bug Spotting)") {

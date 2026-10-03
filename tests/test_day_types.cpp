@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "activity/activity_manager.h"
 #include "core/config.h"
 #include "doctest.h"

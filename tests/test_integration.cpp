@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -58,7 +57,6 @@ struct TestFixture {
     trans.natural_immunity.waning_rate = 0.001;
 
     auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-    trans.stage_curves["mild"] = constant_curve;
     trans.symptom_id_curves = {nullptr, constant_curve};
 
     symptom_tags = {{"healthy", -1, 0}, {"mild", 1, 1}};
@@ -535,10 +533,8 @@ TEST_CASE(
     // Pass visitor_ids to simulate MPI rank processing
     im.processTransmissions(locs, 8.0, 1.0, nullptr, &visitor_ids);
 
-    // Expected: 7 total participants, but Person 0 is a visitor.
-    // So ONLY 6 should be logged on this rank.
-    // CURRENTLY this will likely fail and return 7 because we don't check
-    // visitor_ids in logging.
+    // Visitor participants must be excluded from encounter statistics on the
+    // local rank.
     CHECK(logger.getActualWeekdayEncounters() == 6);
   }
 }
