@@ -7,7 +7,6 @@
 //      guards that keep a scenario honest.
 //   2. Binding behaviour: the committed-set exclusion that makes several rules
 //      coexist — a follower belongs to one rule, a host may recur, no chains.
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <string>
 #include <unordered_map>
 #include <unordered_set>

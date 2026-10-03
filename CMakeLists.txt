@@ -318,7 +318,24 @@ if(BUILD_TESTING)
       test_transmission_determinism
 
       test_presence_window
-      test_partial_presence_foi)
+      test_partial_presence_foi
+
+      test_follow
+      test_policy
+      test_infection_seed_loader
+      test_infection_seeder
+      test_transmission_modes
+      test_foi_calculation
+      test_visitor_wire
+      test_visitor_payload
+      test_filtering
+      test_outcome_rate_context
+      test_infector_symptom_lookup
+      test_partial_presence_sources
+      test_fomite_sub_bins
+      test_emission
+      test_stage_curve_integral
+      test_seed_window)
   add_executable(june_tests tests/june_tests_main.cpp)
   set(JUNE_STANDARD_TEST_SOURCES)
   foreach(test_name IN LISTS JUNE_STANDARD_TESTS)
@@ -330,23 +347,7 @@ if(BUILD_TESTING)
   add_test(NAME june_tests COMMAND june_tests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
   target_include_directories(june_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-  add_june_test(test_follow "tests/test_follow.cpp")
-  add_june_test(test_policy "tests/test_policy.cpp")
-  add_june_test(test_infection_seed_loader "tests/test_infection_seed_loader.cpp")
-  add_june_test(test_infection_seeder "tests/test_infection_seeder.cpp")
-  add_june_test(test_transmission_modes "tests/test_transmission_modes.cpp;src/loaders/disease_loader.cpp")
-  add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/loaders/disease_loader.cpp")
-  add_june_test(test_visitor_wire "tests/test_visitor_wire.cpp")
-  add_june_test(test_visitor_payload "tests/test_visitor_payload.cpp")
-  add_june_test(test_filtering "tests/test_filtering.cpp")
-  add_june_test(test_outcome_rate_context "tests/test_outcome_rate_context.cpp;src/loaders/disease_loader.cpp")
-  add_june_test(test_infector_symptom_lookup "tests/test_infector_symptom_lookup.cpp")
-  add_june_test(test_partial_presence_sources "tests/test_partial_presence_sources.cpp")
-  add_june_test(test_fomite_sub_bins "tests/test_fomite_sub_bins.cpp")
-  add_june_test(test_emission "tests/test_emission.cpp")
-  add_june_test(test_stage_curve_integral "tests/test_stage_curve_integral.cpp")
-  add_june_test(test_seed_window "tests/test_seed_window.cpp")
-  add_june_test(test_sibling_mixing "tests/test_sibling_mixing.cpp;src/loaders/disease_loader.cpp")
+  add_june_test(test_sibling_mixing "tests/test_sibling_mixing.cpp")
   add_june_test(test_compartmental_disease_mode "tests/test_compartmental_disease_mode.cpp")
   add_june_test(test_compartmental_coupling_matrix "tests/test_compartmental_coupling_matrix.cpp")
   add_june_test(test_compartmental_transmission "tests/test_compartmental_transmission.cpp")
