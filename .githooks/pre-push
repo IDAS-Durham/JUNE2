@@ -25,7 +25,7 @@ mkdir -p "$REPO_ROOT/build" && cd "$REPO_ROOT/build"
 
 echo "[2/3] Configuring CMake & Building..."
 cmake .. -DBUILD_TESTING=ON > /dev/null
-if ! make -j8 > /dev/null; then
+if ! cmake --build . --parallel > /dev/null; then
     echo "❌ Build Failed! Please fix compilation errors before pushing."
     echo "========================================"
     exit 1

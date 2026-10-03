@@ -587,14 +587,10 @@ void ActivityManager::precomputeOneSlot(
     is_hyb = true;
   }
 
-  if (is_det) {
+  if (is_det || is_hyb) {
     auto [venue_id, subset_idx] =
         selectVenue(person, act_idx, slot, precomp_key);
-    dt_schedules.emplace_back(act_idx, venue_id, subset_idx, true);
-  } else if (is_hyb) {
-    auto [venue_id, subset_idx] =
-        selectVenue(person, act_idx, slot, precomp_key);
-    dt_schedules.emplace_back(act_idx, venue_id, subset_idx, false);
+    dt_schedules.emplace_back(act_idx, venue_id, subset_idx, is_det);
   } else {
     dt_schedules.emplace_back(act_idx, -1, -1, false);
   }

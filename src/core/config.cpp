@@ -24,19 +24,6 @@ DistributionType parseDistributionType(const std::string& s) {
                            "'. Must be 'poisson', 'binomial', or 'fixed'.");
 }
 
-const char* distributionTypeToString(DistributionType t) {
-  switch (t) {
-    case DistributionType::POISSON:
-      return "poisson";
-    case DistributionType::BINOMIAL:
-      return "binomial";
-    case DistributionType::FIXED:
-      return "fixed";
-    default:
-      return "unknown";
-  }
-}
-
 bool SelectionCriterion::comparesAgainstUnitNames(
     const std::string& property_path) {
   // Must agree with the GEO_ANCESTOR arm of the path dispatch below.

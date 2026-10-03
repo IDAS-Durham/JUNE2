@@ -1,18 +1,17 @@
 #include <yaml-cpp/yaml.h>
 
-#include <cstdio>
-#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 
 #include "core/config.h"
 #include "core/world_state.h"
+#include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
-#include "doctest.h"
 #include "loaders/config_loader_detail.h"
 #include "loaders/policy_loader.h"
+#include "test_utils.h"
 #include "utils/filtering.h"
 
 using namespace june;
@@ -188,19 +187,23 @@ TEST_CASE("activity venue criteria use global types for cross-rank venues") {
   CHECK(criterion.evaluate(world.people.front(), &world));
 }
 
-TEST_CASE("a unit name found at no level is an error unless absent units are allowed") {
+TEST_CASE(
+    "a unit name found at no level is an error unless absent units are "
+    "allowed") {
   WorldState world = buildNationWorld();
 
   SUBCASE("not allowed: resolving throws") {
     SelectionCriterion criterion = xlguCriterion("==", std::string("Atlantis"));
-    CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"), std::runtime_error);
+    CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"),
+                    std::runtime_error);
   }
 
   SUBCASE("allowed: recorded, and matches nobody") {
     SelectionCriterion criterion = xlguCriterion("==", std::string("Atlantis"));
     criterion.allow_absent_geo_units = true;
     CHECK_NOTHROW(criterion.resolveOrThrow(world, "test"));
-    CHECK(criterion.absentGeoUnitNames() == std::vector<std::string>{"Atlantis"});
+    CHECK(criterion.absentGeoUnitNames() ==
+          std::vector<std::string>{"Atlantis"});
     for (const Person& person : world.people) {
       CHECK_FALSE(criterion.evaluate(person, &world));
     }
@@ -211,21 +214,27 @@ TEST_CASE("a unit name found at no level is an error unless absent units are all
         xlguCriterion("in", std::vector<std::string>{"Atlantis", "Wales"});
     criterion.allow_absent_geo_units = true;
     criterion.resolveOrThrow(world, "test");
-    CHECK(criterion.absentGeoUnitNames() == std::vector<std::string>{"Atlantis"});
+    CHECK(criterion.absentGeoUnitNames() ==
+          std::vector<std::string>{"Atlantis"});
     CHECK_FALSE(criterion.evaluate(world.people[0], &world));
     CHECK(criterion.evaluate(world.people[2], &world));
   }
 }
 
-TEST_CASE("a unit name at a different level is an error even when absent units are allowed") {
+TEST_CASE(
+    "a unit name at a different level is an error even when absent units are "
+    "allowed") {
   WorldState world = buildNationWorld();
-  // S00000001 exists, but at SGU: that is a misspelt level, not a missing place.
+  // S00000001 exists, but at SGU: that is a misspelt level, not a missing
+  // place.
   SelectionCriterion criterion = xlguCriterion("==", std::string("S00000001"));
   criterion.allow_absent_geo_units = true;
   CHECK_THROWS_AS(criterion.resolveOrThrow(world, "test"), std::runtime_error);
 }
 
-TEST_CASE("an outcome table reports rows naming units the world lacks, and those rows match nobody") {
+TEST_CASE(
+    "an outcome table reports rows naming units the world lacks, and those "
+    "rows match nobody") {
   WorldState world = buildNationWorld();
 
   OutcomeRates rates;
@@ -259,7 +268,8 @@ TEST_CASE("an outcome table row the world cannot answer is an error") {
   CHECK_THROWS_AS(rates.resolve(world, {}, {}), std::runtime_error);
 }
 
-TEST_CASE("an infection seed attribute filter the world cannot answer is an error") {
+TEST_CASE(
+    "an infection seed attribute filter the world cannot answer is an error") {
   WorldState world = buildNationWorld();
   SelectionCriterion unknown;
   unknown.property_path = "properties.no_such_property";
@@ -291,7 +301,8 @@ TEST_CASE("geo_unit.<LEVEL> == name selects people under that ancestor") {
   CHECK_FALSE(criterion.evaluate(world.people[1]));
 }
 
-TEST_CASE("geo_unit.<LEVEL> in a list of names selects people under any of them") {
+TEST_CASE(
+    "geo_unit.<LEVEL> in a list of names selects people under any of them") {
   WorldState world = buildNationWorld();
 
   SelectionCriterion criterion;
@@ -332,7 +343,8 @@ TEST_CASE("geo_unit.<LEVEL> != excludes, and over a list means not-in") {
   }
 }
 
-TEST_CASE("geo_unit.<LEVEL> at the person's own level matches the unit itself") {
+TEST_CASE(
+    "geo_unit.<LEVEL> at the person's own level matches the unit itself") {
   WorldState world = buildNationWorld();
 
   SelectionCriterion criterion;
@@ -410,7 +422,8 @@ TEST_CASE("the no-ancestor warning fires only for units people live in") {
   }
 }
 
-TEST_CASE("a geo_unit criterion this world cannot answer fails loudly at load") {
+TEST_CASE(
+    "a geo_unit criterion this world cannot answer fails loudly at load") {
   WorldState world = buildNationWorld();
 
   auto criterionFor = [](const std::string& path, const std::string& op,
@@ -532,33 +545,30 @@ TEST_CASE("a policies.yaml applies_to accepts a list of unit names") {
   world.activity_names = {"residence", "primary_activity"};
   world.buildIndices();
 
-  const std::string path = "/tmp/june_test_geo_policies.yaml";
-  {
-    std::ofstream out(path);
-    out << "policies:\n"
-           "  temporal_policies:\n"
-           "    - name: \"english_and_welsh_lockdown\"\n"
-           "      start_date: \"2020-03-23\"\n"
-           "      end_date: \"2020-05-15\"\n"
-           "      override_activities: [\"primary_activity\"]\n"
-           "      replacement: \"residence\"\n"
-           "      compliance_rate: 1.0\n"
-           "      applies_to:\n"
-           "        - property: \"geo_unit.XLGU\"\n"
-           "          operator: \"in\"\n"
-           "          value: [\"London\", \"Wales\"]\n";
-  }
+  ScopedTestFiles files{"june_test_geo_policies"};
+  const auto path =
+      files.write("policies.yaml",
+                  "policies:\n"
+                  "  temporal_policies:\n"
+                  "    - name: \"english_and_welsh_lockdown\"\n"
+                  "      start_date: \"2020-03-23\"\n"
+                  "      end_date: \"2020-05-15\"\n"
+                  "      override_activities: [\"primary_activity\"]\n"
+                  "      replacement: \"residence\"\n"
+                  "      compliance_rate: 1.0\n"
+                  "      applies_to:\n"
+                  "        - property: \"geo_unit.XLGU\"\n"
+                  "          operator: \"in\"\n"
+                  "          value: [\"London\", \"Wales\"]\n");
 
   PolicyManager policy_manager(world);
-  PolicyLoader::loadPolicies(policy_manager, path, "2020-01-01");
+  PolicyLoader::loadPolicies(policy_manager, path.string(), "2020-01-01");
   REQUIRE(policy_manager.getTemporalPolicyCount() == 1);
 
   const TemporalPolicy& policy = policy_manager.getTemporalPolicies()[0];
   CHECK_FALSE(policy.appliesTo(world.people[0], &world));
   CHECK(policy.appliesTo(world.people[1], &world));
   CHECK(policy.appliesTo(world.people[2], &world));
-
-  std::remove(path.c_str());
 }
 
 TEST_CASE("a schedules.yaml selection accepts a list of unit names") {
@@ -575,7 +585,8 @@ TEST_CASE("a schedules.yaml selection accepts a list of unit names") {
   CHECK(std::get<std::vector<std::string>>(criteria[0].value).size() == 2);
 }
 
-TEST_CASE("a temporal policy refuses to resolve a filter this world cannot answer") {
+TEST_CASE(
+    "a temporal policy refuses to resolve a filter this world cannot answer") {
   WorldState world = buildNationWorld();
   world.activity_names = {"residence", "primary_activity"};
   world.buildIndices();
@@ -634,30 +645,28 @@ TEST_CASE("a list value on a non-geographical property must be whole numbers") {
   }
 }
 
-TEST_CASE("the policy loader rejects the same list values as the schedule loader") {
+TEST_CASE(
+    "the policy loader rejects the same list values as the schedule loader") {
   WorldState world = buildNationWorld();
   world.activity_names = {"residence", "primary_activity"};
   world.buildIndices();
 
-  const std::string path = "/tmp/june_test_bad_list_policies.yaml";
-  {
-    std::ofstream out(path);
-    out << "policies:\n"
-           "  temporal_policies:\n"
-           "    - name: \"regional_lockdown\"\n"
-           "      start_date: \"2020-03-23\"\n"
-           "      override_activities: [\"primary_activity\"]\n"
-           "      replacement: \"residence\"\n"
-           "      applies_to:\n"
-           "        - property: \"properties.region\"\n"
-           "          operator: \"in\"\n"
-           "          value: [\"North East\", \"Yorkshire\"]\n";
-  }
+  ScopedTestFiles files{"june_test_bad_list_policies"};
+  const auto path =
+      files.write("policies.yaml",
+                  "policies:\n"
+                  "  temporal_policies:\n"
+                  "    - name: \"regional_lockdown\"\n"
+                  "      start_date: \"2020-03-23\"\n"
+                  "      override_activities: [\"primary_activity\"]\n"
+                  "      replacement: \"residence\"\n"
+                  "      applies_to:\n"
+                  "        - property: \"properties.region\"\n"
+                  "          operator: \"in\"\n"
+                  "          value: [\"North East\", \"Yorkshire\"]\n");
 
   PolicyManager policy_manager(world);
   CHECK_THROWS_AS(
-      PolicyLoader::loadPolicies(policy_manager, path, "2020-01-01"),
+      PolicyLoader::loadPolicies(policy_manager, path.string(), "2020-01-01"),
       std::runtime_error);
-
-  std::remove(path.c_str());
 }

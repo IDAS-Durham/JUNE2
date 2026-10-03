@@ -24,11 +24,11 @@ rm -rf ./*
 
 # Configure with CMake
 echo "=== Running CMake configuration (Release, Tests Disabled) ==="
-cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DJUNE_MPI_DEBUG=OFF
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 
 # Build with parallel jobs
-echo "=== Building with make -j8 ==="
-make -j8
+echo "=== Building with CMake ==="
+cmake --build . --parallel
 
 echo ""
 echo "=== Build complete! ==="

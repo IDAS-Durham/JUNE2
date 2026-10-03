@@ -369,11 +369,6 @@ bool Infection::isDead(double current_time) const {
   return disease_->isFatalStage(disease_->getSymptomName(id));
 }
 
-std::optional<double> Infection::getNextTransitionTime(
-    double current_time) const {
-  return trajectory_.getNextTransitionTime(current_time);
-}
-
 double Infection::sampleFromDistribution(const DistributionParams& dist,
                                          SplitMix64& rng) {
   if (dist.type == "constant") {

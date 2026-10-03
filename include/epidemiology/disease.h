@@ -254,9 +254,6 @@ class Disease {
   const std::vector<SymptomTag>& getSymptomTags() const {
     return symptom_tags_;
   }
-  const DiseaseStageSettings& getStageSettings() const {
-    return stage_settings_;
-  }
   const TransmissionParams& getTransmissionParams() const {
     return transmission_params_;
   }
@@ -349,15 +346,6 @@ struct InfectionTrajectory {
     return transitions.empty() ? 0 : transitions[0].second;
   }
 
-  // Get time until next transition
-  std::optional<double> getNextTransitionTime(double current_time) const {
-    for (const auto& [time, symptom] : transitions) {
-      if (time > current_time) {
-        return time;
-      }
-    }
-    return std::nullopt;
-  }
 };
 
 // =============================================================================
@@ -376,7 +364,6 @@ class Infection {
             const std::string& start_symptom_override = "");
 
   // Getters
-  const Disease* getDisease() const { return disease_; }
   std::string getCurrentSymptom(double current_time) const;
   double getInfectionTime() const { return infection_time_; }
   const InfectionTrajectory& getTrajectory() const { return trajectory_; }
@@ -431,9 +418,6 @@ class Infection {
   /// Returns 24 * ∫_{t0}^{t1} dep_rate(τ) dτ (integral in hours).
   double getIntegratedFomiteDeposition(int fomite_mode_index, double t0,
                                        double t1) const;
-
-  // Get time until next status change
-  std::optional<double> getNextTransitionTime(double current_time) const;
 
  private:
   // Tag ctor for checkpoint restore: sets only disease_, skips all sampling.

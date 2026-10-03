@@ -255,36 +255,23 @@ if(BUILD_TESTING)
   enable_testing()
 
   # Add a standalone test target. Pass an MPI launcher as the optional third
-  # argument for tests that must run under MPI.
+  # argument, and an optional rank count as the fourth, for MPI tests.
   macro(add_june_test name sources)
     add_executable(${name} ${sources})
     target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests)
     target_link_libraries(${name} PRIVATE june_core)
     if("${ARGC}" GREATER 2)
-      add_test(NAME ${name} COMMAND ${ARGN} -np 2 --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+      set(_june_mpi_num_ranks 2)
+      if("${ARGC}" GREATER 3)
+        set(_june_mpi_num_ranks ${ARGV3})
+      endif()
+      add_test(NAME ${name}
+               COMMAND ${ARGV2} -np ${_june_mpi_num_ranks}
+                       --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name}
+               WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     else()
       add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     endif()
-  endmacro()
-
-  macro(add_june_mpi_test name sources)
-    set(_june_mpi_num_ranks 2)
-    if(${ARGC} GREATER 2)
-      set(_june_mpi_num_ranks ${ARGV2})
-    endif()
-    add_executable(${name} ${sources})
-    target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests)
-    target_link_libraries(${name} PRIVATE june_core)
-    if(NOT MPIEXEC_EXECUTABLE)
-      find_program(MPIEXEC_EXECUTABLE NAMES mpirun mpiexec)
-    endif()
-    if(NOT MPIEXEC_EXECUTABLE)
-      message(FATAL_ERROR "MPI execution command (mpirun/mpiexec) not found, but MPI tests are enabled.")
-    endif()
-    add_test(NAME ${name}
-             COMMAND ${MPIEXEC_EXECUTABLE} -np ${_june_mpi_num_ranks}
-                     --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name}
-             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   endmacro()
 
   set(JUNE_STANDARD_TESTS
@@ -388,7 +375,7 @@ if(BUILD_TESTING)
     add_june_test(test_mpi_communication "tests/test_mpi_communication.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_advanced "tests/test_mpi_advanced.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp" "${MPIEXEC_EXECUTABLE}")
-    add_june_mpi_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" 4)
+    add_june_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" "${MPIEXEC_EXECUTABLE}" 4)
 
       # End-to-end disease_sim reproducibility: runs disease_sim at
       # np=1/2/3 against the real config + world and h5diff's the
