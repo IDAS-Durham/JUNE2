@@ -12,7 +12,7 @@
 #include "utils/config_checks.h"
 #include "utils/filtered_csv.h"
 #include "utils/filtering.h"
-#include "utils/mpi_logging.h"
+#include "utils/mpi_utils.h"
 
 namespace june {
 
@@ -265,7 +265,7 @@ void SelectionCriterion::buildGeoAncestorMask(const WorldState& world) const {
 
   // Rank-gated: geo_units is global on every rank, so only the inhabited-unit
   // count is rank-local, and one rank's report is enough to flag the geography.
-  if (units_with_no_ancestor > 0 && logRank0()) {
+  if (units_with_no_ancestor > 0 && mpi_runtime::state().rank == 0) {
     std::cerr << "Warning: '" << property_path
               << "': " << units_with_no_ancestor
               << " inhabited geographical units have no ancestor at level '"

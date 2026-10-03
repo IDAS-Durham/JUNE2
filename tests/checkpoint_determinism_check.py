@@ -34,8 +34,7 @@ import subprocess
 import sys
 import tempfile
 
-import h5py
-import numpy as np
+from hdf5_determinism import canonical_events, compare_events
 
 
 def write_checkpoint_config(src, dst, ckpt_day):
@@ -74,27 +73,6 @@ def run(cmd):
     return p.returncode == 0
 
 
-def events(fn):
-    out = {}
-    with h5py.File(fn, "r") as f:
-        if "events" not in f:
-            return out
-        for k in f["events"]:
-            out[k] = np.asarray(f["events"][k][()])
-    return out
-
-
-def keyset(arr, drop=()):
-    if arr.size == 0:
-        return []
-    flds = [n for n in arr.dtype.names if n not in drop]
-    return sorted(
-        tuple(round(float(x[f]), 9) if arr.dtype[f].kind == "f"
-              else x[f].item() for f in flds)
-        for x in arr
-    )
-
-
 def required_datasets(config_path):
     """Datasets this config promises to write, so their absence means the gate
     lost coverage rather than the run being legitimately quiet.
@@ -111,33 +89,6 @@ def required_datasets(config_path):
     if m and m.group(1) == "true":
         req.add("coordinated_encounters")
     return req
-
-
-def equal(baseline, b, c, required=()):
-    # Union in `required` too: a dataset missing from every file is absent from
-    # all three dicts, so iterating only over what's present is exactly how it
-    # would go unnoticed.
-    keys = set(baseline) | set(b) | set(c) | set(required)
-    ok = True
-    for k in sorted(keys):
-        drop = ("group_id",) if k == "coordinated_encounters" else ()
-        A = baseline.get(k, np.empty(0))
-        B = b.get(k, np.empty(0))
-        C = c.get(k, np.empty(0))
-        if A.size == 0 and B.size == 0 and C.size == 0:
-            if k in required:
-                print(f"    {k:24s} ABSENT from every run, but the config says "
-                      f"it is written: the gate is not checking it")
-                ok = False
-            else:
-                print(f"    {k:24s} no rows in any run, nothing to compare")
-            continue
-        good = sorted(keyset(B, drop) + keyset(C, drop)) == keyset(A, drop)
-        ok &= good
-        print(f"    {k:24s} base={A.shape[0]:7d} "
-              f"B={B.shape[0]:7d} C={C.shape[0]:7d}  "
-              f"{'OK' if good else 'MISMATCH'}")
-    return ok
 
 
 def main():
@@ -183,7 +134,8 @@ def main():
     if not launch(1, "base", ["--days", str(a.days)]):
         print("FAIL: baseline run failed")
         return 1
-    base = events(os.path.join(runs, "base", "simulation_events.h5"))
+    base = canonical_events(
+        os.path.join(runs, "base", "simulation_events.h5"))
 
     required = required_datasets(a.config)
     required |= {d for d in a.require.split(",") if d}
@@ -203,9 +155,9 @@ def main():
             print(f"  FAIL: run error for {pair}")
             overall = False
             continue
-        b = events(os.path.join(runs, bid, "simulation_events.h5"))
-        c = events(os.path.join(runs, cid, "simulation_events.h5"))
-        good = equal(base, b, c, required)
+        b = canonical_events(os.path.join(runs, bid, "simulation_events.h5"))
+        c = canonical_events(os.path.join(runs, cid, "simulation_events.h5"))
+        good = compare_events(base, b, c, required)
         print(f"  => {'PASS' if good else 'FAIL'}  (write@np{wN} "
               f"resume@np{rN})")
         overall &= good

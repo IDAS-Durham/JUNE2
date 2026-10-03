@@ -11,13 +11,11 @@
 #include "loaders/config_loader.h"
 #include "loaders/config_loader_detail.h"
 #include "utils/filtered_csv.h"
-#include "utils/mpi_logging.h"
+#include "utils/mpi_utils.h"
 
 namespace june {
 
 namespace {
-
-using ::june::logRank0;
 
 // Map a frequency-group `rate_unit` literal (e.g. "per_month") onto the
 // number of days it covers. Used to convert raw CSV rates into a daily
@@ -78,7 +76,7 @@ FrequencyGroup parseFrequencyGroup(const std::string& name,
     fg.rows.push_back(std::move(fr));
   }
 
-  if (logRank0()) {
+  if (mpi_runtime::state().rank == 0) {
     std::cout << "[CoordEnc] Loaded frequency_group '" << fg.name << "' from '"
               << fg.csv_path << "' (" << fg.rows.size()
               << " rows, rate_column='" << fg.rate_column << "', rate_unit='"

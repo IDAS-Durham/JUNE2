@@ -6,7 +6,7 @@
 #include "utils/event_logging/event_logger.h"
 #include "utils/event_logging/event_schemas.h"
 #include "utils/event_logging/event_writer_detail.h"
-#include "utils/mpi_logging.h"
+#include "utils/mpi_utils.h"
 
 namespace june::event_writer {
 
@@ -65,7 +65,7 @@ void saveToHDF5WithLookups(
     const WorldState& world, const Config& config,
     const std::unordered_set<PersonId>& infected_person_ids,
     const std::unordered_set<PersonId>* person_ids_filter) {
-  if (logRank0()) {
+  if (mpi_runtime::state().rank == 0) {
     std::cout << "\n=== Saving Events + Lookup Tables to HDF5: " << filename
               << " ===" << std::endl;
   }
@@ -150,7 +150,7 @@ void saveToHDF5WithLookups(
     event_writer_detail::writeStringDataset(registries_group, "follow_rules",
                                             follow_rule_names, false);
 
-    if (logRank0()) {
+    if (mpi_runtime::state().rank == 0) {
       std::cout << "Events and lookup tables saved successfully!" << std::endl;
     }
   } catch (const H5::Exception& e) {

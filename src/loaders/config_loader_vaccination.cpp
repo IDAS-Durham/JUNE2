@@ -9,13 +9,12 @@
 
 #include "loaders/config_loader.h"
 #include "loaders/config_loader_detail.h"
-#include "utils/mpi_logging.h"
+#include "utils/mpi_utils.h"
 
 namespace june {
 
 namespace {
 
-using ::june::logRank0;
 using ::june::config_detail::parseSelectionCriteria;
 
 // Parse a vaccine efficacy node: either a flat `disease -> scalar` map
@@ -114,7 +113,7 @@ VaccinationCampaignConfig parseVaccinationCampaign(
 VaccinationConfig ConfigLoader::loadVaccination(const std::string& filename) {
   VaccinationConfig config;
   if (!std::filesystem::exists(filename)) {
-    if (logRank0()) {
+    if (mpi_runtime::state().rank == 0) {
       std::cout << "Warning: " << filename
                 << " not found. Vaccination will be disabled." << std::endl;
     }

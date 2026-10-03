@@ -6,7 +6,6 @@
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <utility>
 
 #ifdef __APPLE__
 #include <mach/mach.h>
@@ -17,11 +16,6 @@
 namespace june {
 
 namespace memory {
-
-inline std::pair<int, int> getMPIRankAndSize() {
-  const auto mpi = mpi_runtime::state();
-  return {mpi.rank, mpi.size};
-}
 
 inline size_t getRSS() {
   // Gets the current memory usage (RSS) in Kilobytes
@@ -53,7 +47,7 @@ inline void logMemory(const std::string& label) {
 
   double rss_gb = rss_kb / (1024.0 * 1024.0);
 
-  const int rank = getMPIRankAndSize().first;
+  const int rank = mpi_runtime::state().rank;
   if (rank == 0) {
     std::cout << "[MEMORY] " << std::left << std::setw(30) << label << ": "
               << std::fixed << std::setprecision(2) << rss_gb << " GB"
@@ -69,7 +63,9 @@ inline void logGlobalMemoryStats(const std::string& label) {
   double min_gb = rss_gb;
   double max_gb = rss_gb;
   double sum_gb = rss_gb;
-  const auto [rank, size] = getMPIRankAndSize();
+  const auto mpi = mpi_runtime::state();
+  const int rank = mpi.rank;
+  const int size = mpi.size;
 
 #ifdef USE_MPI
   if (size > 1) {

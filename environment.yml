@@ -9,6 +9,5 @@ dependencies:
   - yaml-cpp
   - openmpi
   - metis       # optional: graph partitioning for MPI domain decomposition
-  - gperftools  # optional: CPU profiling
   - h5py
   - numpy

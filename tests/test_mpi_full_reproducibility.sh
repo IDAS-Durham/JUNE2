@@ -112,76 +112,9 @@ for NP in $NPS; do
   mv "$RUN_DIR/simulation_events.h5" "$OUT"
 done
 
-# --- python helper: canonicalize a dataset to sorted text --------------------
-# Optional field-subset mode: "fields=a,b,c" drops everything else. This is
-# needed for coordinated_encounters where group_id is a per-rank monotonic
-# counter by design (partition-dependent and not part of the invariant).
-cat > "$TMP/canon.py" <<'PYEOF'
-#!/usr/bin/env python3
-"""Dump an HDF5 dataset (or group tree) to sorted text for diffing."""
-import sys, h5py
-
-def row_to_str(row, names):
-    parts = []
-    for n in names:
-        v = row[n]
-        if isinstance(v, bytes):
-            v = v.decode('utf-8', errors='replace').rstrip('\x00')
-        parts.append(f"{n}={v!r}")
-    return " ".join(parts)
-
-def dump_dataset(h5, path, out, fields=None):
-    if path not in h5:
-        out.write(f"# MISSING {path}\n")
-        return
-    ds = h5[path]
-    if ds.shape == () or ds.size == 0:
-        out.write(f"# EMPTY {path}\n")
-        return
-    arr = ds[:]
-    if arr.dtype.names:
-        names = list(arr.dtype.names)
-        if fields is not None:
-            missing = [f for f in fields if f not in names]
-            if missing:
-                raise SystemExit(f"fields {missing} not in dataset {path}: {names}")
-            names = fields
-        rows = [row_to_str(arr[i], names) for i in range(arr.shape[0])]
-    else:
-        rows = [str(x) for x in arr.flatten()]
-    rows.sort()
-    for r in rows:
-        out.write(r + "\n")
-
-def dump_group(h5, group_path, out):
-    if group_path not in h5:
-        out.write(f"# MISSING {group_path}\n")
-        return
-    grp = h5[group_path]
-    def walker(name, obj):
-        if isinstance(obj, h5py.Dataset):
-            full = f"{group_path}/{name}"
-            out.write(f"\n## {full}\n")
-            dump_dataset(h5, full, out)
-    grp.visititems(walker)
-
-if __name__ == "__main__":
-    argv = sys.argv[1:]
-    fn, kind, path, outfn = argv[:4]
-    fields = None
-    for a in argv[4:]:
-        if a.startswith("fields="):
-            fields = a.split("=", 1)[1].split(",")
-    with h5py.File(fn, "r") as h5, open(outfn, "w") as out:
-        if kind == "dataset":
-            dump_dataset(h5, path, out, fields)
-        elif kind == "group":
-            dump_group(h5, path, out)
-        else:
-            raise SystemExit("kind must be dataset|group")
-PYEOF
-
 # --- canonicalize every dataset of interest at every np ----------------------
+# The Python helper is shared with checkpoint_determinism_check.py.
+HDF5_HELPER="$SCRIPT_DIR/hdf5_determinism.py"
 # Each entry: "kind:path[|fields=a,b,c]". group_id is excluded for
 # coordinated_encounters: it is a per-rank monotonic counter (partition-
 # dependent by design), not part of the determinism invariant.
@@ -211,7 +144,7 @@ for SPEC in "${DATASETS[@]}"; do
   SAFE=$(echo "$PATH_" | tr '/' '_')
   for NP in $NPS; do
     CANON="$TMP/canon${SAFE}_np${NP}.txt"
-    python3 "$TMP/canon.py" "$TMP/sim_np${NP}.h5" "$KIND" "$PATH_" \
+    python3 "$HDF5_HELPER" dump "$TMP/sim_np${NP}.h5" "$KIND" "$PATH_" \
       "$CANON" $EXTRA
     if grep -q '^# MISSING ' "$CANON"; then
       echo "FAIL: expected dataset ${PATH_} is missing at np=${NP}"
@@ -235,6 +168,8 @@ fi
 
 for SPEC in "${DATASETS[@]}"; do
   MAIN="${SPEC%%|*}"
+  EXTRA=""
+  if [[ "$SPEC" == *"|"* ]]; then EXTRA="${SPEC#*|}"; fi
   PATH_="${MAIN#*:}"
   SAFE=$(echo "$PATH_" | tr '/' '_')
   REF="$TMP/canon${SAFE}_np${REF_NP}.txt"
@@ -243,12 +178,14 @@ for SPEC in "${DATASETS[@]}"; do
   for NP in $NPS; do
     [[ "$NP" == "$REF_NP" ]] && continue
     CUR="$TMP/canon${SAFE}_np${NP}.txt"
-    if ! diff -q "$REF" "$CUR" > /dev/null 2>&1; then
+    DIFF="$TMP/diff${SAFE}_np${NP}.txt"
+    if ! python3 "$HDF5_HELPER" compare "$TMP/sim_np${REF_NP}.h5" \
+         "$TMP/sim_np${NP}.h5" "$PATH_" $EXTRA > "$DIFF"; then
       echo ""
       echo "FAIL: ${PATH_} diverges between np=${REF_NP} and np=${NP}"
       echo "      ref ($REF_LINES lines): $REF"
       echo "      cur: $CUR"
-      diff -u "$REF" "$CUR" | head -30 || true
+      sed -n '1,30p' "$DIFF"
       CLEAN_ON_EXIT=0
       FAIL=1
       SPEC_FAIL=1
