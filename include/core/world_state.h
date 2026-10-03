@@ -225,22 +225,14 @@ class WorldState {
 
   // Flat networks and activities
   std::span<const Person::NetworkMeta> getNetworkMetas(const Person& p) const {
-    if (p.network_meta_count == 0) return {};
-    if (p.network_meta_start >= network_meta.size() ||
-        p.network_meta_start + p.network_meta_count > network_meta.size())
-      return {};
-    return std::span(network_meta.data() + p.network_meta_start,
-                     p.network_meta_count);
+    return checkedSpan(network_meta, p.network_meta_start,
+                       p.network_meta_count);
   }
 
   std::span<const PersonId> getNetworkPartners(
       const Person::NetworkMeta& meta) const {
-    if (meta.partner_count == 0) return {};
-    if (meta.partner_start >= network_partners.size() ||
-        meta.partner_start + meta.partner_count > network_partners.size())
-      return {};
-    return std::span(network_partners.data() + meta.partner_start,
-                     meta.partner_count);
+    return checkedSpan(network_partners, meta.partner_start,
+                       meta.partner_count);
   }
 
   std::span<const PersonId> getNetworkPartners(
@@ -260,48 +252,27 @@ class WorldState {
 
   std::span<const Person::ActivityMeta> getActivityMetas(
       const Person& p) const {
-    if (p.activity_meta_count == 0) return {};
-    if (p.activity_meta_start >= activity_meta.size() ||
-        p.activity_meta_start + p.activity_meta_count > activity_meta.size())
-      return {};
-    return std::span(activity_meta.data() + p.activity_meta_start,
-                     p.activity_meta_count);
+    return checkedSpan(activity_meta, p.activity_meta_start,
+                       p.activity_meta_count);
   }
 
   std::span<const std::pair<VenueId, SubsetIndex>> getActivityVenues(
       const Person::ActivityMeta& meta) const {
-    if (meta.venue_count == 0) return {};
-    if (meta.venue_start >= activity_venues.size() ||
-        meta.venue_start + meta.venue_count > activity_venues.size())
-      return {};
-    return std::span(activity_venues.data() + meta.venue_start,
-                     meta.venue_count);
+    return checkedSpan(activity_venues, meta.venue_start, meta.venue_count);
   }
 
   // Venue/Subset accessors
   std::span<const Subset> getSubsets(const Venue& v) const {
-    if (v.subset_count == 0) return {};
-    if (v.subset_start >= subsets.size() ||
-        v.subset_start + v.subset_count > subsets.size())
-      return {};
-    return std::span(subsets.data() + v.subset_start, v.subset_count);
+    return checkedSpan(subsets, v.subset_start, v.subset_count);
   }
 
   std::span<const PersonId> getSubsetMembers(const Subset& s) const {
-    if (s.member_count == 0) return {};
-    if (s.member_start >= subset_members.size() ||
-        s.member_start + s.member_count > subset_members.size())
-      return {};
-    return std::span(subset_members.data() + s.member_start, s.member_count);
+    return checkedSpan(subset_members, s.member_start, s.member_count);
   }
 
   std::span<const int32_t> getVenueProperties(const Venue& v) const {
-    if (v.properties_count == 0) return {};
-    if (v.properties_start >= venue_properties.size() ||
-        v.properties_start + v.properties_count > venue_properties.size())
-      return {};
-    return std::span(venue_properties.data() + v.properties_start,
-                     v.properties_count);
+    return checkedSpan(venue_properties, v.properties_start,
+                       v.properties_count);
   }
 
   std::span<const std::pair<VenueId, SubsetIndex>> getActivityVenues(
@@ -321,12 +292,8 @@ class WorldState {
 
   // Accessors
   std::span<const int32_t> getPersonProperties(const Person& p) const {
-    if (p.properties_count == 0) return {};
-    if (p.properties_start >= person_properties.size() ||
-        p.properties_start + p.properties_count > person_properties.size())
-      return {};
-    return std::span(person_properties.data() + p.properties_start,
-                     p.properties_count);
+    return checkedSpan(person_properties, p.properties_start,
+                       p.properties_count);
   }
 
   std::optional<PropertyValue> getPersonProperty(
@@ -370,6 +337,17 @@ class WorldState {
   void printSummary() const;
 
  private:
+  template <typename T, typename Start, typename Count>
+  static std::span<const T> checkedSpan(const std::vector<T>& storage,
+                                        Start start, Count count) {
+    const size_t offset = static_cast<size_t>(start);
+    const size_t length = static_cast<size_t>(count);
+    if (length == 0 || offset >= storage.size() ||
+        length > storage.size() - offset)
+      return {};
+    return std::span<const T>(storage.data() + offset, length);
+  }
+
   static int indexOf(const std::vector<std::string>& names,
                      const std::string& name) {
     auto it = std::find(names.begin(), names.end(), name);

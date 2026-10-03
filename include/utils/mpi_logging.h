@@ -1,25 +1,12 @@
 #pragma once
 
-#ifdef USE_MPI
-#include <mpi.h>
-#endif
+#include "utils/mpi_utils.h"
 
 namespace june {
 
 // True on MPI rank 0 (and unconditionally true when MPI is not initialised
 // or not compiled in). Gates load-time log lines that would otherwise be
 // repeated once per rank.
-inline bool logRank0() {
-#ifdef USE_MPI
-  int initialized = 0;
-  MPI_Initialized(&initialized);
-  if (!initialized) return true;
-  int rank = 0;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  return rank == 0;
-#else
-  return true;
-#endif
-}
+inline bool logRank0() { return mpi_runtime::state().rank == 0; }
 
 }  // namespace june

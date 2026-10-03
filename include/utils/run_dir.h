@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "core/config.h"
+#include "utils/mpi_utils.h"
 
 namespace june::run_dir {
 
@@ -47,9 +48,7 @@ inline std::string generateRunIdUtc() {
 // users can override via --run-id, so we send a length first.
 inline void broadcastRunId(std::string& run_id) {
 #ifdef USE_MPI
-  int initialized = 0;
-  MPI_Initialized(&initialized);
-  if (!initialized) return;
+  if (!mpi_runtime::state().active) return;
   int len = static_cast<int>(run_id.size());
   MPI_Bcast(&len, 1, MPI_INT, 0, MPI_COMM_WORLD);
   std::vector<char> buf(len);
@@ -66,9 +65,7 @@ inline void broadcastRunId(std::string& run_id) {
 // even when the seed was auto-generated on rank 0.
 inline void broadcastSeed(unsigned int& seed) {
 #ifdef USE_MPI
-  int initialized = 0;
-  MPI_Initialized(&initialized);
-  if (!initialized) return;
+  if (!mpi_runtime::state().active) return;
   MPI_Bcast(&seed, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
 #else
   (void)seed;
@@ -167,9 +164,9 @@ inline void snapshotRun(const std::filesystem::path& run_dir,
   manifest << YAML::Key << "run_id" << YAML::Value
            << run_dir.filename().string();
   manifest << YAML::Key << "started_utc" << YAML::Value;
-  manifest << formatUtc(std::chrono::system_clock::to_time_t(
-                            std::chrono::system_clock::now()),
-                        "%Y-%m-%dT%H:%M:%SZ");
+  manifest << formatUtc(
+      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()),
+      "%Y-%m-%dT%H:%M:%SZ");
   manifest << YAML::Key << "mpi_size" << YAML::Value << mpi_size;
 
   // Hostname (best-effort).

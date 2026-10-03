@@ -1,36 +1,26 @@
 #pragma once
 
+#include <unistd.h>
+
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <utility>
-#ifdef USE_MPI
-#include <mpi.h>
-#endif
-#include <unistd.h>
-
-#include <iomanip>
 
 #ifdef __APPLE__
 #include <mach/mach.h>
 #endif
+
+#include "utils/mpi_utils.h"
 
 namespace june {
 
 namespace memory {
 
 inline std::pair<int, int> getMPIRankAndSize() {
-  int rank = 0;
-  int size = 1;
-#ifdef USE_MPI
-  int initialized = 0;
-  MPI_Initialized(&initialized);
-  if (initialized) {
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-  }
-#endif
-  return {rank, size};
+  const auto mpi = mpi_runtime::state();
+  return {mpi.rank, mpi.size};
 }
 
 inline size_t getRSS() {

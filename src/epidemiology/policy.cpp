@@ -10,6 +10,31 @@
 
 namespace june {
 
+namespace {
+
+class LazySlotVenueTypeResolver {
+ public:
+  LazySlotVenueTypeResolver(const SlotVenueType& slot_venue_type,
+                            const WorldState& world)
+      : slot_venue_type_(slot_venue_type), world_(world) {}
+
+  const SlotVenueType& operator()() {
+    if (!resolved_) {
+      resolved_slot_venue_type_ = slot_venue_type_.resolveAgainst(world_);
+      resolved_ = true;
+    }
+    return resolved_slot_venue_type_;
+  }
+
+ private:
+  const SlotVenueType& slot_venue_type_;
+  const WorldState& world_;
+  SlotVenueType resolved_slot_venue_type_ = SlotVenueType::absent();
+  bool resolved_ = false;
+};
+
+}  // namespace
+
 PolicyManager::PolicyManager(WorldState& world)
     : world_(world), base_seed_(0) {}
 
@@ -266,15 +291,7 @@ std::optional<PersonLocation> PolicyManager::getOverride(
   // person per slot across the whole population, so an ungated run must never
   // pay for the lookup. A Deferred value naming a venue this rank cannot type
   // throws here rather than degrading to kUnknownVenueTypeId.
-  SlotVenueType resolved_slot_venue_type = slot_venue_type;
-  bool venue_type_resolved = false;
-  auto slotVenueType = [&]() -> const SlotVenueType& {
-    if (!venue_type_resolved) {
-      resolved_slot_venue_type = slot_venue_type.resolveAgainst(world_);
-      venue_type_resolved = true;
-    }
-    return resolved_slot_venue_type;
-  };
+  LazySlotVenueTypeResolver slotVenueType(slot_venue_type, world_);
 
   // Priority 1: symptom-based policies
   if (person.infection != nullptr) {
@@ -461,15 +478,7 @@ bool PolicyManager::suppressesParticipation(
   // Same lazy resolution as getOverride, and for the same reason: this runs
   // once per person per slot across the population, so an ungated run must
   // never pay for the lookup.
-  SlotVenueType resolved_slot_venue_type = slot_venue_type;
-  bool venue_type_resolved = false;
-  auto slotVenueType = [&]() -> const SlotVenueType& {
-    if (!venue_type_resolved) {
-      resolved_slot_venue_type = slot_venue_type.resolveAgainst(world_);
-      venue_type_resolved = true;
-    }
-    return resolved_slot_venue_type;
-  };
+  LazySlotVenueTypeResolver slotVenueType(slot_venue_type, world_);
 
   // Priority 1: symptom-based policies. Untriggered policies are skipped
   // outright — getOverride uses that branch to release a freeze and propagate

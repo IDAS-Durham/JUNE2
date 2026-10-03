@@ -8,9 +8,9 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <sstream>
 
 #include "loaders/hdf5_loader.h"
+#include "utils/filtered_csv.h"
 
 #ifdef USE_METIS
 #include <metis.h>
@@ -40,25 +40,17 @@ void GeographyPartitioner::loadCentroids(const std::string& filename) {
   while (std::getline(file, line)) {
     if (line.empty()) continue;
 
-    // Parse CSV field that may be quoted (e.g. "YORKSHIRE, EAST RIDING")
-    std::string name;
-    size_t pos = 0;
-    if (line[0] == '"') {
-      size_t end_quote = line.find('"', 1);
-      if (end_quote == std::string::npos) continue;
-      name = line.substr(1, end_quote - 1);
-      pos = end_quote + 2;  // skip closing quote + comma
-    } else {
-      size_t comma_pos = line.find(',');
-      if (comma_pos == std::string::npos) continue;
-      name = line.substr(0, comma_pos);
-      pos = comma_pos + 1;
+    const auto fields = csv::splitCSVLine(line);
+    if (fields.size() < 3) continue;
+    const std::string& name = fields[0];
+    float x = 0.0f;
+    float y = 0.0f;
+    try {
+      x = std::stof(fields[1]);
+      y = std::stof(fields[2]);
+    } catch (const std::exception&) {
+      continue;
     }
-
-    float x, y;
-    char comma;
-    std::istringstream ss(line.substr(pos));
-    ss >> x >> comma >> y;
 
     GeoUnitData& data = geo_data_[name];
     data.name = name;
