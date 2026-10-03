@@ -454,7 +454,7 @@ void CompartmentalModelManager::realInitialise(ICompartmentalModel* plugin,
 }
 
 // =============================================================================
-// Public methods (hot-path, unchanged)
+// Public methods
 // =============================================================================
 
 int CompartmentalModelManager::ownedNodeCount() const {

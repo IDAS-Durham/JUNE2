@@ -10,6 +10,9 @@
 namespace june {
 namespace csv {
 
+/// Split a comma-separated line and trim whitespace around each field.
+std::vector<std::string> splitCSVLine(const std::string& line);
+
 /// A single parsed row of a filter.*-convention CSV.
 struct FilteredRow {
   /// Conjunction of criteria drawn from this row's non-empty filter.* cells.
@@ -32,8 +35,10 @@ struct FilteredTable {
 FilteredTable loadFilteredCSV(const std::string& path);
 
 /// Stream form: same as above but reads from an open stream. `source_name` is
-/// used in error messages. Throws std::runtime_error on empty/comment-only input.
-FilteredTable loadFilteredCSV(std::istream& input, const std::string& source_name);
+/// used in error messages. Throws std::runtime_error on empty/comment-only
+/// input.
+FilteredTable loadFilteredCSV(std::istream& input,
+                              const std::string& source_name);
 
 }  // namespace csv
 }  // namespace june

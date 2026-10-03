@@ -1,7 +1,5 @@
 #pragma once
 
-#include <H5Cpp.h>
-
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -13,8 +11,14 @@
 
 namespace june {
 
-class EventWriter;
-class EventMerger;
+class EventLogger;
+namespace event_writer {
+void saveToHDF5WithLookups(
+    const EventLogger& logger, const std::string& filename,
+    const WorldState& world, const Config& config,
+    const std::unordered_set<PersonId>& infected_person_ids,
+    const std::unordered_set<PersonId>* person_ids_filter);
+}
 
 // =============================================================================
 // EventLogger - Collects and saves epidemic events to HDF5
@@ -23,11 +27,8 @@ class EventMerger;
 class EventLogger {
  public:
   EventLogger();
-  ~EventLogger();
 
   // Log events
-  // `transmission` is the record the Infection was built from, so the logged
-  // context is the one it was judged with.
   void logInfection(PersonId person_id, PersonId infector_id, VenueId venue_id,
                     double time, uint8_t encounter_type_id,
                     const TransmissionRecord& transmission);
@@ -66,7 +67,32 @@ class EventLogger {
   // Clear all events (useful for starting fresh)
   void clear();
 
-  // Get event counts
+  // Encounter stats per day type (day_type_idx = index into day_type_names)
+  void logEncounterStats(int day_type_idx, bool is_actual, size_t count = 1) {
+    auto& vec = is_actual ? actual_encounters_ : scheduled_encounters_;
+    if (day_type_idx >= static_cast<int>(vec.size()))
+      vec.resize(day_type_idx + 1, 0);
+    vec[day_type_idx] += count;
+  }
+  void printEncounterStats(const std::vector<std::string>& day_type_names,
+                           const std::vector<int>& day_type_counts) const;
+
+  size_t getActualWeekdayEncounters() const {
+    return actual_encounters_.empty() ? 0 : actual_encounters_[0];
+  }
+  size_t getActualWeekendEncounters() const {
+    return actual_encounters_.size() > 1 ? actual_encounters_[1] : 0;
+  }
+
+  // Total record count across all event buffers
+  size_t getTotalRecordCount() const {
+    return infections_.size() + symptom_changes_.size() + deaths_.size() +
+           hospital_admissions_.size() + icu_admissions_.size() +
+           hospital_discharges_.size() + vaccinations_.size() +
+           relationships_.size() + coordinated_encounters_.size() +
+           follows_.size();
+  }
+
   size_t getInfectionCount() const { return infections_.size(); }
   const std::vector<InfectionEvent>& getInfectionEvents() const {
     return infections_;
@@ -85,50 +111,17 @@ class EventLogger {
   size_t getCoordinatedEncounterCount() const {
     return coordinated_encounters_.size();
   }
-  size_t getFollowCount() const { return follows_.size(); }
 
-  // Encounter stats per day type (day_type_idx = index into day_type_names)
-  void logEncounterStats(int day_type_idx, bool is_actual, size_t count = 1) {
-    auto& vec = is_actual ? actual_encounters_ : scheduled_encounters_;
-    if (day_type_idx >= static_cast<int>(vec.size()))
-      vec.resize(day_type_idx + 1, 0);
-    vec[day_type_idx] += count;
-  }
-  void printEncounterStats(const std::vector<std::string>& day_type_names,
-                           const std::vector<int>& day_type_counts) const;
-
-  // Getters for testing (index 0 = first day type, index 1 = second day type)
-  size_t getScheduledWeekdayEncounters() const {
-    return scheduled_encounters_.empty() ? 0 : scheduled_encounters_[0];
-  }
-  size_t getScheduledWeekendEncounters() const {
-    return scheduled_encounters_.size() > 1 ? scheduled_encounters_[1] : 0;
-  }
-  size_t getActualWeekdayEncounters() const {
-    return actual_encounters_.empty() ? 0 : actual_encounters_[0];
-  }
-  size_t getActualWeekendEncounters() const {
-    return actual_encounters_.size() > 1 ? actual_encounters_[1] : 0;
-  }
-
-  // Total record count across all event buffers
-  size_t getTotalRecordCount() const {
-    return infections_.size() + symptom_changes_.size() + deaths_.size() +
-           hospital_admissions_.size() + icu_admissions_.size() +
-           hospital_discharges_.size() + vaccinations_.size() +
-           relationships_.size() + coordinated_encounters_.size() +
-           follows_.size();
-  }
-
-  // Static method to merge multiple event files into one (Delegated to
-  // EventMerger)
-  static void mergeEventFiles(const std::vector<std::string>& input_files,
-                              const std::string& output_file);
-
-  // Helper: Get infected person IDs (Needed by EventWriter)
+  // Helper: Get infected person IDs for the internal HDF5 writer.
   std::unordered_set<PersonId> getInfectedPersonIds() const;
 
  private:
+  friend void event_writer::saveToHDF5WithLookups(
+      const EventLogger& logger, const std::string& filename,
+      const WorldState& world, const Config& config,
+      const std::unordered_set<PersonId>& infected_person_ids,
+      const std::unordered_set<PersonId>* person_ids_filter);
+
   std::vector<InfectionEvent> infections_;
   std::vector<SymptomChangeEvent> symptom_changes_;
   std::vector<DeathEvent> deaths_;
@@ -142,9 +135,6 @@ class EventLogger {
 
   std::vector<size_t> scheduled_encounters_;  // per day type index
   std::vector<size_t> actual_encounters_;     // per day type index
-
-  friend class EventWriter;
-  friend class EventMerger;
 };
 
 }  // namespace june

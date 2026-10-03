@@ -2,16 +2,12 @@
 # =============================================================================
 # MPI determinism: full disease_sim end-to-end invariants
 # =============================================================================
-# Extends test_mpi_reproducibility.sh (infection counts only) to also diff
-# the HDF5 datasets that cover the relationship + encounter + profile
-# invariants from MPI_TESTS_HANDOFF.md:
+# Diff the HDF5 datasets that exercise coordinated encounters, follows, infections,
+# and symptom transitions. The config_2021 fixture does not enable OOE
+# relationship generation, so /events/relationships is not a required input
+# to this gate.
 #
-#   R2. OOE formation roster          → /events/relationships (tag="ooe")
-#   R4. Profile assignment            → /lookups/profile_assignments/*
-#   E2. Finalized coordinated encounters → /events/coordinated_encounters
-#
-# And, reusing the existing log-based comparison:
-#   (infection counts)                → "Total currently infected" lines
+# It also compares seeded counts and the existing daily infection-count logs.
 #
 # Strategy: run disease_sim at np=1/2/3 into three HDF5 outputs, then use
 # a small python+h5py helper to dump each dataset to a sorted canonical
@@ -25,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build}"
 DAYS="${DAYS:-10}"
+SEED="${SEED:-12345}"
 CONFIG="${CONFIG:-configs/config_2021/simulation.yaml}"
 WORLD="${WORLD:-worlds/world_2021.h5}"
 # Optional infection-seeds file, overriding the one the config names. Set it to
@@ -57,6 +54,7 @@ echo "=== MPI full-reproducibility test ==="
 echo "  binary: $BINARY"
 echo "  days:   $DAYS"
 echo "  nps:    $NPS"
+echo "  seed:   $SEED"
 [[ -n "$SEEDS" ]] && echo "  seeds:  $SEEDS"
 echo "  tmp:    $TMP"
 echo ""
@@ -95,6 +93,7 @@ for NP in $NPS; do
   mpirun -np "$NP" --oversubscribe "$BINARY" \
     --config "$TMP/simulation.yaml" \
     --world "$WORLD" \
+    --seed "$SEED" \
     ${SEEDS_ARG[@]+"${SEEDS_ARG[@]}"} \
     --runs-dir "$TMP/runs" \
     --run-id "$RUN_ID" \
@@ -187,21 +186,22 @@ PYEOF
 # coordinated_encounters: it is a per-rank monotonic counter (partition-
 # dependent by design), not part of the determinism invariant.
 DATASETS=(
-  "dataset:/events/relationships"
   "dataset:/events/coordinated_encounters|fields=person_a,person_b,time,encounter_type_id,slot"
   "dataset:/events/follows"
   "dataset:/events/infections"
+  "dataset:/events/symptom_changes"
 )
+# config_2021 does not configure the optional OOE relationship producer, so
+# /events/relationships is absent by design. It is reported as a fixture
+# limitation rather than treated as a required, non-exercised dataset.
 # NOTE: /lookups/profile_assignments is NOT diffed here — the multi-rank
 # event merger (main.cpp:476) discards per-rank lookup tables, so the
 # merged file only contains rank 0's slice at np>1. Profile-assignment
-# determinism is covered directly by test_profile_determinism (a unit
-# test on the (seed, person.id) contract, which is what actually runs
-# at each rank). If that unit test passes AND /events/relationships is
-# identical across np (this test), then R4 holds transitively:
-# formation probability depends on profile fields, so any profile_id
-# drift would show up as a relationship-event drift.
+# determinism is therefore not directly asserted by this HDF5 comparison.
+# Profile drift that affects attendance, encounters, follows, infections, or
+# symptoms is still observable in the canonical event streams above.
 
+FAIL=0
 for SPEC in "${DATASETS[@]}"; do
   MAIN="${SPEC%%|*}"
   EXTRA=""
@@ -210,13 +210,24 @@ for SPEC in "${DATASETS[@]}"; do
   PATH_="${MAIN#*:}"
   SAFE=$(echo "$PATH_" | tr '/' '_')
   for NP in $NPS; do
+    CANON="$TMP/canon${SAFE}_np${NP}.txt"
     python3 "$TMP/canon.py" "$TMP/sim_np${NP}.h5" "$KIND" "$PATH_" \
-      "$TMP/canon${SAFE}_np${NP}.txt" $EXTRA
+      "$CANON" $EXTRA
+    if grep -q '^# MISSING ' "$CANON"; then
+      echo "FAIL: expected dataset ${PATH_} is missing at np=${NP}"
+      CLEAN_ON_EXIT=0
+      FAIL=1
+    elif grep -q '^# EMPTY ' "$CANON"; then
+      # Every dataset in DATASETS is required to exercise this fixture's
+      # transmission, encounter, seeding, or cross-domain paths.
+      echo "FAIL: expected non-empty dataset ${PATH_} is empty at np=${NP}"
+      CLEAN_ON_EXIT=0
+      FAIL=1
+    fi
   done
 done
 
 # --- diff against np=1 reference ---------------------------------------------
-FAIL=0
 REF_NP=$(echo "$NPS" | awk '{print $1}')
 if [[ "$REF_NP" != "1" ]]; then
   echo "WARN: first np in NPS is not 1 — using np=$REF_NP as reference"
@@ -237,7 +248,7 @@ for SPEC in "${DATASETS[@]}"; do
       echo "FAIL: ${PATH_} diverges between np=${REF_NP} and np=${NP}"
       echo "      ref ($REF_LINES lines): $REF"
       echo "      cur: $CUR"
-      diff -u "$REF" "$CUR" | head -30
+      diff -u "$REF" "$CUR" | head -30 || true
       CLEAN_ON_EXIT=0
       FAIL=1
       SPEC_FAIL=1
@@ -292,7 +303,7 @@ done
 
 echo ""
 if [[ $FAIL -eq 0 ]]; then
-  echo "ALL PASS — R2 (relationships), E2 (coordinated_encounters), R4 (profile_assignments), and infection counts are bit-identical across $NPS"
+  echo "ALL PASS — coordinated encounters, follows, infections, symptom changes, and infection counts are identical across $NPS"
   exit 0
 else
   echo "FAIL — reproducibility invariant violated. Temp files kept at $TMP"

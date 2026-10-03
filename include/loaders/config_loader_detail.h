@@ -14,11 +14,11 @@ namespace june {
 namespace config_detail {
 
 // Parse a YAML sequence of `{property, operator, value}` entries into a
-// vector of SelectionCriterion. The scalar `value` is dispatched
-// int -> double -> string; a sequence `value` goes through
-// parseCriterionSequenceValue (loaders/selection_criterion_value.h).
-// Shared by the loadSchedule / loadActivityPreferences code in
-// config_loader.cpp and by loadVaccination in config_loader_vaccination.cpp.
+// vector of SelectionCriterion. Scalar values use the shared bool -> int ->
+// double -> string dispatch; sequence values are validated by the loader's
+// local sequence parser.
+// Shared by schedule, activity preferences, vaccination, encounters, and
+// policy loading.
 void parseSelectionCriteria(const YAML::Node& selection_node,
                             std::vector<SelectionCriterion>& out);
 

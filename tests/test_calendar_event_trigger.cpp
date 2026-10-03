@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 
 #include "core/types.h"
 #include "core/world_state.h"
@@ -9,25 +8,6 @@
 using namespace june;
 
 namespace {
-
-WorldState buildCatchmentWorld(int num_people = 1) {
-  WorldState world;
-  world.geo_level_names = {"sgu"};
-  GeographicalUnit gu;
-  gu.id = 0; gu.parent_id = -1; gu.level_id = 0;
-  world.geo_units.push_back(gu);
-  world.venue_type_names = {"fair"};
-  Venue v; v.id = 0; v.type_id = 0; v.geo_unit_id = 0;
-  world.venues.push_back(v);
-  world.activity_names = {"Fair_accommodation"};
-  world.schedule_type_names = {"regular", "Fair_day_trip"};
-  for (int i = 0; i < num_people; ++i) {
-    Person& p = world.people.emplace_back();
-    p.id = i; p.geo_unit_id = 0;
-  }
-  world.buildIndices();
-  return world;
-}
 
 CalendarEvent makeCatchmentEvent(int32_t id, int16_t sched_idx,
                                  float compliance = 1.0f,
@@ -49,7 +29,7 @@ CalendarEvent makeCatchmentEvent(int32_t id, int16_t sched_idx,
 // =============================================================================
 
 TEST_CASE("trigger sets hop fields for catchment-rule event") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   CalendarEventManager manager({{makeCatchmentEvent(1, 1)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
 
@@ -62,14 +42,14 @@ TEST_CASE("trigger sets hop fields for catchment-rule event") {
 }
 
 TEST_CASE("trigger sets hop_repeats_remaining from duration_days") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   CalendarEventManager manager({{makeCatchmentEvent(1, 1, 1.0f, 3)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
   CHECK(world.people[0].schedule_hop.repeats_remaining == 2);
 }
 
 TEST_CASE("trigger skips a person already on a hopped schedule") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   world.people[0].schedule_hop.hopped_schedule_id = 3;  // already mid-hop
   CalendarEventManager manager({{makeCatchmentEvent(1, 5)}});
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
@@ -82,14 +62,14 @@ TEST_CASE("trigger skips a person already on a hopped schedule") {
 
 TEST_CASE("compliance rate 1.0 always triggers, 0.0 never triggers") {
   SUBCASE("compliance 1.0 triggers") {
-    WorldState world = buildCatchmentWorld();
+    WorldState world = makeCatchmentWorld();
     CalendarEventManager manager({{makeCatchmentEvent(1, 1, 1.0f)}});
     manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
     CHECK(manager.stats().triggered == 1);
     CHECK(manager.stats().skipped_compliance == 0);
   }
   SUBCASE("compliance 0.0 never triggers") {
-    WorldState world = buildCatchmentWorld();
+    WorldState world = makeCatchmentWorld();
     CalendarEventManager manager({{makeCatchmentEvent(1, 1, 0.0f)}});
     manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});
     CHECK(manager.stats().triggered == 0);
@@ -179,7 +159,7 @@ TEST_CASE("attendee_filters on catchment event exclude non-matching people") {
 }
 
 TEST_CASE("sweepCompletedHops removes entry once hop becomes inactive") {
-  WorldState world = buildCatchmentWorld();
+  WorldState world = makeCatchmentWorld();
   CalendarEventManager manager({{makeCatchmentEvent(1, 1, 1.0f, 1)}});
 
   manager.triggerEventsForDay(0, world, world.people, 123, {{0, {0}}});

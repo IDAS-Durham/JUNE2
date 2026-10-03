@@ -4,8 +4,6 @@
 
 #include <mpi.h>
 
-#include <functional>
-#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -67,19 +65,6 @@ class DomainManager {
       const std::vector<CoordinatedEncounter>& local_finalized,
       std::vector<CoordinatedEncounter>& finalized_for_this_rank);
 
-  // Global Metadata Sharing
-  void exchangeDeathFlags();
-  bool isDeadGlobally(PersonId pid) const {
-    if (pid < 0 || pid >= static_cast<PersonId>(global_death_flags_.size()))
-      return false;
-    return global_death_flags_[pid] != 0;
-  }
-  void exchangeScheduleTypes();
-  void exchangeActivityMasks();
-  uint16_t getGlobalScheduleType(PersonId pid) const;
-  void setGlobalScheduleType(PersonId pid, uint16_t type_id);  // For tests
-  ActivityMask getGlobalActivityMask(PersonId pid) const;
-  void setGlobalActivityMask(PersonId pid, ActivityMask mask);  // For tests
   void setMaxPersonId(PersonId max_id) {
     max_person_id_ = max_id;
   }  // For tests
@@ -113,11 +98,6 @@ class DomainManager {
 
   // Get the rank that owns a specific venue
   int getVenueRank(VenueId vid) const;
-  // Check if a venue is known globally (local or remote)
-  bool isKnownVenue(VenueId vid) const {
-    if (domain_.ownsVenue(vid)) return true;
-    return global_venue_rank_.count(vid) > 0;
-  }
 
   // Get the rank that owns a specific person
   int getPersonRank(PersonId pid) const;
@@ -130,13 +110,6 @@ class DomainManager {
   void buildGlobalVenueOwnershipMap();  // Shares all venue IDs across ranks
   void loadGeographyOnNonZeroRanks();
   void computeGlobalMaxPersonId();
-
-  // Generic MPI global property exchange via Allreduce.
-  // Fills global_buf[pid] with the value from the owning rank for each person.
-  template <typename T>
-  void exchangeGlobalProperty(std::vector<T>& global_buf, T null_value,
-                              MPI_Datatype mpi_type, MPI_Op mpi_op,
-                              std::function<T(const Person&)> extract);
 
   // Context
   WorldState& world_;
@@ -155,17 +128,8 @@ class DomainManager {
   std::unordered_map<GeoUnitId, int> geounit_to_rank_;
   std::unordered_map<VenueId, int>
       global_venue_rank_;  // Global venue_id → owning rank (all ranks)
-  std::vector<GeoUnitId>
-      global_person_geounit_;  // Mapping from PersonId to GeoUnitId
   std::vector<int>
       global_person_rank_;  // Mapping from PersonId to owning MPI rank
-  std::vector<uint16_t>
-      global_person_schedule_type_;  // Mapping from PersonId to ScheduleTypeID
-  std::vector<ActivityMask>
-      global_person_activity_mask_;  // Mapping from PersonId to
-                                     // venue-availability bitmask
-  std::vector<uint8_t>
-      global_death_flags_;  // 1 if person is dead on any rank, 0 otherwise
   PersonId max_person_id_ = 0;
 };
 

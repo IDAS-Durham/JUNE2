@@ -1,10 +1,9 @@
+#include <getopt.h>
 #include <yaml-cpp/yaml.h>
 
-#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
-#include <iomanip>
 #include <iostream>
-#include <map>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -15,9 +14,8 @@
 #include "simulation/compartmental_model_manager.h"
 #include "simulation/simulator.h"
 #include "utils/event_logging/event_logger.h"
+#include "utils/event_logging/event_merger.h"
 #include "utils/memory_utils.h"
-#include "utils/profiler.h"
-#include "utils/random.h"
 #include "utils/run_dir.h"
 
 #ifdef USE_MPI
@@ -33,185 +31,45 @@
 
 using namespace june;
 
-inline std::ostream& operator<<(std::ostream& os, Sex sex) {
-  switch (sex) {
-    case Sex::MALE:
-      return os << "male";
-    case Sex::FEMALE:
-      return os << "female";
-    default:
-      return os << "unknown";
-  }
-}
+#ifdef USE_GPERFTOOLS
+namespace {
 
-void printExamplePeople(const WorldState& world, size_t count = 5) {
-  std::cout << "\n=== Example People ===" << std::endl;
+void startCpuProfiler(int rank, const std::filesystem::path& profile_path,
+                      bool mpi_mode) {
+  if (rank != 0) return;
 
-  for (size_t i = 0; i < std::min(count, world.people.size()); ++i) {
-    const Person& p = world.people[i];
-    std::cout << "Person " << p.id << ": age=" << p.age << ", sex=" << p.sex
-              << ", geo_unit=" << p.geo_unit_id;
-
-    // Show properties
-    if (p.properties_count > 0) {
-      std::cout << ", properties={";
-      for (size_t k = 0; k < p.properties_count; ++k) {
-        if (k > 0) std::cout << ", ";
-        const std::string& key = world.person_property_names[k];
-        std::cout << key << "=";
-        auto prop_opt = world.getPersonProperty(p, key);
-        if (prop_opt.has_value()) {
-          std::visit(
-              [](auto&& arg) {
-                using T = std::decay_t<decltype(arg)>;
-                if constexpr (std::is_same_v<T, std::monostate>) {
-                  std::cout << "null";
-                } else if constexpr (std::is_same_v<T, std::vector<int32_t>> ||
-                                     std::is_same_v<T,
-                                                    std::vector<std::string>>) {
-                  std::cout << "[" << arg.size() << " items]";
-                } else {
-                  std::cout << arg;
-                }
-              },
-              *prop_opt);
-        } else {
-          std::cout << "null";
-        }
-      }
-      std::cout << "}";
-    }
-
-    // Show activities
-    auto metas = world.getActivityMetas(p);
-    if (!metas.empty()) {
-      std::cout << ", activities={";
-      bool first = true;
-      for (const auto& meta : metas) {
-        int16_t act_idx = meta.activity_index;
-        auto venues = world.getActivityVenues(meta);
-
-        if (act_idx < 0 || act_idx >= (int16_t)world.activity_names.size())
-          continue;
-
-        if (!first) std::cout << ", ";
-        first = false;
-        std::cout << world.activity_names[act_idx] << ":" << venues.size();
-      }
-      std::cout << "}";
-    }
-
-    std::cout << std::endl;
-  }
-}
-
-void printExampleVenues(const WorldState& world, size_t count = 5) {
-  std::cout << "\n=== Example Venues ===" << std::endl;
-
-  for (size_t i = 0; i < std::min(count, world.venues.size()); ++i) {
-    const Venue& v = world.venues[i];
-    std::string v_type = (v.type_id < world.venue_type_names.size())
-                             ? world.venue_type_names[v.type_id]
-                             : "unknown";
-    std::cout << "Venue " << v.id << " (type=" << v_type << ")"
-              << ", geo_unit=" << v.geo_unit_id
-              << ", residence=" << (v.is_residence ? "yes" : "no")
-              << ", subsets=" << v.subset_count;
-
-    if (v.properties_count > 0) {
-      std::cout << ", properties=" << v.properties_count;
-    }
-
-    std::cout << std::endl;
-  }
-}
-
-void printVenueTypeSummary(const WorldState& world) {
-  std::cout << "\n=== Venues by Type ===" << std::endl;
-
-  // Count by type
-  std::map<std::string, size_t> typeCounts;
-  for (const auto& v : world.venues) {
-    std::string v_type = (v.type_id < world.venue_type_names.size())
-                             ? world.venue_type_names[v.type_id]
-                             : "unknown";
-    typeCounts[v_type]++;
+  const char* profile_env = std::getenv("CPUPROFILE");
+  if (profile_env) {
+    std::cout << "\n[CPU profiling active (via CPUPROFILE env var): "
+              << profile_env << "]" << std::endl;
+    return;
   }
 
-  for (const auto& [type, count] : typeCounts) {
-    std::cout << "  " << std::setw(20) << std::left << type << ": " << count
-              << std::endl;
-  }
-}
-
-void printActivitySummary(const WorldState& world) {
-  std::cout << "\n=== Activities ===" << std::endl;
-
-  for (const auto& name : world.activity_names) {
-    // Count how many people have this activity
-    size_t count = 0;
-    for (const auto& p : world.people) {
-      if (!world.getActivityVenues(p, name).empty()) {
-        count++;
-      }
-    }
-    std::cout << "  " << std::setw(20) << std::left << name << ": " << count
-              << " people" << std::endl;
-  }
-}
-
-void printConfig(const Config& config) {
-  std::cout << "\n=== Configuration ===" << std::endl;
-  std::cout << "Simulation:" << std::endl;
-  std::cout << "  Date range: " << config.simulation.start_date << " to "
-            << config.simulation.end_date << std::endl;
-  std::cout << "  Time steps: defined by schedule (event-driven)" << std::endl;
-  std::cout << "  Stats interval: every "
-            << config.simulation.stats_interval_days << " day(s)" << std::endl;
-
-  std::cout << "\nSchedule:" << std::endl;
-  if (!config.schedule.schedule_types.empty()) {
-    std::cout << "  Schedule types: " << config.schedule.schedule_types.size()
-              << std::endl;
-    std::cout << "  Default: " << config.schedule.default_schedule_type
-              << std::endl;
-    for (const auto& stype : config.schedule.schedule_types) {
-      std::cout << "    - " << stype.name << " (priority " << stype.priority;
-      for (const auto& [dt_name, dt_slots] : stype.slots_by_day_type) {
-        std::cout << ", " << dt_name << " slots: " << dt_slots.size();
-      }
-      std::cout << ")" << std::endl;
-    }
+  if (mpi_mode) {
+    std::cout << "\n[Starting CPU profiling for Rank 0 to "
+              << profile_path.string() << "...]" << std::endl;
   } else {
-    std::cerr << "  ERROR: No schedule types defined!" << std::endl;
+    std::cout << "\n[Starting CPU profiling to " << profile_path.string()
+              << "...]" << std::endl;
   }
-
-  std::cout << "\nContact Matrices:" << std::endl;
-  std::cout << "  Venue types configured: "
-            << config.contact_matrices.matrices.size() << std::endl;
-
-  // Show a few contact matrices
-  int shown = 0;
-  for (const auto& [venue_type, cm] : config.contact_matrices.matrices) {
-    if (shown++ >= 3) break;
-    std::cout << "    " << venue_type << ": ";
-    if (cm.bins.empty()) {
-      std::cout << "default" << std::endl;
-    } else {
-      std::cout << cm.bins.size() << " bins [";
-      for (size_t i = 0; i < std::min(size_t(2), cm.bins.size()); ++i) {
-        if (i > 0) std::cout << ", ";
-        std::cout << cm.bins[i];
-      }
-      if (cm.bins.size() > 2) std::cout << ", ...";
-      std::cout << "]" << std::endl;
-    }
-  }
+  ProfilerStart(profile_path.string().c_str());
 }
+
+void stopCpuProfiler(int rank, const std::filesystem::path& profile_path,
+                     bool mpi_mode) {
+  if (rank != 0) return;
+
+  ProfilerStop();
+  if (!mpi_mode) std::cout << "\n";
+  std::cout << "[Profiling stopped. Saved to " << profile_path.string() << "]"
+            << std::endl;
+}
+
+}  // namespace
+#endif
 
 int main(int argc, char* argv[]) {
 #ifdef USE_MPI
-  // Initialize MPI
   MPI_Init(&argc, &argv);
 
   int rank, size;
@@ -237,47 +95,65 @@ int main(int argc, char* argv[]) {
   long long seed_override = -1;
   std::vector<std::string> cli_args(argv + 1, argv + argc);
 
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--infection_seeds" && i + 1 < argc) {
-      infection_seeds_file = argv[++i];
+  static const struct option long_options[] = {
+      {"infection_seeds", required_argument, nullptr, 'i'},
+      {"config", required_argument, nullptr, 'c'},
+      {"seed", required_argument, nullptr, 's'},
+      {"runs-dir", required_argument, nullptr, 'r'},
+      {"run-id", required_argument, nullptr, 'u'},
+      {"restart-from", required_argument, nullptr, 'R'},
+      {"days", required_argument, nullptr, 'd'},
+      {"world", required_argument, nullptr, 'w'},
+      {nullptr, 0, nullptr, 0}};
+
+  bool option_error = false;
+  opterr = 0;
+  optind = 1;
+  int option = 0;
+  while ((option = getopt_long(argc, argv, "", long_options, nullptr)) != -1) {
+    if (option == 'i') {
+      infection_seeds_file = optarg;
       infection_seeds_cli_override = true;
-    } else if ((arg == "--sim_config" || arg == "--config") && i + 1 < argc) {
-      sim_config_file = argv[++i];
-    } else if (arg == "--seed" && i + 1 < argc) {
+    } else if (option == 'c') {
+      sim_config_file = optarg;
+    } else if (option == 's') {
       try {
-        long long v = std::stoll(argv[++i]);
+        long long v = std::stoll(optarg);
         if (v < 0 || v > 0xFFFFFFFFLL) {
           throw std::out_of_range("seed must be in [0, 4294967295]");
         }
         seed_override = v;
       } catch (...) {
         if (rank == 0)
-          std::cerr << "Warning: Invalid value for --seed: " << argv[i]
+          std::cerr << "Warning: Invalid value for --seed: " << optarg
                     << std::endl;
       }
-    } else if (arg == "--runs-dir" && i + 1 < argc) {
-      runs_dir = argv[++i];
-    } else if (arg == "--run-id" && i + 1 < argc) {
-      run_id_override = argv[++i];
-    } else if (arg == "--restart-from" && i + 1 < argc) {
-      restart_from = argv[++i];
-    } else if (arg == "--days" && i + 1 < argc) {
+    } else if (option == 'r') {
+      runs_dir = optarg;
+    } else if (option == 'u') {
+      run_id_override = optarg;
+    } else if (option == 'R') {
+      restart_from = optarg;
+    } else if (option == 'd') {
       try {
-        days_override = std::stoi(argv[++i]);
+        days_override = std::stoi(optarg);
       } catch (...) {
         if (rank == 0)
-          std::cerr << "Warning: Invalid value for --days: " << argv[i]
+          std::cerr << "Warning: Invalid value for --days: " << optarg
                     << std::endl;
       }
-    } else if (arg == "--world" && i + 1 < argc) {
-      filename = argv[++i];
-    } else if (arg[0] != '-') {
-      filename = arg;
+    } else if (option == 'w') {
+      filename = optarg;
+    } else {
+      option_error = true;
+      if (rank == 0) {
+        std::cerr << "Error: unknown or incomplete command-line option"
+                  << std::endl;
+      }
     }
   }
 
-  if (sim_config_file.empty() || filename.empty()) {
+  if (option_error || sim_config_file.empty() || filename.empty()) {
     if (rank == 0) {
       if (sim_config_file.empty())
         std::cerr << "Error: --config <path/to/simulation.yaml> is required."
@@ -319,9 +195,9 @@ int main(int argc, char* argv[]) {
     std::string output_path = (run_path / "simulation_events.h5").string();
 
     // Checkpoint resume: the checkpoint's recorded effective seed is
-    // authoritative. Adopt it (unless an explicit --seed was given, in which
-    // case a mismatch is rejected later in restoreFromCheckpoint; no silent
-    // override). Path is normalised here ('latest' symlink resolved).
+    // authoritative. Use it unless the caller supplied --seed; an explicit
+    // mismatch is rejected during checkpoint restore. Path is normalised here
+    // ('latest' symlink resolved).
     if (!restart_from.empty()) {
       std::filesystem::path cpdir = std::filesystem::canonical(restart_from);
       YAML::Node cman = YAML::LoadFile((cpdir / "manifest.yaml").string());
@@ -338,7 +214,7 @@ int main(int argc, char* argv[]) {
     // Resolve the effective RNG seed exactly once, before snapshotting, so it
     // is recorded for reproducible restart. Precedence: CLI --seed overrides
     // config; a zero/absent seed is auto-generated on rank 0 and broadcast so
-    // every rank (and any future checkpoint resume) uses the identical stream.
+    // every rank and subsequent checkpoint resume uses the identical stream.
     if (seed_override >= 0) {
       config.simulation.random_seed = static_cast<unsigned int>(seed_override);
       if (rank == 0)
@@ -352,16 +228,6 @@ int main(int argc, char* argv[]) {
     }
     run_dir::broadcastSeed(effective_seed);
     config.simulation.random_seed = effective_seed;
-
-    // Snapshot every loaded YAML / referenced data file into the run dir
-    // and write manifest.yaml (incl. lineage.effective_random_seed). Rank 0.
-    if (rank == 0) {
-      run_dir::snapshotRun(run_path, sim_config_file, config, size, cli_args,
-                           effective_seed, filename);
-    }
-#ifdef USE_MPI
-    MPI_Barrier(MPI_COMM_WORLD);
-#endif
 
     if (rank == 0) {
       std::cout << "Loading configuration..." << std::endl;
@@ -390,10 +256,6 @@ int main(int argc, char* argv[]) {
                 << "  Seed: " << config.simulation.random_seed << std::endl;
     }
 
-    // Seed global RNG before creating any components
-    // Domain, DomainManager, and other components may use RNG during
-    // construction
-    june::GlobalRNG::seed(effective_seed);
     if (seed_autogenerated && rank == 0) {
       std::cout << "No random seed configured; generated effective seed "
                 << effective_seed
@@ -403,7 +265,6 @@ int main(int argc, char* argv[]) {
     }
 
 #ifdef USE_MPI
-    // Check if parallel mode is enabled
     if (config.parallel.enabled && size > 1) {
       // PARALLEL MODE: Use domain decomposition with distributed memory
       if (rank == 0) {
@@ -449,53 +310,30 @@ int main(int argc, char* argv[]) {
       Simulator simulator(*domain.world, config, &domain_mgr,
                           infection_seeds_file, output_path);
 
+      // The loaders have now recorded any nested data files they actually
+      // consumed; snapshot that authoritative list without reparsing YAML.
+      if (rank == 0) {
+        run_dir::snapshotRun(run_path, sim_config_file, config, size, cli_args,
+                             effective_seed, filename);
+      }
+      MPI_Barrier(MPI_COMM_WORLD);
+
       if (!restart_from.empty()) simulator.restoreFromCheckpoint(restart_from);
 
-      // Start CPU profiling (like cProfile)
       // Start CPU profiling
 #ifdef USE_GPERFTOOLS
-      const char* profile_env = std::getenv("CPUPROFILE");
-      if (profile_env) {
-        if (rank == 0)
-          std::cout << "\n[CPU profiling active (via CPUPROFILE env var): "
-                    << profile_env << "]" << std::endl;
-      } else {
-        // By default, only profile Rank 0 to avoid massive IO and file
-        // contention
-        if (rank == 0) {
-          std::string prof_name = "cpu_profile.prof";
-#ifdef USE_MPI
-          if (size > 1) prof_name = "cpu_profile_rank0.prof";
+      const std::string prof_name =
+          size > 1 ? "cpu_profile_rank0.prof" : "cpu_profile.prof";
+      startCpuProfiler(rank, run_path / prof_name, true);
 #endif
-          std::string prof_file = (run_path / prof_name).string();
-          std::cout << "\n[Starting CPU profiling for Rank 0 to " << prof_file
-                    << "...]" << std::endl;
-          ProfilerStart(prof_file.c_str());
-        }
-      }
-#endif
-
-      // Enable built-in profiler on rank 0
-      if (rank == 0) {
-        Profiler::instance().enable();
-      }
 
       // Run simulation on this domain with cross-domain visitor exchange
       simulator.run();
 
       // Stop profiling and save results
       if (rank == 0) {
-        Profiler::instance().disable();
-        Profiler::instance().printByTotalTime(std::cout, 20);
 #ifdef USE_GPERFTOOLS
-        ProfilerStop();
-        std::string prof_name = "cpu_profile.prof";
-#ifdef USE_MPI
-        if (size > 1) prof_name = "cpu_profile_rank0.prof";
-#endif
-        std::string prof_file = (run_path / prof_name).string();
-        std::cout << "[Profiling stopped. Saved to " << prof_file << "]"
-                  << std::endl;
+        stopCpuProfiler(rank, run_path / prof_name, true);
 #endif
       }
 
@@ -521,7 +359,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Merge into a single file
-        EventLogger::mergeEventFiles(rank_files, final_output);
+        mergeEventFiles(rank_files, final_output);
       }
     } else
 #endif
@@ -555,32 +393,25 @@ int main(int argc, char* argv[]) {
         Simulator simulator(world, config, nullptr, infection_seeds_file,
                             output_path);
 
+        // The loaders have now recorded any nested data files they actually
+        // consumed; snapshot that authoritative list without reparsing YAML.
+        run_dir::snapshotRun(run_path, sim_config_file, config, size, cli_args,
+                             effective_seed, filename);
+
         if (!restart_from.empty())
           simulator.restoreFromCheckpoint(restart_from);
 
         // Start CPU profiling
 #ifdef USE_GPERFTOOLS
-        const char* profile_env = std::getenv("CPUPROFILE");
-        if (profile_env) {
-          std::cout << "\n[CPU profiling active (via CPUPROFILE env var): "
-                    << profile_env << "]" << std::endl;
-        } else {
-          std::string prof_file = (run_path / "cpu_profile.prof").string();
-          std::cout << "\n[Starting CPU profiling to " << prof_file << "...]"
-                    << std::endl;
-          ProfilerStart(prof_file.c_str());
-        }
+        startCpuProfiler(rank, run_path / "cpu_profile.prof", false);
 #endif
 
         simulator.run();
-        MemoryUtils::logMemory("Post-Simulation-Serial");
+        memory::logMemory("Post-Simulation-Serial");
 
         // Stop profiling
 #ifdef USE_GPERFTOOLS
-        ProfilerStop();
-        std::cout << "\n[Profiling stopped. Saved to "
-                  << (run_path / "cpu_profile.prof").string() << "]"
-                  << std::endl;
+        stopCpuProfiler(rank, run_path / "cpu_profile.prof", false);
 #endif
       }
     }

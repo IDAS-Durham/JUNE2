@@ -25,17 +25,11 @@ class OnTheFlyVenueAllocator;
 class ActivityManager {
  public:
   struct PerformanceStats {
-    size_t map_allocations = 0;
-    size_t string_lookups = 0;
     size_t weights_cached = 0;
-    size_t rng_constructions = 0;
 
     void print() const {
       std::cout << "\n=== ActivityManager Performance Stats ===" << std::endl;
-      std::cout << "  Map allocations:   " << map_allocations << std::endl;
-      std::cout << "  String lookups:    " << string_lookups << std::endl;
       std::cout << "  Weights cached:    " << weights_cached << std::endl;
-      std::cout << "  RNG constructions: " << rng_constructions << std::endl;
     }
   };
 
@@ -125,9 +119,10 @@ class ActivityManager {
           slot,  // Used for specified_activity (to select specific venue index)
       uint64_t time_key, int logical_day);
   // Thin wrapper: forwards current_sim_day_ as logical_day.
-  std::pair<VenueId, SubsetIndex> selectVenue(
-      const Person& person, int16_t activity_idx, const TimeSlot& slot,
-      uint64_t time_key);
+  std::pair<VenueId, SubsetIndex> selectVenue(const Person& person,
+                                              int16_t activity_idx,
+                                              const TimeSlot& slot,
+                                              uint64_t time_key);
 
   PerformanceStats stats_;
 
@@ -158,8 +153,7 @@ class ActivityManager {
   // into the pin for a traveller in transit, who occupies no venue at all.
   bool applyPolicyOverride(PersonLocation& loc, Person& person,
                            int16_t activity, VenueId venue, SubsetIndex subset,
-                           SlotVenueType slot_venue_type,
-                           int time_slot_index);
+                           SlotVenueType slot_venue_type, int time_slot_index);
 
   // Returns the TimeSlot at time_slot_index for the given schedule type and
   // day type, or nullptr if any index is out of range / the pointer is null.
@@ -333,26 +327,15 @@ class ActivityManager {
                                      const TimeSlot& slot, int day_type_idx,
                                      std::vector<PersonLocation>& locations);
 
-  // Handles the hopped-schedule branch of assignActivities (single slot
-  // form): runs advanceHoppedSchedule for temporary hops or executes the
-  // non-temporary day-type slot directly against `slot`, applies any
-  // policy override (with effective-venue resolution), and finalises
-  // locations[person_array_idx]. The companion of
-  // assignHoppedScheduleSlot, kept separate because the single-slot form
-  // uses the caller's slot rather than looking one up from
-  // slots_by_day_type_idx[time_slot_index].
-  void assignHoppedSingleSlot(const Person& person, size_t person_array_idx,
-                              const TimeSlot& slot, int day_type_idx,
-                              std::vector<PersonLocation>& locations);
-
-  // Handles the hopped-schedule branch of assignActivitiesFromSchedule:
-  // dispatches to advanceHoppedSchedule (temporary) or the non-temporary
-  // freeze-in-place day-type-slot path, then applies any policy override
-  // and finalises locations[person_array_idx].
-  void assignHoppedScheduleSlot(Person& person, size_t person_array_idx,
-                                int time_slot_index, int day_type_idx,
-                                uint64_t time_key,
-                                std::vector<PersonLocation>& locations);
+  // Handles a hopped-schedule slot. A non-null `slot` is the caller-supplied
+  // slot used by assignActivities; otherwise `time_slot_index` selects the
+  // slot from the hopped schedule used by assignActivitiesFromSchedule.
+  // A time_slot_index of -1 means the policy override is for the single-slot
+  // form rather than a schedule slot.
+  void assignHoppedSlot(Person& person, size_t person_array_idx,
+                        const TimeSlot* slot, int time_slot_index,
+                        int day_type_idx, uint64_t time_key,
+                        std::vector<PersonLocation>& locations);
 
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
@@ -375,7 +358,6 @@ class ActivityManager {
   // Returns true if the person was handled (caller should continue the loop).
   bool advanceHoppedSchedule(Person& person, PersonLocation& loc,
                              size_t person_array_idx);
-
 };
 
 }  // namespace june

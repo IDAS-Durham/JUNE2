@@ -170,7 +170,6 @@ struct InfectionSeedConfig {
 
 // Forward declarations
 class Disease;
-class SeedOfferExchange;
 
 class InfectionSeeder {
  public:
@@ -182,13 +181,6 @@ class InfectionSeeder {
   // infected.
   std::vector<PersonId> seedInfections(const SeedWindow& window,
                                        double simulation_time);
-
-  // Structured seeds are counted globally: the seeder offers its local
-  // candidates and the exchange pools every rank's offers. Without one (a
-  // serial run) the local offers are the whole world.
-  void setOfferExchange(const SeedOfferExchange* exchange) {
-    seed_offer_exchange_ = exchange;
-  }
 
   // Budgets the last seeding step could not fill. Identical on every rank —
   // the offers they are derived from are pooled — so rank 0 can report them
@@ -209,7 +201,6 @@ class InfectionSeeder {
   EventLogger* event_logger_;
   double current_simulation_time_;
   uint64_t base_seed_ = 0;
-  const SeedOfferExchange* seed_offer_exchange_ = nullptr;
   std::vector<SeedShortfall> seed_shortfalls_;
 
   // Apply a single seed event, its draws keyed by its Seed Identity

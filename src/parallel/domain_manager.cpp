@@ -6,29 +6,14 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <limits>
 
 #include "loaders/hdf5_loader.h"
 #include "parallel/mpi_utils.h"
+#include "utils/memory_utils.h"
 
 namespace june {
 
 namespace {
-
-// 2GB-safe chunked MPI_Bcast for large buffers.
-void chunkedBroadcast(void* data, uint64_t count, size_t element_size,
-                      MPI_Datatype type, int root) {
-  const uint64_t MAX_MPI_INT =
-      static_cast<uint64_t>(std::numeric_limits<int>::max());
-  uint64_t sent = 0;
-  while (sent < count) {
-    uint64_t remaining = count - sent;
-    int chunk = static_cast<int>(std::min(remaining, MAX_MPI_INT));
-    MPI_Bcast(static_cast<char*>(data) + sent * element_size, chunk, type, root,
-              MPI_COMM_WORLD);
-    sent += chunk;
-  }
-}
 
 // Pack a local registry of strings into a single null-separated buffer and
 // MPI_Allgatherv-concatenate the same on every rank.
@@ -197,9 +182,6 @@ void DomainManager::loadGeographyOnNonZeroRanks() {
   world_.person_property_names = std::move(temp.person_property_names);
   world_.person_property_value_registries =
       std::move(temp.person_property_value_registries);
-  world_.geo_unit_property_names = std::move(temp.geo_unit_property_names);
-  world_.geo_unit_property_value_registries =
-      std::move(temp.geo_unit_property_value_registries);
   world_.buildIndices();
 }
 
@@ -241,7 +223,6 @@ void DomainManager::initialize() {
   buildVenueOwnershipMap();
   loadGlobalPersonMetadata();
 
-  exchangeActivityMasks();
   buildGlobalVenueOwnershipMap();
   computeGlobalMaxPersonId();
 
@@ -272,9 +253,10 @@ void DomainManager::broadcastPopulationCounts() {
   }
 
   // 1. Broadcast populations and name lengths (chunked for > 2GB safety)
-  chunkedBroadcast(pops.data(), num_units, sizeof(int32_t), MPI_INT32_T, 0);
-  chunkedBroadcast(name_lengths.data(), num_units, sizeof(int32_t), MPI_INT32_T,
-                   0);
+  mpi_utils::broadcastChunked(pops.data(), num_units, sizeof(int32_t),
+                              MPI_INT32_T, 0);
+  mpi_utils::broadcastChunked(name_lengths.data(), num_units, sizeof(int32_t),
+                              MPI_INT32_T, 0);
 
   // 2. Broadcast total size of names buffer
   MPI_Bcast(&total_names_len, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
@@ -291,8 +273,8 @@ void DomainManager::broadcastPopulationCounts() {
     }
   }
 
-  chunkedBroadcast(names_buffer.data(), total_names_len, sizeof(char), MPI_CHAR,
-                   0);
+  mpi_utils::broadcastChunked(names_buffer.data(), total_names_len,
+                              sizeof(char), MPI_CHAR, 0);
 
   // 4. Update local geo_data on non-zero ranks
   if (rank_ != 0) {
@@ -310,7 +292,7 @@ void DomainManager::broadcastPopulationCounts() {
 
 void DomainManager::loadDomainData() {
   world_ = HDF5Loader::loadDomainChunked(
-      world_state_file_, domain_.geo_unit_set,
+      world_state_file_, &domain_.geo_unit_set,
       config_.parallel.geo_unit_chunk_size, config_);
 }
 
@@ -331,24 +313,13 @@ void DomainManager::buildVenueOwnershipMap() {
     }
   }
 
-  int local_count = local_partition_units.size();
-  std::vector<int> counts(num_ranks_);
-  MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
-                MPI_COMM_WORLD);
-
-  std::vector<int> displs;
-  int total;
-  mpi_utils::computeDisplacements(counts, displs, total);
-
-  std::vector<GeoUnitId> all_gu_ids(total);
-  MPI_Allgatherv(local_partition_units.data(), local_count, MPI_INT,
-                 all_gu_ids.data(), counts.data(), displs.data(), MPI_INT,
-                 MPI_COMM_WORLD);
+  const auto all_partition_units =
+      mpi_utils::allgathervInt32ByRank(local_partition_units);
 
   geounit_to_rank_.clear();
   for (int r = 0; r < num_ranks_; ++r) {
-    for (int i = 0; i < counts[r]; ++i) {
-      geounit_to_rank_[all_gu_ids[displs[r] + i]] = r;
+    for (GeoUnitId id : all_partition_units[r]) {
+      geounit_to_rank_[id] = r;
     }
   }
 }
@@ -357,26 +328,12 @@ void DomainManager::buildGlobalVenueOwnershipMap() {
   // Each rank shares its local venue IDs with all other ranks so that
   // cross-rank venue references (from activity mappings) can be resolved.
   const auto& local_ids = domain_.local_venue_ids;
-  int local_count = static_cast<int>(local_ids.size());
-
-  std::vector<int> counts(num_ranks_);
-  MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
-                MPI_COMM_WORLD);
-
-  std::vector<int> displs;
-  int total;
-  mpi_utils::computeDisplacements(counts, displs, total);
-
-  std::vector<VenueId> all_venue_ids(total);
-  MPI_Allgatherv(local_ids.data(), local_count, MPI_INT, all_venue_ids.data(),
-                 counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
+  const auto all_venue_ids = mpi_utils::allgathervInt32ByRank(local_ids);
 
   global_venue_rank_.clear();
-  global_venue_rank_.reserve(total);
   int duplicates = 0;
   for (int r = 0; r < num_ranks_; ++r) {
-    for (int i = 0; i < counts[r]; ++i) {
-      VenueId vid = all_venue_ids[displs[r] + i];
+    for (VenueId vid : all_venue_ids[r]) {
       auto it = global_venue_rank_.find(vid);
       if (it != global_venue_rank_.end() && it->second != r) {
         duplicates++;
@@ -459,7 +416,6 @@ void DomainManager::loadGlobalPersonMetadata() {
         }
       });
 
-  global_person_geounit_.assign(max_person_id_ + 1, -1);
   global_person_rank_.assign(max_person_id_ + 1, -1);
 
   // Second pass: fill the vector
@@ -468,8 +424,6 @@ void DomainManager::loadGlobalPersonMetadata() {
       [&](const std::vector<HDF5Loader::PersonMetadata>& chunk) {
         for (const auto& m : chunk) {
           if (m.person_id >= 0) {
-            global_person_geounit_[m.person_id] = m.geo_unit_id;
-
             // Pre-calculate and cache the owning rank for each person
             GeoUnitId partition_gu_id = partitioner_->findParentAtLevel(
                 m.geo_unit_id, config_.parallel.partition_level);
@@ -523,121 +477,10 @@ void DomainManager::exchangeFinalizedEncounters(
                                              finalized_for_this_rank);
 }
 
-template <typename T>
-void DomainManager::exchangeGlobalProperty(
-    std::vector<T>& global_buf, T null_value, MPI_Datatype mpi_type,
-    MPI_Op mpi_op, std::function<T(const Person&)> extract) {
-  if (num_ranks_ <= 1) return;
-
-  global_buf.assign(max_person_id_ + 1, null_value);
-  std::vector<T> local_buffer(max_person_id_ + 1, null_value);
-
-  for (const auto& person : world_.people) {
-    if (domain_.ownsPerson(person.id)) {
-      local_buffer[person.id] = extract(person);
-    }
-  }
-
-  MPI_Allreduce(local_buffer.data(), global_buf.data(),
-                static_cast<int>(global_buf.size()), mpi_type, mpi_op,
-                MPI_COMM_WORLD);
-}
-
-void DomainManager::exchangeDeathFlags() {
-  exchangeGlobalProperty<uint8_t>(
-      global_death_flags_, 0, MPI_UINT8_T, MPI_MAX,
-      [&](const Person& p) -> uint8_t { return p.is_dead ? 1 : 0; });
-}
-
-void DomainManager::exchangeScheduleTypes() {
-  exchangeGlobalProperty<uint16_t>(
-      global_person_schedule_type_, 65535, MPI_UNSIGNED_SHORT, MPI_MIN,
-      [](const Person& p) -> uint16_t { return p.schedule_type_id; });
-}
-
-uint16_t DomainManager::getGlobalScheduleType(PersonId pid) const {
-  if (pid < 0 ||
-      pid >= static_cast<PersonId>(global_person_schedule_type_.size())) {
-    return 65535;
-  }
-  return global_person_schedule_type_[pid];
-}
-
-void DomainManager::setGlobalScheduleType(PersonId pid, uint16_t type_id) {
-  if (pid < 0) return;
-  if (pid >= static_cast<PersonId>(global_person_schedule_type_.size())) {
-    global_person_schedule_type_.resize(pid + 1, 65535);
-  }
-  global_person_schedule_type_[pid] = type_id;
-}
-
-void DomainManager::exchangeActivityMasks() {
-  if (rank_ == 0)
-    std::cout << "MPI: Exchanging global activity/venue availability masks..."
-              << std::endl;
-
-  size_t num_people = max_person_id_ + 1;
-  global_person_activity_mask_.assign(num_people, 0);
-
-  // MPI has no built-in type for __uint128_t, so we split each ActivityMask
-  // into its low 64 bits and high 64 bits and do two separate Allreduce calls.
-  std::vector<uint64_t> local_lo(num_people, 0), local_hi(num_people, 0);
-
-  for (const auto& person : world_.people) {
-    if (domain_.ownsPerson(person.id)) {
-      ActivityMask mask = 0;
-      auto metas = world_.getActivityMetas(person);
-      for (const auto& meta : metas) {
-        if (meta.venue_count > 0 && meta.activity_index >= 0) {
-          mask |= (ActivityMask(1) << meta.activity_index);
-        }
-      }
-      local_lo[person.id] = static_cast<uint64_t>(mask);
-      local_hi[person.id] = static_cast<uint64_t>(mask >> 64);
-    }
-  }
-
-  // Combine all ranks into the global array.
-  std::vector<uint64_t> global_lo(num_people, 0), global_hi(num_people, 0);
-  MPI_Allreduce(local_lo.data(), global_lo.data(), static_cast<int>(num_people),
-                MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
-  MPI_Allreduce(local_hi.data(), global_hi.data(), static_cast<int>(num_people),
-                MPI_UINT64_T, MPI_MAX, MPI_COMM_WORLD);
-  for (size_t i = 0; i < num_people; ++i) {
-    global_person_activity_mask_[i] =
-        (ActivityMask(global_hi[i]) << 64) | ActivityMask(global_lo[i]);
-  }
-
-  if (rank_ == 0) {
-    std::cout << "  Synchronized activity masks for "
-              << global_person_activity_mask_.size() << " people." << std::endl;
-  }
-}
-
-ActivityMask DomainManager::getGlobalActivityMask(PersonId pid) const {
-  if (pid < 0 ||
-      pid >= static_cast<PersonId>(global_person_activity_mask_.size())) {
-    return 0;
-  }
-  return global_person_activity_mask_[pid];
-}
-
-void DomainManager::setGlobalActivityMask(PersonId pid, ActivityMask mask) {
-  if (pid < 0) return;
-  if (pid >= static_cast<PersonId>(global_person_activity_mask_.size())) {
-    global_person_activity_mask_.resize(pid + 1, 0);
-  }
-  global_person_activity_mask_[pid] = mask;
-}
-
 void DomainManager::setPersonRank(PersonId pid, int rank) {
   if (pid < 0) return;
-  if (pid >= static_cast<PersonId>(global_person_geounit_.size())) {
-    global_person_geounit_.resize(pid + 1, -1);
-  }
   // Create a dummy geo unit that we map to the requested rank
   GeoUnitId dummy_gu = static_cast<GeoUnitId>(pid + 100000);
-  global_person_geounit_[pid] = dummy_gu;
   geounit_to_rank_[dummy_gu] = rank;
 
   if (pid >= static_cast<PersonId>(global_person_rank_.size())) {
@@ -681,7 +524,7 @@ void DomainManager::synchronizeRegistries() {
 void DomainManager::reportDomainStats(const std::string& label) const {
   size_t local_pop = world_.people.size();
   size_t local_venues = world_.venues.size();
-  double local_rss_gb = MemoryUtils::getRSS() / (1024.0 * 1024.0);
+  double local_rss_gb = memory::getRSS() / (1024.0 * 1024.0);
 
   // Exchange stats
   std::vector<uint64_t> pops(num_ranks_);

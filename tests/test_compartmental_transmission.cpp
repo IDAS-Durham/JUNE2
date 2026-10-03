@@ -26,7 +26,6 @@ static Disease makeDiseaseWithCompartmentalUptake(double susc_mult = 1.5) {
 
   auto direct_curve = std::make_shared<ConstantCurve>(1.0);
   tp.symptom_id_curves = {nullptr, direct_curve};
-  tp.stage_curves["infectious"] = direct_curve;
 
   TransmissionMode direct;
   direct.name = "direct";

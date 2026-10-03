@@ -16,8 +16,6 @@ class WorldState;
 // A calendar-triggered event. On `start_day`, attendees drawn from the
 // catchment rule hop onto the temporary schedule `schedule_type_idx`. Venue
 // assignment is handled by OnTheFlyVenueAllocator at activity-selection time.
-// Generic: "Fair" appears only in the data (category / schedule name), never
-// here.
 struct CalendarEvent {
   int32_t calendar_event_id = -1;
   int start_day = -1;              // sim day (0-based) the event triggers on
@@ -28,7 +26,6 @@ struct CalendarEvent {
   GeoUnitId hosting_geo_unit_id = -1;
   std::string venue_type_name;
   std::vector<SelectionCriterion> attendee_filters;
-  std::string category;  // free text (e.g. "fair"); logging/metrics only
 };
 
 // Owns calendar events and the thin per-person active-event-id state.

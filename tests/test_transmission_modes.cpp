@@ -756,7 +756,6 @@ TEST_CASE("F5: Higher infectiousness yields higher infection probability") {
   const int N = 200;
 
   for (int trial = 0; trial < N; ++trial) {
-    GlobalRNG::seed(trial * 1000);
 
     // High infectiousness trial
     {
@@ -1041,7 +1040,6 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
   const int N = 200;
 
   for (int trial = 0; trial < N; ++trial) {
-    GlobalRNG::seed(trial * 100);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
       world.venues[0].type_id = 0;
@@ -1067,7 +1065,6 @@ TEST_CASE("H1: FoI scales with delta_hours (no beta/char_time division)") {
       if (world.people[1].infection) infections_short++;
     }
 
-    GlobalRNG::seed(trial * 100);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
       world.venues[0].type_id = 0;
@@ -1110,7 +1107,6 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
 
   for (int trial = 0; trial < N; ++trial) {
     // Low mode_transmissibility_multiplier (original plague: 0.08)
-    GlobalRNG::seed(trial * 200);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
       world.venues[0].type_id = 0;
@@ -1153,7 +1149,6 @@ TEST_CASE("H2: Susceptibility multiplier dampens per-mode transmission") {
     }
 
     // High mode_transmissibility_multiplier (incorrectly ported: 1.0)
-    GlobalRNG::seed(trial * 200);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(2, 1);
       world.venues[0].type_id = 0;
@@ -1230,7 +1225,6 @@ TEST_CASE("H4: Plague multi-mode: animal_bite infects during bacteraemia") {
   const int N = 200;
 
   for (int trial = 0; trial < N; ++trial) {
-    GlobalRNG::seed(trial * 300);
     WorldState world = TestWorldFactory::createMinimalWorld(6, 1);
     world.venues[0].type_id = 0;
     world.people[0].infection = std::make_unique<Infection>(
@@ -1267,7 +1261,6 @@ TEST_CASE(
   const int N = 300;
 
   for (int trial = 0; trial < N; ++trial) {
-    GlobalRNG::seed(trial * 400);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(6, 1);
       world.venues[0].type_id = 0;
@@ -1283,7 +1276,6 @@ TEST_CASE(
           runTransmission(world, disease, locs, 6.5, 8.0, 1.0, trial * 400);
     }
 
-    GlobalRNG::seed(trial * 400);
     {
       WorldState world = TestWorldFactory::createMinimalWorld(6, 1);
       world.venues[0].type_id = 0;

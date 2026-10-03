@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "activity/activity_manager.h"
 #include "core/config.h"
 #include "doctest.h"
@@ -17,7 +16,7 @@ TEST_CASE("ActivityManager - Bug Fixes for Schedule Caching") {
   // Setup person with existing schedule_type_id (simulating HDF5 load)
   world.people[0].schedule_type_id = 1;  // "worker_schedule"
   world.people[0].cached_schedule_type_ =
-      nullptr;  // Bug condition: loaded from file, pointer is null
+      nullptr;  // Loaded state may have an id without a cached pointer.
 
   // Setup config
   Config config;
@@ -35,7 +34,7 @@ TEST_CASE("ActivityManager - Bug Fixes for Schedule Caching") {
   config.schedule.default_schedule_type = "worker_schedule";
   config.performance.precompute_schedules = false;
   config.performance.stochastic_activities = {
-      "work"};  // Make it stochastic to trigger Bug 2
+      "work"};  // Exercise the stochastic-activity path.
 
   // Check that we have valid registry string for the activity
   world.activity_names = {
@@ -50,7 +49,7 @@ TEST_CASE("ActivityManager - Bug Fixes for Schedule Caching") {
   SUBCASE("assignScheduleTypes correctly restores cached pointer") {
     manager.assignScheduleTypes();
 
-    // Bug 1 fix: cached_schedule_type_ should now be set
+    // Loading a schedule id must restore the cached schedule pointer.
     REQUIRE(world.people[0].cached_schedule_type_ != nullptr);
     CHECK(world.people[0].cached_schedule_type_->name == "worker_schedule");
   }
@@ -73,7 +72,7 @@ TEST_CASE("ActivityManager - Bug Fixes for Schedule Caching") {
     std::vector<PersonLocation> locations;
     locations.resize(world.people.size());
 
-    // This should not crash (Bug 2 fix)
+    // The null-safe schedule path must populate the location.
     manager.assignActivitiesFromSchedule(0, 0, locations);
 
     REQUIRE(locations.size() == 1);

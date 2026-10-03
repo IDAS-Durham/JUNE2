@@ -1,11 +1,9 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include "doctest.h"
-
 #include "activity/activity_manager.h"
 #include "activity/on_the_fly_venue_allocator.h"
 #include "activity/venue_resolve_context.h"
 #include "core/config.h"
 #include "core/world_state.h"
+#include "doctest.h"
 #include "epidemiology/calendar_event.h"
 #include "test_utils.h"
 
@@ -32,8 +30,7 @@ activity_rules:
 )";
 
 TEST_CASE("hasRule") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kBaseYaml);
-
+  auto allocator = allocatorFromYaml(kBaseYaml, "otf_allocator_test_");
   CHECK(allocator.hasRule("fair_attendance"));
   CHECK(allocator.hasRule("fair_accommodation"));
   CHECK(allocator.hasRule("pub_visit"));
@@ -50,23 +47,38 @@ struct AllocatorFixture {
     world.venue_type_names = {"fair", "guest_house", "pub"};
 
     GeographicalUnit gu;
-    gu.id = 0; gu.level_id = 0; gu.parent_id = -1; gu.name = "TestCounty";
+    gu.id = 0;
+    gu.level_id = 0;
+    gu.parent_id = -1;
+    gu.name = "TestCounty";
     world.geo_units.push_back(gu);
 
     // 2 fairs and 1 guest_house in geo_unit 0
     for (int i = 0; i < 2; ++i) {
-      Venue v; v.id = i; v.type_id = 0; v.geo_unit_id = 0;
+      Venue v;
+      v.id = i;
+      v.type_id = 0;
+      v.geo_unit_id = 0;
       world.venues.push_back(v);
     }
-    Venue gh; gh.id = 2; gh.type_id = 1; gh.geo_unit_id = 0;
+    Venue gh;
+    gh.id = 2;
+    gh.type_id = 1;
+    gh.geo_unit_id = 0;
     world.venues.push_back(gh);
 
     // 3 pubs in geo_unit 1
     GeographicalUnit gu2;
-    gu2.id = 1; gu2.level_id = 0; gu2.parent_id = -1; gu2.name = "OtherCounty";
+    gu2.id = 1;
+    gu2.level_id = 0;
+    gu2.parent_id = -1;
+    gu2.name = "OtherCounty";
     world.geo_units.push_back(gu2);
     for (int i = 0; i < 3; ++i) {
-      Venue p; p.id = 10 + i; p.type_id = 2; p.geo_unit_id = 1;
+      Venue p;
+      p.id = 10 + i;
+      p.type_id = 2;
+      p.geo_unit_id = 1;
       world.venues.push_back(p);
     }
 
@@ -76,7 +88,7 @@ struct AllocatorFixture {
 
 TEST_CASE_FIXTURE(AllocatorFixture,
                   "resolve hosting_geo_unit returns venues of correct type") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kBaseYaml);
+  auto allocator = allocatorFromYaml(kBaseYaml, "otf_allocator_test_");
   ctx.hosting_geo_unit_id = 0;
   ctx.resident_geo_unit_id = 1;
 
@@ -89,7 +101,7 @@ TEST_CASE_FIXTURE(AllocatorFixture,
 
 TEST_CASE_FIXTURE(AllocatorFixture,
                   "resolve hosting_geo_unit returns empty when nullopt") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kBaseYaml);
+  auto allocator = allocatorFromYaml(kBaseYaml, "otf_allocator_test_");
   ctx.hosting_geo_unit_id = std::nullopt;
   ctx.resident_geo_unit_id = 1;
 
@@ -100,7 +112,7 @@ TEST_CASE_FIXTURE(AllocatorFixture,
 
 TEST_CASE_FIXTURE(AllocatorFixture,
                   "resolve resident_geo_unit returns venues of correct type") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kBaseYaml);
+  auto allocator = allocatorFromYaml(kBaseYaml, "otf_allocator_test_");
   ctx.resident_geo_unit_id = 1;
 
   const auto& pool = allocator.resolve("pub_visit", ctx, world);
@@ -127,15 +139,20 @@ struct MultiLevelFixture {
 
     auto add_gu = [&](GeoUnitId id, uint8_t level, GeoUnitId parent) {
       GeographicalUnit gu;
-      gu.id = id; gu.level_id = level; gu.parent_id = parent;
+      gu.id = id;
+      gu.level_id = level;
+      gu.parent_id = parent;
       world.geo_units.push_back(gu);
     };
-    add_gu(10, 0, -1);   // district
-    add_gu(11, 1, 10);   // village1
-    add_gu(12, 1, 10);   // village2
+    add_gu(10, 0, -1);  // district
+    add_gu(11, 1, 10);  // village1
+    add_gu(12, 1, 10);  // village2
 
     auto add_pub = [&](VenueId id, GeoUnitId geo) {
-      Venue v; v.id = id; v.type_id = 0; v.geo_unit_id = geo;
+      Venue v;
+      v.id = id;
+      v.type_id = 0;
+      v.geo_unit_id = geo;
       world.venues.push_back(v);
     };
     add_pub(100, 11);
@@ -158,8 +175,10 @@ activity_rules:
 )";
 
 TEST_CASE_FIXTURE(MultiLevelFixture,
-                  "resolve resident_geo_unit with geo_unit_level returns full ancestor pool") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kDistrictLevelYaml);
+                  "resolve resident_geo_unit with geo_unit_level returns full "
+                  "ancestor pool") {
+  auto allocator =
+      allocatorFromYaml(kDistrictLevelYaml, "otf_allocator_test_");
   const auto& pool = allocator.resolve("pub_visit", ctx, world);
 
   REQUIRE(pool.size() == 3);
@@ -169,7 +188,8 @@ TEST_CASE_FIXTURE(MultiLevelFixture,
 }
 
 TEST_CASE_FIXTURE(MultiLevelFixture,
-                  "resolve resident_geo_unit with geo_unit_level returns empty when ancestor not found") {
+                  "resolve resident_geo_unit with geo_unit_level returns empty "
+                  "when ancestor not found") {
   static constexpr std::string_view kMissingLevelYaml = R"(
 rules:
   pub_region_rule:
@@ -179,14 +199,15 @@ rules:
 activity_rules:
   pub_visit: pub_region_rule
 )";
-  auto allocator = OnTheFlyVenueAllocator::fromString(kMissingLevelYaml);
+  auto allocator =
+      allocatorFromYaml(kMissingLevelYaml, "otf_allocator_test_");
   const auto& pool = allocator.resolve("pub_visit", ctx, world);
   CHECK(pool.empty());
 }
 
 TEST_CASE_FIXTURE(AllocatorFixture,
                   "resolve returns empty when no matching venues in geo_unit") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kBaseYaml);
+  auto allocator = allocatorFromYaml(kBaseYaml, "otf_allocator_test_");
   // geo_unit 0 has no pubs
   ctx.resident_geo_unit_id = 0;
 
@@ -199,8 +220,10 @@ TEST_CASE_FIXTURE(AllocatorFixture,
 // checkConsistency
 // =============================================================================
 
-TEST_CASE_FIXTURE(MultiLevelFixture, "checkConsistency throws for unknown geo_unit_level") {
-  auto allocator = OnTheFlyVenueAllocator::fromString(kDistrictLevelYaml);
+TEST_CASE_FIXTURE(MultiLevelFixture,
+                  "checkConsistency throws for unknown geo_unit_level") {
+  auto allocator =
+      allocatorFromYaml(kDistrictLevelYaml, "otf_allocator_test_");
   CHECK_NOTHROW(allocator.checkConsistency(world));
 
   static constexpr std::string_view kBadLevelYaml = R"(
@@ -212,7 +235,8 @@ rules:
 activity_rules:
   pub_visit: pub_bad_rule
 )";
-  auto bad_allocator = OnTheFlyVenueAllocator::fromString(kBadLevelYaml);
+  auto bad_allocator =
+      allocatorFromYaml(kBadLevelYaml, "otf_allocator_test_");
   CHECK_THROWS_AS(bad_allocator.checkConsistency(world), std::runtime_error);
 }
 
@@ -220,50 +244,48 @@ activity_rules:
 // Integration: OTF allocator drives venue assignment for a calendar-event hop
 // =============================================================================
 
-namespace {
-
-// Helper: resolve allowed_activity_indices from allowed_activities.
-void resolveSlotIndicesOtf(TimeSlot& slot, const WorldState& world) {
-  slot.allowed_activity_indices.clear();
-  for (const auto& act : slot.allowed_activities) {
-    int idx = world.getActivityIndex(act);
-    if (idx >= 0)
-      slot.allowed_activity_indices.push_back(static_cast<int16_t>(idx));
-  }
-}
-
-}  // namespace
-
 TEST_CASE(
-    "OTF allocator resolves venue for calendar-event hop with no pre-baked venues") {
+    "OTF allocator resolves venue for calendar-event hop with no pre-baked "
+    "venues") {
   // World: two fair venues in geo_unit 0; person has no activity_meta for
   // fair_attendance so getActivityVenues returns empty → must go through OTF.
   WorldState world;
   world.geo_level_names = {"county"};
   world.venue_type_names = {"fair"};
   world.activity_names = {"residence", "fair_attendance", "none", "dead",
-                           "no_venue"};
+                          "no_venue"};
   world.schedule_type_names = {"regular", "fair_hop"};
 
   GeographicalUnit gu;
-  gu.id = 0; gu.parent_id = -1; gu.level_id = 0; gu.name = "TestCounty";
+  gu.id = 0;
+  gu.parent_id = -1;
+  gu.level_id = 0;
+  gu.name = "TestCounty";
   world.geo_units.push_back(gu);
 
   for (int i = 0; i < 2; ++i) {
-    Venue v; v.id = i; v.type_id = 0; v.geo_unit_id = 0;
+    Venue v;
+    v.id = i;
+    v.type_id = 0;
+    v.geo_unit_id = 0;
     world.venues.push_back(v);
   }
 
   Person& person = world.people.emplace_back();
-  person.id = 0; person.geo_unit_id = 0;
+  person.id = 0;
+  person.geo_unit_id = 0;
   world.buildIndices();
 
   // Temporary hop schedule with a single fair_attendance slot.
-  ScheduleType regular; regular.name = "regular";
-  ScheduleType fair_hop; fair_hop.name = "fair_hop"; fair_hop.is_temporary = true;
-  TimeSlot fair_slot; fair_slot.name = "fair_slot";
+  ScheduleType regular;
+  regular.name = "regular";
+  ScheduleType fair_hop;
+  fair_hop.name = "fair_hop";
+  fair_hop.is_temporary = true;
+  TimeSlot fair_slot;
+  fair_slot.name = "fair_slot";
   fair_slot.allowed_activities = {"fair_attendance"};
-  resolveSlotIndicesOtf(fair_slot, world);
+  resolveCalendarEventSlotIndices(fair_slot, world);
   fair_hop.flat_slots.push_back(fair_slot);
 
   Config config;
@@ -304,7 +326,7 @@ rules:
 activity_rules:
   fair_attendance: fair_rule
 )";
-  auto otf_allocator = OnTheFlyVenueAllocator::fromString(kOtfYaml);
+  auto otf_allocator = allocatorFromYaml(kOtfYaml, "otf_allocator_test_");
 
   ActivityManager activity_manager(world, config);
   activity_manager.setCalendarEventManager(&calendar_manager);

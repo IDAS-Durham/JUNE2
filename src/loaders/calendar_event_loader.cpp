@@ -1,6 +1,5 @@
 #include "loaders/calendar_event_loader.h"
 
-#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -67,7 +66,6 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
         event.duration_days = 1;
       }
       event.compliance_rate = std::stof(get("compliance_rate"));
-      event.category = get("category");
       event.attendee_filters = row.criteria;
       for (SelectionCriterion& c : event.attendee_filters) {
         c.resolveOrThrow(world, "attendee filter");
@@ -92,15 +90,4 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
 
   return events_by_day;
 }
-
-std::vector<std::vector<CalendarEvent>> CalendarEventLoader::load(
-    const std::string& path, const WorldState& world,
-    const std::string& start_date, int num_sim_days) {
-  std::ifstream file(path);
-  if (!file.is_open()) {
-    throw std::runtime_error("CalendarEventLoader: cannot open '" + path + "'");
-  }
-  return parse(file, world, start_date, num_sim_days, path);
-}
-
 }  // namespace june

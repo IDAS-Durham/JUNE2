@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <memory>
 #include <vector>
 
@@ -57,7 +56,6 @@ TEST_CASE("InteractionManager - Venue Matrix Lookups via Resolved Config") {
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   // No fomite modes configured (fomite_configs is empty by default)
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;
@@ -114,12 +112,9 @@ TEST_CASE(
   ContactMatrixConfig cm = ConfigLoader::loadContactMatrices(
       "tests/configs/romantic_regression.yaml");
 
-  // 2. Set up a world with BOTH a physical venue at venue_type_id 0 AND a
-  // virtual encounter at encounter_type_id 0. The integer id collision is
-  // the exact precondition that triggered the aliasing bug: passing
-  // encounter_type_id through the venue-indexed matrix arrays would have
-  // pulled the office matrix (C=9.0) instead of romantic_encounter
-  // (C=1.0). The difference is what this test detects.
+  // 2. Give a physical venue type and a virtual encounter the same integer
+  // id. The virtual lookup must still use the encounter id, selecting the
+  // romantic_encounter matrix (C=1.0) rather than the office matrix (C=9.0).
   WorldState world;
   world.venue_type_names = {"office"};                  // venue_type_id 0
   world.encounter_type_names = {"romantic_encounter"};  // enc_type_id 0
@@ -144,9 +139,9 @@ TEST_CASE(
   world.buildIndices();
 
   // 3. Wire the virtual encounter → matrix mapping the same way
-  // CoordinatedEncounterConfig::resolve does in production. The hot path
-  // looks up virtual matrices by encounter_type_id, not by name, so this
-  // map is the canonical entry point.
+  // CoordinatedEncounterConfig::resolve does in production. Runtime lookup
+  // uses encounter_type_id rather than the matrix name, so this map is the
+  // canonical entry point.
   cm.virtual_matrix_names[0] = "romantic_encounter";
   cm.virtual_encounter_type_ids = {0};
 
@@ -154,11 +149,8 @@ TEST_CASE(
   cm.allow_default_matrix = true;
   finalizeContactMatrices(cm, world);
 
-  // Direct pointer assertions: the lookup keyed by encounter_type_id must
-  // resolve to the romantic_encounter matrix (C=1.0), NOT the office
-  // matrix (C=9.0) that sits at the colliding venue_type_id. Before the
-  // fix, venue-keyed and encounter-keyed lookups were conflated and this
-  // would return the office matrix.
+  // The virtual lookup must use encounter_type_id independently of the
+  // venue-type lookup. The colliding ids ensure the two tables cannot alias.
   const ContactMatrix& by_enc = cm.getVirtualBinStructure(0);
   REQUIRE(!by_enc.contacts.empty());
   REQUIRE(!by_enc.contacts[0].empty());
@@ -176,7 +168,6 @@ TEST_CASE(
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;

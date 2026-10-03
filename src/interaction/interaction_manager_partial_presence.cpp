@@ -445,17 +445,7 @@ int InteractionManager::resolvePartialPresenceInfections(
   int world_size = 1;
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   if (world_size > 1) {
-    int local_count = static_cast<int>(packed.size());
-    std::vector<int> counts(world_size);
-    MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
-                  MPI_COMM_WORLD);
-    std::vector<int> displs;
-    int total = 0;
-    mpi_utils::computeDisplacements(counts, displs, total);
-    std::vector<int32_t> global(total, 0);
-    MPI_Allgatherv(packed.data(), local_count, MPI_INT, global.data(),
-                   counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
-    packed.swap(global);
+    packed = mpi_utils::allgathervInt32(packed);
   }
 #endif
 

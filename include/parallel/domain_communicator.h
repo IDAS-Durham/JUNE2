@@ -4,11 +4,7 @@
 
 #include <mpi.h>
 
-#include <map>
 #include <optional>
-#include <set>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "activity/coordinated_encounter_types.h"

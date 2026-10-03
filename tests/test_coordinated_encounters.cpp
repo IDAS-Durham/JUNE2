@@ -27,28 +27,24 @@
  *          If at least one invitee accepted, a CoordinatedEncounter is created
  *          with all participants.
  *
- * Known bugs this test suite guards against:
+ * Invariants this test suite guards against:
  *
- *  Bug #1: Multiple people ending up in a venue restricted to pairs.
+ *  Pair-only encounters have exactly one invitee and two participants.
  *          invite_distribution fixed(1) means "invite exactly 1",
- *          so finalized encounters must have exactly 2 participants.
+ *          so a finalized encounter must have exactly 2 participants.
  *
- *  Bug #2: Wrong contact matrix applied to virtual encounters.
+ *  Virtual encounters use their configured contact matrix.
  *          virtual_contact_matrix must resolve to the correct matrix name,
- *          not a fallback or a physical venue's matrix.
+ *          not a fallback or a physical venue matrix.
  *
- *  Bug #3: Physical venue IDs colliding with virtual venue IDs, causing
- *          encounters to be logged as happening at a "classroom" when
- *          they should be at a virtual venue. Fixed by using negative IDs
- *          for all virtual venues.
+ *  Physical and virtual venue IDs occupy disjoint ranges. Virtual venues use
+ *          negative IDs, so a virtual encounter cannot be logged as physical.
  *
- *  Bug #4 (NEW): Virtual encounters bypassed schedule validation entirely.
- *          A worker would accept a romantic encounter during work hours.
- *          Fixed by removing the unconditional schedule_allows = true
- *          for virtual encounters.
+ *  Virtual encounters still validate the invitee's trigger-slot schedule;
+ *          a person whose schedule disallows the trigger activity rejects the
+ *          proposal.
  */
 
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -270,7 +266,7 @@ static EncounterTestWorld buildEncounterWorld(
 
   tw.config.coordinated_encounters.encounters = {def};
 
-  // ---- Contact Matrices (needed for getVirtualVenueTypeId) ----
+  // ---- Contact Matrices (needed for cached virtual venue IDs) ----
   tw.config.contact_matrices.matrices["home"] = ContactMatrix();
   tw.config.contact_matrices.matrices["office"] = ContactMatrix();
   tw.config.contact_matrices.matrices[venue_type_name] = ContactMatrix();
@@ -555,9 +551,9 @@ TEST_CASE(
   /**
    * SCENARIO: A physical proposal carries the venue type every downstream
    * participant reads, so manufacturing one whose type is unresolvable must
-   * fail loudly. Without the check, allowed_venue_mask only holds types below
-   * 32, so a 255 proposal is silently rejected later as a no-matching-def
-   * warning — indistinguishable from "the config does not allow this type".
+   * throw. Without the check, allowed_venue_mask only holds types below 32,
+   * so a 255 proposal is later rejected as a no-matching-def warning that is
+   * indistinguishable from a configuration that disallows this type.
    *
    * The reachable way to build one: a registry with the venue type at index
    * 255, aliasing kUnknownVenueTypeId.
@@ -596,7 +592,7 @@ TEST_CASE(
   /**
    * SCENARIO: A virtual encounter with virtual_contact_matrix =
    * "romantic_encounter" should resolve to a specific venue_type_id via
-   * getVirtualVenueTypeId(). The processProposals method uses this to match the
+   * cached virtual venue type ID. processProposals uses this to match the
    * proposal to the correct encounter definition.
    *
    * We verify that a proposal with the correct venue_type_id is ACCEPTED
@@ -1343,10 +1339,10 @@ TEST_CASE("5c. Stress — resetDaily prevents venue ID collision across days") {
 }
 
 // =============================================================================
-// SECTION 6: Regression Tests — Known Bug Scenarios
+// SECTION 6: Regression Tests — Encounter Invariants
 //
-// These tests reconstruct the exact conditions that triggered bugs during
-// development, to ensure they never recur.
+// These tests reconstruct boundary conditions that must remain stable as the
+// encounter pipeline changes.
 // =============================================================================
 
 TEST_CASE(
@@ -2350,32 +2346,6 @@ TEST_CASE("7k. Venue gate — a physical encounter gates on its own venue type")
   CHECK(injected.empty());
 }
 
-/**
- * Builds a Disease whose single stage is "sick" for 100 days, so
- * getCurrentSymptomId is the same at every time the test asks about. The
- * section's createMinimalDisease has no trajectories, which is why 7a/7b have
- * to hedge on whether the symptom fired.
- */
-static Disease buildAlwaysSickDisease() {
-  TransmissionParams transmission;
-  transmission.mode = InfectiousnessMode::STAGE_DRIVEN;
-  auto curve = std::make_shared<ConstantCurve>(1.0);
-  transmission.stage_curves["sick"] = curve;
-  transmission.symptom_id_curves = {nullptr, curve};
-
-  std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"sick", 1, 1}};
-  DiseaseStageSettings stage_settings;
-  stage_settings.recovered_stages = {"healthy"};
-
-  TrajectoryDefinition trajectory;
-  trajectory.selection_key = "general";
-  trajectory.severity = 1.0;
-  trajectory.stages.push_back({"sick", {"constant", {{"value", 100.0}}}});
-
-  return Disease("TestDisease", symptom_tags, stage_settings, {trajectory}, {},
-                 transmission);
-}
-
 TEST_CASE("7l. Eligibility asks the policy question and pins nobody") {
   /**
    * SCENARIO:
@@ -2393,7 +2363,7 @@ TEST_CASE("7l. Eligibility asks the policy question and pins nobody") {
       2, 1, "pub", "friendships", "pub_meetups", false, "", {"leisure"},
       InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 1}, 1.0, 1.0);
 
-  Disease disease = buildAlwaysSickDisease();
+  Disease disease = makeAlwaysSickDisease();
 
   PolicyManager pm(tw.world);
   SymptomPolicy freeze_when_sick;
@@ -3101,16 +3071,13 @@ TEST_CASE(
 // =============================================================================
 // SECTION: Frequency-group budget enforcement
 //
-// A frequency_group caps proposals per (person, group) per day at ONE,
-// regardless of how many encounter types share the group. This is the
-// load-bearing invariant behind realistic GBMSM encounter rates.
+// A frequency_group permits at most one proposal per person and group per day,
+// regardless of how many encounter types share the group. This cap protects
+// the configured daily encounter rate.
 //
-// Intent from coordinated_encounter_manager.cpp:423-452:
-//   - Each (person, group) resolves its daily budget-hit ONCE per day.
-//   - If the hit is false (budget missed), every encounter type in the
-//     group short-circuits for this person for this day.
-//   - Once a hit produces an actual encounter (freq_group_committed_),
-//     all other encounter types in the same group short-circuit too.
+// For each person and group, the daily budget result is resolved once. A missed
+// budget suppresses every encounter type in the group for that day; after one
+// type commits an encounter, the other types in the group are also suppressed.
 //
 // Failure modes a buggy implementation could produce:
 //   - Multiple proposals per day from the same person in the same group
@@ -3136,7 +3103,8 @@ static void installFrequencyGroup(EncounterTestWorld& tw,
   tw.config.coordinated_encounters.frequency_groups[group_name] = fg;
 }
 
-TEST_CASE("freq_group — a row filter the world cannot answer is a config error") {
+TEST_CASE(
+    "freq_group — a row filter the world cannot answer is a config error") {
   auto tw = buildEncounterWorld(
       2, 0, "pub", "friendships", "romantic_encounters", true,
       "romantic_encounter", {"leisure"},
@@ -3464,7 +3432,7 @@ TEST_CASE("9c. Eligibility reads the instance, not the lookup tables") {
    *   A Virtual Encounter whose encounter_type_id is absent from every
    *   EncounterLookups map — the shape a def name missing from the world's
    *   encounter-type registry used to produce. Trigger activities are
-   *   supplied by hand so the policy is genuinely consulted; nothing in the
+   *   supplied by hand so the policy is evaluated; nothing in the
    *   lookups says the encounter is virtual.
    *
    *   The Slot Venue Type must still be absent, so the venue gate on "pub"

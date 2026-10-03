@@ -33,7 +33,7 @@ struct TimeSlot;
 //
 // Dealing is config-driven and capacity-free: per slot, the number of groups
 // for a venue emerges as max(1, ceil(N_global_riders / target_group_size)),
-// where target_group_size is a per-venue-type config knob (roughly vehicle
+// where target_group_size is a per-venue-type configuration value (roughly vehicle
 // occupancy). Assignment is a round-robin deal over a canonical hash-sort of
 // the GLOBAL rider list, so groups differ in size by at most 1 and every rank
 // computes bit-identical assignments for the same rider without exchanging

@@ -36,6 +36,6 @@ int main(int argc, char* argv[]) {
   std::cout << "Inputs (" << input_files.size() << "):\n";
   for (const auto& f : input_files) std::cout << "  " << f << "\n";
 
-  june::EventMerger::mergeEventFiles(input_files, output_file);
+  june::mergeEventFiles(input_files, output_file);
   return 0;
 }

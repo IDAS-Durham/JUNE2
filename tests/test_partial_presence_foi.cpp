@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -19,22 +18,6 @@
 #endif
 
 using namespace june;
-
-// The RuntimeGroupAllocator calls MPI_Comm_size during allocateForSlot when
-// the build has USE_MPI defined, even with a single process. Initialise MPI
-// here so a serial doctest run doesn't abort.
-int main(int argc, char** argv) {
-#ifdef USE_MPI
-  MPI_Init(&argc, &argv);
-#endif
-  doctest::Context context;
-  context.applyCommandLine(argc, argv);
-  int res = context.run();
-#ifdef USE_MPI
-  MPI_Finalize();
-#endif
-  return res;
-}
 
 // =============================================================================
 // Partial-presence FOI integration tests.
@@ -70,7 +53,6 @@ std::unique_ptr<Disease> makeUnitConstantDisease() {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto cur = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["infectious"] = cur;
   trans.symptom_id_curves = {nullptr, cur};
 
   std::vector<TrajectoryDefinition> trajectories;
@@ -337,8 +319,8 @@ TEST_CASE("partial-presence FOI: bin isolation yields zero cross-bin lambda") {
   const double delta_hours = 1.0;
   allocator.allocateForSlot(0, 0, slot, 0.0, delta_hours, locs);
 
-  // tgs=1, 2 riders → 2 bins, one rider in each. Different bins is the
-  // load-bearing invariant for this test; assert it explicitly.
+  // With tgs=1, the two riders must occupy different bins; assert that
+  // invariant explicitly.
   REQUIRE(allocator.getNumGroups(line) == 2);
   const uint16_t bin_a = allocator.getGroupIndex(line, 0);
   const uint16_t bin_b = allocator.getGroupIndex(line, 1);

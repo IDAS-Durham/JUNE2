@@ -8,13 +8,12 @@
 #include <mpi.h>
 #endif
 #include <algorithm>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "core/config.h"
 #include "core/world_state.h"
-#include "utils/memory_utils.h"
-#include "utils/time_utils.h"
 
 namespace june {
 
@@ -42,10 +41,10 @@ class HDF5Loader {
   // chunk_size: number of geo_units to process at once
   static WorldState loadDomainChunked(
       const std::string& filename,
-      const std::unordered_set<GeoUnitId>& owned_geo_units, size_t chunk_size,
+      const std::unordered_set<GeoUnitId>* owned_geo_units, size_t chunk_size,
       const Config& config);
 
-  explicit HDF5Loader(const std::string& filename, const Config& config);
+  explicit HDF5Loader(const std::string& filename);
 
   void loadGeography();
 
@@ -100,7 +99,6 @@ class HDF5Loader {
 
  private:
   H5::H5File file_;
-  const Config& config_;
 
   std::unordered_map<std::string, H5::DataSet> dataset_cache_;
   std::unordered_map<std::string, H5T_class_t> type_cache_;
@@ -109,6 +107,48 @@ class HDF5Loader {
 // =============================================================================
 // Template implementations (must be in header so callers can instantiate)
 // =============================================================================
+
+namespace hdf5_loader_detail {
+
+template <typename T>
+inline const H5::DataType& nativeType() {
+  if constexpr (std::is_same_v<T, int32_t>) {
+    return H5::PredType::NATIVE_INT32;
+  } else if constexpr (std::is_same_v<T, float>) {
+    return H5::PredType::NATIVE_FLOAT;
+  } else if constexpr (std::is_same_v<T, double>) {
+    return H5::PredType::NATIVE_DOUBLE;
+  } else if constexpr (std::is_same_v<T, uint16_t>) {
+    return H5::PredType::NATIVE_UINT16;
+  } else if constexpr (std::is_same_v<T, int16_t>) {
+    return H5::PredType::NATIVE_INT16;
+  } else if constexpr (std::is_same_v<T, uint8_t>) {
+    return H5::PredType::NATIVE_UINT8;
+  } else if constexpr (std::is_same_v<T, int64_t>) {
+    return H5::PredType::NATIVE_INT64;
+  } else if constexpr (std::is_same_v<T, uint64_t>) {
+    return H5::PredType::NATIVE_UINT64;
+  } else if constexpr (std::is_same_v<T, bool>) {
+    return H5::PredType::NATIVE_UINT8;
+  } else {
+    static_assert(std::is_same_v<T, void>, "unsupported HDF5 numeric type");
+  }
+}
+
+template <typename T, typename ReadFn>
+inline void readNumericValues(std::vector<T>& result, ReadFn&& read) {
+  if (result.empty()) return;
+
+  if constexpr (std::is_same_v<T, bool>) {
+    std::vector<uint8_t> temp(result.size());
+    read(temp.data(), nativeType<bool>());
+    for (size_t i = 0; i < result.size(); ++i) result[i] = temp[i] != 0;
+  } else {
+    read(result.data(), nativeType<T>());
+  }
+}
+
+}  // namespace hdf5_loader_detail
 
 template <typename T>
 inline std::vector<T> HDF5Loader::readNumericDataset(const std::string& path) {
@@ -121,32 +161,10 @@ inline std::vector<T> HDF5Loader::readNumericDataset(const std::string& path) {
 
   std::vector<T> result(count);
 
-  if (count > 0) {
-    if constexpr (std::is_same_v<T, int32_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_INT32);
-    } else if constexpr (std::is_same_v<T, float>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_FLOAT);
-    } else if constexpr (std::is_same_v<T, double>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_DOUBLE);
-    } else if constexpr (std::is_same_v<T, uint16_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_UINT16);
-    } else if constexpr (std::is_same_v<T, int16_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_INT16);
-    } else if constexpr (std::is_same_v<T, uint8_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_UINT8);
-    } else if constexpr (std::is_same_v<T, int64_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_INT64);
-    } else if constexpr (std::is_same_v<T, uint64_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_UINT64);
-    } else if constexpr (std::is_same_v<T, bool>) {
-      // Read as uint8 and convert
-      std::vector<uint8_t> temp(count);
-      dataset.read(temp.data(), H5::PredType::NATIVE_UINT8);
-      for (size_t i = 0; i < count; ++i) {
-        result[i] = temp[i] != 0;
-      }
-    }
-  }
+  hdf5_loader_detail::readNumericValues(
+      result, [&dataset](void* data, const H5::DataType& type) {
+        dataset.read(data, type);
+      });
 
   return result;
 }
@@ -168,40 +186,11 @@ inline std::vector<T> HDF5Loader::readNumericDatasetRange(
 
   std::vector<T> result(count);
 
-  if (count > 0) {
-    if constexpr (std::is_same_v<T, int32_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_INT32, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, float>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_FLOAT, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, double>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_DOUBLE, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, uint16_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_UINT16, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, int16_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_INT16, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, uint8_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_UINT8, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, int64_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_INT64, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, uint64_t>) {
-      dataset.read(result.data(), H5::PredType::NATIVE_UINT64, memspace,
-                   dataspace);
-    } else if constexpr (std::is_same_v<T, bool>) {
-      std::vector<uint8_t> temp(count);
-      dataset.read(temp.data(), H5::PredType::NATIVE_UINT8, memspace,
-                   dataspace);
-      for (size_t i = 0; i < count; ++i) {
-        result[i] = temp[i] != 0;
-      }
-    }
-  }
+  hdf5_loader_detail::readNumericValues(
+      result,
+      [&dataset, &memspace, &dataspace](void* data, const H5::DataType& type) {
+        dataset.read(data, type, memspace, dataspace);
+      });
 
   return result;
 }
@@ -232,17 +221,8 @@ inline std::vector<std::vector<T>> HDF5Loader::read2DNumericDatasetRange(
   H5::DataSpace memspace(2, count);
 
   std::vector<T> flat(row_count * cols);
-  H5::DataType h5_type;
-  if constexpr (std::is_same_v<T, int32_t>)
-    h5_type = H5::PredType::NATIVE_INT32;
-  else if constexpr (std::is_same_v<T, float>)
-    h5_type = H5::PredType::NATIVE_FLOAT;
-  else if constexpr (std::is_same_v<T, double>)
-    h5_type = H5::PredType::NATIVE_DOUBLE;
-  else
-    h5_type = dataset.getDataType();
-
-  dataset.read(flat.data(), h5_type, memspace, dataspace);
+  dataset.read(flat.data(), hdf5_loader_detail::nativeType<T>(), memspace,
+               dataspace);
 
   // Fast repack into 2D structure
   std::vector<std::vector<T>> result(row_count, std::vector<T>(cols));

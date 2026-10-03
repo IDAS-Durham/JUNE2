@@ -1,4 +1,5 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <algorithm>
+
 #include "core/world_state.h"
 #include "doctest.h"
 #include "test_utils.h"
@@ -26,7 +27,14 @@ TEST_CASE("WorldState basic functionality") {
     auto people_in_city = world.getPeopleInUnit(0);
     CHECK(people_in_city.size() == 10);
 
-    auto city_by_name = world.getPeopleInUnit("city", "TestCity");
+    auto city = std::find_if(
+        world.geo_units.begin(), world.geo_units.end(), [&](const auto& unit) {
+          return unit.name == "TestCity" &&
+                 unit.level_id < world.geo_level_names.size() &&
+                 world.geo_level_names[unit.level_id] == "city";
+        });
+    REQUIRE(city != world.geo_units.end());
+    auto city_by_name = world.getPeopleInUnit(city->id);
     CHECK(city_by_name.size() == 10);
   }
 }

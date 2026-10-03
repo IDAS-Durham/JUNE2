@@ -1,6 +1,5 @@
 #pragma once
 
-#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -20,8 +19,6 @@ class WorldState;
 class OnTheFlyVenueAllocator {
  public:
   explicit OnTheFlyVenueAllocator(const std::string& config_path);
-
-  static OnTheFlyVenueAllocator fromString(std::string_view yaml);
 
   bool hasRule(std::string_view activity_name) const;
 
@@ -59,45 +56,6 @@ class OnTheFlyVenueAllocator {
     std::string geo_unit_level;  // optional; used by resident_geo_unit
   };
 
-  // Cache key: (rule_name, geo_unit_id)
-  struct CacheKey {
-    std::string rule_name;
-    GeoUnitId geo_unit_id;
-  };
-  // Non-owning probe key, avoids copying rule_name to test a cache hit.
-  struct CacheKeyView {
-    std::string_view rule_name;
-    GeoUnitId geo_unit_id;
-  };
-  struct CacheKeyHash {
-    using is_transparent = void;
-    std::size_t operator()(const CacheKey& k) const {
-      return hashOf(k.rule_name, k.geo_unit_id);
-    }
-    std::size_t operator()(const CacheKeyView& k) const {
-      return hashOf(k.rule_name, k.geo_unit_id);
-    }
-
-   private:
-    static std::size_t hashOf(std::string_view rule_name,
-                              GeoUnitId geo_unit_id) {
-      return std::hash<std::string_view>{}(rule_name) ^
-             (std::hash<GeoUnitId>{}(geo_unit_id) << 32);
-    }
-  };
-  struct CacheKeyEqual {
-    using is_transparent = void;
-    bool operator()(const CacheKey& a, const CacheKey& b) const {
-      return a.rule_name == b.rule_name && a.geo_unit_id == b.geo_unit_id;
-    }
-    bool operator()(const CacheKey& a, const CacheKeyView& b) const {
-      return a.rule_name == b.rule_name && a.geo_unit_id == b.geo_unit_id;
-    }
-    bool operator()(const CacheKeyView& a, const CacheKey& b) const {
-      return a.rule_name == b.rule_name && a.geo_unit_id == b.geo_unit_id;
-    }
-  };
-
   // Transparent hash so callers can probe with string_view without
   // materialising a std::string.
   struct TransparentStringHash {
@@ -109,12 +67,11 @@ class OnTheFlyVenueAllocator {
 
   explicit OnTheFlyVenueAllocator(const YAML::Node& root);
 
-  std::unordered_map<std::string, std::string, TransparentStringHash,
+  std::unordered_map<std::string, RuleConfig, TransparentStringHash,
                      std::equal_to<>>
-      activity_to_rule_;
-  std::unordered_map<std::string, RuleConfig> rules_;
-  std::unordered_map<CacheKey, std::vector<VenueId>, CacheKeyHash,
-                     CacheKeyEqual>
+      rules_;
+  std::unordered_map<std::string,
+                     std::unordered_map<GeoUnitId, std::vector<VenueId>>>
       cache_;
 
   // Set by precomputeAllPools(). Once sealed, a cache miss in resolve() is a

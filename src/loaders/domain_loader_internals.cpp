@@ -1,4 +1,4 @@
-#include "loaders/domain_loader_internals.h"
+#include "domain_loader_internals.h"
 
 #include <algorithm>
 #include <iostream>

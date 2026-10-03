@@ -2,11 +2,8 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <fstream>
-#include <iostream>
 #include <optional>
 #include <span>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -46,84 +43,33 @@ class WorldState {
   std::unordered_map<std::string, std::vector<std::string>>
       venue_property_value_registries;
 
-  std::vector<std::string> geo_unit_property_names;
-  std::unordered_map<std::string, std::vector<std::string>>
-      geo_unit_property_value_registries;
-
   // Helper to get indices from registries
   int getActivityIndex(const std::string& name) const {
-    auto it = std::find(activity_names.begin(), activity_names.end(), name);
-    int idx = (it != activity_names.end())
-                  ? static_cast<int>(std::distance(activity_names.begin(), it))
-                  : -1;
-    return idx;
+    return indexOf(activity_names, name);
   }
 
   int getVenueTypeIndex(const std::string& name) const {
-    auto it = std::find(venue_type_names.begin(), venue_type_names.end(), name);
-    return (it != venue_type_names.end())
-               ? static_cast<int>(std::distance(venue_type_names.begin(), it))
-               : -1;
-  }
-
-  int getSubsetTypeIndex(const std::string& name) const {
-    auto it =
-        std::find(subset_type_names.begin(), subset_type_names.end(), name);
-    return (it != subset_type_names.end())
-               ? static_cast<int>(std::distance(subset_type_names.begin(), it))
-               : -1;
+    return indexOf(venue_type_names, name);
   }
 
   int getNetworkTypeIndex(const std::string& name) const {
-    auto it = std::find(network_names.begin(), network_names.end(), name);
-    return (it != network_names.end())
-               ? static_cast<int>(std::distance(network_names.begin(), it))
-               : -1;
+    return indexOf(network_names, name);
   }
 
   int getScheduleTypeIndex(const std::string& name) const {
-    auto it =
-        std::find(schedule_type_names.begin(), schedule_type_names.end(), name);
-    return (it != schedule_type_names.end())
-               ? static_cast<int>(
-                     std::distance(schedule_type_names.begin(), it))
-               : -1;
+    return indexOf(schedule_type_names, name);
   }
 
   int getEncounterTypeIndex(const std::string& name) const {
-    auto it = std::find(encounter_type_names.begin(),
-                        encounter_type_names.end(), name);
-    return (it != encounter_type_names.end())
-               ? static_cast<int>(
-                     std::distance(encounter_type_names.begin(), it))
-               : -1;
+    return indexOf(encounter_type_names, name);
   }
 
   int getPersonPropertyIndex(const std::string& name) const {
-    auto it = std::find(person_property_names.begin(),
-                        person_property_names.end(), name);
-    return (it != person_property_names.end())
-               ? static_cast<int>(
-                     std::distance(person_property_names.begin(), it))
-               : -1;
+    return indexOf(person_property_names, name);
   }
 
   int getVenuePropertyIndex(const std::string& name) const {
-    auto it = std::find(venue_property_names.begin(),
-                        venue_property_names.end(), name);
-    return (it != venue_property_names.end())
-               ? static_cast<int>(
-                     std::distance(venue_property_names.begin(), it))
-               : -1;
-  }
-
-  int getGeoUnitPropertyIndex(const std::string& name) const {
-    auto it = std::find(geo_unit_property_names.begin(),
-                        geo_unit_property_names.end(), name);
-    return (it != geo_unit_property_names.end())
-               ? static_cast<int>(
-                     std::distance(geo_unit_property_names.begin(), it))
-               : -1;
+    return indexOf(venue_property_names, name);
   }
 
   // GLOBAL FLAT STORAGE
@@ -143,12 +89,7 @@ class WorldState {
   std::vector<std::unordered_map<uint32_t, float>> membership_field_values;
 
   int getMembershipFieldIndex(const std::string& name) const {
-    auto it = std::find(membership_field_names.begin(),
-                        membership_field_names.end(), name);
-    return (it != membership_field_names.end())
-               ? static_cast<int>(
-                     std::distance(membership_field_names.begin(), it))
-               : -1;
+    return indexOf(membership_field_names, name);
   }
 
   // Sentinel for "field absent for this membership". Matches the value MAY
@@ -181,8 +122,6 @@ class WorldState {
   std::vector<Subset> subsets;
   std::vector<PersonId> subset_members;
   std::vector<int32_t> venue_properties;
-  std::vector<int32_t> geo_unit_properties;
-
   // Lookup maps
   std::unordered_map<PersonId, size_t> person_index;  // id -> index in people
   std::unordered_map<VenueId, size_t> venue_index;    // id -> index in venues
@@ -202,8 +141,9 @@ class WorldState {
   //
   // venue_type_by_id is indexed by VenueId and covers every Venue in the world,
   // not just this rank's, so that kUnknownVenueTypeId means "no such Venue" and
-  // never "not mine". Ids naming no Venue are holes holding kUnknownVenueTypeId.
-  // Empty only for a hand-built WorldState, where getVenue() is total.
+  // never "not mine". Ids naming no Venue are holes holding
+  // kUnknownVenueTypeId. Empty only for a hand-built WorldState, where
+  // getVenue() is total.
   std::vector<uint8_t> venue_type_by_id;
   std::unordered_map<VenueId, GeoUnitId> global_venue_geo_unit_map;
   // type_name → sorted list of all VenueIds of that type (globally)
@@ -264,8 +204,6 @@ class WorldState {
   GeographicalUnit* getGeoUnit(GeoUnitId id);
   const GeographicalUnit* getGeoUnit(GeoUnitId id) const;
 
-  std::vector<Venue*> getVenuesByType(const std::string& type);
-
   // Return ids of all venues of `venue_type_name` located in
   // `hosting_geo_unit_id` or any of its descendants. Sorted by venue_id for
   // deterministic assignment.
@@ -284,8 +222,6 @@ class WorldState {
 
   // Get all people in a geographic unit (including descendants)
   std::vector<Person*> getPeopleInUnit(GeoUnitId id);
-  std::vector<Person*> getPeopleInUnit(const std::string& level,
-                                       const std::string& name);
 
   // Flat networks and activities
   std::span<const Person::NetworkMeta> getNetworkMetas(const Person& p) const {
@@ -309,13 +245,7 @@ class WorldState {
 
   std::span<const PersonId> getNetworkPartners(
       const Person& p, const std::string& network_name) const {
-    int type_id = getNetworkTypeIndex(network_name);
-    if (type_id < 0) return {};
-    for (const auto& meta : getNetworkMetas(p)) {
-      if (meta.network_type_id == (uint16_t)type_id)
-        return getNetworkPartners(meta);
-    }
-    return {};
+    return getNetworkPartners(p, getNetworkTypeIndex(network_name));
   }
 
   std::span<const PersonId> getNetworkPartners(const Person& p,
@@ -436,45 +366,17 @@ class WorldState {
     return std::span(dt_schedules.data() + start, count);
   }
 
-  // Geo Units
-  std::span<const int32_t> getGeoUnitProperties(
-      const GeographicalUnit& gu) const {
-    if (gu.properties_count == 0) return {};
-    if (gu.properties_start >= geo_unit_properties.size() ||
-        gu.properties_start + gu.properties_count > geo_unit_properties.size())
-      return {};
-    return std::span(geo_unit_properties.data() + gu.properties_start,
-                     gu.properties_count);
-  }
-
-  std::optional<PropertyValue> getGeoUnitProperty(
-      const GeographicalUnit& gu, const std::string& name) const {
-    // Find index of property name in the global registry
-    auto it = std::find(geo_unit_property_names.begin(),
-                        geo_unit_property_names.end(), name);
-    if (it == geo_unit_property_names.end()) return std::nullopt;
-
-    int idx = std::distance(geo_unit_property_names.begin(), it);
-    if (idx >= gu.properties_count) return std::nullopt;
-
-    int32_t raw_val = geo_unit_properties[gu.properties_start + idx];
-    if (raw_val == -1) return std::nullopt;
-
-    auto it_reg = geo_unit_property_value_registries.find(name);
-    if (it_reg != geo_unit_property_value_registries.end()) {
-      if (raw_val >= 0 && (size_t)raw_val < it_reg->second.size()) {
-        return it_reg->second[raw_val];
-      }
-    }
-    return raw_val;
-  }
-
   // Statistics
-  size_t numPeople() const { return people.size(); }
-  size_t numVenues() const { return venues.size(); }
-  size_t numGeoUnits() const { return geo_units.size(); }
-
   void printSummary() const;
+
+ private:
+  static int indexOf(const std::vector<std::string>& names,
+                     const std::string& name) {
+    auto it = std::find(names.begin(), names.end(), name);
+    return it == names.end()
+               ? -1
+               : static_cast<int>(std::distance(names.begin(), it));
+  }
 };
 
 }  // namespace june

@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <sstream>
 
 #include "core/types.h"
@@ -47,8 +46,8 @@ TEST_CASE("loader parses CSV into the day-indexed table") {
 
   std::string csv =
       "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
-      "catchment_rule_id,duration_days,compliance_rate,category\n"
-      "42,2021-01-05,Fair_day_trip,5250,fair,7,3,0.9,fair\n";
+      "catchment_rule_id,duration_days,compliance_rate\n"
+      "42,2021-01-05,Fair_day_trip,5250,fair,7,3,0.9\n";
   std::istringstream input(csv);
 
   auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
@@ -64,7 +63,6 @@ TEST_CASE("loader parses CSV into the day-indexed table") {
   CHECK(e.catchment_rule_id == 7);
   CHECK(e.duration_days == 3);
   CHECK(e.compliance_rate == doctest::Approx(0.9f));
-  CHECK(e.category == "fair");
 }
 
 TEST_CASE("loader parses filter.* columns into attendee_filters") {
@@ -73,8 +71,8 @@ TEST_CASE("loader parses filter.* columns into attendee_filters") {
 
   std::string csv =
       "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
-      "catchment_rule_id,duration_days,compliance_rate,category,filter.age\n"
-      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,fair,>=18\n";
+      "catchment_rule_id,duration_days,compliance_rate,filter.age\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,>=18\n";
   std::istringstream input(csv);
 
   auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
@@ -91,8 +89,8 @@ TEST_CASE("loader treats blank duration_days as 1") {
 
   std::string csv =
       "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
-      "catchment_rule_id,duration_days,compliance_rate,category\n"
-      "1,2021-01-05,Fair_day_trip,0,fair,0,,1.0,fair\n";
+      "catchment_rule_id,duration_days,compliance_rate\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,,1.0\n";
   std::istringstream input(csv);
 
   auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
@@ -111,8 +109,8 @@ TEST_CASE("loader throws on an unknown schedule_name") {
   world.schedule_type_names = {"regular"};
   std::string csv =
       "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
-      "catchment_rule_id,duration_days,compliance_rate,category\n"
-      "42,2021-01-05,no_such_schedule,0,fair,0,1,1.0,fair\n";
+      "catchment_rule_id,duration_days,compliance_rate\n"
+      "42,2021-01-05,no_such_schedule,0,fair,0,1,1.0\n";
   std::istringstream input(csv);
   CHECK_THROWS_AS(
       CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv"),
@@ -124,9 +122,9 @@ TEST_CASE("loader throws on an attendee filter the world cannot answer") {
   world.schedule_type_names = {"regular", "Fair_day_trip"};
   std::string csv =
       "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
-      "catchment_rule_id,duration_days,compliance_rate,category,"
+      "catchment_rule_id,duration_days,compliance_rate,"
       "filter.properties.no_such_property\n"
-      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,fair,x\n";
+      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,x\n";
   std::istringstream input(csv);
   CHECK_THROWS_AS(
       CalendarEventLoader::parse(input, world, "2021-01-01", 30, "test.csv"),
@@ -150,9 +148,9 @@ TEST_CASE("loader skips out-of-window rows but keeps in-window ones") {
   world.schedule_type_names = {"Fair_day_trip"};
   std::string csv =
       "calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,"
-      "catchment_rule_id,duration_days,compliance_rate,category\n"
-      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0,fair\n"
-      "2,2021-03-01,Fair_day_trip,0,fair,0,1,1.0,fair\n";
+      "catchment_rule_id,duration_days,compliance_rate\n"
+      "1,2021-01-05,Fair_day_trip,0,fair,0,1,1.0\n"
+      "2,2021-03-01,Fair_day_trip,0,fair,0,1,1.0\n";
   std::istringstream input(csv);
 
   auto table = CalendarEventLoader::parse(input, world, "2021-01-01", 30,
@@ -162,4 +160,3 @@ TEST_CASE("loader skips out-of-window rows but keeps in-window ones") {
   CHECK(total == 1);
   CHECK(table[4].size() == 1);
 }
-

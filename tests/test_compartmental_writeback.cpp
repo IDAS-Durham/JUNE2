@@ -132,8 +132,7 @@ TEST_CASE(
 
   std::vector<PersonLocation> locs = {{0, 10, -1, -1, 255, 0}};
   mgr->computeDepositionWriteback(locs, world, no_dep, 5.0, 5.0 + 1.0 / 24.0);
-  // No deposition modes → writeCouplingInputs receives all zeros or is not
-  // called Either way, plugin should show 0 non-zero entries
+  // With no deposition modes, the plugin receives no non-zero coupling inputs.
   for (float v : plugin.last_coupling_inputs) CHECK(v == doctest::Approx(0.0f));
 }
 

@@ -1,20 +1,15 @@
 #include <iostream>
 #include <unordered_set>
 
+#include "utils/event_logging/event_lookup_schemas.h"
 #include "utils/event_logging/event_merger.h"
+#include "utils/event_logging/event_writer_detail.h"
 
 namespace june {
 
 namespace {
 
-// Open `name` under `parent` if it exists, otherwise create it.
-// `parent` may be either H5::H5File or H5::Group.
-template <typename Parent>
-H5::Group openOrCreateGroup(Parent& parent, const std::string& name) {
-  if (H5Lexists(parent.getId(), name.c_str(), H5P_DEFAULT))
-    return parent.openGroup(name);
-  return parent.createGroup(name);
-}
+using event_writer_detail::openOrCreateGroup;
 
 // Extend `out_ds` by buffer.size() rows, write buffer at the tail, then
 // clear it. `total_written` is the running output row count and must
@@ -33,100 +28,59 @@ void flushBufferToDataset(std::vector<T>& buffer, H5::DataSet& out_ds,
   buffer.clear();
 }
 
-H5::CompType buildPeopleCompType() {
-  H5::StrType sex_type(H5::PredType::C_S1, 16);
-  H5::StrType schedule_type(H5::PredType::C_S1, 64);
-  H5::CompType type(sizeof(detail::PersonRecord));
-  type.insertMember("person_id", HOFFSET(detail::PersonRecord, person_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("age", HOFFSET(detail::PersonRecord, age),
-                    H5::PredType::NATIVE_DOUBLE);
-  type.insertMember("sex", HOFFSET(detail::PersonRecord, sex), sex_type);
-  type.insertMember("geo_unit_id", HOFFSET(detail::PersonRecord, geo_unit_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("is_dead", HOFFSET(detail::PersonRecord, is_dead),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("death_time", HOFFSET(detail::PersonRecord, death_time),
-                    H5::PredType::NATIVE_DOUBLE);
-  type.insertMember("schedule_type",
-                    HOFFSET(detail::PersonRecord, schedule_type),
-                    schedule_type);
-  type.insertMember("num_activities",
-                    HOFFSET(detail::PersonRecord, num_activities),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("num_residence_venues",
-                    HOFFSET(detail::PersonRecord, num_residence_venues),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("num_primary_activities",
-                    HOFFSET(detail::PersonRecord, num_primary_activities),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("num_leisure_venues",
-                    HOFFSET(detail::PersonRecord, num_leisure_venues),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("num_medical_facilities",
-                    HOFFSET(detail::PersonRecord, num_medical_facilities),
-                    H5::PredType::NATIVE_INT);
-  return type;
-}
-
-// Stream unique PersonRecords from the input files into `out_ds`,
-// deduplicated by person_id. Populates `id_to_merged_idx` mapping each
-// input person_id to its row index in the merged output. Returns the
-// number of unique records written.
-hsize_t streamUniquePeople(H5::DataSet& out_ds, const H5::CompType& type,
-                           const std::vector<std::string>& input_files,
-                           std::vector<int32_t>& id_to_merged_idx) {
-  std::vector<uint8_t> seen;
+// Stream unique records from the input files into `out_ds`, deduplicated by
+// the key returned by `key_fn`. `on_unique` runs for each first occurrence.
+template <typename Record, typename Key, typename KeyFn, typename OnUnique>
+hsize_t streamUniqueRecords(H5::DataSet& out_ds, const H5::CompType& type,
+                            const std::vector<std::string>& input_files,
+                            const std::string& dataset_path, KeyFn key_fn,
+                            OnUnique on_unique) {
+  std::unordered_set<Key> seen;
   hsize_t total_unique = 0;
-  const size_t CHUNK_SIZE = 100000;
-  std::vector<detail::PersonRecord> unique_buffer;
+  constexpr size_t CHUNK_SIZE = 100000;
+  std::vector<Record> unique_buffer;
 
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/people", H5P_DEFAULT)) continue;
-      H5::DataSet ds = file.openDataSet("/lookups/people");
-      H5::DataSpace in_space = ds.getSpace();
-      hsize_t in_dims[1];
-      in_space.getSimpleExtentDims(in_dims);
-
-      hsize_t in_count = in_dims[0];
-      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
-        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
-        std::vector<detail::PersonRecord> chunk(count);
-
-        hsize_t count_h[1] = {count};
-        hsize_t offset_h[1] = {offset};
-        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
-        H5::DataSpace mem_space(1, count_h);
-        ds.read(chunk.data(), type, mem_space, in_space);
-
-        for (const auto& r : chunk) {
-          int rid = r.person_id;
-          if (rid >= (int)seen.size()) seen.resize(rid + 1, 0);
-          if (rid >= (int)id_to_merged_idx.size())
-            id_to_merged_idx.resize(rid + 1, -1);
-
-          if (!seen[rid]) {
-            seen[rid] = 1;
-            id_to_merged_idx[rid] = (int32_t)total_unique;
-            unique_buffer.push_back(r);
-            total_unique++;
-
-            if (unique_buffer.size() >= CHUNK_SIZE) {
-              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-            }
+  event_merger_detail::forEachDatasetChunk<Record>(
+      input_files, dataset_path, type,
+      [&](const std::vector<Record>& chunk, hsize_t count, hsize_t) {
+        for (hsize_t i = 0; i < count; ++i) {
+          const auto& record = chunk[i];
+          if (!seen.insert(key_fn(record)).second) continue;
+          unique_buffer.push_back(record);
+          ++total_unique;
+          on_unique(record, total_unique - 1);
+          if (unique_buffer.size() >= CHUNK_SIZE) {
+            flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
           }
         }
-      }
-    } catch (...) {
-    }
-  }
+      });
 
   if (!unique_buffer.empty()) {
     flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
   }
   return total_unique;
+}
+
+template <typename Record, typename Key, typename KeyFn, typename OnUnique>
+hsize_t mergeUniqueLookup(H5::H5File& out_file,
+                          const std::vector<std::string>& input_files,
+                          const std::string& dataset_path,
+                          const H5::CompType& type, KeyFn key_fn,
+                          OnUnique on_unique) {
+  if (input_files.empty()) return 0;
+
+  hsize_t initial_dims[1] = {0};
+  hsize_t max_dims[1] = {H5S_UNLIMITED};
+  H5::DataSpace out_space(1, initial_dims, max_dims);
+  H5::DSetCreatPropList plist;
+  hsize_t chunk_dims[1] = {100000};
+  plist.setChunk(1, chunk_dims);
+  plist.setDeflate(6);
+  H5::DataSet out_ds =
+      out_file.createDataSet(dataset_path, type, out_space, plist);
+
+  return streamUniqueRecords<Record, Key>(out_ds, type, input_files,
+                                          dataset_path, key_fn, on_unique);
 }
 
 void collectPeoplePropertyKeys(const std::vector<std::string>& input_files,
@@ -210,147 +164,6 @@ void readPropertyValuesFromFile(const std::string& f, const std::string& key,
   }
 }
 
-H5::CompType buildVenueCompType() {
-  H5::StrType name_type(H5::PredType::C_S1, 128);
-  H5::StrType type_type(H5::PredType::C_S1, 64);
-  H5::CompType type(sizeof(detail::VenueRecord));
-  type.insertMember("venue_id", HOFFSET(detail::VenueRecord, venue_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("name", HOFFSET(detail::VenueRecord, name), name_type);
-  type.insertMember("type", HOFFSET(detail::VenueRecord, type), type_type);
-  type.insertMember("geo_unit_id", HOFFSET(detail::VenueRecord, geo_unit_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("n_subsets", HOFFSET(detail::VenueRecord, n_subsets),
-                    H5::PredType::NATIVE_INT);
-  return type;
-}
-
-// Stream unique VenueRecords from input files into `out_ds`,
-// deduplicated by venue_id (first occurrence wins). Returns count of
-// unique records written.
-hsize_t streamUniqueVenues(H5::DataSet& out_ds, const H5::CompType& type,
-                           const std::vector<std::string>& input_files) {
-  std::unordered_set<int> seen_venues;
-  hsize_t total_unique = 0;
-  const size_t CHUNK_SIZE = 100000;
-  std::vector<detail::VenueRecord> unique_buffer;
-
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/venues", H5P_DEFAULT)) continue;
-      H5::DataSet ds = file.openDataSet("/lookups/venues");
-      H5::DataSpace in_space = ds.getSpace();
-      hsize_t in_dims[1];
-      in_space.getSimpleExtentDims(in_dims);
-
-      hsize_t in_count = in_dims[0];
-      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
-        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
-        std::vector<detail::VenueRecord> chunk(count);
-        hsize_t count_h[1] = {count};
-        hsize_t offset_h[1] = {offset};
-        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
-        H5::DataSpace mem_space(1, count_h);
-        ds.read(chunk.data(), type, mem_space, in_space);
-
-        for (const auto& r : chunk) {
-          if (seen_venues.insert(r.venue_id).second) {
-            unique_buffer.push_back(r);
-            total_unique++;
-            if (unique_buffer.size() >= CHUNK_SIZE) {
-              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-            }
-          }
-        }
-      }
-    } catch (...) {
-    }
-  }
-
-  if (!unique_buffer.empty()) {
-    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-  }
-  return total_unique;
-}
-
-H5::CompType buildPopulationSummaryCompType() {
-  H5::CompType type(sizeof(PopulationSummaryRecord));
-  type.insertMember("person_id", HOFFSET(PopulationSummaryRecord, person_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("age_group", HOFFSET(PopulationSummaryRecord, age_group),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("sex_code", HOFFSET(PopulationSummaryRecord, sex_code),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("schedule_type_code",
-                    HOFFSET(PopulationSummaryRecord, schedule_type_code),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("reserved", HOFFSET(PopulationSummaryRecord, reserved),
-                    H5::PredType::NATIVE_UINT8);
-  type.insertMember("geo_unit_id",
-                    HOFFSET(PopulationSummaryRecord, geo_unit_id),
-                    H5::PredType::NATIVE_INT);
-  hsize_t extra_dims[1] = {4};
-  H5::ArrayType extra_type(H5::PredType::NATIVE_UINT8, 1, extra_dims);
-  type.insertMember("extra_codes",
-                    HOFFSET(PopulationSummaryRecord, extra_codes), extra_type);
-  return type;
-}
-
-// Stream unique PopulationSummaryRecords from input files into `out_ds`,
-// deduplicated by person_id (first occurrence wins). Returns count of
-// unique records written.
-hsize_t streamUniquePopulationSummary(
-    H5::DataSet& out_ds, const H5::CompType& type,
-    const std::vector<std::string>& input_files) {
-  std::vector<uint8_t> seen;
-  hsize_t total_unique = 0;
-  const size_t CHUNK_SIZE = 100000;
-  std::vector<PopulationSummaryRecord> unique_buffer;
-
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), "/lookups/population_summary", H5P_DEFAULT))
-        continue;
-      H5::DataSet ds = file.openDataSet("/lookups/population_summary");
-      H5::DataSpace in_space = ds.getSpace();
-      hsize_t in_dims[1];
-      in_space.getSimpleExtentDims(in_dims);
-
-      hsize_t in_count = in_dims[0];
-      for (hsize_t offset = 0; offset < in_count; offset += CHUNK_SIZE) {
-        hsize_t count = std::min(hsize_t(CHUNK_SIZE), in_count - offset);
-        std::vector<PopulationSummaryRecord> chunk(count);
-        hsize_t count_h[1] = {count};
-        hsize_t offset_h[1] = {offset};
-        in_space.selectHyperslab(H5S_SELECT_SET, count_h, offset_h);
-        H5::DataSpace mem_space(1, count_h);
-        ds.read(chunk.data(), type, mem_space, in_space);
-
-        for (const auto& r : chunk) {
-          int rid = r.person_id;
-          if (rid >= (int)seen.size()) seen.resize(rid + 1, 0);
-          if (!seen[rid]) {
-            seen[rid] = 1;
-            unique_buffer.push_back(r);
-            total_unique++;
-            if (unique_buffer.size() >= CHUNK_SIZE) {
-              flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-            }
-          }
-        }
-      }
-    } catch (...) {
-    }
-  }
-
-  if (!unique_buffer.empty()) {
-    flushBufferToDataset(unique_buffer, out_ds, type, total_unique);
-  }
-  return total_unique;
-}
-
 // Walk `input_files` and return the union of child-group names under
 // `parent_path`, preserving insertion order for deterministic output.
 // Returns an empty vector if no input file contains the parent group.
@@ -380,18 +193,15 @@ std::vector<std::string> discoverChildGroupNames(
 // dataset, or if `out_facet/field` already exists.
 void concatenateOneField(const std::vector<std::string>& input_files,
                          const std::string& ds_path, const std::string& field,
-                         H5::Group& out_facet) {
-  hsize_t total = 0;
-  H5::DataType dtype;
-  bool dtype_set = false;
+                         H5::Group& out_facet,
+                         const H5::DataType* forced_dtype = nullptr) {
+  H5::DataType dtype = forced_dtype ? *forced_dtype : H5::DataType();
+  bool dtype_set = forced_dtype != nullptr;
   for (const auto& f : input_files) {
     try {
       H5::H5File file(f, H5F_ACC_RDONLY);
       if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
       H5::DataSet ds = file.openDataSet(ds_path);
-      hsize_t d[1];
-      ds.getSpace().getSimpleExtentDims(d);
-      total += d[0];
       if (!dtype_set) {
         dtype = ds.getDataType();
         dtype_set = true;
@@ -399,101 +209,11 @@ void concatenateOneField(const std::vector<std::string>& input_files,
     } catch (...) {
     }
   }
-  if (!dtype_set || total == 0) return;
+  if (!dtype_set) return;
   if (H5Lexists(out_facet.getId(), field.c_str(), H5P_DEFAULT)) return;
 
-  hsize_t out_dims[1] = {total};
-  H5::DataSpace out_space(1, out_dims);
-  H5::DSetCreatPropList plist;
-  hsize_t chunk[1] = {std::min(total, hsize_t(100000))};
-  if (chunk[0] == 0) chunk[0] = 1;
-  plist.setChunk(1, chunk);
-  plist.setDeflate(6);
-  H5::DataSet out_ds = out_facet.createDataSet(field, dtype, out_space, plist);
-
-  const size_t elem_size = dtype.getSize();
-  std::vector<uint8_t> buffer;
-  hsize_t current_out_offset = 0;
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-      H5::DataSet in_ds = file.openDataSet(ds_path);
-      H5::DataSpace in_space = in_ds.getSpace();
-      hsize_t in_dims[1];
-      in_space.getSimpleExtentDims(in_dims);
-      if (in_dims[0] == 0) continue;
-
-      buffer.resize(in_dims[0] * elem_size);
-      in_ds.read(buffer.data(), dtype);
-
-      hsize_t count_h[1] = {in_dims[0]};
-      hsize_t out_offset_h[1] = {current_out_offset};
-      out_space.selectHyperslab(H5S_SELECT_SET, count_h, out_offset_h);
-      H5::DataSpace mem_space(1, count_h);
-      out_ds.write(buffer.data(), dtype, mem_space, out_space);
-      current_out_offset += in_dims[0];
-    } catch (...) {
-    }
-  }
-}
-
-// Concatenate the int32 dataset at `ds_path` across all `input_files`
-// into a new dataset `field` under `out_net`. Parallels
-// concatenateOneField but uses an explicit NATIVE_INT32 dtype, matching
-// the writer in event_writer_lookups. No-op if no input file has the
-// dataset, total is zero, or `out_net/field` already exists.
-void mergeOneNetworkField(const std::vector<std::string>& input_files,
-                          const std::string& ds_path, const char* field,
-                          H5::Group& out_net) {
-  hsize_t total = 0;
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-      H5::DataSet ds = file.openDataSet(ds_path);
-      hsize_t d[1];
-      ds.getSpace().getSimpleExtentDims(d);
-      total += d[0];
-    } catch (...) {
-    }
-  }
-  if (total == 0) return;
-  if (H5Lexists(out_net.getId(), field, H5P_DEFAULT)) return;
-
-  hsize_t out_dims[1] = {total};
-  H5::DataSpace out_space(1, out_dims);
-  H5::DSetCreatPropList plist;
-  hsize_t chunk[1] = {std::min(total, hsize_t(100000))};
-  if (chunk[0] == 0) chunk[0] = 1;
-  plist.setChunk(1, chunk);
-  plist.setDeflate(6);
-  H5::DataSet out_ds = out_net.createDataSet(field, H5::PredType::NATIVE_INT32,
-                                             out_space, plist);
-
-  std::vector<int32_t> buffer;
-  hsize_t current_out_offset = 0;
-  for (const auto& f : input_files) {
-    try {
-      H5::H5File file(f, H5F_ACC_RDONLY);
-      if (!H5Lexists(file.getId(), ds_path.c_str(), H5P_DEFAULT)) continue;
-      H5::DataSet in_ds = file.openDataSet(ds_path);
-      hsize_t in_dims[1];
-      in_ds.getSpace().getSimpleExtentDims(in_dims);
-      if (in_dims[0] == 0) continue;
-      buffer.resize(in_dims[0]);
-      in_ds.read(buffer.data(), H5::PredType::NATIVE_INT32);
-
-      hsize_t count_h[1] = {in_dims[0]};
-      hsize_t out_offset_h[1] = {current_out_offset};
-      out_space.selectHyperslab(H5S_SELECT_SET, count_h, out_offset_h);
-      H5::DataSpace mem_space(1, count_h);
-      out_ds.write(buffer.data(), H5::PredType::NATIVE_INT32, mem_space,
-                   out_space);
-      current_out_offset += in_dims[0];
-    } catch (...) {
-    }
-  }
+  event_merger_detail::writeMergedDataset<uint8_t>(
+      out_facet, field, input_files, ds_path, dtype, dtype.getSize(), true);
 }
 
 void mergeOneNetwork(const std::vector<std::string>& input_files,
@@ -502,7 +222,8 @@ void mergeOneNetwork(const std::vector<std::string>& input_files,
   for (const char* field : {"person_id", "partner_id"}) {
     const std::string ds_path =
         "/lookups/population_networks/" + net_name + "/" + field;
-    mergeOneNetworkField(input_files, ds_path, field, out_net);
+    concatenateOneField(input_files, ds_path, field, out_net,
+                        &H5::PredType::NATIVE_INT32);
   }
   std::cout << "  Merged population_networks for '" << net_name << "'\n";
 }
@@ -552,25 +273,24 @@ void mergeOnePeopleProperty(const std::string& key,
 
 }  // namespace
 
-void EventMerger::mergePeopleLookup(
-    H5::H5File& out_file, const std::vector<std::string>& input_files) {
+namespace event_merger_detail {
+
+void mergePeopleLookup(H5::H5File& out_file,
+                       const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  H5::CompType type = buildPeopleCompType();
-
-  hsize_t initial_dims[1] = {0};
-  hsize_t max_dims[1] = {H5S_UNLIMITED};
-  H5::DataSpace out_space(1, initial_dims, max_dims);
-  H5::DSetCreatPropList plist;
-  hsize_t chunk_dims[1] = {100000};
-  plist.setChunk(1, chunk_dims);
-  plist.setDeflate(6);
-  H5::DataSet out_ds =
-      out_file.createDataSet("/lookups/people", type, out_space, plist);
+  H5::CompType type = event_lookup_schema::person();
 
   std::vector<int32_t> id_to_merged_idx;
-  hsize_t total_unique =
-      streamUniquePeople(out_ds, type, input_files, id_to_merged_idx);
+  hsize_t total_unique = mergeUniqueLookup<detail::PersonRecord, int>(
+      out_file, input_files, "/lookups/people", type,
+      [](const detail::PersonRecord& record) { return record.person_id; },
+      [&id_to_merged_idx](const detail::PersonRecord& record,
+                          hsize_t merged_index) {
+        if (record.person_id >= (int)id_to_merged_idx.size())
+          id_to_merged_idx.resize(record.person_id + 1, -1);
+        id_to_merged_idx[record.person_id] = (int32_t)merged_index;
+      });
   std::cout << "  Merged " << total_unique << " unique people (streaming)"
             << std::endl;
 
@@ -585,73 +305,41 @@ void EventMerger::mergePeopleLookup(
   }
 }
 
-void EventMerger::mergeVenueLookup(
-    H5::H5File& out_file, const std::vector<std::string>& input_files) {
+void mergeVenueLookup(H5::H5File& out_file,
+                      const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  H5::CompType type = buildVenueCompType();
-
-  hsize_t initial_dims[1] = {0};
-  hsize_t max_dims[1] = {H5S_UNLIMITED};
-  H5::DataSpace out_space(1, initial_dims, max_dims);
-  H5::DSetCreatPropList plist;
-  hsize_t chunk_dims[1] = {100000};
-  plist.setChunk(1, chunk_dims);
-  plist.setDeflate(6);
-  H5::DataSet out_ds =
-      out_file.createDataSet("/lookups/venues", type, out_space, plist);
-
-  hsize_t total_unique = streamUniqueVenues(out_ds, type, input_files);
+  H5::CompType type = event_lookup_schema::venue();
+  hsize_t total_unique = mergeUniqueLookup<detail::VenueRecord, int>(
+      out_file, input_files, "/lookups/venues", type,
+      [](const detail::VenueRecord& record) { return record.venue_id; },
+      [](const detail::VenueRecord&, hsize_t) {});
   std::cout << "  Merged " << total_unique << " unique venues (streaming)"
             << std::endl;
 }
 
-void EventMerger::mergePersonActivityLookup(
-    H5::H5File& out_file, const std::vector<std::string>& input_files) {
-  H5::StrType name_type(H5::PredType::C_S1, 64);
-  H5::CompType type(sizeof(detail::PersonActivityRecord));
-  type.insertMember("person_id",
-                    HOFFSET(detail::PersonActivityRecord, person_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("activity_name",
-                    HOFFSET(detail::PersonActivityRecord, activity_name),
-                    name_type);
-  type.insertMember("venue_id", HOFFSET(detail::PersonActivityRecord, venue_id),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("subset_index",
-                    HOFFSET(detail::PersonActivityRecord, subset_index),
-                    H5::PredType::NATIVE_INT);
-  type.insertMember("activity_index",
-                    HOFFSET(detail::PersonActivityRecord, activity_index),
-                    H5::PredType::NATIVE_INT);
+void mergePersonActivityLookup(H5::H5File& out_file,
+                               const std::vector<std::string>& input_files) {
+  H5::CompType type = event_lookup_schema::personActivity();
   mergeDatasetTemplate<detail::PersonActivityRecord>(
       out_file, "/lookups/person_activities", input_files, type);
 }
 
-void EventMerger::mergePopulationSummary(
-    H5::H5File& out_file, const std::vector<std::string>& input_files) {
+void mergePopulationSummary(H5::H5File& out_file,
+                            const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
-  H5::CompType type = buildPopulationSummaryCompType();
-
-  hsize_t initial_dims[1] = {0};
-  hsize_t max_dims[1] = {H5S_UNLIMITED};
-  H5::DataSpace out_space(1, initial_dims, max_dims);
-  H5::DSetCreatPropList plist;
-  hsize_t chunk_dims[1] = {100000};
-  plist.setChunk(1, chunk_dims);
-  plist.setDeflate(6);
-  H5::DataSet out_ds = out_file.createDataSet("/lookups/population_summary",
-                                              type, out_space, plist);
-
-  hsize_t total_unique =
-      streamUniquePopulationSummary(out_ds, type, input_files);
+  H5::CompType type = event_lookup_schema::populationSummary();
+  hsize_t total_unique = mergeUniqueLookup<PopulationSummaryRecord, int>(
+      out_file, input_files, "/lookups/population_summary", type,
+      [](const PopulationSummaryRecord& record) { return record.person_id; },
+      [](const PopulationSummaryRecord&, hsize_t) {});
   std::cout << "  Merged " << total_unique
             << " population summary records (streaming)" << std::endl;
 }
 
-void EventMerger::mergeProfileAssignments(
-    H5::H5File& out_file, const std::vector<std::string>& input_files) {
+void mergeProfileAssignments(H5::H5File& out_file,
+                             const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
   // Discover which facets exist. Take the union across all rank files so
@@ -669,8 +357,8 @@ void EventMerger::mergeProfileAssignments(
   }
 }
 
-void EventMerger::mergePopulationNetworks(
-    H5::H5File& out_file, const std::vector<std::string>& input_files) {
+void mergePopulationNetworks(H5::H5File& out_file,
+                             const std::vector<std::string>& input_files) {
   if (input_files.empty()) return;
 
   std::vector<std::string> network_names =
@@ -685,4 +373,5 @@ void EventMerger::mergePopulationNetworks(
   }
 }
 
+}  // namespace event_merger_detail
 }  // namespace june

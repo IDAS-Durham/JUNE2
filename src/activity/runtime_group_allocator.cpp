@@ -1,7 +1,6 @@
 #include "activity/runtime_group_allocator.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <unordered_map>
@@ -141,8 +140,8 @@ void RuntimeGroupAllocator::allocateForSlot(
 
     // No sort: windows are raw line-local offsets (each leg in its own venue's
     // clock) and f_p is order-independent, so leg order does not affect the
-    // result. leg_idx remains the authoritative journey order for the future
-    // multi-slot follow-up, but is not load-bearing here.
+    // result. leg_idx preserves journey order for consumers that need it, but
+    // it does not affect current bucketing.
     tb_buf.resize(raw_legs.size());
     ta_buf.resize(raw_legs.size());
     for (size_t j = 0; j < raw_legs.size(); ++j) {
@@ -207,17 +206,7 @@ void RuntimeGroupAllocator::allocateForSlot(
   int world_size = 1;
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   if (world_size > 1) {
-    int local_count = static_cast<int>(local_packed.size());
-    std::vector<int> counts(world_size);
-    MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
-                  MPI_COMM_WORLD);
-    std::vector<int> displs;
-    int total = 0;
-    mpi_utils::computeDisplacements(counts, displs, total);
-    global_packed.assign(total, 0);
-    MPI_Allgatherv(local_packed.data(), local_count, MPI_INT,
-                   global_packed.data(), counts.data(), displs.data(), MPI_INT,
-                   MPI_COMM_WORLD);
+    global_packed = mpi_utils::allgathervInt32(local_packed);
   }
 #endif
 
@@ -388,17 +377,7 @@ void RuntimeGroupAllocator::attachFollowers(
   int world_size = 1;
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
   if (world_size > 1) {
-    int local_count = static_cast<int>(packed.size());
-    std::vector<int> counts(world_size);
-    MPI_Allgather(&local_count, 1, MPI_INT, counts.data(), 1, MPI_INT,
-                  MPI_COMM_WORLD);
-    std::vector<int> displs;
-    int total = 0;
-    mpi_utils::computeDisplacements(counts, displs, total);
-    std::vector<int32_t> global(total, 0);
-    MPI_Allgatherv(packed.data(), local_count, MPI_INT, global.data(),
-                   counts.data(), displs.data(), MPI_INT, MPI_COMM_WORLD);
-    packed.swap(global);
+    packed = mpi_utils::allgathervInt32(packed);
   }
 #endif
 

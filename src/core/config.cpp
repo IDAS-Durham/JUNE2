@@ -645,7 +645,6 @@ namespace {
 // matrices reachable only via the default fallback correctly bin-resolved.
 void resolveContactMatrixBins(ContactMatrix& matrix, const WorldState& world) {
   std::fill(std::begin(matrix.age_to_bin), std::end(matrix.age_to_bin), -1);
-  matrix.has_age_bins = false;
   for (size_t b = 0; b < matrix.bins.size(); ++b) {
     const std::string& bin_name = matrix.bins[b];
     int min_age = -1, max_age = -1;
@@ -675,7 +674,6 @@ void resolveContactMatrixBins(ContactMatrix& matrix, const WorldState& world) {
       }
     }
     if (min_age >= 0 && max_age >= min_age) {
-      matrix.has_age_bins = true;
       for (int a = std::max(0, min_age); a <= std::min(99, max_age); ++a) {
         if (matrix.age_to_bin[a] < 0) {
           matrix.age_to_bin[a] = static_cast<int>(b);

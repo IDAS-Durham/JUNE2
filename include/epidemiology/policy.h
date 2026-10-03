@@ -1,11 +1,8 @@
 #pragma once
 
 #include <algorithm>
-#include <iomanip>
 #include <iostream>
-#include <memory>
 #include <optional>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -17,8 +14,6 @@
 #include "core/types.h"
 #include "core/world_state.h"
 #include "epidemiology/transmission_modifiers.h"
-#include "utils/deterministic_rng.h"
-#include "utils/random.h"
 
 namespace june {
 
@@ -36,20 +31,15 @@ struct ActivityExemption {
 
   bool appliesTo(const Person& person, const WorldState* world = nullptr,
                  const Person* partner = nullptr) const {
-    for (const auto& criterion : criteria) {
-      if (!criterion.evaluate(person, world, partner)) {
-        return false;
-      }
-    }
-    return true;
+    return matchesAllCriteria(person, criteria, world, partner);
   }
 
   void resolve(const WorldState& world) {
     activity_index =
         static_cast<int16_t>(world.getActivityIndex(activity_name));
     for (auto& criterion : criteria) {
-      criterion.resolveOrThrow(world, "policy exemption for activity '" +
-                                          activity_name + "'");
+      criterion.resolveOrThrow(
+          world, "policy exemption for activity '" + activity_name + "'");
     }
   }
 };
@@ -263,8 +253,9 @@ struct PolicyAction {
       }
       if (index >= 64) {
         throw std::runtime_error(
-            "PolicyAction::resolve: policy '" + policy_name + "' venue type id " +
-            std::to_string(index) + " ('" + venue_type + "') in " + field_name +
+            "PolicyAction::resolve: policy '" + policy_name +
+            "' venue type id " + std::to_string(index) + " ('" + venue_type +
+            "') in " + field_name +
             " exceeds 64-bit mask width; promote venue_gate_mask to a wider "
             "bitset.");
       }
@@ -295,9 +286,8 @@ struct PolicyAction {
           "directions are mutually exclusive.");
     }
     if (!override_venue_types.empty()) {
-      venue_gate_mask = resolveVenueTypeMask(world, override_venue_types,
-                                             "override_venue_types",
-                                             policy_name);
+      venue_gate_mask = resolveVenueTypeMask(
+          world, override_venue_types, "override_venue_types", policy_name);
       venue_gate_direction = VenueGateDirection::RestrictTo;
     } else if (!exempt_venue_types.empty()) {
       venue_gate_mask = resolveVenueTypeMask(world, exempt_venue_types,
@@ -352,8 +342,8 @@ struct PolicyAction {
 // No end is an empty end_time, not a magic value: any number, -1 included, is
 // a real day (an end_date one day before the simulation starts is day -1).
 struct ActiveWindow {
-  double start_time = 0.0;              // days from simulation start
-  std::optional<double> end_time;       // empty = no end
+  double start_time = 0.0;         // days from simulation start
+  std::optional<double> end_time;  // empty = no end
 
   bool contains(double current_time) const {
     if (current_time < start_time) return false;
@@ -405,18 +395,7 @@ struct SymptomPolicy {
   // Check if policy applies to this person (based on selection criteria)
   bool appliesTo(const Person& person,
                  const WorldState* world = nullptr) const {
-    // Empty criteria = applies to everyone
-    if (applies_to.empty()) {
-      return true;
-    }
-
-    // All criteria must match
-    for (const auto& criterion : applies_to) {
-      if (!criterion.evaluate(person, world)) {
-        return false;
-      }
-    }
-    return true;
+    return matchesAllCriteria(person, applies_to, world);
   }
 
   void resolve(const WorldState& world, const Disease& disease) {
@@ -457,18 +436,7 @@ struct TemporalPolicy {
   // Check if policy applies to this person (based on selection criteria)
   bool appliesTo(const Person& person,
                  const WorldState* world = nullptr) const {
-    // Empty criteria = applies to everyone
-    if (applies_to.empty()) {
-      return true;
-    }
-
-    // All criteria must match
-    for (const auto& criterion : applies_to) {
-      if (!criterion.evaluate(person, world)) {
-        return false;
-      }
-    }
-    return true;
+    return matchesAllCriteria(person, applies_to, world);
   }
 
   void resolve(const WorldState& world) {
@@ -565,14 +533,11 @@ class PolicyManager {
   // key a venue-gated action is decided on. The two are separate arguments
   // because callers legitimately differ on them — a traveller in transit is
   // pinned at their last overnight venue while occupying no venue at all.
-  std::optional<PersonLocation> getOverride(Person& person,
-                                            int16_t scheduled_activity_index,
-                                            VenueId pin_venue_id,
-                                            SubsetIndex pin_subset_index,
-                                            SlotVenueType slot_venue_type,
-                                            double current_time,
-                                            int time_slot_index,
-                                            const Person* partner = nullptr);
+  std::optional<PersonLocation> getOverride(
+      Person& person, int16_t scheduled_activity_index, VenueId pin_venue_id,
+      SubsetIndex pin_subset_index, SlotVenueType slot_venue_type,
+      double current_time, int time_slot_index,
+      const Person* partner = nullptr);
 
   // Would a policy remove this Person from `activity_index` this slot? A
   // question, not an instruction: no freeze is established or released, no

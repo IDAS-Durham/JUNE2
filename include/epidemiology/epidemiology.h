@@ -1,6 +1,5 @@
 #pragma once
 
-#include <iostream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -33,7 +32,8 @@ class Epidemiology {
       const std::vector<PersonLocation>& locations);
 
   // Apply decay to venue fomite loads based on time elapsed
-  void updateVenueFomites(double current_simulation_time, double delta_hours);
+  void updateVenueFomites(double current_simulation_time,
+                          double delta_hours = 0.0);
 
   // Recovery and death end any policy freeze the person is under, so
   // Epidemiology needs the manager holding it. Absent (tests that run no

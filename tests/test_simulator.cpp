@@ -1,9 +1,7 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
 #include "simulation/simulator.h"
-#include "utils/random.h"
 
 using namespace june;
 
@@ -44,9 +42,6 @@ TEST_CASE("Simulator Initialization") {
 }
 
 TEST_CASE("Simulator run() multi-day smoke test") {
-  // Seed the global RNG before simulator creation (critical invariant)
-  GlobalRNG::seed(12345);
-
   // Create a small world with 20 people and 2 venues
   WorldState world;
   world.venue_type_names = {"office", "home"};

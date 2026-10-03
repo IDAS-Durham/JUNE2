@@ -17,7 +17,6 @@
 #include "epidemiology/transmission/partial_presence_sources.h"
 #include "policy.h"
 #include "transmission_modifiers.h"
-#include "utils/age_utils.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/event_logging/event_types.h"
 #include "utils/time_utils.h"

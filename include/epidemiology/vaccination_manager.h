@@ -18,7 +18,7 @@ class VaccinationCampaign {
  public:
   VaccinationCampaign(const VaccinationCampaignConfig& config,
                       const Config& full_config)
-      : config_(config), full_config_(full_config) {
+      : config_(config) {
     std::tm sim_start = parseDate(full_config.simulation.start_date);
 
     if (!config.start_date.empty()) {
@@ -43,11 +43,8 @@ class VaccinationCampaign {
   bool isEligible(const Person& person, double current_time,
                   const WorldState& world) const {
     // 1. Selection criteria match
-    for (const auto& criterion : config_.selection_criteria) {
-      if (!criterion.evaluate(person, &world)) {
-        return false;
-      }
-    }
+    if (!matchesAllCriteria(person, config_.selection_criteria, &world))
+      return false;
 
     if (config_.dose_sequence.empty()) return false;
 
@@ -101,7 +98,6 @@ class VaccinationCampaign {
 
  private:
   VaccinationCampaignConfig config_;
-  const Config& full_config_;
   double start_day_offset_;
   double end_day_offset_;
 };
@@ -114,8 +110,7 @@ class VaccinationManager {
       : world_(world), config_(config), event_logger_(event_logger) {
     if (config.vaccination.enabled) {
       for (const auto& camp_cfg : config.vaccination.campaigns) {
-        campaigns_.push_back(
-            std::make_unique<VaccinationCampaign>(camp_cfg, config));
+        campaigns_.emplace_back(camp_cfg, config);
       }
     }
   }
@@ -126,9 +121,9 @@ class VaccinationManager {
 
     // 1. Identify active campaigns once for the day
     std::vector<VaccinationCampaign*> active_campaigns;
-    for (const auto& campaign : campaigns_) {
-      if (campaign->isActive(current_time)) {
-        active_campaigns.push_back(campaign.get());
+    for (auto& campaign : campaigns_) {
+      if (campaign.isActive(current_time)) {
+        active_campaigns.push_back(&campaign);
       }
     }
 
@@ -198,7 +193,7 @@ class VaccinationManager {
   WorldState& world_;
   const Config& config_;
   EventLogger* event_logger_;
-  std::vector<std::unique_ptr<VaccinationCampaign>> campaigns_;
+  std::vector<VaccinationCampaign> campaigns_;
 };
 
 }  // namespace june

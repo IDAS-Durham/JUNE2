@@ -209,7 +209,7 @@ void GeographyPartitioner::partition(
 }
 
 void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
-  HDF5Loader loader(h5_file, config_);
+  HDF5Loader loader(h5_file);
   loader.loadRegistries();
 
   std::vector<int32_t> counts;
@@ -226,8 +226,8 @@ void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
     gu_ids = loader.readNumericDataset<int32_t>(
         "/population/partition_index/geo_unit_ids");
   } else if (loader.datasetExists("/population/geo_unit_ids")) {
-    // ULTIMATE FALLBACK: Calculate counts by reading all IDs (can be slow but
-    // accurate)
+    // If no precomputed counts exist, count every population geo-unit ID.
+    // This reads the full ID dataset, so it is slower but exact.
     auto all_ids =
         loader.readNumericDataset<int32_t>("/population/geo_unit_ids");
     std::unordered_map<int32_t, int> counts_map;
@@ -265,7 +265,6 @@ void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
   if (!gu_ids.empty()) {
     // CASE A: We have explicit GeoUnit IDs for each count (from
     // partition_index)
-    int matched_parents = 0;
     int missing_parents = 0;
     int unknown_geo_names = 0;
 
@@ -279,11 +278,8 @@ void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
         if (parent_gu) {
           if (geo_data_.count(parent_gu->name)) {
             geo_data_[parent_gu->name].population += pop;
-            matched_parents++;
           } else {
             unknown_geo_names++;
-            if (unknown_geo_names < 5) {
-            }
           }
         }
       } else {
@@ -296,12 +292,10 @@ void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
                 << std::endl;
     }
   } else {
-    // CASE B: Fallback to scanning all geo units (assuming counts match SGUs in
-    // order)
-    int matched_parents = 0;
+    // Without explicit geo-unit IDs, pair the counts with SGUs in registry
+    // order.
     int missing_parents = 0;
     int unknown_geo_names = 0;
-    int sgu_count = 0;
     int sgu_idx = 0;
 
     for (const auto& gu : loader.world_.geo_units) {
@@ -310,7 +304,6 @@ void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
                               : "unknown";
 
       if (level == "SGU") {
-        sgu_count++;
         if (sgu_idx < (int)counts.size()) {
           int pop = counts[sgu_idx++];
           GeoUnitId parent_id = findParentAtLevel(gu.id, partition_level);
@@ -320,7 +313,6 @@ void GeographyPartitioner::loadPopulationWeights(const std::string& h5_file) {
             if (parent_gu) {
               if (geo_data_.count(parent_gu->name)) {
                 geo_data_[parent_gu->name].population += pop;
-                matched_parents++;
               } else {
                 unknown_geo_names++;
               }

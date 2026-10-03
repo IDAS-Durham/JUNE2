@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <set>
 
 #include "activity/activity_manager.h"
@@ -163,7 +162,7 @@ TEST_CASE("Cross-domain venues are not loaded locally") {
 
 // =============================================================================
 // selectVenue fallback: when ALL venues for an activity are cross-domain,
-// the fixed ActivityManager returns one of them instead of {-1,-1}.
+// the selected cross-domain venue is retained instead of {-1,-1}.
 // =============================================================================
 TEST_CASE("selectVenue: cross-domain fallback when no local venues exist") {
   WorldState world = buildCrossDomainWorld();
@@ -176,7 +175,7 @@ TEST_CASE("selectVenue: cross-domain fallback when no local venues exist") {
                            locs);
 
   // Person 0's only primary_activity venue is 100 (cross-domain).
-  // The fixed code falls back to it rather than returning -1.
+  // Retain the cross-domain venue rather than returning -1.
   CHECK(locs[0].venue_id == 100);
   CHECK(locs[0].subset_index == 0);
 }

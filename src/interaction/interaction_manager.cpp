@@ -1,5 +1,3 @@
-// #define DEBUG_INTERACTION_MANAGER
-// #define DEBUG_TRANSMISSION
 //
 // =============================================================================
 // InteractionManager: file roadmap
@@ -63,7 +61,6 @@
 #include "simulation/compartmental_model_manager.h"
 #include "utils/deterministic_rng.h"
 #include "utils/event_logging/event_types.h"
-#include "utils/profiler.h"
 #include "utils/random.h"
 
 namespace june {
@@ -80,10 +77,10 @@ InteractionManager::InteractionManager(
       disease_(disease),
       event_logger_(event_logger),
       base_seed_(simulation_config.random_seed) {
-  // Refuse here rather than at the first lookup. An unresolved lookup throws
-  // mid-slot, and under MPI a rank that throws inside a collective leaves the
-  // others waiting on it forever, so the run hangs instead of failing. Every
-  // rank reaches this constructor, so every rank refuses together.
+  // Resolve this at construction time. If a rank discovered the unresolved
+  // matrix during a collective, that rank could throw while other ranks
+  // waited indefinitely. All ranks construct this manager before transmission,
+  // so they reject the invalid configuration before entering that path.
   if (!contact_matrices_.isResolved()) {
     throw std::runtime_error(
         "InteractionManager: contact matrices have not been resolved. Call "

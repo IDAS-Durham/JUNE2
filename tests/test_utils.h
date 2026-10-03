@@ -1,17 +1,141 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
+#include "activity/on_the_fly_venue_allocator.h"
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
 #include "epidemiology/disease.h"
 
 namespace june {
+
+inline Disease makeOneStageDisease() {
+  TransmissionParams transmission;
+  transmission.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto constant_curve = std::make_shared<ConstantCurve>(1.0);
+  transmission.symptom_id_curves = {nullptr, constant_curve};
+
+  std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"mild", 1, 1}};
+  TrajectoryDefinition trajectory;
+  trajectory.selection_key = "general";
+  trajectory.severity = 1.0;
+  trajectory.stages.push_back({"mild", {"constant", {{"value", 10.0}}}});
+
+  return Disease("TestDisease", symptom_tags, {}, {trajectory}, {},
+                 transmission);
+}
+
+inline Disease makeAlwaysSickDisease() {
+  TransmissionParams transmission;
+  transmission.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto constant_curve = std::make_shared<ConstantCurve>(1.0);
+  transmission.symptom_id_curves = {nullptr, constant_curve};
+
+  std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"sick", 1, 1}};
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"healthy"};
+
+  TrajectoryDefinition trajectory;
+  trajectory.selection_key = "general";
+  trajectory.severity = 1.0;
+  trajectory.stages.push_back({"sick", {"constant", {{"value", 100.0}}}});
+
+  return Disease("TestDisease", symptom_tags, stage_settings, {trajectory}, {},
+                 transmission);
+}
+
+inline WorldState makeCatchmentWorld(int num_people = 1) {
+  WorldState world;
+  world.geo_level_names = {"sgu"};
+  GeographicalUnit gu;
+  gu.id = 0;
+  gu.parent_id = -1;
+  gu.level_id = 0;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"fair"};
+  Venue v;
+  v.id = 0;
+  v.type_id = 0;
+  v.geo_unit_id = 0;
+  world.venues.push_back(v);
+  world.activity_names = {"Fair_accommodation"};
+  world.schedule_type_names = {"regular", "Fair_day_trip"};
+  for (int i = 0; i < num_people; ++i) {
+    Person& person = world.people.emplace_back();
+    person.id = i;
+    person.geo_unit_id = 0;
+  }
+  world.buildIndices();
+  return world;
+}
+
+inline void resolveCalendarEventSlotIndices(TimeSlot& slot,
+                                            const WorldState& world) {
+  slot.allowed_activity_indices.clear();
+  for (const auto& activity : slot.allowed_activities) {
+    int index = world.getActivityIndex(activity);
+    if (index >= 0)
+      slot.allowed_activity_indices.push_back(static_cast<int16_t>(index));
+  }
+}
+
+class ScopedTestFiles {
+ public:
+  explicit ScopedTestFiles(std::string prefix = "june2_test") {
+    static std::atomic<unsigned> counter{0};
+    directory_ = std::filesystem::temp_directory_path() /
+                 (std::move(prefix) + "_" +
+                  std::to_string(counter.fetch_add(1)));
+    if (!std::filesystem::create_directories(directory_))
+      throw std::runtime_error("could not create test temp directory: " +
+                               directory_.string());
+  }
+
+  ScopedTestFiles(const ScopedTestFiles&) = delete;
+  ScopedTestFiles& operator=(const ScopedTestFiles&) = delete;
+
+  ~ScopedTestFiles() {
+    std::error_code ec;
+    std::filesystem::remove_all(directory_, ec);
+  }
+
+  std::filesystem::path write(std::string_view filename,
+                               std::string_view contents) const {
+    const auto path = directory_ / std::string(filename);
+    std::ofstream file(path);
+    if (!file.is_open())
+      throw std::runtime_error("could not create test temp file: " +
+                               path.string());
+    file << contents;
+    if (!file)
+      throw std::runtime_error("could not write test temp file: " +
+                               path.string());
+    return path;
+  }
+
+ private:
+  std::filesystem::path directory_;
+};
+
+inline OnTheFlyVenueAllocator allocatorFromYaml(std::string_view yaml,
+                                                std::string_view file_prefix) {
+  ScopedTestFiles files{std::string(file_prefix)};
+  const auto path = files.write("config.yaml", yaml);
+  auto allocator = OnTheFlyVenueAllocator(path.string());
+  return allocator;
+}
 
 class TestWorldFactory {
  public:
@@ -100,8 +224,8 @@ class TestWorldFactory {
           if (new_meta_idx == expected) {
             person.network_meta_count++;
           } else {
-            // Non-contiguous: must rebuild. For now, just overwrite
-            // (this happens if networks are interleaved with other people)
+            // Non-contiguous entries cannot share the current contiguous range,
+            // so this entry starts a new range.
             person.network_meta_start = new_meta_idx;
             person.network_meta_count = 1;
           }

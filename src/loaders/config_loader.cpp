@@ -3,13 +3,13 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
 #include "loaders/config_loader_detail.h"
-#include "loaders/selection_criterion_value.h"
 #include "utils/filtered_csv.h"
 #include "utils/filtering.h"
 
@@ -69,9 +69,8 @@ std::vector<TimeSlot> parseSlotList(const YAML::Node& slot_list_node) {
   return slots;
 }
 
-// Read the `config_paths:` block (or legacy top-level keys when no
-// `config_paths` section is present) onto the SimulationConfig file fields.
-// Also throws on the removed `group_encounters_file` key.
+// Read the required `config_paths:` block onto the SimulationConfig file
+// fields.
 void parseSimulationConfigPaths(const YAML::Node& paths,
                                 SimulationConfig& config) {
   if (paths["disease_file"])
@@ -89,13 +88,6 @@ void parseSimulationConfigPaths(const YAML::Node& paths,
   if (paths["coordinated_encounters_file"])
     config.coordinated_encounters_file =
         paths["coordinated_encounters_file"].as<std::string>();
-  if (paths["group_encounters_file"]) {
-    throw std::runtime_error(
-        "simulation.yaml: 'group_encounters_file' is no longer a top-level "
-        "config_paths entry. Move it into coordinated_encounters.yaml as a "
-        "`parameters_file` field on the encounter entry whose network is "
-        "\"group_sex_roster\".");
-  }
   if (paths["performance_file"])
     config.performance_file = paths["performance_file"].as<std::string>();
   if (paths["parallel_file"])
@@ -272,26 +264,6 @@ void parseParallelPartitioning(const YAML::Node& part,
   }
 }
 
-// Read the optional `parallel.output:` block (partition / load-balance /
-// communication reporting flags).
-void parseParallelOutput(const YAML::Node& output, ParallelConfig& config) {
-  if (output["save_partition"]) {
-    config.save_partition = output["save_partition"].as<bool>();
-  }
-  if (output["partition_file"]) {
-    config.partition_file = output["partition_file"].as<std::string>();
-  }
-  if (output["report_load_balance"]) {
-    config.report_load_balance = output["report_load_balance"].as<bool>();
-  }
-  if (output["report_communication"]) {
-    config.report_communication = output["report_communication"].as<bool>();
-  }
-  if (output["report_interval_days"]) {
-    config.report_interval_days = output["report_interval_days"].as<int>();
-  }
-}
-
 // Read the `checkpoint:` block. Cadence is mutually exclusive: on_dates
 // (non-null, non-empty) takes precedence over every_n_days. A null YAML
 // value leaves the corresponding optional empty.
@@ -379,13 +351,37 @@ ScheduleType parseScheduleType(const std::string& name,
 
 namespace config_detail {
 
+PropertyValue parseCriterionSequenceValue(const YAML::Node& value_node,
+                                          const std::string& property_path) {
+  if (SelectionCriterion::comparesAgainstUnitNames(property_path)) {
+    try {
+      return value_node.as<std::vector<std::string>>();
+    } catch (const YAML::Exception&) {
+      throw std::runtime_error("selection criterion '" + property_path +
+                               "': list value must be geographical unit names");
+    }
+  }
+
+  try {
+    return value_node.as<std::vector<int32_t>>();
+  } catch (const YAML::Exception&) {
+    throw std::runtime_error(
+        "selection criterion '" + property_path +
+        "': list value must be whole numbers (only 'geo_unit.<LEVEL>' "
+        "compares against a list of names)");
+  }
+}
+
 // Parse a YAML sequence of `{property, operator, value}` entries into a vector
-// of SelectionCriterion. The scalar `value` is dispatched int -> double ->
-// string; a sequence `value` goes through parseCriterionSequenceValue.
+// of SelectionCriterion. Scalar values use bool -> int -> double -> string;
+// sequence values are validated by the local parseCriterionSequenceValue
+// helper.
 // Declared in loaders/config_loader_detail.h so the vaccination-loader TU can
 // reuse it.
 void parseSelectionCriteria(const YAML::Node& selection_node,
                             std::vector<SelectionCriterion>& out) {
+  if (!selection_node || !selection_node.IsSequence()) return;
+
   for (const auto& criterion_node : selection_node) {
     SelectionCriterion criterion;
     criterion.property_path = criterion_node["property"].as<std::string>();
@@ -393,16 +389,21 @@ void parseSelectionCriteria(const YAML::Node& selection_node,
 
     const auto& value_node = criterion_node["value"];
     if (value_node.IsSequence()) {
-      criterion.value = config_detail::parseCriterionSequenceValue(
-          value_node, criterion.property_path);
+      criterion.value =
+          parseCriterionSequenceValue(value_node, criterion.property_path);
     } else if (value_node.IsScalar()) {
-      try {
-        criterion.value = value_node.as<int>();
-      } catch (...) {
+      const std::string scalar = value_node.as<std::string>();
+      if (scalar == "true" || scalar == "false") {
+        criterion.value = value_node.as<bool>() ? 1 : 0;
+      } else {
         try {
-          criterion.value = value_node.as<double>();
+          criterion.value = value_node.as<int>();
         } catch (...) {
-          criterion.value = value_node.as<std::string>();
+          try {
+            criterion.value = value_node.as<double>();
+          } catch (...) {
+            criterion.value = scalar;
+          }
         }
       }
     }
@@ -443,10 +444,11 @@ SimulationConfig ConfigLoader::loadSimulation(const std::string& filename) {
     config.end_date = time["end_date"].as<std::string>();
   }
 
-  // File links: support both nested `config_paths:` block and legacy
-  // top-level keys.
-  parseSimulationConfigPaths(root["config_paths"] ? root["config_paths"] : root,
-                             config);
+  if (!root["config_paths"] || !root["config_paths"].IsMap()) {
+    throw std::runtime_error(
+        "simulation.yaml requires a top-level 'config_paths:' mapping");
+  }
+  parseSimulationConfigPaths(root["config_paths"], config);
 
   if (root["random_seed"]) {
     config.random_seed = root["random_seed"].as<unsigned int>();
@@ -608,11 +610,6 @@ PerformanceConfig ConfigLoader::loadPerformance(const std::string& filename) {
         config.stochastic_activities =
             perf["stochastic_activities"].as<std::vector<std::string>>();
       }
-
-      if (perf["track_active_infections_only"]) {
-        config.track_active_infections_only =
-            perf["track_active_infections_only"].as<bool>();
-      }
     }
   } catch (const std::exception& e) {
     // File doesn't exist or parse error - use defaults
@@ -620,12 +617,6 @@ PerformanceConfig ConfigLoader::loadPerformance(const std::string& filename) {
               << std::endl;
     std::cerr << "Using default performance settings (maximum performance mode)"
               << std::endl;
-
-    // Defaults: maximum performance (all activities deterministic)
-    config.precompute_schedules = true;
-    config.deterministic_activities.clear();  // Empty = all deterministic
-    config.stochastic_activities.clear();
-    config.track_active_infections_only = true;
   }
 
   return config;
@@ -662,17 +653,6 @@ ParallelConfig ConfigLoader::loadParallel(const std::string& filename) {
     if (chunked["geo_unit_chunk_size"]) {
       config.geo_unit_chunk_size = chunked["geo_unit_chunk_size"].as<size_t>();
     }
-  }
-
-  if (parallel["communication"]) {
-    YAML::Node comm = parallel["communication"];
-    if (comm["buffer_size_mb"]) {
-      config.buffer_size_mb = comm["buffer_size_mb"].as<int>();
-    }
-  }
-
-  if (parallel["output"]) {
-    parseParallelOutput(parallel["output"], config);
   }
 
   return config;

@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
@@ -20,7 +19,6 @@ TEST_CASE("Epidemiology - Fomite Pruning") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = constant_curve;
   trans.symptom_id_curves = {nullptr, constant_curve};
 
   TransmissionMode direct_mode;
@@ -54,13 +52,13 @@ TEST_CASE("Epidemiology - Fomite Pruning") {
 
   // current_time=3.0 days → age = 3.0 days > max_age(2.0 days) → should be
   // pruned
-  epi.updateVenueFomites(3.0, 1.0);
+  epi.updateVenueFomites(3.0);
   CHECK(world.venues[0].fomite_history[0].empty());
 
   // Add a recent event (time=2.5 days) and call again at time=3.0
   // age = 0.5 days < max_age(2.0 days) → should survive
   world.venues[0].fomite_history[0].push_back({2.5, 3.0});
-  epi.updateVenueFomites(3.0, 1.0);
+  epi.updateVenueFomites(3.0);
   CHECK(world.venues[0].fomite_history[0].size() == 1);
   CHECK(world.venues[0].fomite_history[0].front().amount ==
         doctest::Approx(3.0));
@@ -76,8 +74,6 @@ TEST_CASE("Epidemiology - updateInfectionStates progression") {
   trans.natural_immunity.waning_rate = 0.001;
 
   auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = constant_curve;
-  trans.stage_curves["severe"] = constant_curve;
   trans.symptom_id_curves = {nullptr, constant_curve, constant_curve};
 
   std::vector<SymptomTag> symptom_tags = {
@@ -174,8 +170,6 @@ TEST_CASE("Epidemiology - updateInfectionStates with fatal trajectory") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = constant_curve;
-  trans.stage_curves["dead"] = constant_curve;
   trans.symptom_id_curves = {nullptr, constant_curve, constant_curve};
 
   std::vector<SymptomTag> symptom_tags = {
@@ -222,7 +216,6 @@ TEST_CASE("Epidemiology - Track Infection") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
   auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-  trans.stage_curves["mild"] = constant_curve;
   trans.symptom_id_curves = {nullptr, constant_curve};
 
   std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"mild", 1, 1}};
