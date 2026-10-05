@@ -706,10 +706,10 @@ class InteractionManager {
       const std::unordered_map<PersonId, VisitorInfo>* visitor_data);
 
   // STEP 3 per-susceptible-bin orchestrator: build the four kinds of source
-  // (direct contact, sibling mixing, fomite, comp uptake), apply regional-risk
-  // multiplier, short-circuit if total_risk == 0, build the cumulative weights
-  // once, and iterate susceptibles via processOneVenueSusceptible. Returns the
-  // number of new infections produced.
+  // (direct contact, sibling mixing, fomite, comp uptake), short-circuit if
+  // total_risk == 0, build the cumulative weights once, and iterate
+  // susceptibles via processOneVenueSusceptible. Returns the number of new
+  // infections produced.
   int processOneSuscBin(
       int susc_bin, int num_bins_needed, int num_modes, int num_fomite_modes,
       bool is_virtual_encounter, uint8_t encounter_type_id,

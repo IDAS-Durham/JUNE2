@@ -100,13 +100,6 @@ inline std::vector<std::string> collectConfigPaths(
   push(sim.policies_file);
   push(sim.infection_seeds_file);
 
-  // Referenced data / CSV files. The regional-risk CSV is only consumed when
-  // the feature is enabled (main.cpp gates loadRegionalRiskFactors on it), so
-  // snapshot it only then. Otherwise a disabled-but-stale path bloats the run
-  // dir and can even hard-fail snapshotRun's existence check.
-  if (sim.regional_risk.enabled) {
-    push(sim.regional_risk.regional_risk_file);
-  }
   push(config.schedule.csv_path);
   for (const auto& [_, fg] : config.coordinated_encounters.frequency_groups) {
     push(fg.csv_path);

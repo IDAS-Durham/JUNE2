@@ -482,10 +482,6 @@ int InteractionManager::resolvePartialPresenceInfections(
     if (p->infection) continue;  // already infected, e.g. seeded this slot
     if (disease_ == nullptr) continue;
 
-    float severity_factor = 1.0f;
-    if (auto* gu = world_.getGeoUnit(p->geo_unit_id))
-      severity_factor = gu->severity_factor;
-
     std::string venue_type_name;
     if (c.venue_type_id < world_.venue_type_names.size())
       venue_type_name = world_.venue_type_names[c.venue_type_id];
@@ -498,7 +494,7 @@ int InteractionManager::resolvePartialPresenceInfections(
                                           c.transmission_mode_index};
     p->infection = std::make_unique<Infection>(
         disease_, current_time, p, static_cast<unsigned int>(seed),
-        transmission, &world_, venue_type_name, c.venue_id, severity_factor);
+        transmission, &world_, venue_type_name, c.venue_id);
     infector_symptom_lookup_.countIfGap(transmission);
 
     if (event_logger_ != nullptr)
@@ -573,9 +569,6 @@ bool InteractionManager::processOnePartialSusceptible(
   if (!(lambda > 0.0)) return false;
 
   double total_risk = lambda;
-  if (simulation_config_.regional_risk.enabled && venue) {
-    total_risk *= venue->transmission_factor;
-  }
   double prob = 1.0 - std::exp(-total_risk);
   if (!(prob > 1e-12)) return false;
 

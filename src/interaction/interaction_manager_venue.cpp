@@ -187,9 +187,6 @@ bool InteractionManager::processOneVenueSusceptible(
         person, susc_mem.visitor, susc_mem.susceptibility, mode);
     lambda_eff += lambda_by_mode[mode] * target_susceptibility[mode];
   }
-  if (simulation_config_.regional_risk.enabled && venue) {
-    lambda_eff *= venue->transmission_factor;
-  }
   double prob = 1.0 - std::exp(-lambda_eff);
   if (!(prob > 1e-12)) return false;
 
@@ -358,10 +355,6 @@ void InteractionManager::applyVenueInfection(
   Person* susc_person = world_.getPerson(susceptible_id);
   if (!susc_person || susc_person->infection || disease_ == nullptr) return;
 
-  float severity_factor = 1.0f;
-  auto* gu = world_.getGeoUnit(susc_person->geo_unit_id);
-  if (gu) severity_factor = gu->severity_factor;
-
   std::string venue_type_name;
   if (venue_type_id < world_.venue_type_names.size()) {
     venue_type_name = world_.venue_type_names[venue_type_id];
@@ -373,7 +366,7 @@ void InteractionManager::applyVenueInfection(
   susc_person->infection = std::make_unique<Infection>(
       disease_, current_time, susc_person,
       static_cast<unsigned int>(infection_seed), transmission, &world_,
-      venue_type_name, actual_venue_id, severity_factor);
+      venue_type_name, actual_venue_id);
   infector_symptom_lookup_.countIfGap(transmission);
 
   if (event_logger_ != nullptr) {

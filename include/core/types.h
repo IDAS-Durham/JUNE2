@@ -141,10 +141,6 @@ struct GeographicalUnit {
   GeoUnitId parent_id;  // -1 if root
   float latitude;
   float longitude;
-
-  // Regional risk factors
-  float transmission_factor = 1.0f;
-  float severity_factor = 1.0f;
 };
 
 // =============================================================================
@@ -411,9 +407,6 @@ struct Venue {
   // Subsets: start index into WorldState::subsets
   uint32_t subset_start = 0;
   uint16_t subset_count = 0;
-
-  // Regional risk factors (performance cache)
-  float transmission_factor = 1.0f;
 
   // Fomite transmission state: deposition history per fomite mode.
   // Outer index = local fomite mode index (0, 1, ... matching order of

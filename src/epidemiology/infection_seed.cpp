@@ -906,10 +906,6 @@ void InfectionSeeder::infectPerson(Person* person,
       mix_seed(base_seed_, person->id,
                static_cast<uint64_t>(current_simulation_time_ * 1000), 0x5EED);
 
-  float severity_factor = 1.0f;
-  auto* gu = world_.getGeoUnit(person->geo_unit_id);
-  if (gu) severity_factor = gu->severity_factor;
-
   // No infector and no transmission, so the only context facts are the ones
   // the seed declares; the rest are absent.
   const TransmissionRecord transmission{InfectionSource::Seed,
@@ -919,8 +915,7 @@ void InfectionSeeder::infectPerson(Person* person,
       disease_, current_simulation_time_, person,
       static_cast<unsigned int>(infection_seed), transmission, &world_,
       "seed",  // venue type
-      INFECTION_SEED_VENUE_ID, severity_factor, seed.trajectory_key,
-      seed.start_symptom);
+      INFECTION_SEED_VENUE_ID, seed.trajectory_key, seed.start_symptom);
 
   if (event_logger_ != nullptr) {
     event_logger_->logInfection(

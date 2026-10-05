@@ -359,7 +359,6 @@ class Infection {
             unsigned int random_seed, const TransmissionRecord& transmission,
             const WorldState* world = nullptr,
             const std::string& venue_type = "", int venue_id = -1,
-            float severity_factor = 1.0f,
             const std::string& trajectory_key_override = "",
             const std::string& start_symptom_override = "");
 
@@ -487,7 +486,6 @@ class Infection {
       SplitMix64& rng, const Person* person, const WorldState* world,
       const TransmissionRecord& transmission,
       const std::string& venue_type = "", int venue_id = -1,
-      float severity_factor = 1.0f,
       const std::string& trajectory_key_override = "",
       const std::string& start_symptom_override = "");
 

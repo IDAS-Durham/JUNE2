@@ -23,8 +23,3 @@ output:
   stats_interval_days: 1
   flush_interval_days: 7
   max_event_buffer_size: 100000
-
-# Regional Risk Factors
-regional_risk:
-  enabled: false
-  regional_risk_file: "data/regional_risk.csv"

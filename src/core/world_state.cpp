@@ -1,10 +1,6 @@
 #include "core/world_state.h"
 
-#include <fstream>
 #include <iostream>
-#include <unordered_map>
-
-#include "utils/filtered_csv.h"
 
 namespace june {
 
@@ -189,58 +185,6 @@ void WorldState::printSummary() const {
   for (const auto& [type, indices] : venues_by_type) {
     std::cout << "    " << type << ": " << indices.size() << std::endl;
   }
-}
-
-void WorldState::loadRegionalRiskFactors(const std::string& csv_path) {
-  std::ifstream file(csv_path);
-  if (!file.is_open()) {
-    std::cerr << "Error: Could not open regional risk factors file: "
-              << csv_path << std::endl;
-    return;
-  }
-
-  std::string line;
-  std::getline(file, line);  // Skip header
-
-  std::unordered_map<std::string, std::pair<float, float>> factors;
-  while (std::getline(file, line)) {
-    if (line.empty()) continue;
-    const auto fields = csv::splitCSVLine(line);
-    if (fields.size() < 3) continue;
-    try {
-      factors[fields[0]] = {std::stof(fields[1]), std::stof(fields[2])};
-    } catch (...) {
-      continue;
-    }
-  }
-
-  int updated_units = 0;
-  for (auto& gu : geo_units) {
-    auto it = factors.find(gu.name);
-    if (it != factors.end()) {
-      gu.transmission_factor = it->second.first;
-      gu.severity_factor = it->second.second;
-      updated_units++;
-    }
-  }
-
-  int updated_venues = 0;
-  for (auto& v : venues) {
-    if (v.geo_unit_id != -1) {
-      auto it_idx = geo_unit_index.find(v.geo_unit_id);
-      if (it_idx != geo_unit_index.end()) {
-        float susc = geo_units[it_idx->second].transmission_factor;
-        if (susc != 1.0f) {
-          v.transmission_factor = susc;
-          updated_venues++;
-        }
-      }
-    }
-  }
-
-  std::cout << "[Regional Risk] Loaded factors for " << updated_units
-            << " geographical units. Updated " << updated_venues
-            << " venues for performance caching." << std::endl;
 }
 
 }  // namespace june

@@ -100,9 +100,6 @@ output:
     max_event_buffer_size: 100000
     save_coordinated_encounters: false
 
-regional_risk:
-    enabled: false
-    regional_risk_file: "data/regional_risk.csv"
 ```
 
 | Field | What it controls |
@@ -112,7 +109,6 @@ regional_risk:
 | `output.stats_interval_days` | How often summary stats are written. |
 | `output.flush_interval_days` | How often the event buffer is flushed to HDF5. |
 | `output.save_coordinated_encounters` | Write coordinated encounters to `/events/coordinated_encounters`. Default `false` — it's the largest dataset in `simulation_events.h5` and rarely needed for analysis; encounters still happen and still drive transmission either way, only the H5 record is skipped. |
-| `regional_risk` | Optional per-geo multipliers on transmission and severity. |
 
 > **Paths** are resolved relative to the working directory you launched
 > from (typically the repo root). All sample configs assume that.
@@ -656,7 +652,6 @@ to retune the model without touching code.
 |---|---|---|
 | `infection_outcome_rates_<disease>.csv` | Per (age, sex, pop) outcome probabilities | `filter.age,filter.sex,asymptomatic,mild,severe,hospital,icu,home_ifr,hospital_ifr,icu_ifr` |
 | `bulk_seeds_<disease>.csv` | Bulk seeding events | see §6 |
-| `regional_risk.csv` | Per-geo transmission/severity multipliers | `geo_unit,transmission_factor,severity_factor` |
 | `domain_decomposition/<world>/` | METIS centroids + adjacency | CSV + JSON |
 
 Convention: every column starting `filter.` is a row-selection key

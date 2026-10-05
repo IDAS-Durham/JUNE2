@@ -714,12 +714,6 @@ struct SimulationConfig {
   std::vector<std::string> summary_properties = {
       "ethnicity", "has_comorbidities", "work_mode"};
 
-  // Regional Risk Factors
-  struct RegionalRiskConfig {
-    bool enabled = false;
-    std::string regional_risk_file = "";
-  } regional_risk;
-
   // Checkpoint / restart. Cadence is MUTUALLY EXCLUSIVE: if on_dates is
   // present (non-null, non-empty) it takes precedence and every_n_days is
   // ignored. A null YAML value leaves the corresponding optional empty.

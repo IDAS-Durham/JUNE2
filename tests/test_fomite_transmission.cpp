@@ -668,7 +668,7 @@ TEST_CASE("a Person-infector infection logs the context it was judged with") {
   initVenueFomiteHistory(world, 1);
   world.people[1].infection = std::make_unique<Infection>(
       &disease, 0.0, &world.people[1], 42, kNoTransmissionContext, &world,
-      "office", 0, 1.0f, "context_row");
+      "office", 0, "context_row");
 
   std::vector<PersonLocation> locations;
   for (PersonId id : {0, 1}) {

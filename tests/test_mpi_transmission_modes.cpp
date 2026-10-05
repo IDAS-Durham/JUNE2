@@ -97,7 +97,7 @@ TEST_CASE("H1: Stage-driven visitor infects local susceptible") {
     Person* p = f.world.getPerson(TwoRankFixture::PERSON_R0);
     p->infection = std::make_unique<Infection>(&disease, -1.0, p, 42u,
                                                kNoTransmissionContext, &f.world,
-                                               "household", 0, 1.0f, "general");
+                                               "household", 0, "general");
   }
 
   double expected_integrated = 0.0;
@@ -166,7 +166,7 @@ TEST_CASE("H2: Trajectory-driven visitor infects local susceptible") {
     Person* p = f.world.getPerson(TwoRankFixture::PERSON_R0);
     p->infection = std::make_unique<Infection>(&disease, -1.0, p, 42u,
                                                kNoTransmissionContext, &f.world,
-                                               "household", 0, 1.0f, "general");
+                                               "household", 0, "general");
   }
 
   f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
@@ -218,7 +218,7 @@ TEST_CASE("H3: Local infector infects visitor, pending routed back") {
     Person* p = f.world.getPerson(TwoRankFixture::PERSON_R1);
     p->infection = std::make_unique<Infection>(&disease, -1.0, p, 42u,
                                                kNoTransmissionContext, &f.world,
-                                               "household", 1, 1.0f, "general");
+                                               "household", 1, "general");
   }
 
   // Person 0 (rank 0, susceptible) visits venue 1 (rank 1)
@@ -283,7 +283,7 @@ TEST_CASE("H4: Multi-mode stage-driven infectiousness across ranks") {
     Person* p = f.world.getPerson(TwoRankFixture::PERSON_R0);
     p->infection = std::make_unique<Infection>(&disease, -1.0, p, 42u,
                                                kNoTransmissionContext, &f.world,
-                                               "household", 0, 1.0f, "general");
+                                               "household", 0, "general");
   }
 
   f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
@@ -351,7 +351,7 @@ TEST_CASE("H6: Immune visitor resists cross-rank infection") {
     Person* p = f.world.getPerson(TwoRankFixture::PERSON_R1);
     p->infection = std::make_unique<Infection>(&disease, -1.0, p, 42u,
                                                kNoTransmissionContext, &f.world,
-                                               "household", 1, 1.0f, "general");
+                                               "household", 1, "general");
   }
 
   // Rank 0: person 0 has full immunity and visits rank 1
@@ -421,7 +421,7 @@ TEST_CASE("H7: Bidirectional cross-rank transmission") {
   Person* local_p = f.world.getPerson(f.rank);
   local_p->infection = std::make_unique<Infection>(
       &disease, -1.0, local_p, 42u, kNoTransmissionContext, &f.world,
-      "household", f.rank, 1.0f, "general");
+      "household", f.rank, "general");
 
   // Each person visits the other rank's venue
   f.dm->exchangeVisitors({makeRemoteLocation(f.rank)}, disease, 0.0, 1.0);
