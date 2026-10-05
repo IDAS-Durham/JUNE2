@@ -12,10 +12,7 @@
 #include "loaders/policy_loader.h"
 #include "parallel/mpi_utils.h"
 #include "utils/filtered_csv.h"
-
-#ifdef USE_MPI
-#include <mpi.h>
-#endif
+#include "utils/mpi_utils.h"
 
 namespace june {
 namespace {
@@ -203,15 +200,6 @@ std::vector<PolicyTransmissionEffect> parseEffects(
 }
 
 #ifdef USE_MPI
-bool mpiActive() {
-  int initialized = 0;
-  int finalized = 0;
-  MPI_Initialized(&initialized);
-  if (!initialized) return false;
-  MPI_Finalized(&finalized);
-  return finalized == 0;
-}
-
 void broadcastBytes(std::vector<char>& bytes) {
   uint64_t size = bytes.size();
   MPI_Bcast(&size, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
@@ -239,9 +227,9 @@ void PolicyLoader::loadTransmissionEffects(
 
   std::vector<char> csv_bytes;
 #ifdef USE_MPI
-  const bool use_mpi = mpiActive();
-  int rank = 0;
-  if (use_mpi) MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  const auto mpi = mpi_runtime::state();
+  const bool use_mpi = mpi.active;
+  const int rank = mpi.rank;
 #else
   constexpr bool use_mpi = false;
   constexpr int rank = 0;

@@ -255,36 +255,23 @@ if(BUILD_TESTING)
   enable_testing()
 
   # Add a standalone test target. Pass an MPI launcher as the optional third
-  # argument for tests that must run under MPI.
+  # argument, and an optional rank count as the fourth, for MPI tests.
   macro(add_june_test name sources)
     add_executable(${name} ${sources})
     target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests)
     target_link_libraries(${name} PRIVATE june_core)
     if("${ARGC}" GREATER 2)
-      add_test(NAME ${name} COMMAND ${ARGN} -np 2 --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+      set(_june_mpi_num_ranks 2)
+      if("${ARGC}" GREATER 3)
+        set(_june_mpi_num_ranks ${ARGV3})
+      endif()
+      add_test(NAME ${name}
+               COMMAND ${ARGV2} -np ${_june_mpi_num_ranks}
+                       --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name}
+               WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     else()
       add_test(NAME ${name} COMMAND ${name} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     endif()
-  endmacro()
-
-  macro(add_june_mpi_test name sources)
-    set(_june_mpi_num_ranks 2)
-    if(${ARGC} GREATER 2)
-      set(_june_mpi_num_ranks ${ARGV2})
-    endif()
-    add_executable(${name} ${sources})
-    target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests)
-    target_link_libraries(${name} PRIVATE june_core)
-    if(NOT MPIEXEC_EXECUTABLE)
-      find_program(MPIEXEC_EXECUTABLE NAMES mpirun mpiexec)
-    endif()
-    if(NOT MPIEXEC_EXECUTABLE)
-      message(FATAL_ERROR "MPI execution command (mpirun/mpiexec) not found, but MPI tests are enabled.")
-    endif()
-    add_test(NAME ${name}
-             COMMAND ${MPIEXEC_EXECUTABLE} -np ${_june_mpi_num_ranks}
-                     --oversubscribe ${CMAKE_CURRENT_BINARY_DIR}/${name}
-             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   endmacro()
 
   set(JUNE_STANDARD_TESTS
@@ -331,7 +318,24 @@ if(BUILD_TESTING)
       test_transmission_determinism
 
       test_presence_window
-      test_partial_presence_foi)
+      test_partial_presence_foi
+
+      test_follow
+      test_policy
+      test_infection_seed_loader
+      test_infection_seeder
+      test_transmission_modes
+      test_foi_calculation
+      test_visitor_wire
+      test_visitor_payload
+      test_filtering
+      test_outcome_rate_context
+      test_infector_symptom_lookup
+      test_partial_presence_sources
+      test_fomite_sub_bins
+      test_emission
+      test_stage_curve_integral
+      test_seed_window)
   add_executable(june_tests tests/june_tests_main.cpp)
   set(JUNE_STANDARD_TEST_SOURCES)
   foreach(test_name IN LISTS JUNE_STANDARD_TESTS)
@@ -343,23 +347,7 @@ if(BUILD_TESTING)
   add_test(NAME june_tests COMMAND june_tests WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
   target_include_directories(june_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-  add_june_test(test_follow "tests/test_follow.cpp")
-  add_june_test(test_policy "tests/test_policy.cpp")
-  add_june_test(test_infection_seed_loader "tests/test_infection_seed_loader.cpp")
-  add_june_test(test_infection_seeder "tests/test_infection_seeder.cpp")
-  add_june_test(test_transmission_modes "tests/test_transmission_modes.cpp;src/loaders/disease_loader.cpp")
-  add_june_test(test_foi_calculation "tests/test_foi_calculation.cpp;src/loaders/disease_loader.cpp")
-  add_june_test(test_visitor_wire "tests/test_visitor_wire.cpp")
-  add_june_test(test_visitor_payload "tests/test_visitor_payload.cpp")
-  add_june_test(test_filtering "tests/test_filtering.cpp")
-  add_june_test(test_outcome_rate_context "tests/test_outcome_rate_context.cpp;src/loaders/disease_loader.cpp")
-  add_june_test(test_infector_symptom_lookup "tests/test_infector_symptom_lookup.cpp")
-  add_june_test(test_partial_presence_sources "tests/test_partial_presence_sources.cpp")
-  add_june_test(test_fomite_sub_bins "tests/test_fomite_sub_bins.cpp")
-  add_june_test(test_emission "tests/test_emission.cpp")
-  add_june_test(test_stage_curve_integral "tests/test_stage_curve_integral.cpp")
-  add_june_test(test_seed_window "tests/test_seed_window.cpp")
-  add_june_test(test_sibling_mixing "tests/test_sibling_mixing.cpp;src/loaders/disease_loader.cpp")
+  add_june_test(test_sibling_mixing "tests/test_sibling_mixing.cpp")
   add_june_test(test_compartmental_disease_mode "tests/test_compartmental_disease_mode.cpp")
   add_june_test(test_compartmental_coupling_matrix "tests/test_compartmental_coupling_matrix.cpp")
   add_june_test(test_compartmental_transmission "tests/test_compartmental_transmission.cpp")
@@ -388,7 +376,7 @@ if(BUILD_TESTING)
     add_june_test(test_mpi_communication "tests/test_mpi_communication.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_advanced "tests/test_mpi_advanced.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp" "${MPIEXEC_EXECUTABLE}")
-    add_june_mpi_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" 4)
+    add_june_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" "${MPIEXEC_EXECUTABLE}" 4)
 
       # End-to-end disease_sim reproducibility: runs disease_sim at
       # np=1/2/3 against the real config + world and h5diff's the

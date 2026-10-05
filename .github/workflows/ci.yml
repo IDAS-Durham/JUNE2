@@ -22,13 +22,13 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install hdf5 yaml-cpp open-mpi metis gperftools cmake
+          brew install hdf5 yaml-cpp open-mpi metis cmake
 
       - name: Install Dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libhdf5-dev libyaml-cpp-dev libopenmpi-dev libmetis-dev google-perftools libgoogle-perftools-dev cmake
+          sudo apt-get install -y libhdf5-dev libyaml-cpp-dev libopenmpi-dev libmetis-dev cmake
 
       - name: Configure CMake
         run: cmake -B build -DBUILD_TESTING=ON
@@ -55,7 +55,7 @@ jobs:
       - name: Install Dependencies (Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libhdf5-dev libyaml-cpp-dev google-perftools libgoogle-perftools-dev cmake
+          sudo apt-get install -y libhdf5-dev libyaml-cpp-dev cmake
 
       - name: Configure CMake (serial)
         run: cmake -B build-serial -DBUILD_TESTING=ON -DUSE_MPI=OFF -DUSE_METIS=OFF

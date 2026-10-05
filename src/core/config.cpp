@@ -12,7 +12,7 @@
 #include "utils/config_checks.h"
 #include "utils/filtered_csv.h"
 #include "utils/filtering.h"
-#include "utils/mpi_logging.h"
+#include "utils/mpi_utils.h"
 
 namespace june {
 
@@ -22,19 +22,6 @@ DistributionType parseDistributionType(const std::string& s) {
   if (s == "fixed") return DistributionType::FIXED;
   throw std::runtime_error("Unknown distribution type: '" + s +
                            "'. Must be 'poisson', 'binomial', or 'fixed'.");
-}
-
-const char* distributionTypeToString(DistributionType t) {
-  switch (t) {
-    case DistributionType::POISSON:
-      return "poisson";
-    case DistributionType::BINOMIAL:
-      return "binomial";
-    case DistributionType::FIXED:
-      return "fixed";
-    default:
-      return "unknown";
-  }
 }
 
 bool SelectionCriterion::comparesAgainstUnitNames(
@@ -278,7 +265,7 @@ void SelectionCriterion::buildGeoAncestorMask(const WorldState& world) const {
 
   // Rank-gated: geo_units is global on every rank, so only the inhabited-unit
   // count is rank-local, and one rank's report is enough to flag the geography.
-  if (units_with_no_ancestor > 0 && logRank0()) {
+  if (units_with_no_ancestor > 0 && mpi_runtime::state().rank == 0) {
     std::cerr << "Warning: '" << property_path
               << "': " << units_with_no_ancestor
               << " inhabited geographical units have no ancestor at level '"

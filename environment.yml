@@ -8,8 +8,6 @@ dependencies:
   - hdf5
   - yaml-cpp
   - openmpi
-  - mpi4py
   - metis       # optional: graph partitioning for MPI domain decomposition
-  - gperftools  # optional: CPU profiling
   - h5py
   - numpy

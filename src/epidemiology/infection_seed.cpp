@@ -19,6 +19,7 @@
 #include "epidemiology/seeding/seed_selector.h"
 #include "utils/deterministic_rng.h"
 #include "utils/filtered_csv.h"
+#include "utils/mpi_utils.h"
 #include "utils/random.h"
 #include "utils/time_utils.h"
 
@@ -29,15 +30,10 @@ namespace {
 #ifdef USE_MPI
 std::vector<SeedOffer> poolSeedOffers(
     const std::vector<SeedOffer>& local_offers) {
-  int mpi_initialized = 0;
-  int mpi_finalized = 0;
-  MPI_Initialized(&mpi_initialized);
-  MPI_Finalized(&mpi_finalized);
-  if (!mpi_initialized || mpi_finalized) return local_offers;
+  const auto mpi = mpi_runtime::state();
+  if (!mpi.active || mpi.size == 1) return local_offers;
 
-  int num_ranks = 1;
-  MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
-  if (num_ranks == 1) return local_offers;
+  const int num_ranks = mpi.size;
 
   const int offer_bytes = static_cast<int>(sizeof(SeedOffer));
   const int local_bytes = static_cast<int>(local_offers.size()) * offer_bytes;
@@ -88,61 +84,6 @@ std::string budgetLabel(const SeedBudget& budget,
 // =============================================================================
 // Configuration Loader Implementation
 // =============================================================================
-
-std::vector<SelectionCriterion> InfectionSeedConfigLoader::parseCriterion(
-    const std::string& key, const std::string& val) {
-  std::string property = key;
-  // Map age_groups to age for internal property evaluation
-  if (property == "age_groups") {
-    property = "age";
-    // Silent mapping: internal config normalization
-  }
-
-  std::vector<SelectionCriterion> results;
-
-  // Support ranges like "18-30" or "65-100"
-  size_t dash = val.find('-');
-  if (dash != std::string::npos && dash > 0 && dash < val.size() - 1) {
-    try {
-      SelectionCriterion c_min, c_max;
-      c_min.property_path = property;
-      c_min.operator_type = ">=";
-      c_min.value = std::stoi(val.substr(0, dash));
-
-      c_max.property_path = property;
-      c_max.operator_type = "<=";
-      c_max.value = std::stoi(val.substr(dash + 1));
-
-      results.push_back(c_min);
-      results.push_back(c_max);
-      return results;
-    } catch (...) {
-      // If parsing failed, fall back to treats it as a single string
-    }
-  }
-
-  SelectionCriterion c;
-  c.property_path = property;
-  c.operator_type = "==";
-
-  // Try numeric/bool first, fallback to string
-  try {
-    if (val == "true" || val == "True")
-      c.value = true;
-    else if (val == "false" || val == "False")
-      c.value = false;
-    else if (val.find('.') != std::string::npos) {
-      c.value = std::stod(val);
-    } else {
-      c.value = std::stoi(val);
-    }
-  } catch (...) {
-    c.value = val;
-  }
-
-  results.push_back(c);
-  return results;
-}
 
 InfectionSeedType InfectionSeedConfigLoader::parseSeedType(
     const std::string& type_str) {
@@ -355,8 +296,8 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
           if (params["attribute_filters"]) {
             auto filters = params["attribute_filters"];
             for (auto it = filters.begin(); it != filters.end(); ++it) {
-              auto cs = parseCriterion(it->first.as<std::string>(),
-                                       it->second.as<std::string>());
+              auto cs = filtering::parseCriterionFromKeyValue(
+                  it->first.as<std::string>(), it->second.as<std::string>());
               seed.attribute_filters.insert(seed.attribute_filters.end(),
                                             cs.begin(), cs.end());
             }
@@ -385,7 +326,8 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
                 std::string s = age_str.as<std::string>();
                 SeedTargetGroup g;
                 g.label = s;
-                auto cs = parseCriterion("age", s);
+                auto cs =
+                    filtering::parseCriterionFromKeyValue("age_groups", s);
                 g.criteria.insert(g.criteria.end(), cs.begin(), cs.end());
                 seed.structured_config.target_groups.push_back(g);
               }
@@ -950,11 +892,7 @@ std::vector<PersonId> InfectionSeeder::applyClusteredSeed(
 
 bool InfectionSeeder::matchesAttributes(
     const Person* person, const std::vector<SelectionCriterion>& filters) {
-  if (filters.empty()) return true;
-  for (const auto& filter : filters) {
-    if (!filter.evaluate(*person, &world_)) return false;
-  }
-  return true;
+  return filters.empty() || matchesAllCriteria(*person, filters, &world_);
 }
 
 void InfectionSeeder::infectPerson(Person* person,

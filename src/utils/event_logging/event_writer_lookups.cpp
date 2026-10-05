@@ -7,6 +7,24 @@ namespace {
 
 using june::event_writer_detail::openOrCreateGroup;
 
+template <typename T>
+H5::DataSet writeFixedDataset(H5::H5File& file, const std::string& name,
+                              const std::vector<T>& data,
+                              const H5::CompType& type, int compression_level) {
+  hsize_t dims[1] = {data.size()};
+  H5::DataSpace space(1, dims);
+  H5::DataSet dataset;
+  if (compression_level <= 0) {
+    dataset = file.createDataSet(name, type, space);
+  } else {
+    H5::DSetCreatPropList plist = june::event_writer_detail::chunkedProperties(
+        dims[0], compression_level);
+    dataset = file.createDataSet(name, type, space, plist);
+  }
+  dataset.write(data.data(), type);
+  return dataset;
+}
+
 // Resolve which people should appear in a /lookups/* table for this write
 // call. `mode` is the config switch ("none"/"all"/"infected_only"). Empty
 // result means "skip the whole table". The mode=="all" + append branch
@@ -304,17 +322,8 @@ void writeVenueLookupTable(H5::H5File& file, const WorldState& world,
 
   auto vtype = event_lookup_schema::venue();
 
-  hsize_t vdims[1] = {n + 1};
-  H5::DataSpace vspace(1, vdims);
-  H5::DataSet vds;
-  if (config.simulation.compression_level <= 0) {
-    vds = file.createDataSet("/lookups/venues", vtype, vspace);
-  } else {
-    H5::DSetCreatPropList plist = event_writer_detail::chunkedProperties(
-        vdims[0], config.simulation.compression_level);
-    vds = file.createDataSet("/lookups/venues", vtype, vspace, plist);
-  }
-  vds.write(records.data(), vtype);
+  writeFixedDataset(file, "/lookups/venues", records, vtype,
+                    config.simulation.compression_level);
 }
 
 void writePersonActivitiesTable(
@@ -345,18 +354,9 @@ void writePopulationSummary(H5::H5File& file, const WorldState& world,
   auto records = buildPopulationSummaryRecords(world, property_names);
   auto ptype = event_lookup_schema::populationSummary();
 
-  hsize_t pdims[1] = {n};
-  H5::DataSpace pspace(1, pdims);
-  H5::DataSet pds;
-  if (config.simulation.compression_level <= 0) {
-    pds = file.createDataSet("/lookups/population_summary", ptype, pspace);
-  } else {
-    H5::DSetCreatPropList plist = event_writer_detail::chunkedProperties(
-        pdims[0], config.simulation.compression_level);
-    pds =
-        file.createDataSet("/lookups/population_summary", ptype, pspace, plist);
-  }
-  pds.write(records.data(), ptype);
+  H5::DataSet pds =
+      writeFixedDataset(file, "/lookups/population_summary", records, ptype,
+                        config.simulation.compression_level);
 
   for (size_t k = 0; k < property_names.size(); ++k) {
     H5::StrType stype(H5::PredType::C_S1, H5T_VARIABLE);

@@ -55,11 +55,7 @@ struct SeedTargetGroup {
   std::string label;
 
   bool matches(const Person& person, const WorldState* world) const {
-    if (criteria.empty()) return true;
-    for (const auto& c : criteria) {
-      if (!c.evaluate(person, world)) return false;
-    }
-    return true;
+    return matchesAllCriteria(person, criteria, world);
   }
 
   void resolve(const WorldState& world) {
@@ -233,8 +229,6 @@ class InfectionSeedConfigLoader {
 
   static void loadBulkCsvSeeds(const std::string& csv_path,
                                InfectionSeedConfig& config);
-  static std::vector<SelectionCriterion> parseCriterion(const std::string& key,
-                                                        const std::string& val);
 
  private:
   static InfectionSeedType parseSeedType(const std::string& type_str);

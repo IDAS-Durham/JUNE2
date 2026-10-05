@@ -1,13 +1,10 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <string>
 
 #include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
 #include "epidemiology/seeding/seed_identity.h"
+#include "test_utils.h"
 #include "utils/time_utils.h"
 
 using namespace june;
@@ -23,22 +20,9 @@ SeedWindow windowEndingAt(const std::string& date_time) {
 // Writes YAML to a throwaway file and loads it, so the tests exercise the
 // loader's real public entry point rather than a parsing helper.
 InfectionSeedConfig loadYaml(const std::string& yaml) {
-  static int counter = 0;
-  std::filesystem::path path = std::filesystem::temp_directory_path() /
-                               ("june_seed_test_" + std::to_string(counter++) +
-                                ".yaml");
-  {
-    std::ofstream out(path);
-    out << yaml;
-  }
-  try {
-    InfectionSeedConfig config = InfectionSeedConfigLoader::loadFromFile(path);
-    std::filesystem::remove(path);
-    return config;
-  } catch (...) {
-    std::filesystem::remove(path);
-    throw;
-  }
+  ScopedTestFiles files{"june_seed_test"};
+  return InfectionSeedConfigLoader::loadFromFile(
+      files.write("seeds.yaml", yaml));
 }
 
 // A one-stage disease, enough for the seeder to construct an Infection.
@@ -202,7 +186,8 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
+  auto infected =
+      seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 }
@@ -225,7 +210,8 @@ infection_seeds:
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
+  auto infected =
+      seeder.seedInfections(windowEndingAt("2020-02-01 08:00"), 0.0);
 
   CHECK(infected.size() == 20);
 
@@ -294,19 +280,16 @@ infection_seeds:
 // =============================================================================
 
 TEST_CASE("bulk CSV keeps one budget per distinct criteria set") {
-  std::filesystem::path csv_path =
-      std::filesystem::temp_directory_path() / "june_bulk_seed_test.csv";
-  {
-    std::ofstream out(csv_path);
-    out << "name,date,type,geo_level,geo_unit,cases,filter.sex\n"
-           "bubonic,1348-06-02 08:00,exact,County,DURHAM,100,male\n"
-           "bubonic,1348-06-02 08:00,exact,County,DURHAM,7,female\n"
-           "bubonic,1348-06-02 08:00,exact,County,YORK,3,female\n";
-  }
+  ScopedTestFiles files{"june_bulk_seed_test"};
+  const auto csv_path =
+      files.write("seeds.csv",
+                  "name,date,type,geo_level,geo_unit,cases,filter.sex\n"
+                  "bubonic,1348-06-02 08:00,exact,County,DURHAM,100,male\n"
+                  "bubonic,1348-06-02 08:00,exact,County,DURHAM,7,female\n"
+                  "bubonic,1348-06-02 08:00,exact,County,YORK,3,female\n");
 
   InfectionSeedConfig config;
   InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
-  std::filesystem::remove(csv_path);
 
   REQUIRE(config.seeds.size() == 1);
   const auto& structured = config.seeds[0].structured_config;
@@ -334,25 +317,23 @@ TEST_CASE("bulk CSV keeps one budget per distinct criteria set") {
 }
 
 TEST_CASE("bulk CSV seeds each criteria set its own count") {
-  std::filesystem::path csv_path =
-      std::filesystem::temp_directory_path() / "june_bulk_seed_run_test.csv";
-  {
-    std::ofstream out(csv_path);
-    out << "name,date,type,geo_level,geo_unit,cases,filter.age\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,10,0-17\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,4,65-100\n";
-  }
+  ScopedTestFiles files{"june_bulk_seed_run_test"};
+  const auto csv_path =
+      files.write("seeds.csv",
+                  "name,date,type,geo_level,geo_unit,cases,filter.age\n"
+                  "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,10,0-17\n"
+                  "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,4,65-100\n");
 
   InfectionSeedConfig config;
   InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
-  std::filesystem::remove(csv_path);
 
   WorldState world = makeWorld("DURHAM", 300);
   config.resolve(world);
 
   Disease disease = makeDisease();
   InfectionSeeder seeder(world, &disease, config);
-  auto infected = seeder.seedInfections(windowEndingAt("1348-06-02 08:00"), 0.0);
+  auto infected =
+      seeder.seedInfections(windowEndingAt("1348-06-02 08:00"), 0.0);
 
   REQUIRE(infected.size() == 14);
   int children = 0;
@@ -371,18 +352,15 @@ TEST_CASE("bulk CSV seeds each criteria set its own count") {
 // =============================================================================
 
 TEST_CASE("bulk CSV reads a seed's infector symptom and transmission mode") {
-  std::filesystem::path csv_path =
-      std::filesystem::temp_directory_path() / "june_bulk_seed_context.csv";
-  {
-    std::ofstream out(csv_path);
-    out << "name,date,type,geo_level,geo_unit,cases,infector_symptom,"
-           "transmission_mode\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,3,mild,rat_flea_bite\n";
-  }
+  ScopedTestFiles files{"june_bulk_seed_context"};
+  const auto csv_path = files.write(
+      "seeds.csv",
+      "name,date,type,geo_level,geo_unit,cases,infector_symptom,"
+      "transmission_mode\n"
+      "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,3,mild,rat_flea_bite\n");
 
   InfectionSeedConfig config;
   InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
-  std::filesystem::remove(csv_path);
 
   REQUIRE(config.seeds.size() == 1);
   CHECK(config.seeds[0].infector_symptom == "mild");
@@ -390,17 +368,14 @@ TEST_CASE("bulk CSV reads a seed's infector symptom and transmission mode") {
 }
 
 TEST_CASE("bulk CSV without context columns leaves both facts absent") {
-  std::filesystem::path csv_path =
-      std::filesystem::temp_directory_path() / "june_bulk_seed_no_context.csv";
-  {
-    std::ofstream out(csv_path);
-    out << "name,date,type,geo_level,geo_unit,cases\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,3\n";
-  }
+  ScopedTestFiles files{"june_bulk_seed_no_context"};
+  const auto csv_path =
+      files.write("seeds.csv",
+                  "name,date,type,geo_level,geo_unit,cases\n"
+                  "bubonic,1348-06-02 08:00,exact,MGU,DURHAM,3\n");
 
   InfectionSeedConfig config;
   InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
-  std::filesystem::remove(csv_path);
 
   REQUIRE(config.seeds.size() == 1);
   CHECK(config.seeds[0].infector_symptom.empty());
@@ -508,13 +483,11 @@ infection_seeds:
 // =============================================================================
 
 TEST_CASE("a YAML seed and a bulk CSV seed with equal identity clash") {
-  std::filesystem::path csv_path =
-      std::filesystem::temp_directory_path() / "june_bulk_seed_clash.csv";
-  {
-    std::ofstream out(csv_path);
-    out << "name,date,type,geo_level,geo_unit,cases\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,U1,3\n";
-  }
+  ScopedTestFiles files{"june_bulk_seed_clash"};
+  const auto csv_path =
+      files.write("seeds.csv",
+                  "name,date,type,geo_level,geo_unit,cases\n"
+                  "bubonic,1348-06-02 08:00,exact,MGU,U1,3\n");
   auto config = loadYaml("bulk_csv: \"" + csv_path.string() + R"("
 infection_seeds:
   - name: "bubonic"
@@ -524,7 +497,6 @@ infection_seeds:
       units:
         "U1": 1
 )");
-  std::filesystem::remove(csv_path);
 
   REQUIRE(config.seeds.size() == 2);
   CHECK_THROWS_WITH(requireUniqueSeedIdentities(config.seeds),
@@ -532,18 +504,15 @@ infection_seeds:
 }
 
 TEST_CASE("bulk CSV rows differing only in a context column are two seeds") {
-  std::filesystem::path csv_path =
-      std::filesystem::temp_directory_path() / "june_bulk_seed_two_modes.csv";
-  {
-    std::ofstream out(csv_path);
-    out << "name,date,type,geo_level,geo_unit,cases,transmission_mode\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,U1,3,rat_flea_bite\n"
-           "bubonic,1348-06-02 08:00,exact,MGU,U1,2,\n";
-  }
+  ScopedTestFiles files{"june_bulk_seed_two_modes"};
+  const auto csv_path =
+      files.write("seeds.csv",
+                  "name,date,type,geo_level,geo_unit,cases,transmission_mode\n"
+                  "bubonic,1348-06-02 08:00,exact,MGU,U1,3,rat_flea_bite\n"
+                  "bubonic,1348-06-02 08:00,exact,MGU,U1,2,\n");
 
   InfectionSeedConfig config;
   InfectionSeedConfigLoader::loadBulkCsvSeeds(csv_path.string(), config);
-  std::filesystem::remove(csv_path);
 
   REQUIRE(config.seeds.size() == 2);
   CHECK_NOTHROW(requireUniqueSeedIdentities(config.seeds));

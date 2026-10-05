@@ -175,12 +175,6 @@ struct PolicyAction {
   double compliance_rate = 1.0;
 
   // Check if this action should override a given activity
-  bool shouldOverride(const std::string& activity_name) const {
-    if (override_all) return true;
-    return override_activities.count(activity_name) > 0;
-  }
-
-  // Check by index
   bool shouldOverride(int16_t activity_index) const {
     if (override_all) return true;
     if (activity_index < 0 || activity_index >= 64) return false;

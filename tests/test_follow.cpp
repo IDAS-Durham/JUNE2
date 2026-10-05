@@ -7,9 +7,6 @@
 //      guards that keep a scenario honest.
 //   2. Binding behaviour: the committed-set exclusion that makes several rules
 //      coexist — a follower belongs to one rule, a host may recur, no chains.
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
-#include <filesystem>
-#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,6 +18,7 @@
 #include "epidemiology/disease.h"
 #include "loaders/config_loader.h"
 #include "simulation/follow_bindings.h"
+#include "test_utils.h"
 #include "transmission_fixtures.h"
 
 using namespace june;
@@ -33,17 +31,13 @@ using follow_detail::rebuildCriteriaBindings;
 
 // Write a coordinated_encounters YAML body to a temp file and parse it.
 static CoordinatedEncounterConfig parseCE(const std::string& body) {
-  static int counter = 0;
-  std::filesystem::path path =
-      std::filesystem::temp_directory_path() /
-      ("follow_test_ce_" + std::to_string(counter++) + ".yaml");
-  std::ofstream(path) << "coordinated_encounters:\n"
-                         "  enabled: false\n"
-                         "  encounters: []\n"
-                      << body;
-  auto cfg = ConfigLoader::loadCoordinatedEncounters(path.string());
-  std::filesystem::remove(path);
-  return cfg;
+  ScopedTestFiles files{"follow_test_ce"};
+  const auto path = files.write("config.yaml",
+                                "coordinated_encounters:\n"
+                                "  enabled: false\n"
+                                "  encounters: []\n" +
+                                    body);
+  return ConfigLoader::loadCoordinatedEncounters(path.string());
 }
 
 TEST_CASE("follow: singular block is sugar for a one-element list") {
@@ -614,9 +608,9 @@ TEST_CASE("a venue-gated policy on the host's venue stops the mirror") {
                                               5.0) == true);
 
   // Same policy, host somewhere the gate does not name: the mirror stands.
-  CHECK(follow_detail::policySuppressesMirror(
-            &policy_manager, world.people[0], kLeisureActivity,
-            kGroceryVenueType, 5.0) == false);
+  CHECK(follow_detail::policySuppressesMirror(&policy_manager, world.people[0],
+                                              kLeisureActivity,
+                                              kGroceryVenueType, 5.0) == false);
 }
 
 TEST_CASE("the mirror gate keys on the host's venue type, not the follower's") {
@@ -641,9 +635,9 @@ TEST_CASE("an activity-only policy stops the mirror wherever the host is") {
   CHECK(follow_detail::policySuppressesMirror(&policy_manager, world.people[0],
                                               kLeisureActivity, kPubVenueType,
                                               5.0) == true);
-  CHECK(follow_detail::policySuppressesMirror(
-            &policy_manager, world.people[0], kLeisureActivity,
-            kGroceryVenueType, 5.0) == true);
+  CHECK(follow_detail::policySuppressesMirror(&policy_manager, world.people[0],
+                                              kLeisureActivity,
+                                              kGroceryVenueType, 5.0) == true);
 }
 
 TEST_CASE("with no policy manager the mirror always stands") {

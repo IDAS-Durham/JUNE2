@@ -58,7 +58,7 @@ Or manually:
 ```bash
 mkdir -p build && cd build
 cmake ..
-make -j8
+cmake --build . --parallel
 ```
 
 The executable is produced at `build/disease_sim`.

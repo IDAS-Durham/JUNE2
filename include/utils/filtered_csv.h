@@ -10,7 +10,8 @@
 namespace june {
 namespace csv {
 
-/// Split a comma-separated line and trim whitespace around each field.
+/// Split a comma-separated line, honoring quoted fields and trimming
+/// whitespace around each field.
 std::vector<std::string> splitCSVLine(const std::string& line);
 
 /// A single parsed row of a filter.*-convention CSV.

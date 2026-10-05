@@ -1,7 +1,6 @@
 #include "utils/filtered_csv.h"
 
 #include <fstream>
-#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -23,11 +22,25 @@ std::string trim(const std::string& s) {
 
 std::vector<std::string> splitCSVLine(const std::string& line) {
   std::vector<std::string> fields;
-  std::istringstream lss(line);
-  std::string f;
-  while (std::getline(lss, f, ',')) {
-    fields.push_back(trim(f));
+  std::string field;
+  bool quoted = false;
+  for (size_t i = 0; i < line.size(); ++i) {
+    const char c = line[i];
+    if (c == '"') {
+      if (quoted && i + 1 < line.size() && line[i + 1] == '"') {
+        field.push_back('"');
+        ++i;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (c == ',' && !quoted) {
+      fields.push_back(trim(field));
+      field.clear();
+    } else {
+      field.push_back(c);
+    }
   }
+  fields.push_back(trim(field));
   return fields;
 }
 

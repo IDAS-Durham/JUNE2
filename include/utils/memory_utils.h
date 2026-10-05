@@ -1,37 +1,21 @@
 #pragma once
 
-#include <fstream>
-#include <iostream>
-#include <string>
-#include <utility>
-#ifdef USE_MPI
-#include <mpi.h>
-#endif
 #include <unistd.h>
 
+#include <fstream>
 #include <iomanip>
+#include <iostream>
+#include <string>
 
 #ifdef __APPLE__
 #include <mach/mach.h>
 #endif
 
+#include "utils/mpi_utils.h"
+
 namespace june {
 
 namespace memory {
-
-inline std::pair<int, int> getMPIRankAndSize() {
-  int rank = 0;
-  int size = 1;
-#ifdef USE_MPI
-  int initialized = 0;
-  MPI_Initialized(&initialized);
-  if (initialized) {
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
-  }
-#endif
-  return {rank, size};
-}
 
 inline size_t getRSS() {
   // Gets the current memory usage (RSS) in Kilobytes
@@ -63,7 +47,7 @@ inline void logMemory(const std::string& label) {
 
   double rss_gb = rss_kb / (1024.0 * 1024.0);
 
-  const int rank = getMPIRankAndSize().first;
+  const int rank = mpi_runtime::state().rank;
   if (rank == 0) {
     std::cout << "[MEMORY] " << std::left << std::setw(30) << label << ": "
               << std::fixed << std::setprecision(2) << rss_gb << " GB"
@@ -79,7 +63,9 @@ inline void logGlobalMemoryStats(const std::string& label) {
   double min_gb = rss_gb;
   double max_gb = rss_gb;
   double sum_gb = rss_gb;
-  const auto [rank, size] = getMPIRankAndSize();
+  const auto mpi = mpi_runtime::state();
+  const int rank = mpi.rank;
+  const int size = mpi.size;
 
 #ifdef USE_MPI
   if (size > 1) {

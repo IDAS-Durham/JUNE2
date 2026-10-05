@@ -9,8 +9,8 @@
 #include <string>
 #include <string_view>
 #include <tuple>
-#include <utility>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "activity/on_the_fly_venue_allocator.h"
@@ -20,22 +20,6 @@
 #include "epidemiology/disease.h"
 
 namespace june {
-
-inline Disease makeOneStageDisease() {
-  TransmissionParams transmission;
-  transmission.mode = InfectiousnessMode::STAGE_DRIVEN;
-  auto constant_curve = std::make_shared<ConstantCurve>(1.0);
-  transmission.symptom_id_curves = {nullptr, constant_curve};
-
-  std::vector<SymptomTag> symptom_tags = {{"healthy", -1, 0}, {"mild", 1, 1}};
-  TrajectoryDefinition trajectory;
-  trajectory.selection_key = "general";
-  trajectory.severity = 1.0;
-  trajectory.stages.push_back({"mild", {"constant", {{"value", 10.0}}}});
-
-  return Disease("TestDisease", symptom_tags, {}, {trajectory}, {},
-                 transmission);
-}
 
 inline Disease makeAlwaysSickDisease() {
   TransmissionParams transmission;
@@ -95,9 +79,9 @@ class ScopedTestFiles {
  public:
   explicit ScopedTestFiles(std::string prefix = "june2_test") {
     static std::atomic<unsigned> counter{0};
-    directory_ = std::filesystem::temp_directory_path() /
-                 (std::move(prefix) + "_" +
-                  std::to_string(counter.fetch_add(1)));
+    directory_ =
+        std::filesystem::temp_directory_path() /
+        (std::move(prefix) + "_" + std::to_string(counter.fetch_add(1)));
     if (!std::filesystem::create_directories(directory_))
       throw std::runtime_error("could not create test temp directory: " +
                                directory_.string());
@@ -112,7 +96,7 @@ class ScopedTestFiles {
   }
 
   std::filesystem::path write(std::string_view filename,
-                               std::string_view contents) const {
+                              std::string_view contents) const {
     const auto path = directory_ / std::string(filename);
     std::ofstream file(path);
     if (!file.is_open())

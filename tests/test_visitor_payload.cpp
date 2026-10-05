@@ -4,7 +4,6 @@
 // local infector. No MPI runtime, so this runs as a plain ctest binary, not
 // under mpirun.
 
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
 #ifdef USE_MPI
