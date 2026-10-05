@@ -458,6 +458,20 @@ bool SelectionCriterion::evaluate(
 
   // 4. Perform comparison for each fetched value (multi-venue support)
   auto compare = [this](const PropertyValue& p_val) -> bool {
+    if (std::holds_alternative<std::vector<std::string>>(p_val)) {
+      // A list comparison checks one exact member. CSV uses == for this same
+      // operation, while scalar string contains keeps its substring behavior.
+      if (!std::holds_alternative<std::string>(value)) return false;
+      const auto& list = std::get<std::vector<std::string>>(p_val);
+      const bool member = std::find(list.begin(), list.end(),
+                                    std::get<std::string>(value)) != list.end();
+      if (cached_operator == Operator::EQUAL ||
+          cached_operator == Operator::CONTAINS)
+        return member;
+      if (cached_operator == Operator::NOT_EQUAL) return !member;
+      return false;
+    }
+
     if (cached_operator == Operator::EQUAL) return p_val == value;
     if (cached_operator == Operator::NOT_EQUAL) return p_val != value;
 
@@ -1148,6 +1162,18 @@ void SelectionCriterion::resolveOrThrow(const WorldState& world,
     throw std::runtime_error(context + ": person property '" +
                              cached_sub_property +
                              "' is not carried by this world");
+  }
+
+  if (cached_type == PropertyType::CUSTOM_PROPERTY &&
+      world.person_property_list_value_registries.count(cached_sub_property)) {
+    const bool membership_operator = cached_operator == Operator::EQUAL ||
+                                     cached_operator == Operator::NOT_EQUAL ||
+                                     cached_operator == Operator::CONTAINS;
+    if (!membership_operator || !std::holds_alternative<std::string>(value)) {
+      throw std::runtime_error(
+          context + ": list-valued property '" + cached_sub_property +
+          "' supports ==, !=, and contains against one string value");
+    }
   }
 
   if (cached_operator == Operator::UNSUPPORTED) {

@@ -7,11 +7,37 @@
 
 #include "loaders/hdf5_loader.h"
 
+#include <yaml-cpp/yaml.h>
+
 #include <algorithm>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 namespace {
+
+// MAY writes string lists as JSON. yaml-cpp handles this syntax, and its scalar
+// tags let numeric network arrays pass through unchanged.
+std::optional<std::vector<std::string>> parseJsonStringArray(
+    const std::string& text) {
+  const size_t first = text.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos || text[first] != '[') return std::nullopt;
+
+  try {
+    YAML::Node node = YAML::Load(text);
+    if (!node.IsSequence()) return std::nullopt;
+
+    std::vector<std::string> values;
+    values.reserve(node.size());
+    for (const auto& item : node) {
+      if (!item.IsScalar() || item.Tag() != "!") return std::nullopt;
+      values.push_back(item.as<std::string>());
+    }
+    return values;
+  } catch (const YAML::Exception&) {
+    return std::nullopt;
+  }
+}
 
 template <typename ReadFn>
 std::vector<std::string> readStringValues(H5::DataSet& dataset,
@@ -205,7 +231,14 @@ std::vector<PropertyValue> HDF5Loader::readPropertyDatasetRange(
       try {
         auto strings = readStringDatasetRange(path, start, count);
         for (size_t i = 0; i < count; ++i) {
-          result[i] = strings[i];
+          if (path.find("/population/") != std::string::npos) {
+            auto list = parseJsonStringArray(strings[i]);
+            if (list.has_value()) {
+              result[i] = std::move(*list);
+              continue;
+            }
+          }
+          result[i] = std::move(strings[i]);
         }
       } catch (const std::exception& e) {
         std::cerr << "ERROR: Failed to read string property " << path

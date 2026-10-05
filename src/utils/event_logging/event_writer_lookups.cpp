@@ -25,6 +25,16 @@ H5::DataSet writeFixedDataset(H5::H5File& file, const std::string& name,
   return dataset;
 }
 
+std::string jsonString(const std::string& value) {
+  std::string escaped = "\"";
+  for (char c : value) {
+    if (c == '\\' || c == '\"') escaped.push_back('\\');
+    escaped.push_back(c);
+  }
+  escaped.push_back('\"');
+  return escaped;
+}
+
 // Resolve which people should appear in a /lookups/* table for this write
 // call. `mode` is the config switch ("none"/"all"/"infected_only"). Empty
 // result means "skip the whole table". The mode=="all" + append branch
@@ -115,7 +125,16 @@ std::vector<std::string> collectPropertyValues(
         values.push_back(std::get<bool>(val) ? "true" : "false");
       else if (std::holds_alternative<double>(val))
         values.push_back(std::to_string(std::get<double>(val)));
-      else
+      else if (std::holds_alternative<std::vector<std::string>>(val)) {
+        const auto& list = std::get<std::vector<std::string>>(val);
+        std::string encoded = "[";
+        for (size_t i = 0; i < list.size(); ++i) {
+          if (i > 0) encoded += ",";
+          encoded += jsonString(list[i]);
+        }
+        encoded += "]";
+        values.push_back(std::move(encoded));
+      } else
         values.push_back(june::kCouldNotResolve);
     } else if (network_type_id >= 0) {
       auto partners = world.getNetworkPartners(person, network_type_id);

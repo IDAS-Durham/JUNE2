@@ -41,6 +41,23 @@ static WorldState buildSinglePersonWorld() {
   return world;
 }
 
+static WorldState buildListPropertyWorld() {
+  WorldState world;
+  world.person_property_names = {"comorbidities"};
+  world.person_property_list_value_registries["comorbidities"] = {
+      {"crd", "cancer"}, {"flu"}, {}};
+
+  for (int i = 0; i < 4; ++i) {
+    Person& person = world.people.emplace_back();
+    person.id = i;
+    person.properties_start = static_cast<uint32_t>(i);
+    person.properties_count = 1;
+    world.person_properties.push_back(i < 3 ? i : -1);
+  }
+  world.buildIndices();
+  return world;
+}
+
 static SelectionCriterion makeCriterion(const std::string& property_path,
                                         const std::string& operator_type,
                                         PropertyValue value) {
@@ -94,6 +111,38 @@ TEST_CASE("contains matches a substring of a string value") {
                          world));
   CHECK_FALSE(evaluateResolved(
       makeCriterion("sex", "contains", std::string("xyz")), world));
+}
+
+TEST_CASE("list-valued properties use exact membership") {
+  WorldState world = buildListPropertyWorld();
+  const auto& with_cancer = world.people[0];
+  const auto& empty = world.people[2];
+  const auto& missing = world.people[3];
+
+  auto property = world.getPersonProperty(with_cancer, "comorbidities");
+  REQUIRE(property.has_value());
+  REQUIRE(std::holds_alternative<std::vector<std::string>>(*property));
+  CHECK(std::get<std::vector<std::string>>(*property) ==
+        std::vector<std::string>{"crd", "cancer"});
+
+  SelectionCriterion equals_cancer =
+      makeCriterion("properties.comorbidities", "==", "cancer");
+  SelectionCriterion contains_cancer =
+      makeCriterion("properties.comorbidities", "contains", "cancer");
+  SelectionCriterion contains_fragment =
+      makeCriterion("properties.comorbidities", "contains", "can");
+  SelectionCriterion not_cancer =
+      makeCriterion("properties.comorbidities", "!=", "cancer");
+  for (SelectionCriterion* criterion : {&equals_cancer, &contains_cancer,
+                                         &contains_fragment, &not_cancer})
+    criterion->resolveOrThrow(world, "test");
+
+  CHECK(equals_cancer.evaluate(with_cancer, &world));
+  CHECK(contains_cancer.evaluate(with_cancer, &world));
+  CHECK_FALSE(contains_fragment.evaluate(with_cancer, &world));
+  CHECK_FALSE(not_cancer.evaluate(with_cancer, &world));
+  CHECK(not_cancer.evaluate(empty, &world));
+  CHECK_FALSE(not_cancer.evaluate(missing, &world));
 }
 
 TEST_CASE("boolean predicates support == and != only") {

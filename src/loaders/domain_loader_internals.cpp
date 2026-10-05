@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <unordered_set>
@@ -17,11 +18,8 @@ namespace detail {
 
 namespace {
 
-// Intern a PropertyValue against a per-property string registry and cache.
-// Returns the interned code, or -1 for null/empty values and for strings
-// that are network-encoded (starting with '[' or '{'); those are handled
-// separately by parseNetworkPartnersFromString. Lazily seeds index_cache
-// from registry on first use after a registry was populated elsewhere.
+// Intern scalar values in the property's string registry. Null and
+// network-encoded strings return -1.
 int32_t internPropertyValue(
     const PropertyValue& val, std::vector<std::string>& registry,
     std::unordered_map<std::string, int32_t>& index_cache) {
@@ -46,6 +44,25 @@ int32_t internPropertyValue(
   int32_t code = static_cast<int32_t>(registry.size());
   registry.push_back(s);
   index_cache[s] = code;
+  return code;
+}
+
+// Empty lists are values too, so they receive a list-registry id.
+int32_t internStringListValue(
+    const PropertyValue& val,
+    std::vector<std::vector<std::string>>& list_registry,
+    std::map<std::vector<std::string>, int32_t>& list_index_cache) {
+  const auto& list = std::get<std::vector<std::string>>(val);
+  if (list_index_cache.empty() && !list_registry.empty()) {
+    for (size_t i = 0; i < list_registry.size(); ++i)
+      list_index_cache[list_registry[i]] = static_cast<int32_t>(i);
+  }
+  auto it = list_index_cache.find(list);
+  if (it != list_index_cache.end()) return it->second;
+
+  int32_t code = static_cast<int32_t>(list_registry.size());
+  list_registry.push_back(list);
+  list_index_cache[list] = code;
   return code;
 }
 
@@ -245,7 +262,10 @@ void loadPersonsInSpan(
     const std::vector<GeoUnitId>& geo_units_vec,
     const std::vector<std::string>& population_property_names,
     std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
-        property_indices_cache) {
+        property_indices_cache,
+    std::unordered_map<std::string,
+                       std::map<std::vector<std::string>, int32_t>>&
+        list_property_indices_cache) {
   auto chunk_ids = loader.readNumericDatasetRange<int32_t>(
       "/population/ids", span.start, span.count);
   auto chunk_ages = loader.readNumericDatasetRange<float>(
@@ -280,9 +300,72 @@ void loadPersonsInSpan(
       for (size_t k = 0; k < chunk_property_columns.size(); ++k) {
         const auto& prop_name = population_property_names[k];
         const auto& prop_val = chunk_property_columns[k][j_off];
-        loader.world_.person_properties.push_back(internPropertyValue(
-            prop_val, loader.world_.person_property_value_registries[prop_name],
-            property_indices_cache[prop_name]));
+        const bool is_list =
+            std::holds_alternative<std::vector<std::string>>(prop_val);
+        const bool is_empty_list =
+            is_list && std::get<std::vector<std::string>>(prop_val).empty();
+        const bool is_missing =
+            std::holds_alternative<std::monostate>(prop_val) ||
+            (std::holds_alternative<std::string>(prop_val) &&
+             std::get<std::string>(prop_val).empty());
+        const bool has_type = !is_empty_list && !is_missing;
+
+        if (has_type) {
+          auto [kind_it, inserted] =
+              loader.world_.person_property_is_list.emplace(prop_name, is_list);
+          if (!inserted && kind_it->second != is_list) {
+            throw std::runtime_error("Person property '" + prop_name +
+                                     "' mixes scalar and string-list values");
+          }
+          if (is_list) {
+            auto& pending =
+                loader.world_
+                    .person_property_pending_empty_list_values[prop_name];
+            auto& list_registry =
+                loader.world_.person_property_list_value_registries[prop_name];
+            auto& list_cache = list_property_indices_cache[prop_name];
+            if (inserted && !pending.empty()) {
+              const int32_t empty_code = internStringListValue(
+                  PropertyValue(std::vector<std::string>{}), list_registry,
+                  list_cache);
+              for (size_t index : pending)
+                loader.world_.person_properties[index] = empty_code;
+              pending.clear();
+            }
+            loader.world_.person_properties.push_back(
+                internStringListValue(prop_val, list_registry, list_cache));
+          } else {
+            loader.world_.person_properties.push_back(internPropertyValue(
+                prop_val,
+                loader.world_.person_property_value_registries[prop_name],
+                property_indices_cache[prop_name]));
+          }
+        } else if (is_empty_list) {
+          auto kind_it = loader.world_.person_property_is_list.find(prop_name);
+          if (kind_it != loader.world_.person_property_is_list.end() &&
+              kind_it->second) {
+            auto& list_registry =
+                loader.world_.person_property_list_value_registries[prop_name];
+            loader.world_.person_properties.push_back(
+                internStringListValue(prop_val, list_registry,
+                                      list_property_indices_cache[prop_name]));
+          } else if (kind_it != loader.world_.person_property_is_list.end()) {
+            loader.world_.person_properties.push_back(-1);
+          } else {
+            loader.world_.person_property_pending_empty_list_values[prop_name]
+                .push_back(loader.world_.person_properties.size());
+            loader.world_.person_properties.push_back(-1);
+          }
+        } else {
+          if (is_missing) {
+            loader.world_.person_properties.push_back(-1);
+          } else {
+            loader.world_.person_properties.push_back(internPropertyValue(
+                prop_val,
+                loader.world_.person_property_value_registries[prop_name],
+                property_indices_cache[prop_name]));
+          }
+        }
       }
 
       // Network parsing

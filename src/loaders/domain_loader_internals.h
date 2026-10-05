@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -53,7 +54,10 @@ void loadPersonsInSpan(
     const std::vector<GeoUnitId>& geo_units_vec,
     const std::vector<std::string>& population_property_names,
     std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>&
-        property_indices_cache);
+        property_indices_cache,
+    std::unordered_map<std::string,
+                       std::map<std::vector<std::string>, int32_t>>&
+        list_property_indices_cache);
 
 void loadVenuesInSpan(
     HDF5Loader& loader, const ChunkSpan& span,

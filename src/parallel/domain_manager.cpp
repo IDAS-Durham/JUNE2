@@ -73,6 +73,57 @@ std::vector<int32_t> buildRemapToGlobal(
   return remap;
 }
 
+std::string encodeStringList(const std::vector<std::string>& values) {
+  std::string encoded = std::to_string(values.size());
+  encoded.push_back(';');
+  for (const auto& value : values) {
+    encoded += std::to_string(value.size());
+    encoded.push_back(':');
+    encoded += value;
+  }
+  return encoded;
+}
+
+std::vector<std::string> decodeStringList(const std::string& encoded) {
+  std::vector<std::string> values;
+  const size_t count_end = encoded.find(';');
+  if (count_end == std::string::npos) return {};
+  size_t count = 0;
+  try {
+    count = std::stoull(encoded.substr(0, count_end));
+  } catch (...) {
+    return {};
+  }
+  values.reserve(count);
+  size_t pos = count_end + 1;
+  for (size_t i = 0; i < count; ++i) {
+    const size_t colon = encoded.find(':', pos);
+    if (colon == std::string::npos) return {};
+    size_t length = 0;
+    try {
+      length = std::stoull(encoded.substr(pos, colon - pos));
+    } catch (...) {
+      return {};
+    }
+    const size_t start = colon + 1;
+    if (length > encoded.size() - start) return {};
+    values.emplace_back(encoded, start, length);
+    pos = start + length;
+  }
+  if (pos != encoded.size()) return {};
+  return values;
+}
+
+int32_t internEmptyStringList(
+    std::vector<std::vector<std::string>>& list_registry) {
+  auto it = std::find(list_registry.begin(), list_registry.end(),
+                      std::vector<std::string>{});
+  if (it != list_registry.end())
+    return static_cast<int32_t>(it - list_registry.begin());
+  list_registry.emplace_back();
+  return static_cast<int32_t>(list_registry.size() - 1);
+}
+
 // Print per-rank and aggregate domain-load stats from already-gathered
 // per-rank pop / venue / RSS vectors. Caller restricts to rank 0.
 void printDomainStats(const std::string& label, int num_ranks,
@@ -182,6 +233,8 @@ void DomainManager::loadGeographyOnNonZeroRanks() {
   world_.person_property_names = std::move(temp.person_property_names);
   world_.person_property_value_registries =
       std::move(temp.person_property_value_registries);
+  world_.person_property_list_value_registries =
+      std::move(temp.person_property_list_value_registries);
   world_.buildIndices();
 }
 
@@ -518,6 +571,73 @@ void DomainManager::synchronizeRegistries() {
 
     // 5. Replace local registry with global registry
     local_registry = global_registry;
+  }
+
+  // Iterate the shared property list so every rank enters the same collectives,
+  // including ranks with no local list values.
+  for (const auto& prop_name : world_.person_property_names) {
+    int local_list = 0;
+    int local_scalar = 0;
+    int local_pending = 0;
+    auto kind_it = world_.person_property_is_list.find(prop_name);
+    if (kind_it != world_.person_property_is_list.end()) {
+      (kind_it->second ? local_list : local_scalar) = 1;
+    }
+    auto pending_it =
+        world_.person_property_pending_empty_list_values.find(prop_name);
+    if (pending_it != world_.person_property_pending_empty_list_values.end() &&
+        !pending_it->second.empty())
+      local_pending = 1;
+    int any_list = 0;
+    int any_scalar = 0;
+    int any_pending = 0;
+    MPI_Allreduce(&local_list, &any_list, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_scalar, &any_scalar, 1, MPI_INT, MPI_MAX,
+                  MPI_COMM_WORLD);
+    MPI_Allreduce(&local_pending, &any_pending, 1, MPI_INT, MPI_MAX,
+                  MPI_COMM_WORLD);
+    if (any_list && any_scalar)
+      throw std::runtime_error("Person property '" + prop_name +
+                               "' mixes scalar and string-list values");
+    const bool is_list = any_list || (!any_scalar && any_pending);
+    if (!is_list) {
+      world_.person_property_pending_empty_list_values.erase(prop_name);
+      continue;
+    }
+
+    auto local_pending_it =
+        world_.person_property_pending_empty_list_values.find(prop_name);
+    if (local_pending_it !=
+        world_.person_property_pending_empty_list_values.end()) {
+      auto& local_registry =
+          world_.person_property_list_value_registries[prop_name];
+      const int32_t empty_code = internEmptyStringList(local_registry);
+      for (size_t index : local_pending_it->second)
+        world_.person_properties[index] = empty_code;
+      world_.person_property_pending_empty_list_values.erase(local_pending_it);
+    }
+    world_.person_property_is_list[prop_name] = true;
+
+    auto& local_registry =
+        world_.person_property_list_value_registries[prop_name];
+    std::vector<std::string> encoded_registry;
+    encoded_registry.reserve(local_registry.size());
+    for (const auto& values : local_registry)
+      encoded_registry.push_back(encodeStringList(values));
+
+    std::vector<char> all_packed =
+        gatherPackedValuesAcrossRanks(encoded_registry, num_ranks_);
+    std::vector<std::string> global_encoded =
+        buildGlobalRegistryFromPacked(all_packed);
+
+    std::vector<int32_t> remap =
+        buildRemapToGlobal(encoded_registry, global_encoded);
+    remapPersonPropertyValues(world_, prop_name, remap);
+
+    local_registry.clear();
+    local_registry.reserve(global_encoded.size());
+    for (const auto& encoded : global_encoded)
+      local_registry.push_back(decodeStringList(encoded));
   }
 }
 

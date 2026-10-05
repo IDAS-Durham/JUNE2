@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <H5Cpp.h>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -5,6 +7,7 @@
 #include "core/world_state.h"
 #include "doctest.h"
 #include "loaders/domain_loader_internals.h"
+#include "loaders/hdf5_loader.h"
 
 using namespace june;
 
@@ -81,4 +84,34 @@ TEST_CASE("fillGlobalVenueMaps warns on sparse ids but still loads") {
   CHECK(captured.str().find("sparse") != std::string::npos);
   CHECK(world.getVenueTypeId(100) == 0);
   CHECK(world.getVenueTypeId(200) == 1);
+}
+
+TEST_CASE("HDF5 person properties parse JSON string lists but preserve networks") {
+  const std::string path = "/tmp/june2_list_property_test.h5";
+  {
+    H5::H5File file(path, H5F_ACC_TRUNC);
+    H5::Group population = file.createGroup("population");
+    H5::Group properties = population.createGroup("properties");
+    hsize_t dims[1] = {3};
+    H5::DataSpace space(1, dims);
+    H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
+    H5::DataSet dataset =
+        properties.createDataSet("comorbidities", type, space);
+    const char* values[] = {"[\"cancer\", \"crd\"]", "[]", "[1,2,3]"};
+    dataset.write(values, type);
+  }
+
+  HDF5Loader loader(path);
+  auto values = loader.readPropertyDatasetRange(
+      "/population/properties/comorbidities", 0, 3, "comorbidities");
+  REQUIRE(values.size() == 3);
+  REQUIRE(std::holds_alternative<std::vector<std::string>>(values[0]));
+  CHECK(std::get<std::vector<std::string>>(values[0]) ==
+        std::vector<std::string>{"cancer", "crd"});
+  REQUIRE(std::holds_alternative<std::vector<std::string>>(values[1]));
+  CHECK(std::get<std::vector<std::string>>(values[1]).empty());
+  CHECK(std::holds_alternative<std::string>(values[2]));
+  CHECK(std::get<std::string>(values[2]) == "[1,2,3]");
+
+  std::remove(path.c_str());
 }
