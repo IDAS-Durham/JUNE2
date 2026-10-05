@@ -13,30 +13,6 @@ bool contains(const std::vector<std::string>& v, const std::string& s) {
 
 }  // namespace
 
-TEST_CASE("collectConfigPaths - regional risk is gated on enabled") {
-  Config config;
-  config.simulation.regional_risk.regional_risk_file = "data/rr.csv";
-  const std::string sim_yaml = "configs/x/simulation.yaml";
-
-  SUBCASE("disabled: the CSV is NOT snapshotted") {
-    config.simulation.regional_risk.enabled = false;
-    auto paths = run_dir::collectConfigPaths(config, sim_yaml);
-    CHECK_FALSE(contains(paths, "data/rr.csv"));
-  }
-
-  SUBCASE("enabled: the CSV IS snapshotted") {
-    config.simulation.regional_risk.enabled = true;
-    auto paths = run_dir::collectConfigPaths(config, sim_yaml);
-    CHECK(contains(paths, "data/rr.csv"));
-  }
-
-  SUBCASE("the anchoring simulation.yaml is always first") {
-    auto paths = run_dir::collectConfigPaths(config, sim_yaml);
-    REQUIRE(!paths.empty());
-    CHECK(paths.front() == sim_yaml);
-  }
-}
-
 TEST_CASE("collectConfigPaths - uses loader-recorded nested data CSVs") {
   Config config;
   config.simulation.referenced_paths = {"configs/config_2021/rates.csv",

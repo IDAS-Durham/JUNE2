@@ -548,10 +548,6 @@ std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
     venue_type_name = world_.venue_type_names[pending.venue_type_id];
   }
 
-  float severity_factor = 1.0f;
-  auto* gu = world_.getGeoUnit(person->geo_unit_id);
-  if (gu) severity_factor = gu->severity_factor;
-
   // venue_key consistent with the local infection path
   // (interaction_manager.cpp): for a virtual venue, key on the host's
   // person_id so the infection seed is the same regardless of which rank
@@ -569,7 +565,7 @@ std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
   person->infection = std::make_unique<Infection>(
       &disease, pending.infection_time, person,
       static_cast<unsigned int>(infection_seed), transmission, &world_,
-      venue_type_name, pending.venue_id, severity_factor);
+      venue_type_name, pending.venue_id);
 
   return pending;
 }

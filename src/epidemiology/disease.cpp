@@ -285,8 +285,7 @@ Infection::Infection(const Disease* disease, double infection_time,
                      const Person* person, unsigned int random_seed,
                      const TransmissionRecord& transmission,
                      const WorldState* world, const std::string& venue_type,
-                     int venue_id, float severity_factor,
-                     const std::string& trajectory_key_override,
+                     int venue_id, const std::string& trajectory_key_override,
                      const std::string& start_symptom_override)
     : disease_(disease), infection_time_(infection_time) {
   SplitMix64 rng(random_seed);
@@ -299,7 +298,7 @@ Infection::Infection(const Disease* disease, double infection_time,
 
   // Generate trajectory
   trajectory_ = generateTrajectoryFromRates(
-      rng, person, world, transmission, venue_type, venue_id, severity_factor,
+      rng, person, world, transmission, venue_type, venue_id,
       trajectory_key_override, start_symptom_override);
 
   if (disease_->getTransmissionParams().mode ==
@@ -534,8 +533,7 @@ std::optional<InfectionTrajectory> Infection::tryBuildForcedTrajectory(
 InfectionTrajectory Infection::generateTrajectoryFromRates(
     SplitMix64& rng, const Person* person, const WorldState* world,
     const TransmissionRecord& transmission, const std::string& venue_type,
-    int venue_id, float severity_factor,
-    const std::string& trajectory_key_override,
+    int venue_id, const std::string& trajectory_key_override,
     const std::string& start_symptom_override) {
   if (!person) {
     std::cerr

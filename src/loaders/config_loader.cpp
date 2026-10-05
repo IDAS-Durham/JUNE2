@@ -461,17 +461,6 @@ SimulationConfig ConfigLoader::loadSimulation(const std::string& filename) {
     parseSimulationOutput(root["output"], config);
   }
 
-  if (root["regional_risk"]) {
-    auto regional_risk = root["regional_risk"];
-    if (regional_risk["enabled"]) {
-      config.regional_risk.enabled = regional_risk["enabled"].as<bool>();
-    }
-    if (regional_risk["regional_risk_file"]) {
-      config.regional_risk.regional_risk_file =
-          regional_risk["regional_risk_file"].as<std::string>();
-    }
-  }
-
   if (root["partial_presence"]) {
     parseSimulationPartialPresence(root["partial_presence"], config);
   }

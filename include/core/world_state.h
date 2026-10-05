@@ -200,9 +200,6 @@ class WorldState {
   // Sort each global_venues_by_type_name bucket ascending by VenueId.
   void sortGlobalVenuesByTypeName();
 
-  // Load susceptibility factors from CSV
-  void loadRegionalRiskFactors(const std::string& csv_path);
-
   // Accessors
   Person* getPerson(PersonId id);
   const Person* getPerson(PersonId id) const;

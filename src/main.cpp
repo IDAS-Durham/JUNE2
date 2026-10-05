@@ -296,15 +296,6 @@ int main(int argc, char* argv[]) {
       // Get the local domain's world state
       Domain& domain = domain_mgr.getDomain();
 
-      // Regional Risk: Load factors
-      if (config.simulation.regional_risk.enabled) {
-        if (rank == 0)
-          std::cout << "Loading regional risk factors for parallel domains..."
-                    << std::endl;
-        domain.world->loadRegionalRiskFactors(
-            config.simulation.regional_risk.regional_risk_file);
-      }
-
       MPI_Barrier(MPI_COMM_WORLD);
 
       Simulator simulator(*domain.world, config, &domain_mgr,
@@ -373,13 +364,6 @@ int main(int argc, char* argv[]) {
 
       WorldState world = HDF5Loader::load(filename, config);
       config.resolve(world);
-
-      // Regional Risk: Load factors
-      if (config.simulation.regional_risk.enabled) {
-        std::cout << "Loading regional risk factors..." << std::endl;
-        world.loadRegionalRiskFactors(
-            config.simulation.regional_risk.regional_risk_file);
-      }
 
       if (rank == 0) {
         std::cout << std::string(50, '=') << std::endl;
