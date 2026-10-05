@@ -1,6 +1,6 @@
-// Simulator per-timeslot pipeline: visitor exchange, transmission, applying
-// inbound results, post-transmission epidemiology update. Split from
-// simulator.cpp (declared in simulation/simulator.h).
+// Pipeline for one simulation timeslot: exchange visitors, process
+// transmission, apply inbound results, then update epidemiology.
+// Declarations are in simulation/simulator.h.
 #include <algorithm>
 #include <iostream>
 #include <utility>
@@ -12,9 +12,8 @@ namespace june {
 
 namespace {
 
-// Per-slot transmission + epidemiology summary print: MPI_Reduce the
-// per-rank totals onto rank 0 and print one line of transmissions + one
-// line of epi transitions/recoveries/deaths if any are non-zero.
+// Reduce per-rank totals to rank 0, then print the transmission count and any
+// non-zero epidemiology counts for this slot.
 void printSlotEpiSummary(int local_new_infections,
                          const EpiSlotStats& epi_stats, double delta_hours,
                          DomainManager* domain_mgr, int rank) {
@@ -49,11 +48,10 @@ void printSlotEpiSummary(int local_new_infections,
   }
 }
 
-// Per-slot venue distribution print: bin locations by activity index and
-// MPI_Reduce onto rank 0 for printing. Indexed by activity_index over
-// world.activity_names so the Reduce buffer size is identical on every
-// rank. Collapsing by name via std::map would break with
-// MPI_ERR_TRUNCATE as soon as ranks diverge in which activities they hold.
+// Count locations by activity index, then reduce the counts to rank 0.
+// world.activity_names gives every rank the same buffer size. Reducing by
+// name with std::map would produce different buffer sizes when ranks hold
+// different activities and can trigger MPI_ERR_TRUNCATE.
 void printSlotVenueDistribution(const WorldState& world,
                                 const std::vector<PersonLocation>& locations,
                                 DomainManager* domain_mgr, int rank) {
@@ -68,8 +66,8 @@ void printSlotVenueDistribution(const WorldState& world,
   std::vector<int> global_counts(num_activities, 0);
 #ifdef USE_MPI
   if (domain_mgr) {
-    // Rank-0 print only: Reduce instead of Allreduce; non-root ranks
-    // don't need the aggregated result.
+    // Only rank 0 prints, so Reduce is enough; other ranks do not need the
+    // aggregated result.
     MPI_Reduce(local_counts.data(), global_counts.data(),
                static_cast<int>(num_activities), MPI_INT, MPI_SUM, 0,
                MPI_COMM_WORLD);
@@ -130,10 +128,10 @@ int Simulator::runSlotTransmission(
         pending_infections, visitor_data_map,
         compartmental_model_manager_.get());
 
-    // Transport lines are handled apart from the venue loop above, because a
-    // rider on several legs cannot be found from the location table. Every
-    // rank walks the lines it owns, then all of them settle the results
-    // together so a rider infected on two legs at once gets one infection.
+    // Process transport lines separately from venues because a rider on
+    // multiple legs is not represented by one location entry. Each rank
+    // processes its owned lines, then the ranks resolve infections together
+    // so a rider infected on two legs in the same slot gets one infection.
     if (runtime_group_allocator_ && runtime_group_allocator_->isActive()) {
       std::vector<VenueId> owned_lines;
       owned_lines.reserve(runtime_group_allocator_->ridersByVenue().size());
@@ -201,23 +199,22 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
 
     Domain& domain = domain_mgr_->getDomain();
 
-    // Filter out outgoing visitors (local people at remote venues): we
-    // only keep local people at LOCAL venues. People at remote venues are
-    // handled exclusively as visitors on the owning rank.
+    // Keep unallocated locations and people at venues owned by this rank.
+    // The owning rank processes people at remote venues as visitors.
     augmented_locations.reserve(locations_.size() +
                                 domain.incoming_visitors.size());
     for (const auto& loc : locations_) {
       if (loc.venue_id == -1) {
-        augmented_locations.push_back(loc);  // unallocated, keep
+        augmented_locations.push_back(loc);  // keep unallocated location
         continue;
       }
       if (domain.ownsVenue(loc.venue_id)) {
-        augmented_locations.push_back(loc);  // local venue, keep
+        augmented_locations.push_back(loc);  // keep local location
       }
-      // remote venue: skip (handled as visitor on owning rank)
+      // Skip remote venues; the owning rank handles them as visitors.
     }
 
-    // Add incoming visitors to augmented locations
+    // Add incoming visitors to the augmented locations.
     size_t visitor_start = augmented_locations.size();
     for (const auto& visitor : domain.incoming_visitors) {
       PersonLocation visitor_loc;
@@ -230,19 +227,20 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       augmented_locations.push_back(visitor_loc);
     }
 
-    // Sort visitor portion by person_id for deterministic processing order
-    // (MPI message arrival order is non-deterministic)
+    // Sort incoming visitors by person_id so processing order does not depend
+    // on MPI message arrival order.
     std::sort(augmented_locations.begin() + visitor_start,
               augmented_locations.end(),
               [](const PersonLocation& a, const PersonLocation& b) {
                 return a.person_id < b.person_id;
               });
 
-    // Get visitor IDs for InteractionManager
+    // Collect visitor IDs for InteractionManager.
     visitor_ids = domain_mgr_->getVisitorIds();
 
-    // Populate visitor data map for transmission calculations
-    // Emission is moved out: incoming_visitors is only read for ids after this.
+    // Build the visitor data used for transmission calculations. Move the
+    // emission and susceptibility vectors into the map instead of copying
+    // them.
     for (auto& visitor : domain.incoming_visitors) {
       VisitorInfo info;
       info.person_id = visitor.person_id;
@@ -252,7 +250,8 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       info.time_in_stage = visitor.time_in_stage;
       info.emission = std::move(visitor.emission);
       info.target_susceptibility = std::move(visitor.target_susceptibility);
-      // Wire carries one multiplier per deposition mode; expand to per mode.
+      // The wire format stores one multiplier per deposition mode. Expand it
+      // to an entry for each transmission mode.
       if (!visitor.deposition_source_multiplier.empty()) {
         const auto& modes = disease_->getTransmissionParams().modes;
         info.deposition_source_multiplier.assign(modes.size(), 1.0);
@@ -283,13 +282,13 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 
   printSimulationState(slot.name, delta_hours);
 
-  // Compartmental coupling sequence (ORDER IS LOAD-BEARING):
-  // 1. advance():                    plugin integrates ODE with previous
-  //                                  slot's inputs
-  // 2. processTransmissions():       humans exposed to FOI from plugin (reads
-  //                                  buffer lazily)
-  // 3. computeDepositionWriteback(): aggregate infections into plugin inputs
-  // 4. maybeSnapshot():              record plugin state after full slot
+  // Compartmental coupling sequence. Each step consumes the state produced by
+  // the preceding one:
+  // 1. advance(): integrates the ODE using the previous slot's inputs.
+  // 2. processTransmissions(): exposes people to the plugin's FOI, reading the
+  //    buffer lazily.
+  // 3. computeDepositionWriteback(): aggregates infections into plugin inputs.
+  // 4. maybeSnapshot(): records plugin state after the slot completes.
   compartmental_model_manager_->advance(
       static_cast<float>(delta_hours / 24.0),
       static_cast<float>(current_simulation_time_));
@@ -299,24 +298,24 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
                                         config_.simulation.start_date,
                                         current_day_num_, time_slot_index));
 
-  // Step 1: Assign people to activities using pre-computed schedules
-  // Update current time for policy checks
+  // Step 1: Update the time used by policy checks, then assign activities from
+  // the precomputed schedule.
   {
     activity_manager_.setCurrentTime(current_simulation_time_);
     activity_manager_.assignActivitiesFromSchedule(time_slot_index,
                                                    day_type_idx, locations_);
-    // Runtime group allocation for partial-presence venues (e.g. train
-    // groups). One-test no-op when SimulationConfig::partial_presence is
-    // empty, so non-commute scenarios pay nothing here.
+    // Allocate runtime groups for partial-presence venues such as train
+    // groups. This call is a no-op when SimulationConfig::partial_presence is
+    // empty, so other scenarios do not do this work.
     runtime_group_allocator_->allocateForSlot(time_slot_index, day_type_idx,
                                               slot, current_simulation_time_,
                                               delta_hours, locations_);
   }
 
 #ifdef USE_MPI
-  // Clear per-slot virtual venue registry before encounter injection.
-  // Also clear stale virtual venue rank assignments so that hash-colliding
-  // venue IDs from previous slots don't prevent correct re-registration.
+  // Clear the per-slot virtual venue registry before injecting encounters.
+  // Remove stale rank assignments too, so a hash collision with a venue ID
+  // from an earlier slot does not block re-registration.
   if (domain_mgr_) {
     domain_mgr_->getDomain().clearVirtualVenues();
     domain_mgr_->clearVirtualVenueRanks();
@@ -329,11 +328,10 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   // Place followers at their host's resolved location for this slot.
   injectFollowsIntoSlot(time_slot_index);
 
-  // Everyone on a line must be a rider of it, and every rider must be on one.
-  // Riding without a rider entry was the old ghost: aboard, but infecting
-  // nobody and catching nothing. Holding an entry while standing somewhere
-  // else is its mirror image, and would crowd a group with someone who
-  // left. Both are bugs, so say so rather than quietly modelling a phantom.
+  // A person on a partial-presence venue must have at least one rider leg, and
+  // every rider must be placed on a partial-presence venue. A mismatch would
+  // either omit the person from transmission or keep them in a group after
+  // they leave the line, so fail before processing the slot.
   if (runtime_group_allocator_ && runtime_group_allocator_->isActive()) {
     for (const auto& loc : locations_) {
       if (loc.person_id < 0) continue;
@@ -358,7 +356,8 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
     }
   }
 
-  // Per-slot venue distribution print (collective Reduce → rank 0 prints).
+  // The collective Reduce gathers the per-slot venue distribution before rank
+  // 0 prints it.
   if (policy_manager_) {
     policy_manager_->refreshTransmissionModifiers(
         current_simulation_time_, epidemiology_->getActiveInfectionsMutable());
@@ -366,7 +365,7 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   printSlotVenueDistribution(world_, locations_, domain_mgr_, rank);
 
 #ifdef USE_MPI
-  // Step 2: Exchange visitors between domains (parallel mode only)
+  // Step 2: Exchange visitors between domains in MPI mode.
   std::vector<PersonLocation> augmented_locations;
   std::unordered_set<PersonId> visitor_ids;
   std::vector<PendingInfection> pending_infections;
@@ -374,15 +373,16 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
   exchangeVisitorsAndBuildAugmented(delta_hours, augmented_locations,
                                     visitor_ids, visitor_data_map);
 
-  // Use augmented locations (locals + visitors) for transmission processing
+  // In MPI mode, use local locations plus incoming visitors. Otherwise use the
+  // original locations.
   std::vector<PersonLocation>& transmission_locations =
       domain_mgr_ ? augmented_locations : locations_;
 #else
-  // Serial mode: use original locations
+  // Serial mode uses the original locations.
   std::vector<PersonLocation>& transmission_locations = locations_;
 #endif
 
-  // Step 3: Calculate contacts and transmission (pass active_infections)
+  // Step 3: Calculate contacts and transmission using active infections.
   int local_new_infections;
 #ifdef USE_MPI
   const bool have_mpi = (domain_mgr_ != nullptr);
@@ -398,23 +398,21 @@ void Simulator::simulateTimeSlot(const TimeSlot& slot, int time_slot_index,
 #endif
 
 #ifdef USE_MPI
-  // Step 4: Send back pending infections to home ranks (parallel mode only)
+  // Step 4: Return pending infections to their home ranks in MPI mode.
   receivePendingAndApply(pending_infections);
 #endif
 
-  // Steps 5 + 6: infection state update + venue fomite decay (must run
-  // AFTER transmission so newly-infected people are tracked and death
-  // processing lands at end of slot).
+  // Steps 5 and 6: update infection states and decay venue fomites after
+  // transmission. This ensures newly infected people are tracked and deaths
+  // are processed at the end of the slot.
   EpiSlotStats epi_stats = updateEpidemiologyAfterTransmission(delta_hours);
 
-  // Per-slot transmission + epidemiology summary (rank-0 prints after
-  // Reduce).
+  // Reduce and print the per-slot transmission and epidemiology summary.
   printSlotEpiSummary(local_new_infections, epi_stats, delta_hours, domain_mgr_,
                       rank);
 
-  // Deposition write-back: aggregate per-node contributions from infected
-  // people at owned venues and forward to the plugin for the next advance()
-  // call.
+  // Aggregate infected people's per-node deposition at owned venues and pass
+  // it to the plugin before the next advance() call.
   const std::unordered_map<PersonId, VisitorInfo>* deposition_visitor_data =
       nullptr;
 #ifdef USE_MPI

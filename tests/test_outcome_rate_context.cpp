@@ -21,6 +21,22 @@ static WorldState buildOnePersonWorld() {
   return world;
 }
 
+static WorldState buildComorbidityWorld() {
+  WorldState world;
+  world.person_property_names = {"comorbidities"};
+  world.person_property_list_value_registries["comorbidities"] = {
+      {"cancer", "crd"}, {"cancer"}};
+  for (int i = 0; i < 2; ++i) {
+    Person& person = world.people.emplace_back();
+    person.id = i;
+    person.properties_start = static_cast<uint32_t>(i);
+    person.properties_count = 1;
+    world.person_properties.push_back(i);
+  }
+  world.buildIndices();
+  return world;
+}
+
 static SelectionCriterion contextCriterion(const std::string& fact,
                                            const std::string& value) {
   SelectionCriterion criterion;
@@ -64,6 +80,35 @@ TEST_CASE("an outcome row filtering on a known transmission mode resolves") {
   Disease disease = buildDisease(
       {rowWith(contextCriterion("transmission_mode", "respiratory"))});
   CHECK_NOTHROW(disease.resolve(world));
+}
+
+TEST_CASE("outcome rows select exact list membership in first-match order") {
+  WorldState world = buildComorbidityWorld();
+  const std::vector<std::string> headers = {
+      "filter.properties.comorbidities",
+      "filter.properties.comorbidities", "death"};
+  const auto filter_columns = filtering::findFilterColumns(headers);
+
+  OutcomeRow combination;
+  combination.criteria = filtering::parseCriteriaFromRow(
+      {"cancer", "crd", ""}, filter_columns);
+  combination.probabilities = {{"death", 0.9}};
+
+  OutcomeRow single;
+  single.criteria = filtering::parseCriteriaFromRow(
+      {"cancer", "", ""}, filter_columns);
+  single.probabilities = {{"death", 0.4}};
+
+  OutcomeRow fallback;
+  fallback.probabilities = {{"death", 0.1}};
+
+  OutcomeRates rates;
+  rates.rows = {combination, single, fallback};
+  REQUIRE(rates.resolve(world).empty());
+  CHECK(rates.getRate(world.people[0], &world, "death") ==
+        doctest::Approx(0.9));
+  CHECK(rates.getRate(world.people[1], &world, "death") ==
+        doctest::Approx(0.4));
 }
 
 TEST_CASE("an outcome row filtering on a known infector symptom resolves") {

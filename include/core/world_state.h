@@ -38,6 +38,15 @@ class WorldState {
   std::vector<std::string> person_property_names;
   std::unordered_map<std::string, std::vector<std::string>>
       person_property_value_registries;
+  // Each list-valued property uses one id per person. The id points into that
+  // property's list registry, so flat person storage stays int32_t.
+  std::unordered_map<std::string, std::vector<std::vector<std::string>>>
+      person_property_list_value_registries;
+  // Loading records the type so a column cannot mix scalar and list values.
+  std::unordered_map<std::string, bool> person_property_is_list;
+  // Empty JSON arrays stay here until the column type is known.
+  std::unordered_map<std::string, std::vector<size_t>>
+      person_property_pending_empty_list_values;
 
   std::vector<std::string> venue_property_names;
   std::unordered_map<std::string, std::vector<std::string>>
@@ -305,6 +314,14 @@ class WorldState {
 
     int32_t raw_val = person_properties[abs_idx];
     if (raw_val == -1) return std::nullopt;  // monostate/null
+
+    auto list_reg = person_property_list_value_registries.find(name);
+    if (list_reg != person_property_list_value_registries.end()) {
+      if (raw_val >= 0 &&
+          static_cast<size_t>(raw_val) < list_reg->second.size())
+        return list_reg->second[raw_val];
+      return std::nullopt;
+    }
 
     // Check if this property has a registry (categorical)
     auto it_reg = person_property_value_registries.find(name);

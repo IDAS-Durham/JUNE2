@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <map>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -157,6 +158,8 @@ WorldState HDF5Loader::loadDomainChunked(
   // Caches for interning property values across chunks
   std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>
       property_indices_cache;
+  std::unordered_map<std::string, std::map<std::vector<std::string>, int32_t>>
+      list_property_indices_cache;
   std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>
       venue_property_indices_cache;
 
@@ -217,7 +220,8 @@ WorldState HDF5Loader::loadDomainChunked(
     for (const auto& span : pop_spans) {
       detail::loadPersonsInSpan(loader, span, pop_partition_map, geo_units_vec,
                                 population_property_names,
-                                property_indices_cache);
+                                property_indices_cache,
+                                list_property_indices_cache);
     }
 
     auto venue_spans = detail::detectChunkSpans(

@@ -44,7 +44,7 @@ struct WorldState;
 /// `male` or `female`                    | | `filter.geo_unit_id`          |
 /// `person.geo_unit_id`  | Integer ID                            | |
 /// `filter.properties.<name>`    | named custom property | Integer, bool, or
-/// string              | | `filter.activities.<act>.<p>` | activity
+/// string                     | | `filter.activities.<act>.<p>` | activity
 /// sub-property | Integer or string                     | |
 /// `filter.networks.<net>.<p>`   | network sub-property  | Integer or string |
 ///
@@ -73,6 +73,9 @@ struct WorldState;
 /// | Comparison   | `<18`          | `age < 18`                       |
 /// | Boolean      | `true`         | property equals true             |
 /// | String       | `male`         | string equality                  |
+///
+/// For a list-valued property, a plain filter cell matches one exact member.
+/// `cancer` therefore matches `["crd", "cancer"]`, but not `"can"`.
 ///
 /// ## Example CSV
 ///
