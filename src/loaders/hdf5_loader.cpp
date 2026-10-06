@@ -23,6 +23,15 @@ std::optional<std::vector<std::string>> parseJsonStringArray(
   const size_t first = text.find_first_not_of(" \t\r\n");
   if (first == std::string::npos || text[first] != '[') return std::nullopt;
 
+  // MAY writes list columns as JSON arrays. Check the first item so numeric
+  // network arrays can be rejected before calling yaml-cpp. Empty arrays are
+  // treated as string lists; quoted arrays still use yaml-cpp for escaping and
+  // validation.
+  const size_t first_item = text.find_first_not_of(" \t\r\n", first + 1);
+  if (first_item == std::string::npos || text[first_item] == ']')
+    return std::vector<std::string>{};
+  if (text[first_item] != '"' && text[first_item] != '\'') return std::nullopt;
+
   try {
     YAML::Node node = YAML::Load(text);
     if (!node.IsSequence()) return std::nullopt;
@@ -230,8 +239,10 @@ std::vector<PropertyValue> HDF5Loader::readPropertyDatasetRange(
       // Default to string
       try {
         auto strings = readStringDatasetRange(path, start, count);
+        const bool is_population_property =
+            path.starts_with("/population/properties/");
         for (size_t i = 0; i < count; ++i) {
-          if (path.find("/population/") != std::string::npos) {
+          if (is_population_property) {
             auto list = parseJsonStringArray(strings[i]);
             if (list.has_value()) {
               result[i] = std::move(*list);

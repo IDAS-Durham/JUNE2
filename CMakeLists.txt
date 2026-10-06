@@ -362,6 +362,10 @@ if(BUILD_TESTING)
   target_compile_definitions(test_compartmental_model_manager PRIVATE
       MOCK_COMPARTMENTAL_MODEL_SO_PATH="$<TARGET_FILE:mock_compartmental_model>")
   add_dependencies(test_compartmental_model_manager mock_compartmental_model)
+  add_test(NAME test_cli_compatibility
+           COMMAND bash ${CMAKE_SOURCE_DIR}/tests/test_cli_compatibility.sh
+                   $<TARGET_FILE:disease_sim>
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   # Slice 3: test writes synthetic HDF5 graphs using the C API directly.
   target_link_libraries(test_compartmental_model_manager PRIVATE hdf5::hdf5)
 
@@ -375,6 +379,7 @@ if(BUILD_TESTING)
 
     add_june_test(test_mpi_communication "tests/test_mpi_communication.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_advanced "tests/test_mpi_advanced.cpp" "${MPIEXEC_EXECUTABLE}")
+    add_june_test(test_mpi_registry_sync "tests/test_mpi_registry_sync.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" "${MPIEXEC_EXECUTABLE}" 4)
 

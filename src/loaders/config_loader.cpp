@@ -311,7 +311,7 @@ ScheduleType parseScheduleType(const std::string& name,
     sched_type.flat_slots = parseSlotList(type_node["flat_slots"]);
   }
 
-  if (type_node["selection"]) {
+  if (type_node["selection"].IsDefined()) {
     parseSelectionCriteria(type_node["selection"],
                            sched_type.selection_criteria);
   }
@@ -380,7 +380,12 @@ PropertyValue parseCriterionSequenceValue(const YAML::Node& value_node,
 // reuse it.
 void parseSelectionCriteria(const YAML::Node& selection_node,
                             std::vector<SelectionCriterion>& out) {
-  if (!selection_node || !selection_node.IsSequence()) return;
+  if (!selection_node.IsDefined()) return;
+  if (!selection_node.IsSequence()) {
+    throw MalformedSelectionError(
+        "selection must be a sequence of {property, operator, value} "
+        "entries; use [] for a catch-all selection");
+  }
 
   for (const auto& criterion_node : selection_node) {
     SelectionCriterion criterion;
@@ -666,7 +671,7 @@ ActivityPreferenceConfig ConfigLoader::loadActivityPreferences(
             profile_node["priority"] ? profile_node["priority"].as<int>() : 0;
 
         // Load selection criteria
-        if (profile_node["selection"]) {
+        if (profile_node["selection"].IsDefined()) {
           parseSelectionCriteria(profile_node["selection"],
                                  profile.selection_criteria);
         }
@@ -688,6 +693,8 @@ ActivityPreferenceConfig ConfigLoader::loadActivityPreferences(
                 return a.priority > b.priority;
               });
 
+  } catch (const config_detail::MalformedSelectionError&) {
+    throw;
   } catch (const std::exception& e) {
     std::cerr << "Warning: Could not load " << filename << ": " << e.what()
               << std::endl;

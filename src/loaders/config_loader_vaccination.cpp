@@ -98,7 +98,7 @@ VaccinationCampaignConfig parseVaccinationCampaign(
   if (camp_node["daily_coverage"])
     camp.daily_coverage = camp_node["daily_coverage"].as<double>();
 
-  if (camp_node["selection"]) {
+  if (camp_node["selection"].IsDefined()) {
     parseSelectionCriteria(camp_node["selection"], camp.selection_criteria);
   }
   if (camp_node["last_dose_type_filter"]) {
@@ -144,6 +144,8 @@ VaccinationConfig ConfigLoader::loadVaccination(const std::string& filename) {
       }
     }
 
+  } catch (const config_detail::MalformedSelectionError&) {
+    throw;
   } catch (const std::exception& e) {
     std::cerr << "Warning: Could not load " << filename << ": " << e.what()
               << std::endl;

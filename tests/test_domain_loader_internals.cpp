@@ -1,5 +1,5 @@
-#include <cstdio>
 #include <H5Cpp.h>
+
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "loaders/domain_loader_internals.h"
 #include "loaders/hdf5_loader.h"
+#include "test_utils.h"
 
 using namespace june;
 
@@ -86,25 +87,34 @@ TEST_CASE("fillGlobalVenueMaps warns on sparse ids but still loads") {
   CHECK(world.getVenueTypeId(200) == 1);
 }
 
-TEST_CASE("HDF5 person properties parse JSON string lists but preserve networks") {
-  const std::string path = "/tmp/june2_list_property_test.h5";
+TEST_CASE(
+    "HDF5 person properties parse JSON string lists but preserve networks") {
+  ScopedTestFiles files{"june_list_property"};
+  const auto path = files.write("properties.h5", "");
   {
-    H5::H5File file(path, H5F_ACC_TRUNC);
+    H5::H5File file(path.string(), H5F_ACC_TRUNC);
     H5::Group population = file.createGroup("population");
     H5::Group properties = population.createGroup("properties");
-    hsize_t dims[1] = {3};
+    hsize_t dims[1] = {5};
     H5::DataSpace space(1, dims);
     H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
     H5::DataSet dataset =
         properties.createDataSet("comorbidities", type, space);
-    const char* values[] = {"[\"cancer\", \"crd\"]", "[]", "[1,2,3]"};
+    const char* values[] = {"[\"cancer\", \"crd\"]", "[]", "[1,2,3]", "plain",
+                            "[\"quoted\"]"};
     dataset.write(values, type);
+
+    hsize_t mixed_dims[1] = {2};
+    H5::DataSpace mixed_space(1, mixed_dims);
+    H5::DataSet mixed = properties.createDataSet("mixed", type, mixed_space);
+    const char* mixed_values[] = {"[\"list\"]", "scalar"};
+    mixed.write(mixed_values, type);
   }
 
-  HDF5Loader loader(path);
+  HDF5Loader loader(path.string());
   auto values = loader.readPropertyDatasetRange(
-      "/population/properties/comorbidities", 0, 3, "comorbidities");
-  REQUIRE(values.size() == 3);
+      "/population/properties/comorbidities", 0, 5, "comorbidities");
+  REQUIRE(values.size() == 5);
   REQUIRE(std::holds_alternative<std::vector<std::string>>(values[0]));
   CHECK(std::get<std::vector<std::string>>(values[0]) ==
         std::vector<std::string>{"cancer", "crd"});
@@ -112,6 +122,59 @@ TEST_CASE("HDF5 person properties parse JSON string lists but preserve networks"
   CHECK(std::get<std::vector<std::string>>(values[1]).empty());
   CHECK(std::holds_alternative<std::string>(values[2]));
   CHECK(std::get<std::string>(values[2]) == "[1,2,3]");
+  CHECK(std::holds_alternative<std::string>(values[3]));
+  CHECK(std::get<std::string>(values[3]) == "plain");
+  REQUIRE(std::holds_alternative<std::vector<std::string>>(values[4]));
+  CHECK(std::get<std::vector<std::string>>(values[4]) ==
+        std::vector<std::string>{"quoted"});
 
-  std::remove(path.c_str());
+  const auto mixed = loader.readPropertyDatasetRange(
+      "/population/properties/mixed", 0, 2, "mixed");
+  REQUIRE(mixed.size() == 2);
+  CHECK(std::holds_alternative<std::vector<std::string>>(mixed[0]));
+  CHECK(std::holds_alternative<std::string>(mixed[1]));
+}
+
+TEST_CASE("domain loader rejects mixed scalar and string-list properties") {
+  ScopedTestFiles files{"june_mixed_property"};
+  const auto path = files.write("properties.h5", "");
+  {
+    H5::H5File file(path.string(), H5F_ACC_TRUNC);
+    H5::Group population = file.createGroup("population");
+    H5::Group properties = population.createGroup("properties");
+    hsize_t dims[1] = {2};
+    H5::DataSpace space(1, dims);
+
+    H5::DataSet ids =
+        population.createDataSet("ids", H5::PredType::NATIVE_INT32, space);
+    int32_t id_values[] = {1, 2};
+    ids.write(id_values, H5::PredType::NATIVE_INT32);
+    H5::DataSet ages =
+        population.createDataSet("ages", H5::PredType::NATIVE_FLOAT, space);
+    float age_values[] = {20.0F, 21.0F};
+    ages.write(age_values, H5::PredType::NATIVE_FLOAT);
+    H5::DataSet sexes =
+        population.createDataSet("sexes", H5::PredType::NATIVE_UINT8, space);
+    uint8_t sex_values[] = {0, 0};
+    sexes.write(sex_values, H5::PredType::NATIVE_UINT8);
+
+    H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
+    H5::DataSet mixed = properties.createDataSet("mixed", type, space);
+    const char* mixed_values[] = {"[\"list\"]", "scalar"};
+    mixed.write(mixed_values, type);
+  }
+
+  HDF5Loader loader(path.string());
+  detail::ChunkSpan span{0, 2, {0}};
+  detail::GeoPartitionMap partition{{10, {0, 2}}};
+  std::unordered_map<std::string, std::unordered_map<std::string, int32_t>>
+      scalar_cache;
+  std::unordered_map<std::string, std::map<std::vector<std::string>, int32_t>>
+      list_cache;
+
+  CHECK_THROWS_WITH(
+      detail::loadPersonsInSpan(loader, span, partition, {10}, {"mixed"},
+                                scalar_cache, list_cache),
+      doctest::Contains(
+          "Person property 'mixed' mixes scalar and string-list"));
 }

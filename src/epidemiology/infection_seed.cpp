@@ -245,7 +245,7 @@ void InfectionSeedConfigLoader::loadBulkCsvSeeds(const std::string& csv_path,
 }
 
 InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
-    const std::string& filename) {
+    const std::string& filename, std::vector<std::string>* referenced_paths) {
   InfectionSeedConfig config;
 
   try {
@@ -261,6 +261,7 @@ InfectionSeedConfig InfectionSeedConfigLoader::loadFromFile(
 
     if (root["bulk_csv"]) {
       loadBulkCsvSeeds(root["bulk_csv"].as<std::string>(), config);
+      if (referenced_paths) referenced_paths->push_back(config.bulk_csv_path);
     }
 
     if (root["infection_seeds"]) {

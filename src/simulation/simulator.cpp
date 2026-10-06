@@ -427,7 +427,8 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Initialize infection seeder
   InfectionSeedConfig seed_config;
   try {
-    seed_config = InfectionSeedConfigLoader::loadFromFile(infection_seeds_file);
+    seed_config = InfectionSeedConfigLoader::loadFromFile(
+        infection_seeds_file, &config_.simulation.referenced_paths);
   } catch (const std::exception& e) {
     std::cerr << "Warning: Could not load infection seeds: " << e.what()
               << std::endl;

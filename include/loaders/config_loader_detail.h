@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdexcept>
 #include <vector>
 
 #include "core/config.h"
@@ -12,6 +13,11 @@ class Node;
 
 namespace june {
 namespace config_detail {
+
+class MalformedSelectionError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
 
 // Parse a YAML sequence of `{property, operator, value}` entries into a
 // vector of SelectionCriterion. Scalar values use the shared bool -> int ->

@@ -369,9 +369,9 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
             "follow.span must be 'hop' or 'standing', got '" + s + "'");
     }
 
-    if (fn["eligibility"])
+    if (fn["eligibility"].IsDefined())
       f.follower = parseEligibility(fn["eligibility"], "eligibility");
-    if (fn["host_eligibility"])
+    if (fn["host_eligibility"].IsDefined())
       f.host = parseEligibility(fn["host_eligibility"], "host_eligibility");
 
     if (fn["activity_exceptions"])
