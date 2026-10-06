@@ -98,7 +98,6 @@ int main(int argc, char* argv[]) {
   static const struct option long_options[] = {
       {"infection_seeds", required_argument, nullptr, 'i'},
       {"config", required_argument, nullptr, 'c'},
-      {"sim_config", required_argument, nullptr, 'c'},
       {"seed", required_argument, nullptr, 's'},
       {"runs-dir", required_argument, nullptr, 'r'},
       {"run-id", required_argument, nullptr, 'u'},
@@ -111,144 +110,46 @@ int main(int argc, char* argv[]) {
   opterr = 0;
   optind = 1;
   int option = 0;
-  std::vector<bool> seen_options(256, false);
-  auto option_name = [](int option) {
-    switch (option) {
-      case 'i':
-        return "--infection_seeds";
-      case 'c':
-        return "--config/--sim_config";
-      case 's':
-        return "--seed";
-      case 'r':
-        return "--runs-dir";
-      case 'u':
-        return "--run-id";
-      case 'R':
-        return "--restart-from";
-      case 'd':
-        return "--days";
-      case 'w':
-        return "--world";
-      default:
-        return "option";
-    }
-  };
-  auto mark_option = [&](int value) {
-    const auto index = static_cast<unsigned char>(value);
-    if (seen_options[index]) {
-      option_error = true;
-      if (rank == 0)
-        std::cerr << "Error: " << option_name(value)
-                  << " may only be specified once." << std::endl;
-      return false;
-    }
-    seen_options[index] = true;
-    return true;
-  };
-  auto option_token = [&]() {
-    if (optind > 0 && optind - 1 < argc) return std::string(argv[optind - 1]);
-    return std::string("<unknown>");
-  };
-  auto report_getopt_error = [&]() {
-    option_error = true;
-    const std::string token = option_token();
-    const bool known_value_option =
-        token == "--infection_seeds" || token == "--config" ||
-        token == "--sim_config" || token == "--seed" || token == "--runs-dir" ||
-        token == "--run-id" || token == "--restart-from" || token == "--days" ||
-        token == "--world";
-    if (rank != 0) return;
-    if (known_value_option) {
-      std::cerr << "Error: " << token << " requires an argument." << std::endl;
-    } else {
-      std::cerr << "Error: unknown command-line option '" << token << "'."
-                << std::endl;
-    }
-  };
-  auto require_path_value = [&](int value) {
-    if (optarg && *optarg != '\0' && optarg[0] != '-') return true;
-    option_error = true;
-    if (rank == 0)
-      std::cerr << "Error: " << option_name(value)
-                << " requires a non-empty path argument." << std::endl;
-    return false;
-  };
   while ((option = getopt_long(argc, argv, "", long_options, nullptr)) != -1) {
-    if (option == '?') {
-      report_getopt_error();
-      continue;
-    }
-    if (!mark_option(option)) continue;
     if (option == 'i') {
-      if (!require_path_value(option)) continue;
       infection_seeds_file = optarg;
       infection_seeds_cli_override = true;
     } else if (option == 'c') {
-      if (!require_path_value(option)) continue;
       sim_config_file = optarg;
     } else if (option == 's') {
       try {
-        const std::string value(optarg);
-        size_t consumed = 0;
-        long long v = std::stoll(value, &consumed);
-        if (consumed != value.size())
-          throw std::invalid_argument("seed contains non-numeric characters");
+        long long v = std::stoll(optarg);
         if (v < 0 || v > 0xFFFFFFFFLL) {
           throw std::out_of_range("seed must be in [0, 4294967295]");
         }
         seed_override = v;
       } catch (...) {
-        option_error = true;
         if (rank == 0)
-          std::cerr << "Error: --seed expects an integer in [0, 4294967295], "
-                    << "got '" << optarg << "'." << std::endl;
+          std::cerr << "Warning: Invalid value for --seed: " << optarg
+                    << std::endl;
       }
     } else if (option == 'r') {
-      if (!require_path_value(option)) continue;
       runs_dir = optarg;
     } else if (option == 'u') {
-      if (!require_path_value(option)) continue;
       run_id_override = optarg;
     } else if (option == 'R') {
-      if (!require_path_value(option)) continue;
       restart_from = optarg;
     } else if (option == 'd') {
       try {
-        const std::string value(optarg);
-        size_t consumed = 0;
-        days_override = std::stoi(value, &consumed);
-        if (consumed != value.size())
-          throw std::invalid_argument("days contains non-numeric characters");
-        if (days_override < 0) throw std::out_of_range("days is negative");
+        days_override = std::stoi(optarg);
       } catch (...) {
-        option_error = true;
         if (rank == 0)
-          std::cerr << "Error: --days expects a non-negative integer, got '"
-                    << optarg << "'." << std::endl;
+          std::cerr << "Warning: Invalid value for --days: " << optarg
+                    << std::endl;
       }
     } else if (option == 'w') {
-      if (!require_path_value(option)) continue;
       filename = optarg;
-    }
-  }
-
-  std::vector<std::string> positional_args;
-  for (int i = optind; i < argc; ++i) positional_args.emplace_back(argv[i]);
-  if (positional_args.size() > 1) {
-    option_error = true;
-    if (rank == 0)
-      std::cerr << "Error: only one positional argument is supported, as the "
-                   "world path."
-                << std::endl;
-  } else if (!positional_args.empty()) {
-    if (seen_options[static_cast<unsigned char>('w')]) {
-      option_error = true;
-      if (rank == 0)
-        std::cerr << "Error: positional world path conflicts with --world."
-                  << std::endl;
     } else {
-      filename = positional_args.front();
+      option_error = true;
+      if (rank == 0) {
+        std::cerr << "Error: unknown or incomplete command-line option"
+                  << std::endl;
+      }
     }
   }
 

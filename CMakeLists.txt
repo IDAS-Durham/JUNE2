@@ -362,10 +362,6 @@ if(BUILD_TESTING)
   target_compile_definitions(test_compartmental_model_manager PRIVATE
       MOCK_COMPARTMENTAL_MODEL_SO_PATH="$<TARGET_FILE:mock_compartmental_model>")
   add_dependencies(test_compartmental_model_manager mock_compartmental_model)
-  add_test(NAME test_cli_compatibility
-           COMMAND bash ${CMAKE_SOURCE_DIR}/tests/test_cli_compatibility.sh
-                   $<TARGET_FILE:disease_sim>
-           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   # Slice 3: test writes synthetic HDF5 graphs using the C API directly.
   target_link_libraries(test_compartmental_model_manager PRIVATE hdf5::hdf5)
 

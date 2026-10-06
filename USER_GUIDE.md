@@ -28,21 +28,13 @@ all the other YAML files via `config_paths:`).
 
 ```bash
 # Serial
-./build/disease_sim worlds/world_2021.h5 \
-    --config configs/config_2021/simulation.yaml
-
-# Equivalent explicit form
 ./build/disease_sim --world worlds/world_2021.h5 \
     --config configs/config_2021/simulation.yaml
 
 # Parallel (MPI domain decomposition)
-mpirun -n 4 ./build/disease_sim worlds/world_2021.h5 \
+mpirun -n 4 ./build/disease_sim --world worlds/world_2021.h5 \
     --config configs/config_2021/simulation.yaml
 ```
-
-The positional world form is retained for compatibility. The explicit
-`--world` form is equivalent; `--sim_config` is also accepted as a compatibility
-alias for `--config`.
 
 > Output: `simulation_events.h5` (HDF5 event log) + the contents of
 > `output/` (partition map, stats CSVs, etc.).
