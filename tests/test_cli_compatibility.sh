@@ -4,7 +4,7 @@ set -euo pipefail
 BIN="$1"
 WORLD="worlds/world_2021.h5"
 CONFIG="configs/config_2021/simulation.yaml"
-TMP="$(mktemp -d /private/tmp/june2-cli-smoke.XXXXXX)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/june2-cli-smoke.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 printf '%s\n' 'infection_seeds: []' > "$TMP/override.yaml"
