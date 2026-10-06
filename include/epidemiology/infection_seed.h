@@ -22,10 +22,11 @@ namespace june {
 inline void rejectInfectionContextSeedFilter(
     const SelectionCriterion& criterion, const std::string& location) {
   if (filtering::isInfectionContextCriterion(criterion)) {
-    throw std::runtime_error(
-        location + " cannot use infection context filter '" +
-        criterion.property_path + "'; context filters are only valid for "
-                                  "outcome-rate tables");
+    throw std::runtime_error(location +
+                             " cannot use infection context filter '" +
+                             criterion.property_path +
+                             "'; context filters are only valid for "
+                             "outcome-rate tables");
   }
 }
 
@@ -225,7 +226,12 @@ class InfectionSeeder {
 
 class InfectionSeedConfigLoader {
  public:
-  static InfectionSeedConfig loadFromFile(const std::string& filename);
+  // When supplied, append each data file loaded from this YAML to
+  // referenced_paths. Keep the original path because bulk CSV paths are
+  // resolved from the current working directory.
+  static InfectionSeedConfig loadFromFile(
+      const std::string& filename,
+      std::vector<std::string>* referenced_paths = nullptr);
 
   static void loadBulkCsvSeeds(const std::string& csv_path,
                                InfectionSeedConfig& config);

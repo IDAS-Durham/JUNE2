@@ -28,11 +28,11 @@ all the other YAML files via `config_paths:`).
 
 ```bash
 # Serial
-./build/disease_sim worlds/world_2021.h5 \
+./build/disease_sim --world worlds/world_2021.h5 \
     --config configs/config_2021/simulation.yaml
 
 # Parallel (MPI domain decomposition)
-mpirun -n 4 ./build/disease_sim worlds/world_2021.h5 \
+mpirun -n 4 ./build/disease_sim --world worlds/world_2021.h5 \
     --config configs/config_2021/simulation.yaml
 ```
 

@@ -182,6 +182,10 @@ int main(int argc, char* argv[]) {
     // simulation.yaml, then hardcoded default
     if (!infection_seeds_cli_override) {
       infection_seeds_file = config.simulation.infection_seeds_file;
+    } else {
+      // Use the CLI-selected seed file in the run snapshot. The loader records
+      // any CSV files referenced by it in referenced_paths.
+      config.simulation.infection_seeds_file = infection_seeds_file;
     }
 
     // Resolve run id (UTC timestamp by default; --run-id overrides). Rank 0

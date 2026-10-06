@@ -375,6 +375,7 @@ if(BUILD_TESTING)
 
     add_june_test(test_mpi_communication "tests/test_mpi_communication.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_advanced "tests/test_mpi_advanced.cpp" "${MPIEXEC_EXECUTABLE}")
+    add_june_test(test_mpi_registry_sync "tests/test_mpi_registry_sync.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" "${MPIEXEC_EXECUTABLE}" 4)
 

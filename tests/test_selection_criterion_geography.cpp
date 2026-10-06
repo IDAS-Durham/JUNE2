@@ -9,6 +9,7 @@
 #include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infection_seed.h"
+#include "loaders/config_loader.h"
 #include "loaders/config_loader_detail.h"
 #include "loaders/policy_loader.h"
 #include "test_utils.h"
@@ -583,6 +584,135 @@ TEST_CASE("a schedules.yaml selection accepts a list of unit names") {
   REQUIRE(criteria.size() == 1);
   REQUIRE(std::holds_alternative<std::vector<std::string>>(criteria[0].value));
   CHECK(std::get<std::vector<std::string>>(criteria[0].value).size() == 2);
+}
+
+TEST_CASE("selection shape validation preserves absent and empty semantics") {
+  std::vector<SelectionCriterion> criteria;
+
+  const YAML::Node absent = YAML::Load("name: fallback")["selection"];
+  CHECK_FALSE(absent.IsDefined());
+  CHECK_NOTHROW(config_detail::parseSelectionCriteria(absent, criteria));
+
+  const YAML::Node empty = YAML::Load("selection: []")["selection"];
+  CHECK_NOTHROW(config_detail::parseSelectionCriteria(empty, criteria));
+  CHECK(criteria.empty());
+
+  for (const std::string& value : {"null", "everyone", "{property: age}"}) {
+    const YAML::Node malformed = YAML::Load("selection: " + value)["selection"];
+    CHECK_THROWS_WITH(
+        config_detail::parseSelectionCriteria(malformed, criteria),
+        doctest::Contains("selection must be a sequence"));
+  }
+}
+
+TEST_CASE("every selection loader rejects a present malformed selection") {
+  ScopedTestFiles files{"june_malformed_selection"};
+
+  const auto schedules = files.write("schedules.yaml",
+                                     "day_type_cycle: [weekday]\n"
+                                     "schedule_types:\n"
+                                     "  fallback:\n"
+                                     "    selection: {}\n");
+  CHECK_THROWS_WITH(ConfigLoader::loadSchedule(schedules.string()),
+                    doctest::Contains("selection must be a sequence"));
+  const auto valid_schedules = files.write("valid_schedules.yaml",
+                                           "day_type_cycle: [weekday]\n"
+                                           "schedule_types:\n"
+                                           "  fallback:\n"
+                                           "    selection: []\n");
+  CHECK(ConfigLoader::loadSchedule(valid_schedules.string())
+            .schedule_types.size() == 1);
+
+  const auto preferences = files.write("preferences.yaml",
+                                       "profiles:\n"
+                                       "  - name: bad\n"
+                                       "    selection: null\n");
+  CHECK_THROWS_WITH(ConfigLoader::loadActivityPreferences(preferences.string()),
+                    doctest::Contains("selection must be a sequence"));
+  const auto valid_preferences = files.write("valid_preferences.yaml",
+                                             "profiles:\n"
+                                             "  - name: fallback\n"
+                                             "    selection: []\n");
+  CHECK(ConfigLoader::loadActivityPreferences(valid_preferences.string())
+            .profiles.size() == 1);
+
+  const auto vaccines = files.write("vaccines.yaml",
+                                    "enabled: true\n"
+                                    "campaigns:\n"
+                                    "  bad:\n"
+                                    "    selection: {property: age}\n");
+  CHECK_THROWS_WITH(ConfigLoader::loadVaccination(vaccines.string()),
+                    doctest::Contains("selection must be a sequence"));
+  const auto valid_vaccines = files.write("valid_vaccines.yaml",
+                                          "enabled: true\n"
+                                          "campaigns:\n"
+                                          "  fallback:\n"
+                                          "    selection: []\n");
+  CHECK(
+      ConfigLoader::loadVaccination(valid_vaccines.string()).campaigns.size() ==
+      1);
+
+  const auto policy_applies =
+      files.write("policy_applies.yaml",
+                  "policies:\n"
+                  "  temporal_policies:\n"
+                  "    - name: bad\n"
+                  "      applies_to: {property: age}\n");
+  WorldState policy_world = buildNationWorld();
+  PolicyManager policy_manager(policy_world);
+  CHECK_THROWS_WITH(PolicyLoader::loadPolicies(
+                        policy_manager, policy_applies.string(), "2020-01-01"),
+                    doctest::Contains("selection must be a sequence"));
+  const auto valid_policy_applies = files.write("valid_policy_applies.yaml",
+                                                "policies:\n"
+                                                "  temporal_policies:\n"
+                                                "    - name: everyone\n"
+                                                "      applies_to: []\n");
+  WorldState valid_policy_world = buildNationWorld();
+  PolicyManager valid_policy_manager(valid_policy_world);
+  CHECK_NOTHROW(PolicyLoader::loadPolicies(
+      valid_policy_manager, valid_policy_applies.string(), "2020-01-01"));
+
+  const auto policy_exempt = files.write("policy_exempt.yaml",
+                                         "policies:\n"
+                                         "  temporal_policies:\n"
+                                         "    - name: bad\n"
+                                         "      exempt:\n"
+                                         "        - activity: leisure\n"
+                                         "          selection: everyone\n");
+  WorldState exempt_world = buildNationWorld();
+  PolicyManager exempt_manager(exempt_world);
+  CHECK_THROWS_WITH(PolicyLoader::loadPolicies(
+                        exempt_manager, policy_exempt.string(), "2020-01-01"),
+                    doctest::Contains("selection must be a sequence"));
+  const auto valid_policy_exempt = files.write("valid_policy_exempt.yaml",
+                                               "policies:\n"
+                                               "  temporal_policies:\n"
+                                               "    - name: everyone\n"
+                                               "      exempt:\n"
+                                               "        - activity: leisure\n"
+                                               "          selection: []\n");
+  WorldState valid_exempt_world = buildNationWorld();
+  PolicyManager valid_exempt_manager(valid_exempt_world);
+  CHECK_NOTHROW(PolicyLoader::loadPolicies(
+      valid_exempt_manager, valid_policy_exempt.string(), "2020-01-01"));
+
+  const auto follow = files.write("follow.yaml",
+                                  "coordinated_encounters:\n"
+                                  "  encounters: []\n"
+                                  "  follows:\n"
+                                  "    - name: bad\n"
+                                  "      eligibility: {property: age}\n");
+  CHECK_THROWS_WITH(ConfigLoader::loadCoordinatedEncounters(follow.string()),
+                    doctest::Contains("follow.eligibility must be a list"));
+  const auto valid_follow = files.write("valid_follow.yaml",
+                                        "coordinated_encounters:\n"
+                                        "  encounters: []\n"
+                                        "  follows:\n"
+                                        "    - name: everyone\n"
+                                        "      eligibility: []\n");
+  CHECK(ConfigLoader::loadCoordinatedEncounters(valid_follow.string())
+            .follows.size() == 1);
 }
 
 TEST_CASE(

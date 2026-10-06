@@ -517,3 +517,13 @@ TEST_CASE("bulk CSV rows differing only in a context column are two seeds") {
   REQUIRE(config.seeds.size() == 2);
   CHECK_NOTHROW(requireUniqueSeedIdentities(config.seeds));
 }
+
+TEST_CASE("bulk CSV with invalid columns fails through the YAML loader") {
+  ScopedTestFiles files{"june_bulk_seed_invalid"};
+  const auto csv_path = files.write("invalid.csv", "name,date\nmissing,type\n");
+  const auto yaml_path =
+      files.write("seeds.yaml", "bulk_csv: \"" + csv_path.string() + "\"\n");
+
+  CHECK_THROWS_WITH(InfectionSeedConfigLoader::loadFromFile(yaml_path.string()),
+                    doctest::Contains("Bulk CSV missing required columns"));
+}

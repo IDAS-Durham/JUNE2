@@ -6,6 +6,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <set>
 
 #include "loaders/hdf5_loader.h"
 #include "parallel/mpi_utils.h"
@@ -547,41 +548,54 @@ void DomainManager::setGeoUnitRank(GeoUnitId guid, int rank) {
 }
 
 void DomainManager::synchronizeRegistries() {
-  // Each rank may have discovered property values in a different order
-  // during chunked loading.  Build a globally-consistent registry by
-  // gathering all unique values and sorting them deterministically.
-  // Then remap every person property integer code to the new indices.
+  // The HDF5 property-name list is shared, but each rank discovers its value
+  // registries from local people. Gather all names first so every rank enters
+  // collectives in the same order. Keep person_property_names in its original
+  // order because it is also the column order of person_properties.
+  std::vector<std::string> local_property_names = world_.person_property_names;
+  for (const auto& [name, _] : world_.person_property_value_registries)
+    local_property_names.push_back(name);
+  for (const auto& [name, _] : world_.person_property_list_value_registries)
+    local_property_names.push_back(name);
+  for (const auto& [name, _] : world_.person_property_is_list)
+    local_property_names.push_back(name);
+  for (const auto& [name, _] : world_.person_property_pending_empty_list_values)
+    local_property_names.push_back(name);
+  std::sort(local_property_names.begin(), local_property_names.end());
+  local_property_names.erase(
+      std::unique(local_property_names.begin(), local_property_names.end()),
+      local_property_names.end());
 
-  for (auto& [prop_name, local_registry] :
-       world_.person_property_value_registries) {
-    // 1. Gather all unique values from all ranks (null-separated packed)
-    std::vector<char> all_packed =
-        gatherPackedValuesAcrossRanks(local_registry, num_ranks_);
+  const std::vector<std::string> canonical_property_names =
+      buildGlobalRegistryFromPacked(
+          gatherPackedValuesAcrossRanks(local_property_names, num_ranks_));
 
-    // 2. Build a sorted, deduplicated global registry
-    std::vector<std::string> global_registry =
-        buildGlobalRegistryFromPacked(all_packed);
-
-    // 3. Build remap from old local index → new global index
-    std::vector<int32_t> remap =
-        buildRemapToGlobal(local_registry, global_registry);
-
-    // 4. Remap all person property values for this property
-    remapPersonPropertyValues(world_, prop_name, remap);
-
-    // 5. Replace local registry with global registry
-    local_registry = global_registry;
-  }
-
-  // Iterate the shared property list so every rank enters the same collectives,
-  // including ranks with no local list values.
-  for (const auto& prop_name : world_.person_property_names) {
+  // All ranks walk the same name list, even when a rank has no local value.
+  for (const auto& prop_name : canonical_property_names) {
     int local_list = 0;
     int local_scalar = 0;
     int local_pending = 0;
     auto kind_it = world_.person_property_is_list.find(prop_name);
     if (kind_it != world_.person_property_is_list.end()) {
       (kind_it->second ? local_list : local_scalar) = 1;
+    }
+    // Empty registries carry no type information. A rank may create one before
+    // it sees the first value, so use a non-empty registry or the explicit
+    // type marker.
+    auto scalar_registry_it =
+        world_.person_property_value_registries.find(prop_name);
+    if (kind_it == world_.person_property_is_list.end() &&
+        scalar_registry_it != world_.person_property_value_registries.end() &&
+        !scalar_registry_it->second.empty()) {
+      local_scalar = 1;
+    }
+    auto list_registry_it =
+        world_.person_property_list_value_registries.find(prop_name);
+    if (kind_it == world_.person_property_is_list.end() &&
+        list_registry_it !=
+            world_.person_property_list_value_registries.end() &&
+        !list_registry_it->second.empty()) {
+      local_list = 1;
     }
     auto pending_it =
         world_.person_property_pending_empty_list_values.find(prop_name);
@@ -601,9 +615,26 @@ void DomainManager::synchronizeRegistries() {
                                "' mixes scalar and string-list values");
     const bool is_list = any_list || (!any_scalar && any_pending);
     if (!is_list) {
+      auto& local_registry = world_.person_property_value_registries[prop_name];
+      std::vector<char> all_packed =
+          gatherPackedValuesAcrossRanks(local_registry, num_ranks_);
+      std::vector<std::string> global_registry =
+          buildGlobalRegistryFromPacked(all_packed);
+      std::vector<int32_t> remap =
+          buildRemapToGlobal(local_registry, global_registry);
+      remapPersonPropertyValues(world_, prop_name, remap);
+      local_registry = std::move(global_registry);
+      world_.person_property_is_list[prop_name] = false;
+      // Remove list metadata so the scalar and list registries stay consistent.
+      world_.person_property_list_value_registries.erase(prop_name);
       world_.person_property_pending_empty_list_values.erase(prop_name);
       continue;
     }
+
+    // An empty scalar registry carries no type information. If another rank
+    // has shown that this is a list property, drop the empty entry everywhere
+    // before publishing the list registry.
+    world_.person_property_value_registries.erase(prop_name);
 
     auto local_pending_it =
         world_.person_property_pending_empty_list_values.find(prop_name);

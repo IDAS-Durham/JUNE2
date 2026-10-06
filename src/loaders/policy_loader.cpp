@@ -83,7 +83,7 @@ PolicyAction loadPolicyAction(const YAML::Node& node) {
       for (const auto& exempt_node : node["exempt"]) {
         ActivityExemption exemption;
         exemption.activity_name = exempt_node["activity"].as<std::string>();
-        if (exempt_node["selection"]) {
+        if (exempt_node["selection"].IsDefined()) {
           config_detail::parseSelectionCriteria(exempt_node["selection"],
                                                 exemption.criteria);
         }
@@ -167,7 +167,7 @@ void loadCommonPolicyFields(Policy& policy, const YAML::Node& node,
                             const std::string& simulation_start_date) {
   policy.window = loadActiveWindow(node, simulation_start_date);
   policy.action = loadPolicyAction(node);
-  if (node["applies_to"]) {
+  if (node["applies_to"].IsDefined()) {
     config_detail::parseSelectionCriteria(node["applies_to"],
                                           policy.applies_to);
   }
