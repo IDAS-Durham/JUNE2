@@ -461,9 +461,7 @@ bool hostRollsFollow(const FollowConfig& fc, uint64_t seed, PersonId host,
   if (fc.probability >= 1.0) return true;
   SplitMix64 rng(mix_seed(seed, static_cast<uint64_t>(host),
                           static_cast<uint64_t>(hop_start_day)));
-  double u =
-      static_cast<double>(rng()) / static_cast<double>(SplitMix64::max());
-  return u < fc.probability;
+  return uniform01(rng) < fc.probability;
 }
 
 // A host rolls once to gather followers from its pool. For a hop span the host
