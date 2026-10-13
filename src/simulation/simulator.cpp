@@ -669,7 +669,7 @@ void Simulator::runOneDay(int day, int rank) {
                                               catchment_rules_);
 
   // 3. Negotiate Coordinated Encounters
-  negotiateAndLogDailyEncounters(day, rank);
+  negotiateAndLogDailyEncounters(day);
 
   // Print daily encounter debug summary
   if (coordinated_encounter_manager_) {

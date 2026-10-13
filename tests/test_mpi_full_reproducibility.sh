@@ -115,11 +115,10 @@ done
 # --- canonicalize every dataset of interest at every np ----------------------
 # The Python helper is shared with checkpoint_determinism_check.py.
 HDF5_HELPER="$SCRIPT_DIR/hdf5_determinism.py"
-# Each entry: "kind:path[|fields=a,b,c]". group_id is excluded for
-# coordinated_encounters: it is a per-rank monotonic counter (partition-
-# dependent by design), not part of the determinism invariant.
+# Each entry: "kind:path[|fields=a,b,c]". Every field is compared unless a
+# fields= list narrows it.
 DATASETS=(
-  "dataset:/events/coordinated_encounters|fields=person_a,person_b,time,encounter_type_id,slot"
+  "dataset:/events/coordinated_encounters"
   "dataset:/events/follows"
   "dataset:/events/infections"
   "dataset:/events/symptom_changes"

@@ -1,6 +1,12 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+#include <numeric>
 #include <set>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "core/types.h"
 
@@ -65,5 +71,76 @@ struct CoordinatedEncounter {
 
   std::set<PersonId> participants;
 };
+
+// The id stamped on every row of one finalised encounter in the
+// coordinated_encounters dataset. It is built from what the encounter is, not
+// from a counter, so the same encounter gets the same id at any rank count.
+//
+//   bits 62..51  day      (12 bits, absolute simulation day, up to 4095)
+//   bits 50..36  ordinal  (15 bits, the host's records that day, numbered
+//                          from 0 in encounter_id order)
+//   bits 35..0   host_id  (36 bits)
+//
+// 63 bits in all, so the value is always positive when read as a signed
+// 64 bit integer. A field that does not fit throws; nothing is clamped or
+// wrapped, because a wrapped id would collide with another encounter's.
+inline constexpr int kGroupIdHostBits = 36;
+inline constexpr int kGroupIdOrdinalBits = 15;
+inline constexpr int kGroupIdDayBits = 12;
+
+struct EncounterGroupIdParts {
+  int day;
+  uint32_t ordinal;
+  uint64_t host_id;
+};
+
+inline uint64_t packEncounterGroupId(int64_t day, int64_t ordinal,
+                                     int64_t host_id) {
+  auto check = [](const char* name, int64_t value, int bits) {
+    if (value < 0 || value >= (int64_t{1} << bits))
+      throw std::runtime_error(
+          "coordinated encounter group_id: " + std::string(name) + " " +
+          std::to_string(value) + " does not fit in " + std::to_string(bits) +
+          " bits (limit " + std::to_string((int64_t{1} << bits) - 1) + ")");
+  };
+  check("day", day, kGroupIdDayBits);
+  check("ordinal", ordinal, kGroupIdOrdinalBits);
+  check("host_id", host_id, kGroupIdHostBits);
+  return (static_cast<uint64_t>(day)
+          << (kGroupIdOrdinalBits + kGroupIdHostBits)) |
+         (static_cast<uint64_t>(ordinal) << kGroupIdHostBits) |
+         static_cast<uint64_t>(host_id);
+}
+
+inline EncounterGroupIdParts unpackEncounterGroupId(uint64_t id) {
+  const uint64_t host_mask = (uint64_t{1} << kGroupIdHostBits) - 1;
+  const uint64_t ordinal_mask = (uint64_t{1} << kGroupIdOrdinalBits) - 1;
+  return {static_cast<int>(id >> (kGroupIdOrdinalBits + kGroupIdHostBits)),
+          static_cast<uint32_t>((id >> kGroupIdHostBits) & ordinal_mask),
+          id & host_mask};
+}
+
+// One id per record, aligned with `finalized`. A host's ordinal is the rank of
+// the record's encounter_id among that host's records, so it does not depend
+// on the order the records arrive in or on which rank holds them: all of a
+// host's replies are finalised on the host's own rank.
+inline std::vector<uint64_t> assignEncounterGroupIds(
+    const std::vector<CoordinatedEncounter>& finalized, int day) {
+  std::vector<size_t> order(finalized.size());
+  std::iota(order.begin(), order.end(), size_t{0});
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    if (finalized[a].host_id != finalized[b].host_id)
+      return finalized[a].host_id < finalized[b].host_id;
+    return finalized[a].encounter_id < finalized[b].encounter_id;
+  });
+  std::vector<uint64_t> ids(finalized.size());
+  int64_t ordinal = 0;
+  for (size_t k = 0; k < order.size(); ++k) {
+    const auto& enc = finalized[order[k]];
+    if (k > 0 && finalized[order[k - 1]].host_id != enc.host_id) ordinal = 0;
+    ids[order[k]] = packEncounterGroupId(day, ordinal++, enc.host_id);
+  }
+  return ids;
+}
 
 }  // namespace june

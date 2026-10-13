@@ -162,7 +162,7 @@ void applyEncounterInjection(
 
 }  // namespace
 
-void Simulator::negotiateAndLogDailyEncounters(int day, int rank) {
+void Simulator::negotiateAndLogDailyEncounters(int day) {
   if (!coordinated_encounter_manager_) return;
   coordinated_encounter_manager_->resetDaily();
 
@@ -216,7 +216,7 @@ void Simulator::negotiateAndLogDailyEncounters(int day, int rank) {
 
   // Log locally-finalized encounters to HDF5 BEFORE merging remote ones, so
   // cross-rank encounters never get double-logged.
-  logFinalizedEncountersLocally(finalized, rank);
+  logFinalizedEncountersLocally(finalized, day);
 
   // Phase 4: Exchange finalized encounters so remote participants know
 #ifdef USE_MPI
@@ -232,7 +232,7 @@ void Simulator::negotiateAndLogDailyEncounters(int day, int rank) {
 }
 
 void Simulator::logFinalizedEncountersLocally(
-    const std::vector<CoordinatedEncounter>& finalized, int rank) {
+    const std::vector<CoordinatedEncounter>& finalized, int day) {
   // Skip before anything enters the EventLogger buffer, so disabling this
   // avoids the RAM cost too, not just the HDF5 write. Encounters still
   // happen and still drive transmission (see
@@ -240,15 +240,13 @@ void Simulator::logFinalizedEncountersLocally(
   // recorded to simulation_events.h5.
   if (!config_.simulation.save_coordinated_encounters) return;
 
-  // group_id fans one unique uint64 per real encounter across every pair-row
-  // belonging to it. Rank is packed into the high 16 bits so counters stay
-  // unique across MPI ranks without coordination; the low 48 bits are a
-  // per-rank monotonic counter (2^48 events / rank is effectively unbounded
-  // for realistic simulations).
-  const uint64_t rank_prefix = static_cast<uint64_t>(rank) << 48;
-  for (const auto& enc : finalized) {
-    const uint64_t group_id =
-        rank_prefix | (next_encounter_group_id_++ & 0x0000FFFFFFFFFFFFULL);
+  // One group_id per finalised encounter, shared by its pair-rows. It is
+  // derived from (day, host, ordinal), so it is the same at any rank count.
+  const std::vector<uint64_t> group_ids =
+      assignEncounterGroupIds(finalized, day);
+  for (size_t i = 0; i < finalized.size(); ++i) {
+    const auto& enc = finalized[i];
+    const uint64_t group_id = group_ids[i];
     for (PersonId pid : enc.participants) {
       if (pid != enc.host_id) {
         event_logger_.logCoordinatedEncounter(

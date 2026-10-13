@@ -347,9 +347,6 @@ void Simulator::restoreCheckpointStateFile(const fs::path& cp) {
   auto I32 = H5::PredType::NATIVE_INT32;
   auto cst = readVec<double>(f, "/scalars/current_simulation_time", F64);
   if (!cst.empty()) current_simulation_time_ = cst[0];
-  auto ng = readVec<uint64_t>(f, "/scalars/next_encounter_group_id",
-                              H5::PredType::NATIVE_UINT64);
-  if (!ng.empty()) next_encounter_group_id_ = ng[0];
   auto dtc = readVec<int32_t>(f, "/scalars/day_type_counts", I32);
   day_type_counts_.assign(dtc.begin(), dtc.end());
 }

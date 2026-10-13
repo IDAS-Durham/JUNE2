@@ -10,8 +10,7 @@ For each (wN, rN) pair:
   B = run days [0, ckpt_day]   at wN ranks, checkpoint at ckpt_day
   C = resume from B's checkpoint, run to `days`, at rN ranks
   assert  set(B.events) + set(C.events) == set(baseline.events)
-          per dataset, modulo coordinated_encounters.group_id
-          (documented rank-stamped field).
+          per dataset, every field included.
 
 A dataset that carries no rows in any of the three runs cannot be compared, so
 it is reported rather than passed over. If the config says the dataset is being

@@ -53,11 +53,7 @@ def canonical_events(filename):
         if "events" not in h5:
             return events
         for name in h5["events"]:
-            fields = None
-            if name == "coordinated_encounters":
-                fields = ["person_a", "person_b", "time", "encounter_type_id",
-                          "slot"]
-            events[name] = canonical_rows(h5, f"/events/{name}", fields)
+            events[name] = canonical_rows(h5, f"/events/{name}")
     return events
 
 

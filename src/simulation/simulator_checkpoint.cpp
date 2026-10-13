@@ -584,9 +584,6 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
   writeVec(f, "/scalars/current_simulation_time",
            std::vector<double>{current_simulation_time_},
            H5::PredType::NATIVE_DOUBLE, 0);
-  writeVec(f, "/scalars/next_encounter_group_id",
-           std::vector<uint64_t>{next_encounter_group_id_},
-           H5::PredType::NATIVE_UINT64, 0);
   writeVec(f, "/scalars/effective_random_seed",
            std::vector<uint32_t>{config_.simulation.random_seed},
            H5::PredType::NATIVE_UINT32, 0);

@@ -105,11 +105,6 @@ class Simulator {
 
   // Event logging
   EventLogger event_logger_;
-  // Monotonic per-rank counter stamped into CoordinatedEncounterEvent.group_id
-  // so every pair-row of the same real encounter shares the same id. Rank is
-  // packed into the high 16 bits at stamping time for cross-rank uniqueness.
-  uint64_t next_encounter_group_id_ = 0;
-
   // Day to resume the main loop at (set by restoreFromCheckpoint; 0 = fresh
   // run). Equals checkpoint completed_day + 1.
   int resume_from_day_ = 0;
@@ -159,12 +154,12 @@ class Simulator {
   // exchange across ranks, process, exchange replies, finalize, log locally,
   // and broadcast finalized encounters back so remote participants pick them
   // up. Runs the full Phases 1–4 when coordinated_encounter_manager_ is set.
-  void negotiateAndLogDailyEncounters(int day, int rank);
+  void negotiateAndLogDailyEncounters(int day);
 
-  // Log this rank's finalized encounters with a rank-tagged group_id. Called
+  // Log this rank's finalized encounters, each with its group_id. Called
   // before the cross-rank merge so paired rows are never double-logged.
   void logFinalizedEncountersLocally(
-      const std::vector<CoordinatedEncounter>& finalized, int rank);
+      const std::vector<CoordinatedEncounter>& finalized, int day);
 
   // Two-pass coordinated-encounter injection for this slot: build per-slot
   // lookups, dedup + sort daily_encounters, compute local eligibility,
@@ -269,7 +264,7 @@ class Simulator {
                                 int comp);
 
   // Read the global / scalar restore state from state.h5 into class members
-  // (current_simulation_time_, next_encounter_group_id_, day_type_counts_).
+  // (current_simulation_time_, day_type_counts_).
   // Per-rank manager state (lpt, frozen_states) is overlaid from the shards,
   // not from here.
   void restoreCheckpointStateFile(const std::filesystem::path& cp);
@@ -281,7 +276,7 @@ class Simulator {
   void validateResumeBounds(int completed_day) const;
 
   // Rank-0-only piece of writeCheckpoint: emit state.h5 with the scalars
-  // (completed_day, current_simulation_time_, next_encounter_group_id_, …)
+  // (completed_day, current_simulation_time_, …)
   // and the rank-0 event-log buffered record counts. Per-rank manager state
   // (lpt, frozen_states) lives in each shard, not here, so the checkpoint
   // stays rank-count-independent.
