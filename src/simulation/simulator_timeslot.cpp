@@ -227,13 +227,21 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       augmented_locations.push_back(visitor_loc);
     }
 
-    // Sort incoming visitors by person_id so processing order does not depend
-    // on MPI message arrival order.
-    std::sort(augmented_locations.begin() + visitor_start,
-              augmented_locations.end(),
-              [](const PersonLocation& a, const PersonLocation& b) {
-                return a.person_id < b.person_id;
-              });
+    // Sort incoming visitors so processing order does not depend on MPI
+    // message arrival order. A rider on a multi-leg journey arrives once per
+    // leg under the same person_id, so person_id alone ties; the venue and
+    // subset finish the key.
+    std::stable_sort(augmented_locations.begin() + visitor_start,
+                     augmented_locations.end(),
+                     [](const PersonLocation& a, const PersonLocation& b) {
+                       if (a.person_id != b.person_id)
+                         return a.person_id < b.person_id;
+                       if (a.venue_id != b.venue_id)
+                         return a.venue_id < b.venue_id;
+                       if (a.subset_index != b.subset_index)
+                         return a.subset_index < b.subset_index;
+                       return a.encounter_type_id < b.encounter_type_id;
+                     });
 
     // Collect visitor IDs for InteractionManager.
     visitor_ids = domain_mgr_->getVisitorIds();
