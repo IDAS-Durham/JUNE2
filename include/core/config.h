@@ -2,13 +2,13 @@
 
 #include <map>
 #include <optional>
-#include <random>
 #include <ranges>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "types.h"
+#include "utils/deterministic_rng.h"
 
 namespace june {
 
@@ -386,7 +386,7 @@ struct ScheduleConfig {
   /// fallback range (caller should then use YAML selection_criteria).
   const ScheduleType* tryCSVAssignment(const Person& person,
                                        const WorldState& world,
-                                       std::mt19937& rng) const;
+                                       SplitMix64& rng) const;
 
   /// Parse csv_path (if set) and populate csv_rows. Resolves geo_unit names
   /// to sets of geo_unit_ids. Throws on unknown schedule names or bad probs.

@@ -63,8 +63,9 @@ void ActivityManager::assignScheduleTypeForPerson(Person& person) {
   }
 
   // 1. Try CSV-based probabilistic assignment first
-  //    Use a per-person seed for reproducible assignment across MPI ranks.
-  std::mt19937 csv_rng(mix_seed(base_seed_, person.id, 0xC5A0ULL));
+  //    One stream per person, so the draw does not depend on rank count or on
+  //    the order people are visited in.
+  SplitMix64 csv_rng(mix_seed(base_seed_, person.id, 0xC5A0ULL));
   const ScheduleType* matched_type =
       config_.schedule.tryCSVAssignment(person, world_, csv_rng);
 

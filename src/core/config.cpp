@@ -1412,14 +1412,12 @@ void CoordinatedEncounterConfig::resolve(
 
 const ScheduleType* ScheduleConfig::tryCSVAssignment(const Person& person,
                                                      const WorldState& world,
-                                                     std::mt19937& rng) const {
+                                                     SplitMix64& rng) const {
   if (csv_rows.empty()) return nullptr;
-
-  std::uniform_real_distribution<double> dist(0.0, 1.0);
 
   for (const auto& row : csv_rows) {
     if (filtering::matchesCriteria(person, &world, row.criteria)) {
-      double rand_val = dist(rng);
+      double rand_val = uniform01(rng);
       for (const auto& [type_idx, cumulative] : row.schedule_probs) {
         if (rand_val < cumulative) {
           return &schedule_types[type_idx];

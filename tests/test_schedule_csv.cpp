@@ -1,5 +1,10 @@
+#include <array>
+#include <cmath>
 #include <fstream>
+#include <map>
+#include <numeric>
 #include <string>
+#include <vector>
 
 #include "activity/activity_manager.h"
 #include "core/config.h"
@@ -45,7 +50,7 @@ TEST_CASE("ScheduleCSV - single row p=1.0 assigns that schedule") {
   row.schedule_probs.push_back({0, 1.0});
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   for (int i = 0; i < 20; ++i) {
     const ScheduleType* result =
         cfg.tryCSVAssignment(world.people[0], world, rng);
@@ -63,7 +68,7 @@ TEST_CASE("ScheduleCSV - probabilistic assignment respects proportions") {
   row.schedule_probs.push_back({1, 1.0});  // retired: [0.7, 1.0)
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   int worker_count = 0;
   const int TRIALS = 10000;
   for (int i = 0; i < TRIALS; ++i) {
@@ -89,7 +94,7 @@ TEST_CASE("ScheduleCSV - no matching row returns nullptr") {
   row.schedule_probs.push_back({0, 1.0});
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   CHECK(cfg.tryCSVAssignment(world.people[0], world, rng) == nullptr);
 }
 
@@ -113,7 +118,7 @@ TEST_CASE("ScheduleCSV - filter.age range matches correctly") {
   row.schedule_probs.push_back({0, 1.0});
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   CHECK(cfg.tryCSVAssignment(world.people[0], world, rng) != nullptr);
   CHECK(cfg.tryCSVAssignment(world.people[1], world, rng) == nullptr);
 }
@@ -134,7 +139,7 @@ TEST_CASE("ScheduleCSV - filter.sex matches correctly") {
   row.schedule_probs.push_back({0, 1.0});
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   CHECK(cfg.tryCSVAssignment(world.people[0], world, rng) !=
         nullptr);  // male → match
   CHECK(cfg.tryCSVAssignment(world.people[1], world, rng) ==
@@ -154,7 +159,7 @@ TEST_CASE("ScheduleCSV - catch-all row (no filters) matches every person") {
   row.schedule_probs.push_back({0, 1.0});
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   for (auto& person : world.people) {
     const ScheduleType* result = cfg.tryCSVAssignment(person, world, rng);
     REQUIRE(result != nullptr);
@@ -172,7 +177,7 @@ TEST_CASE("ScheduleCSV - fallback_prob range returns nullptr") {
   row.fallback_prob = 0.4;
   cfg.csv_rows.push_back(row);
 
-  std::mt19937 rng(42);
+  SplitMix64 rng(42);
   int null_count = 0;
   const int TRIALS = 10000;
   for (int i = 0; i < TRIALS; ++i) {
@@ -457,4 +462,105 @@ TEST_CASE(
   // HDF5 wins: retired (index 1) stays
   REQUIRE(world.people[0].cached_schedule_type_ != nullptr);
   CHECK(world.people[0].cached_schedule_type_->name == "retired");
+}
+
+// ---------------------------------------------------------------------------
+// Properties of the draw itself
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Three schedule types with a catch-all CSV row: a 0.2, b 0.3, c 0.5.
+Config threeTypeConfig(uint64_t run_seed) {
+  Config config;
+  config.simulation.random_seed = static_cast<unsigned int>(run_seed);
+  config.schedule.day_type_cycle = {"workday"};
+  config.schedule.day_type_names = {"workday"};
+  for (const char* name : {"a", "b", "c"}) {
+    ScheduleType t;
+    t.name = name;
+    config.schedule.schedule_types.push_back(t);
+  }
+  config.schedule.default_schedule_type = "a";
+  ScheduleAssignmentRow row;
+  row.schedule_probs = {{0, 0.2}, {1, 0.5}, {2, 1.0}};
+  config.schedule.csv_rows.push_back(row);
+  return config;
+}
+
+// Assigns schedule types to the given people and returns type index by id.
+std::map<PersonId, int> assignFor(const std::vector<int>& ids,
+                                  uint64_t run_seed) {
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 1);
+  world.schedule_type_names = {"a", "b", "c"};
+  world.people.clear();
+  for (int id : ids) {
+    Person& p = world.people.emplace_back();
+    p.id = id;
+    p.age = 30.0f;
+    p.sex = Sex::MALE;
+    p.geo_unit_id = 0;
+  }
+  Config config = threeTypeConfig(run_seed);
+  config.resolve(world);
+  ActivityManager mgr(world, config);
+  mgr.assignScheduleTypes();
+  std::map<PersonId, int> out;
+  for (const auto& p : world.people) out[p.id] = p.schedule_type_id;
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("schedule CSV draw is a fixed function of run seed and person") {
+  // Golden values from an independent implementation of mix_seed and
+  // SplitMix64; they must hold on every build.
+  SplitMix64 r0(mix_seed(777, 0, 0xC5A0ULL));
+  CHECK(uniform01(r0) == 0x1.8d98ac27aba60p-3);
+  SplitMix64 r5(mix_seed(777, 5, 0xC5A0ULL));
+  CHECK(uniform01(r5) == 0x1.74132fb8c93f9p-2);
+
+  std::vector<int> ids(10);
+  std::iota(ids.begin(), ids.end(), 0);
+  const auto assigned = assignFor(ids, 777);
+  const std::vector<int> expected = {0, 2, 0, 1, 2, 1, 2, 2, 0, 1};
+  for (int id : ids) CHECK(assigned.at(id) == expected[id]);
+}
+
+TEST_CASE("schedule CSV assignment is the same at any rank split and order") {
+  const int n = 4000;
+  std::vector<int> all(n);
+  std::iota(all.begin(), all.end(), 0);
+  const auto reference = assignFor(all, 2024);
+
+  // Reverse order, one process.
+  std::vector<int> reversed(all.rbegin(), all.rend());
+  CHECK(assignFor(reversed, 2024) == reference);
+
+  // Three ranks, each holding the people whose id falls in its residue class,
+  // in an order that differs from the reference.
+  for (int rank = 0; rank < 3; ++rank) {
+    std::vector<int> mine;
+    for (int id = n - 1; id >= 0; --id)
+      if (id % 3 == rank) mine.push_back(id);
+    for (const auto& [id, type] : assignFor(mine, 2024))
+      CHECK(type == reference.at(id));
+  }
+
+  // The run seed matters.
+  CHECK(assignFor(all, 2025) != reference);
+}
+
+TEST_CASE("schedule CSV assignment hits the target shares") {
+  const int n = 20000;
+  std::vector<int> all(n);
+  std::iota(all.begin(), all.end(), 0);
+  std::array<int, 3> counts{0, 0, 0};
+  for (const auto& [id, type] : assignFor(all, 31)) counts.at(type)++;
+  const std::array<double, 3> share = {0.2, 0.3, 0.5};
+  for (int t = 0; t < 3; ++t) {
+    // Four standard deviations of a binomial with n = 20000.
+    const double tolerance = 4.0 * std::sqrt(share[t] * (1 - share[t]) / n);
+    CHECK(std::abs(static_cast<double>(counts[t]) / n - share[t]) < tolerance);
+  }
 }
