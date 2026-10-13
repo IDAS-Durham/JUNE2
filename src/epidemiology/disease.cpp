@@ -403,8 +403,7 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
     double scale = dist.params.at("scale");
 
     // Exponentiated Weibull distribution
-    std::uniform_real_distribution<double> uniform(0.0, 1.0);
-    double u = uniform(rng);
+    double u = uniform01(rng);
     double weibull_sample = scale * std::pow(-std::log(1.0 - u), 1.0 / c);
     double exp_weibull = std::pow(weibull_sample, a);
     return loc + exp_weibull;
@@ -471,8 +470,7 @@ std::pair<std::vector<double>, double> Infection::gatherTrajectoryRates(
 int Infection::sampleTrajectoryIndex(const std::vector<double>& rates,
                                      double total_rate, SplitMix64& rng) {
   if (total_rate <= 0.0) return 0;
-  std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
-  double rand_val = prob_dist(rng);
+  double rand_val = uniform01(rng);
   double cumulative = 0.0;
   for (size_t i = 0; i < rates.size(); ++i) {
     cumulative += rates[i];

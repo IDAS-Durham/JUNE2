@@ -166,7 +166,6 @@ class CoordinatedEncounterManager {
       const Person& person, size_t person_idx,
       const CoordinatedEncounterDef& enc_def, int slot_idx, int virtual_v_type,
       const std::string* fg_name_ptr, SplitMix64& gen,
-      std::uniform_real_distribution<double>& dist,
       std::unordered_map<size_t, std::vector<int>>& remaining_slots,
       std::vector<EncounterProposal>& out_proposals);
 

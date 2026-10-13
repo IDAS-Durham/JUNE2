@@ -80,7 +80,7 @@ void CalendarEventManager::triggerEventsForDay(
       // Deterministic per-(person, event) compliance roll.
       SplitMix64 rng(mix_seed(base_seed, person.id,
                               static_cast<uint64_t>(event.calendar_event_id)));
-      double roll = std::uniform_real_distribution<double>(0.0, 1.0)(rng);
+      double roll = uniform01(rng);
       if (roll >= event.compliance_rate) {
         ++stats_.skipped_compliance;
         continue;

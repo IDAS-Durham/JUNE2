@@ -200,7 +200,7 @@ bool InteractionManager::processOneVenueSusceptible(
   SplitMix64 susc_rng(
       mix_seed(base_seed_, susceptible_id, venue_key, time_bits));
 
-  double rng_roll = uniform_dist_(susc_rng);
+  double rng_roll = uniform01(susc_rng);
   if (!(rng_roll < prob)) return false;
 
   source_cumulative_buffer_.clear();

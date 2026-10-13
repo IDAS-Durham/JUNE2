@@ -511,8 +511,7 @@ std::vector<PersonId> InfectionSeeder::applyUniformSeed(
 
     // Per-person deterministic draw keyed to person ID
     SplitMix64 prng(mix_seed(event_base, person.id, time_bits));
-    std::uniform_real_distribution<double> dist(0.0, 1.0);
-    double rng_val = dist(prng);
+    double rng_val = uniform01(prng);
     bool seeded = rng_val < cases_per_capita;
     if (seeded) {
       infectPerson(&person, seed);

@@ -5,6 +5,8 @@
 #include <random>
 #include <vector>
 
+#include "utils/deterministic_rng.h"
+
 namespace june {
 
 // Build cumulative weights into `out` (cleared first). Returns the total
@@ -28,8 +30,7 @@ inline int sampleFromCumulative(const std::vector<double>& cumulative,
   if (cumulative.empty()) return -1;
   double total = cumulative.back();
   if (!(total > 0.0)) return -1;
-  std::uniform_real_distribution<double> u(0.0, total);
-  double r = u(rng);
+  double r = total * uniform01(rng);
   auto it = std::lower_bound(cumulative.begin(), cumulative.end(), r);
   int idx = static_cast<int>(it - cumulative.begin());
   if (idx >= static_cast<int>(cumulative.size()))

@@ -248,8 +248,7 @@ void PolicyManager::refreshTransmissionModifiers(
 bool PolicyManager::checkCompliance(double compliance_rate, PersonId person_id,
                                     uint32_t policy_index) const {
   SplitMix64 rng(mix_seed(base_seed_, person_id, policy_index, 0xC0E1A9ULL));
-  std::uniform_real_distribution<double> dist(0.0, 1.0);
-  return dist(rng) < compliance_rate;
+  return uniform01(rng) < compliance_rate;
 }
 
 std::optional<PersonLocation> PolicyManager::getReplacementLocation(

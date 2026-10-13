@@ -953,9 +953,6 @@ class InteractionManager {
   // A local member's Emission, reused across members
   Emission emission_scratch_;
 
-  // Cached uniform distribution for transmission rolls
-  std::uniform_real_distribution<double> uniform_dist_{0.0, 1.0};
-
   // Base seed for deterministic per-entity RNG (MPI reproducibility)
   uint64_t base_seed_ = 0;
 

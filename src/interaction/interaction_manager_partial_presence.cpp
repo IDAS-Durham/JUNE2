@@ -573,7 +573,7 @@ bool InteractionManager::processOnePartialSusceptible(
   if (!(prob > 1e-12)) return false;
 
   SplitMix64 susc_rng(mix_seed(base_seed_, susc_id, venue_key, time_bits));
-  double rng_roll = uniform_dist_(susc_rng);
+  double rng_roll = uniform01(susc_rng);
   if (!(rng_roll < prob)) return false;
 
   // Source attribution: weight-sample from accumulated AccumSource entries.

@@ -146,13 +146,12 @@ bool CoordinatedEncounterManager::tryEmitForOneSlot(
     const Person& person, size_t person_idx,
     const CoordinatedEncounterDef& enc_def, int slot_idx, int virtual_v_type,
     const std::string* fg_name_ptr, SplitMix64& gen,
-    std::uniform_real_distribution<double>& dist,
     std::unordered_map<size_t, std::vector<int>>& remaining_slots,
     std::vector<EncounterProposal>& out_proposals) {
   // Rate gate: frequency_group bypass (budget-hit verified once per day) or
   // the legacy scalar proposal_probability roll.
   if (!fg_name_ptr) {
-    if (dist(gen) > enc_def.proposal_probability) return false;
+    if (uniform01(gen) > enc_def.proposal_probability) return false;
   }
 
   VenueSelection venue = selectVenue(person, enc_def, virtual_v_type, gen);
@@ -193,8 +192,7 @@ bool CoordinatedEncounterManager::isFrequencyGroupBudgetAvailable(
     uint64_t group_key = hashGroupName(fg_name);
     SplitMix64 fg_gen(mix_seed(config_.simulation.random_seed, person.id,
                                current_day, group_key));
-    std::uniform_real_distribution<double> fg_dist(0.0, 1.0);
-    bool hit = (daily_p > 0.0) && (fg_dist(fg_gen) < daily_p);
+    bool hit = (daily_p > 0.0) && (uniform01(fg_gen) < daily_p);
     per_person[fg_name] = hit;
 
     // Daily-summary accounting (per frequency group). Counted once
@@ -488,7 +486,6 @@ void CoordinatedEncounterManager::proposeForOnePersonOneEncounter(
   // Per-person deterministic RNG for MPI reproducibility
   SplitMix64 gen(mix_seed(config_.simulation.random_seed, person.id,
                           current_day, enc_type_counter));
-  std::uniform_real_distribution<double> dist(0.0, 1.0);
 
   // If this encounter is part of a frequency_group, resolve today's
   // per-person budget-hit once per (person, group). The roll uses a
@@ -519,8 +516,7 @@ void CoordinatedEncounterManager::proposeForOnePersonOneEncounter(
   for (int slot_idx : valid_slots) {
     if (proposals_made >= type_budget) break;
     if (tryEmitForOneSlot(person, person_idx, enc_def, slot_idx, virtual_v_type,
-                          fg_name_ptr, gen, dist, remaining_slots,
-                          out_proposals)) {
+                          fg_name_ptr, gen, remaining_slots, out_proposals)) {
       proposals_made++;
     }
   }
@@ -594,8 +590,7 @@ EncounterReply CoordinatedEncounterManager::replyForOneProposal(
   // (31-bit truncation).
   SplitMix64 gen(mix_seed(config_.simulation.random_seed, prop.encounter_id,
                           prop.invitee_id, 0xACCE97ULL));
-  std::uniform_real_distribution<double> dist(0.0, 1.0);
-  if (dist(gen) > matched_def->acceptance_probability) {
+  if (uniform01(gen) > matched_def->acceptance_probability) {
     reply.status = ReplyStatus::REJECTED_DECLINED;
   } else {
     reply.status = ReplyStatus::ACCEPTED;

@@ -135,8 +135,7 @@ void ActivityManager::maybeRollLinkedActivitiesDay(
   }
   SplitMix64 day_rng(
       mix_seed(base_seed_, person.id, mix_seed(0xDA17ULL, day_now, 0ULL)));
-  std::uniform_real_distribution<double> day_dist(0.0, 1.0);
-  bool pass = day_dist(day_rng) < linked_rate;
+  bool pass = uniform01(day_rng) < linked_rate;
   const_cast<Person&>(person).linked_activities_day = day_now;
   const_cast<Person&>(person).linked_activities_pass = pass;
 }
@@ -161,8 +160,7 @@ int16_t ActivityManager::pickActivityByRate(
     if (act_idx < static_cast<int16_t>(participation_by_id.size())) {
       double rate = participation_by_id[act_idx];
       if (rate > 0.0) {
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
-        if (dist(rng) < rate) {
+        if (uniform01(rng) < rate) {
           return act_idx;  // Participate in this activity
         }
       }
