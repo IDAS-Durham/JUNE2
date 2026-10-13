@@ -127,17 +127,6 @@ static double lookupFrequencyDailyP(const Person& person,
   return 0.0;
 }
 
-// Hash a frequency-group name into a stable 64-bit key suitable for mixing
-// into the per-person RNG. FNV-1a 64.
-static uint64_t hashGroupName(const std::string& name) {
-  uint64_t h = 1469598103934665603ULL;
-  for (char c : name) {
-    h ^= static_cast<uint64_t>(static_cast<unsigned char>(c));
-    h *= 1099511628211ULL;
-  }
-  return h;
-}
-
 // =============================================================================
 // generateProposals helpers
 // =============================================================================
@@ -189,7 +178,7 @@ bool CoordinatedEncounterManager::isFrequencyGroupBudgetAvailable(
     if (fg_it != config_.coordinated_encounters.frequency_groups.end()) {
       daily_p = lookupFrequencyDailyP(person, world_, fg_it->second);
     }
-    uint64_t group_key = hashGroupName(fg_name);
+    uint64_t group_key = hash_name(fg_name);
     SplitMix64 fg_gen(mix_seed(config_.simulation.random_seed, person.id,
                                current_day, group_key));
     bool hit = (daily_p > 0.0) && (uniform01(fg_gen) < daily_p);
