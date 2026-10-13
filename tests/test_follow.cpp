@@ -712,3 +712,38 @@ TEST_CASE("the mirror gate pins nobody at the host's venue") {
   CHECK(follower.schedule_hop.hopped_schedule_id == kHoppedSchedule);
   CHECK(follower.schedule_hop.return_schedule_id == kReturnSchedule);
 }
+
+// ===========================================================================
+// Invite distribution parameters
+// ===========================================================================
+
+static void loadWithInviteDistribution(const std::string& distribution) {
+  ScopedTestFiles files{"invite_distribution_ce"};
+  const auto path = files.write(
+      "config.yaml",
+      "coordinated_encounters:\n"
+      "  enabled: true\n"
+      "  encounters:\n"
+      "    - name: meet\n"
+      "      network: friends\n"
+      "      trigger_slots: [leisure]\n"
+      "      allowed_venues: [pub]\n"
+      "      proposal_probability: 0.5\n"
+      "      invite_distribution: " +
+          distribution + "\n");
+  ConfigLoader::loadCoordinatedEncounters(path.string());
+}
+
+TEST_CASE("invite distribution parameters are checked when the file loads") {
+  CHECK_NOTHROW(loadWithInviteDistribution("{type: poisson, mean: 1.5}"));
+  CHECK_NOTHROW(loadWithInviteDistribution("{type: binomial, p: 1.0}"));
+  CHECK_NOTHROW(loadWithInviteDistribution("{type: fixed, count: 0}"));
+  CHECK_THROWS_WITH(loadWithInviteDistribution("{type: poisson, mean: 501}"),
+                    doctest::Contains("'meet' mean must be in [0, 500"));
+  CHECK_THROWS_WITH(loadWithInviteDistribution("{type: poisson, mean: -1}"),
+                    doctest::Contains("mean must be"));
+  CHECK_THROWS_WITH(loadWithInviteDistribution("{type: binomial, p: 1.2}"),
+                    doctest::Contains("p must be in [0, 1]"));
+  CHECK_THROWS_WITH(loadWithInviteDistribution("{type: fixed, count: -2}"),
+                    doctest::Contains("count must be 0 or more"));
+}

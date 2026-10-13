@@ -1,6 +1,9 @@
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 #include "../include/utils/deterministic_rng.h"
@@ -293,4 +296,179 @@ TEST_CASE("uniform01 golden values for a fixed seed") {
   CHECK(uniform01(g) == 0x1.c4415072f63bap-1);
   CHECK(uniform01(g) == 0x1.b9e279aa86e59p-2);
   CHECK(uniform01(g) == 0x1.b117462002515p-6);
+}
+
+// ---------------------------------------------------------------------------
+// poisson and binomial
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Raw bits that uniform01 maps back to exactly u (u is a double below 1).
+uint64_t bitsFor(double u) { return static_cast<uint64_t>(u * 0x1.0p64); }
+
+// Plays back a list of uniform01 values and counts how many were consumed.
+struct ReplayBits {
+  using result_type = uint64_t;
+  std::vector<uint64_t> values;
+  size_t used = 0;
+  static constexpr uint64_t min() { return 0; }
+  static constexpr uint64_t max() { return UINT64_MAX; }
+  uint64_t operator()() { return values.at(used++); }
+};
+
+int poissonAt(double mean, double u) {
+  ReplayBits g{{bitsFor(u)}};
+  return poisson(g, mean);
+}
+
+constexpr double kLargestUniform01 = 1.0 - 0x1.0p-53;
+
+double poissonCdf(double mean, int k) {
+  double term = std::exp(-mean), sum = term;
+  for (int i = 1; i <= k; ++i) {
+    term *= mean / i;
+    sum += term;
+  }
+  return sum;
+}
+
+}  // namespace
+
+TEST_CASE("poisson golden values, away from any boundary") {
+  // The cumulative sums for mean 1.5 are 0.2231, 0.5578, 0.8088, 0.9344,
+  // 0.9814. Each draw below sits at least 0.015 from a boundary, so a one ulp
+  // difference in exp cannot change the answer on any build. Expected values
+  // come from a 60 digit evaluation of the cumulative sums.
+  CHECK(poissonAt(1.5, 0.0) == 0);
+  CHECK(poissonAt(1.5, 0.40) == 1);
+  CHECK(poissonAt(1.5, 0.70) == 2);
+  CHECK(poissonAt(1.5, 0.88) == 3);
+  CHECK(poissonAt(1.5, 0.96) == 4);
+  CHECK(poissonAt(10.0, 0.5) == 10);
+  CHECK(poissonAt(10.0, 0.9) == 14);  // cumulative 0.8645 at 13, 0.9165 at 14
+  CHECK(poissonAt(0.0, 0.0) == 0);
+  CHECK(poissonAt(0.0, kLargestUniform01) == 0);
+}
+
+TEST_CASE("poisson at the largest uniform01 stops on the plateau") {
+  // The running sum stalls just below 1, and the largest draw can sit above
+  // it. The result is then the k reached, not an error and not a hang.
+  for (double mean : {0.5, 1.5, 10.0, 100.0, kPoissonMaxMean}) {
+    const int k = poissonAt(mean, kLargestUniform01);
+    CHECK(k >= mean);
+    CHECK(k < kPoissonMaxTerms);
+    CHECK(poissonCdf(mean, k) > 1.0 - 1e-12);
+  }
+  CHECK(poissonAt(1.5, kLargestUniform01) >= 18);
+  CHECK(poissonAt(1.5, kLargestUniform01) <= 24);
+}
+
+TEST_CASE("poisson consumes exactly one draw, whatever the value") {
+  for (double mean : {0.0, 0.1, 1.5, 50.0}) {
+    SplitMix64 a(mix_seed(5, 1)), b(mix_seed(5, 1));
+    (void)poisson(a, mean);
+    (void)b();
+    CHECK(a() == b());  // the next draw is the same for every mean
+  }
+}
+
+TEST_CASE("poisson rejects a mean it cannot handle") {
+  SplitMix64 g(1);
+  CHECK_THROWS_WITH_AS(poisson(g, -0.5), doctest::Contains("-0.5"),
+                       std::runtime_error);
+  CHECK_THROWS_AS(poisson(g, std::numeric_limits<double>::quiet_NaN()),
+                  std::runtime_error);
+  CHECK_THROWS_AS(poisson(g, std::numeric_limits<double>::infinity()),
+                  std::runtime_error);
+  CHECK_THROWS_WITH_AS(poisson(g, 500.5), doctest::Contains("500.5"),
+                       std::runtime_error);
+  CHECK_NOTHROW(poisson(g, kPoissonMaxMean));
+}
+
+TEST_CASE("poisson mean and variance match the parameter") {
+  const int n = 200000;
+  for (double mean : {0.3, 1.5, 10.0, 80.0}) {
+    SplitMix64 g(mix_seed(77, static_cast<uint64_t>(mean * 10)));
+    double sum = 0, sum_sq = 0;
+    for (int i = 0; i < n; ++i) {
+      const double v = poisson(g, mean);
+      sum += v;
+      sum_sq += v * v;
+    }
+    const double m = sum / n, var = sum_sq / n - m * m;
+    // Four standard errors; the variance of the sample variance of a
+    // Poisson is (mean + 2 mean^2) / n.
+    CHECK(std::abs(m - mean) < 4.0 * std::sqrt(mean / n));
+    CHECK(std::abs(var - mean) < 4.0 * std::sqrt((mean + 2 * mean * mean) / n));
+  }
+}
+
+TEST_CASE("poisson histogram matches the exact distribution") {
+  const int n = 400000;
+  const double mean = 1.5;
+  std::vector<double> count(10, 0.0);
+  SplitMix64 g(mix_seed(78, 1));
+  for (int i = 0; i < n; ++i) count[std::min(poisson(g, mean), 9)] += 1;
+  for (int k = 0; k < 10; ++k) {
+    const double p =
+        k < 9 ? poissonCdf(mean, k) - (k ? poissonCdf(mean, k - 1) : 0)
+              : 1.0 - poissonCdf(mean, 8);
+    const double expected = n * p, sd = std::sqrt(n * p * (1 - p));
+    CHECK(std::abs(count[k] - expected) < 4.5 * sd);
+  }
+}
+
+TEST_CASE("binomial golden values and draw count") {
+  // u: 0.1 0.5 0.29 0.9 against p = 0.3 gives two successes in four draws.
+  ReplayBits g{{bitsFor(0.1), bitsFor(0.5), bitsFor(0.29), bitsFor(0.9)}};
+  CHECK(binomial(g, 4, 0.3) == 2);
+  CHECK(g.used == 4);
+
+  ReplayBits zeros{std::vector<uint64_t>(5, 0)};
+  CHECK(binomial(zeros, 5, 0.3) == 5);  // u = 0 is below any p > 0
+  CHECK(zeros.used == 5);
+  ReplayBits zeros_p0{std::vector<uint64_t>(5, 0)};
+  CHECK(binomial(zeros_p0, 5, 0.0) == 0);  // but never below p = 0
+
+  ReplayBits tops{std::vector<uint64_t>(5, UINT64_MAX)};
+  CHECK(binomial(tops, 5, 0.3) == 0);
+  ReplayBits tops_p1{std::vector<uint64_t>(5, UINT64_MAX)};
+  CHECK(binomial(tops_p1, 5, 1.0) == 5);  // the largest draw is still below 1
+
+  ReplayBits none{{}};
+  CHECK(binomial(none, 0, 0.5) == 0);
+  CHECK(none.used == 0);
+}
+
+TEST_CASE("binomial rejects n or p it cannot handle") {
+  SplitMix64 g(1);
+  CHECK_THROWS_WITH_AS(binomial(g, -1, 0.5), doctest::Contains("-1"),
+                       std::runtime_error);
+  CHECK_THROWS_AS(binomial(g, 3, -0.1), std::runtime_error);
+  CHECK_THROWS_AS(binomial(g, 3, 1.1), std::runtime_error);
+  CHECK_THROWS_AS(binomial(g, 3, std::numeric_limits<double>::quiet_NaN()),
+                  std::runtime_error);
+}
+
+TEST_CASE("binomial mean and histogram match the exact distribution") {
+  const int trials = 200000, n = 9;
+  const double p = 0.3;
+  std::vector<double> count(n + 1, 0.0);
+  SplitMix64 g(mix_seed(79, 1));
+  double sum = 0;
+  for (int i = 0; i < trials; ++i) {
+    const int v = binomial(g, n, p);
+    count[v] += 1;
+    sum += v;
+  }
+  CHECK(std::abs(sum / trials - n * p) <
+        4.0 * std::sqrt(n * p * (1 - p) / trials));
+  double choose = 1;
+  for (int k = 0; k <= n; ++k) {
+    if (k > 0) choose = choose * (n - k + 1) / k;
+    const double pk = choose * std::pow(p, k) * std::pow(1 - p, n - k);
+    const double expected = trials * pk, sd = std::sqrt(trials * pk * (1 - pk));
+    CHECK(std::abs(count[k] - expected) < 4.5 * sd);
+  }
 }

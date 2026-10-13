@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <stdexcept>
 #include <string>
 
 namespace june {
@@ -86,9 +87,9 @@ inline uint64_t bounded(Rng& g, uint64_t n) {
 // largest double below 1. Only engines that span the full 64 bits qualify.
 template <typename Rng>
 inline double uniform01(Rng& g) {
-  static_assert(Rng::min() == 0 &&
-                    Rng::max() == std::numeric_limits<uint64_t>::max(),
-                "uniform01 needs a generator spanning all 64 bits");
+  static_assert(
+      Rng::min() == 0 && Rng::max() == std::numeric_limits<uint64_t>::max(),
+      "uniform01 needs a generator spanning all 64 bits");
   const double u = static_cast<double>(g()) * 0x1.0p-64;
   return u < 1.0 ? u : std::nextafter(1.0, 0.0);
 }
@@ -101,6 +102,63 @@ inline void shuffle_det(It first, It last, Rng& g) {
         static_cast<decltype(i)>(bounded(g, static_cast<uint64_t>(i) + 1));
     if (i != j) std::iter_swap(first + i, first + j);
   }
+}
+
+// Poisson count by inversion of the cumulative distribution, from exactly one
+// uniform01 draw. The stream position afterwards therefore does not depend on
+// the value drawn, which std::poisson_distribution does not give.
+//
+// The terms are built from p(0) = exp(-mean) by p(k) = p(k-1) * mean / k, and
+// the result is the first k whose running sum exceeds the draw. In double
+// precision the running sum stops growing a little below 1, and the largest
+// uniform01 value can sit above that plateau. When the next term is too small
+// to change the sum, the result is the k reached: the draw is then within about
+// 1e-16 of 1, where the exact answer is in the far tail anyway.
+//
+// A mean above kPoissonMaxMean throws: exp(-mean) underflows near 745, and the
+// terms lose accuracy well before that. The loop is also capped at
+// kPoissonMaxTerms. The plateau stops it first for every allowed mean (for the
+// largest draw it stops at k = 20 for mean 1.5, 46 for mean 10 and 693 for
+// mean 500, against a cap of 4096), so the cap is a guard that cannot be
+// reached, and it throws if it ever is.
+inline constexpr double kPoissonMaxMean = 500.0;
+inline constexpr int kPoissonMaxTerms = 4096;
+
+template <typename Rng>
+inline int poisson(Rng& g, double mean) {
+  if (!(mean >= 0.0) || !std::isfinite(mean) || mean > kPoissonMaxMean)
+    throw std::runtime_error("poisson: mean " + std::to_string(mean) +
+                             " is outside [0, " +
+                             std::to_string(kPoissonMaxMean) + "]");
+  const double u = uniform01(g);
+  double term = std::exp(-mean);
+  double sum = term;
+  for (int k = 0; k < kPoissonMaxTerms; ++k) {
+    if (u < sum) return k;
+    term *= mean / (k + 1);
+    if (sum + term == sum) return k;  // plateau: the sum cannot grow further
+    sum += term;
+  }
+  throw std::runtime_error("poisson: no result within " +
+                           std::to_string(kPoissonMaxTerms) +
+                           " terms for mean " + std::to_string(mean));
+}
+
+// Binomial count as n independent uniform01 draws below p, so it consumes
+// exactly n draws and is exact. It is O(n); n here is a person's friend count,
+// at most a few tens.
+template <typename Rng>
+inline int binomial(Rng& g, int n, double p) {
+  if (n < 0)
+    throw std::runtime_error("binomial: n " + std::to_string(n) +
+                             " is negative");
+  if (!(p >= 0.0 && p <= 1.0))
+    throw std::runtime_error("binomial: p " + std::to_string(p) +
+                             " is outside [0, 1]");
+  int count = 0;
+  for (int i = 0; i < n; ++i)
+    if (uniform01(g) < p) ++count;
+  return count;
 }
 
 // SplitMix64: lightweight RNG satisfying C++ UniformRandomBitGenerator.

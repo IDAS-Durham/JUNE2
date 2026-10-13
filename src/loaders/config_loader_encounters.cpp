@@ -10,6 +10,7 @@
 
 #include "loaders/config_loader.h"
 #include "loaders/config_loader_detail.h"
+#include "utils/deterministic_rng.h"
 #include "utils/filtered_csv.h"
 #include "utils/mpi_utils.h"
 
@@ -120,12 +121,25 @@ void parseInviteDistribution(const YAML::Node& dist_node,
     return;
   }
 
-  if (dist.type == DistributionType::POISSON)
+  const std::string where =
+      "Coordinated encounter '" + enc_name + "' " + parameter + " must be ";
+  if (dist.type == DistributionType::POISSON) {
     dist.mean = dist_node[parameter].as<double>();
-  else if (dist.type == DistributionType::BINOMIAL)
+    if (!(dist.mean >= 0.0 && dist.mean <= kPoissonMaxMean))
+      throw std::runtime_error(where + "in [0, " +
+                               std::to_string(kPoissonMaxMean) + "], got " +
+                               std::to_string(dist.mean));
+  } else if (dist.type == DistributionType::BINOMIAL) {
     dist.p = dist_node[parameter].as<double>();
-  else
+    if (!(dist.p >= 0.0 && dist.p <= 1.0))
+      throw std::runtime_error(where + "in [0, 1], got " +
+                               std::to_string(dist.p));
+  } else {
     dist.count = dist_node[parameter].as<int>();
+    if (dist.count < 0)
+      throw std::runtime_error(where + "0 or more, got " +
+                               std::to_string(dist.count));
+  }
 }
 
 // Parse the required scalar/list fields of a coordinated-encounter entry

@@ -23,14 +23,9 @@ namespace {
 template <typename Dist>
 int sampleCountFromDistribution(const Dist& dist, int n_for_binomial,
                                 int default_val, SplitMix64& gen) {
-  if (dist.type == DistributionType::POISSON) {
-    std::poisson_distribution<int> pd(dist.mean);
-    return pd(gen);
-  }
-  if (dist.type == DistributionType::BINOMIAL) {
-    std::binomial_distribution<int> bd(n_for_binomial, dist.p);
-    return bd(gen);
-  }
+  if (dist.type == DistributionType::POISSON) return poisson(gen, dist.mean);
+  if (dist.type == DistributionType::BINOMIAL)
+    return binomial(gen, n_for_binomial, dist.p);
   if (dist.type == DistributionType::FIXED) {
     return dist.count;
   }
