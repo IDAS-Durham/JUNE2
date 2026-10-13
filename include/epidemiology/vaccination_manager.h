@@ -1,18 +1,42 @@
 #pragma once
 
+#include <cmath>
+#include <cstdint>
 #include <memory>
-#include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "core/config.h"
 #include "core/world_state.h"
+#include "utils/deterministic_rng.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/random.h"
 #include "utils/time_utils.h"
 #include "vaccine.h"
 
 namespace june {
+
+// update() is called once per simulated day with the day index. A time that is
+// negative, not finite or not a whole number is a caller bug: the roll is keyed
+// on the day, so a fractional time would silently share a day with another.
+inline uint64_t vaccinationDayIndex(double current_time) {
+  if (!std::isfinite(current_time) || current_time < 0.0 ||
+      current_time != std::floor(current_time))
+    throw std::runtime_error("vaccination: simulation time " +
+                             std::to_string(current_time) +
+                             " is not a whole, non negative day index");
+  return static_cast<uint64_t>(current_time);
+}
+
+// Seed for one campaign's coverage roll for one person on one day. Every part
+// of the key goes through mix_seed, so two different (person, day, campaign)
+// triples never share a draw, and the run seed changes every draw.
+inline uint64_t vaccinationRollSeed(uint64_t base_seed, PersonId person,
+                                    size_t campaign_index, uint64_t day) {
+  return mix_seed(base_seed, static_cast<uint64_t>(person), day,
+                  0x7ACC1ULL + campaign_index);
+}
 
 class VaccinationCampaign {
  public:
@@ -117,6 +141,7 @@ class VaccinationManager {
 
   // This is called every simulation day to hand out vaccines
   void update(double current_time) {
+    const uint64_t day = vaccinationDayIndex(current_time);
     if (!config_.vaccination.enabled) return;
 
     // 1. Identify active campaigns once for the day
@@ -138,14 +163,12 @@ class VaccinationManager {
 
         // Eligibility check
         if (campaign->isEligible(person, current_time, world_)) {
-          // Daily probability check using a stable per-person seed
-          unsigned int vax_seed =
-              static_cast<unsigned int>(person.id) ^
-              static_cast<unsigned int>(current_time * 1000) ^ 0xBADBEEF;
-          std::mt19937 vax_rng(vax_seed);
-          std::uniform_real_distribution<double> vax_dist(0.0, 1.0);
+          // Daily probability check, one draw per (person, day, campaign)
+          SplitMix64 vax_rng(vaccinationRollSeed(
+              config_.simulation.random_seed, person.id,
+              static_cast<size_t>(campaign - campaigns_.data()), day));
 
-          if (vax_dist(vax_rng) < camp_cfg.daily_coverage) {
+          if (uniform01(vax_rng) < camp_cfg.daily_coverage) {
             administerVaccine(person, camp_cfg.vaccine_type, current_time);
             break;  // Only one vaccine/campaign per day for a person
           }

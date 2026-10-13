@@ -596,10 +596,17 @@ campaigns:
   (`days_to_effective`), waning window, and per-disease, per-age-band
   efficacy against infection and symptoms. Efficacy multiplies the
   trajectory's `severity` to compute symptom protection.
-- A **campaign** rolls out a vaccine to a selected sub-population at
-  `daily_coverage` until end-date. `last_dose_type_filter` lets a
-  booster campaign target only people whose previous dose was a
-  specific brand.
+- A **campaign** offers a vaccine once a day, until end-date, to the
+  people its `selection` matches. Each campaign rolls independently for
+  each person each day, with `daily_coverage` as the chance. When
+  several campaigns are active, a person is checked against them in
+  file order and the first success takes them, so file order only
+  decides which vaccine they get. It does not change how many people
+  are reached: with coverages a and b the chance of a dose from either
+  in one day is 1 minus (1 minus a)(1 minus b). `last_dose_type_filter`
+  lets a booster campaign target only people whose previous dose was a
+  specific brand. The rolls depend on the run seed, so a different
+  `random_seed` vaccinates different people.
 
 ---
 
