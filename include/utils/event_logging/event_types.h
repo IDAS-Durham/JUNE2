@@ -19,6 +19,16 @@ inline void copyFixedField(char (&destination)[N], std::string_view source) {
   std::memcpy(destination, source.data(), length);
 }
 
+// Records written to HDF5 as raw memory must not carry padding: a padding byte
+// is whatever the allocator left behind, so the same events would be written
+// differently from run to run. Where alignment leaves a gap the struct names it
+// as a zero-initialised pad member at the same offset, so the schema does not
+// move, and `packed` below fails the build if a gap is left unnamed.
+// std::has_unique_object_representations is no use here: it is false for any
+// struct holding a double.
+template <typename T, typename... Members>
+inline constexpr bool packed = sizeof(T) == (sizeof(Members) + ...);
+
 // Shared fallback strings for unresolvable/inapplicable HDF5 lookup-table
 // values. Single point of definition so every writer/merger call site stays
 // in sync.
@@ -48,13 +58,18 @@ struct InfectionEvent {
   PersonId person_id;
   PersonId infector_id;
   VenueId venue_id;
+  uint8_t pad_before_time_[4] = {};
   double time;
   uint8_t encounter_type_id;
   uint8_t transmission_mode_index;
   uint8_t infector_symptom_id;
   InfectionSource source;
   uint8_t reserved = 0;
+  uint8_t pad_tail_[3] = {};
 };
+static_assert(
+    packed<InfectionEvent, PersonId, PersonId, VenueId, uint8_t[4], double,
+           uint8_t, uint8_t, uint8_t, InfectionSource, uint8_t, uint8_t[3]>);
 
 struct SymptomChangeEvent {
   PersonId person_id;
@@ -62,13 +77,17 @@ struct SymptomChangeEvent {
   double time;
   uint8_t old_symptom_id;
   uint8_t new_symptom_id;
+  uint8_t pad_tail_[6] = {};
 };
+static_assert(packed<SymptomChangeEvent, PersonId, VenueId, double, uint8_t,
+                     uint8_t, uint8_t[6]>);
 
 struct DeathEvent {
   PersonId person_id;
   VenueId venue_id;
   double time;
 };
+static_assert(packed<DeathEvent, PersonId, VenueId, double>);
 
 struct HospitalAdmissionEvent {
   PersonId person_id;
@@ -82,6 +101,7 @@ struct ICUAdmissionEvent {
   VenueId hospital_id;
   double time;
 };
+static_assert(packed<ICUAdmissionEvent, PersonId, VenueId, double>);
 
 struct HospitalDischargeEvent {
   PersonId person_id;
@@ -96,6 +116,7 @@ struct VaccinationEvent {
   int dose_index;
   double time;
 };
+static_assert(packed<VaccinationEvent, PersonId, char[64], int, double>);
 
 struct RelationshipEvent {
   PersonId person_a;
@@ -104,18 +125,23 @@ struct RelationshipEvent {
   double dissolution_time;
   char tie_tag[32];  // Generic tag: "ooe", etc.
 };
+static_assert(
+    packed<RelationshipEvent, PersonId, PersonId, double, double, char[32]>);
 
 struct CoordinatedEncounterEvent {
   PersonId person_a;  // Always the host of the encounter.
   PersonId person_b;  // A guest. The host fans one pair-row out per guest.
   double time;
   uint8_t encounter_type_id;
+  uint8_t pad_before_slot_[3] = {};
   int slot;
   // Stable id shared by every pair-row belonging to the same real group
   // encounter. Group rows on this to recover participant sets without
   // depending on the (person_a, time, slot, encounter_type_id) heuristic.
   uint64_t group_id;
 };
+static_assert(packed<CoordinatedEncounterEvent, PersonId, PersonId, double,
+                     uint8_t, uint8_t[3], int, uint64_t>);
 
 // A follower bound to a host by a follow rule. Not a coordinated encounter:
 // nothing was proposed, negotiated or accepted, so these live in their own
@@ -126,8 +152,11 @@ struct FollowEvent {
   double time;
   // Index into the follows list, named by the follow_rules registry.
   uint8_t rule_id;
+  uint8_t pad_before_slot_[3] = {};
   int slot;
 };
+static_assert(
+    packed<FollowEvent, PersonId, PersonId, double, uint8_t, uint8_t[3], int>);
 
 // =============================================================================
 // HDF5 Record Structures (C-compatible for H5::CompType)
@@ -191,6 +220,7 @@ struct FollowRecord {
 
 struct PersonRecord {
   int person_id;
+  uint8_t pad_before_age_[4] = {};
   double age;
   char sex[16];
   int geo_unit_id;
@@ -202,7 +232,10 @@ struct PersonRecord {
   int num_primary_activities;
   int num_leisure_venues;
   int num_medical_facilities;
+  uint8_t pad_tail_[4] = {};
 };
+static_assert(packed<PersonRecord, int, uint8_t[4], double, char[16], int, int,
+                     double, char[64], int, int, int, int, int, uint8_t[4]>);
 
 struct PersonActivityRecord {
   int person_id;

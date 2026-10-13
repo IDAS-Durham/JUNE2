@@ -314,6 +314,7 @@ if(BUILD_TESTING)
       test_simulator
 
       test_deterministic_rng
+      test_event_record_layout
 
       test_transmission_determinism
 

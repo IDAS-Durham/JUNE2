@@ -22,9 +22,14 @@ void EventLogger::logInfection(PersonId person_id, PersonId infector_id,
                                uint8_t encounter_type_id,
                                const TransmissionRecord& transmission) {
   infections_.push_back(
-      {person_id, infector_id, venue_id, time, encounter_type_id,
-       transmission.transmission_mode_index, transmission.infector_symptom_id,
-       transmission.source});
+      {.person_id = person_id,
+       .infector_id = infector_id,
+       .venue_id = venue_id,
+       .time = time,
+       .encounter_type_id = encounter_type_id,
+       .transmission_mode_index = transmission.transmission_mode_index,
+       .infector_symptom_id = transmission.infector_symptom_id,
+       .source = transmission.source});
 }
 
 void EventLogger::logSymptomChange(PersonId person_id, VenueId venue_id,
@@ -81,13 +86,21 @@ void EventLogger::logCoordinatedEncounter(PersonId person_a, PersonId person_b,
                                           double time,
                                           uint8_t encounter_type_id, int slot,
                                           uint64_t group_id) {
-  coordinated_encounters_.push_back(
-      {person_a, person_b, time, encounter_type_id, slot, group_id});
+  coordinated_encounters_.push_back({.person_a = person_a,
+                                     .person_b = person_b,
+                                     .time = time,
+                                     .encounter_type_id = encounter_type_id,
+                                     .slot = slot,
+                                     .group_id = group_id});
 }
 
 void EventLogger::logFollow(PersonId host, PersonId follower, double time,
                             uint8_t rule_id, int slot) {
-  follows_.push_back({host, follower, time, rule_id, slot});
+  follows_.push_back({.host = host,
+                      .follower = follower,
+                      .time = time,
+                      .rule_id = rule_id,
+                      .slot = slot});
 }
 
 void EventLogger::clear() {
