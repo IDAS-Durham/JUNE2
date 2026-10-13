@@ -253,3 +253,44 @@ TEST_CASE("Per-entity RNG independence: order of creation does not matter") {
   CHECK(val_r0_p10 == val_r1_p10);
   CHECK(val_r0_p20 == val_r1_p20);
 }
+
+namespace {
+// Returns a fixed raw value forever, to probe the ends of the 64-bit range.
+struct ConstantBits {
+  using result_type = uint64_t;
+  uint64_t value;
+  static constexpr uint64_t min() { return 0; }
+  static constexpr uint64_t max() { return UINT64_MAX; }
+  uint64_t operator()() { return value; }
+};
+}  // namespace
+
+TEST_CASE("uniform01 equals uniform_real_distribution over SplitMix64") {
+  SplitMix64 a(mix_seed(42, 700));
+  SplitMix64 b(mix_seed(42, 700));
+  std::uniform_real_distribution<double> dist(0.0, 1.0);
+  for (int i = 0; i < 1000000; ++i) {
+    const double got = uniform01(a);
+    REQUIRE(got == dist(b));
+    REQUIRE(got >= 0.0);
+    REQUIRE(got < 1.0);
+  }
+}
+
+TEST_CASE("uniform01 stays below one at the top of the range") {
+  ConstantBits top{UINT64_MAX};
+  CHECK(uniform01(top) == std::nextafter(1.0, 0.0));
+  ConstantBits zero{0};
+  CHECK(uniform01(zero) == 0.0);
+  ConstantBits half{1ULL << 63};
+  CHECK(uniform01(half) == 0.5);
+}
+
+TEST_CASE("uniform01 golden values for a fixed seed") {
+  // Raw SplitMix64 output is fixed by the algorithm, so these are exact on
+  // every build. A different value here means the mapping to double changed.
+  SplitMix64 g(0);
+  CHECK(uniform01(g) == 0x1.c4415072f63bap-1);
+  CHECK(uniform01(g) == 0x1.b9e279aa86e59p-2);
+  CHECK(uniform01(g) == 0x1.b117462002515p-6);
+}

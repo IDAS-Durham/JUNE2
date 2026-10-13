@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -74,6 +75,22 @@ inline uint64_t bounded(Rng& g, uint64_t n) {
     x = g();
   } while (x > limit);
   return x % n;
+}
+
+// Uniform double in [0, 1), from exactly one 64-bit draw. The draw is scaled by
+// 2^-64, which is what the standard's generate_canonical computes for a 64-bit
+// engine, so every call site that used uniform_real_distribution(0, 1) over
+// SplitMix64 keeps its value. It is written out here so that the value is
+// fixed by this code and not by whichever standard library the build links.
+// A draw within 2^-54 of the top rounds up to 1.0 and is pulled back to the
+// largest double below 1. Only engines that span the full 64 bits qualify.
+template <typename Rng>
+inline double uniform01(Rng& g) {
+  static_assert(Rng::min() == 0 &&
+                    Rng::max() == std::numeric_limits<uint64_t>::max(),
+                "uniform01 needs a generator spanning all 64 bits");
+  const double u = static_cast<double>(g()) * 0x1.0p-64;
+  return u < 1.0 ? u : std::nextafter(1.0, 0.0);
 }
 
 template <typename It, typename Rng>
