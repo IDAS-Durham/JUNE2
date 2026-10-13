@@ -4,7 +4,6 @@
 
 #include <mpi.h>
 
-#include <random>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -87,15 +86,12 @@ class Domain {
   // Domain-local state
   WorldState* world;  // Pointer to shared read-only world state
 
-  // Thread-local RNG for this domain
-  std::mt19937 rng;
-
   // Statistics
   size_t local_population;  // Number of residents
   size_t local_venues;      // Number of venues
 
   // Constructor
-  Domain(int rank, int num_ranks, WorldState* world, uint64_t base_seed = 0);
+  Domain(int rank, int num_ranks, WorldState* world);
 
   // Query methods
   bool ownsGeoUnit(GeoUnitId id) const { return geo_unit_set.count(id) > 0; }

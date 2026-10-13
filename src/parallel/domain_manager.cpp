@@ -199,7 +199,7 @@ DomainManager::DomainManager(WorldState& world, const Config& config)
       world_state_file_("world_state.h5"),
       rank_(0),
       num_ranks_(1),
-      domain_(0, 1, &world, config.simulation.random_seed) {}
+      domain_(0, 1, &world) {}
 
 void DomainManager::setMPI(int rank, int num_ranks) {
   rank_ = rank;

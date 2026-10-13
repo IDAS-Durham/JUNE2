@@ -12,15 +12,12 @@
 
 namespace june {
 
-Domain::Domain(int rank, int num_ranks, WorldState* world, uint64_t base_seed)
+Domain::Domain(int rank, int num_ranks, WorldState* world)
     : rank(rank),
       num_ranks(num_ranks),
       world(world),
       local_population(0),
-      local_venues(0) {
-  // Deterministic per-rank seed derived from global seed (MPI reproducible)
-  rng.seed(static_cast<unsigned int>(mix_seed(base_seed, rank, 0xD0A1AULL)));
-}
+      local_venues(0) {}
 
 void Domain::assignPeopleAndVenues() {
   // Clear existing assignments
