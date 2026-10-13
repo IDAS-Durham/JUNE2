@@ -563,9 +563,8 @@ std::optional<PendingInfection> DomainCommunicator::applyOnePendingInfection(
                                         pending.infector_symptom_id,
                                         pending.transmission_mode_index};
   person->infection = std::make_unique<Infection>(
-      &disease, pending.infection_time, person,
-      static_cast<unsigned int>(infection_seed), transmission, &world_,
-      venue_type_name, pending.venue_id);
+      &disease, pending.infection_time, person, infection_seed, transmission,
+      &world_, venue_type_name, pending.venue_id);
 
   return pending;
 }

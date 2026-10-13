@@ -340,3 +340,42 @@ TEST_CASE("InteractionManager basic transmission") {
     CHECK(world.people[1].infection != nullptr);
   }
 }
+
+TEST_CASE("infection stream depends on the upper 32 bits of the seed") {
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto cur = std::make_shared<ConstantCurve>(1.0);
+  trans.symptom_id_curves = {nullptr, cur};
+
+  // One stage whose length is drawn, so the seed shows up in the transition.
+  TrajectoryDefinition td;
+  td.description = "drawn stage";
+  td.selection_key = "general_population";
+  td.severity = 1.0;
+  td.stages.push_back(
+      {"mild",
+       {"exponweib", {{"a", 1.0}, {"c", 1.0}, {"loc", 0.0}, {"scale", 10.0}}}});
+  td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
+
+  SymptomTag healthy{.name = "healthy", .value = -1, .id = 0};
+  SymptomTag mild{.name = "mild", .value = 1, .id = 1};
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"healthy"};
+  Disease disease("DrawnStage", {healthy, mild}, stage_settings, {td}, {},
+                  trans);
+
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 0);
+  Person& p = world.people[0];
+  auto recoveryTime = [&](uint64_t seed) {
+    Infection inf(&disease, 0.0, &p, seed, kNoTransmissionContext, nullptr,
+                  "office", 0);
+    return inf.getTrajectory().transitions.at(1).first;
+  };
+
+  // The same seed gives the same draw.
+  CHECK(recoveryTime(7) == recoveryTime(7));
+  // Seeds that agree in the low 32 bits and differ above them were one stream
+  // while the seed was truncated to 32 bits. They must now be different.
+  for (uint64_t low = 1; low <= 32; ++low)
+    CHECK(recoveryTime(low) != recoveryTime(low + (uint64_t{1} << 32)));
+}

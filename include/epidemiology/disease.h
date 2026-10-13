@@ -356,7 +356,7 @@ class Infection {
  public:
   Infection(const Disease* disease, double infection_time,
             const Person* person,  // Pass person for vaccine context
-            unsigned int random_seed, const TransmissionRecord& transmission,
+            uint64_t random_seed, const TransmissionRecord& transmission,
             const WorldState* world = nullptr,
             const std::string& venue_type = "", int venue_id = -1,
             const std::string& trajectory_key_override = "",

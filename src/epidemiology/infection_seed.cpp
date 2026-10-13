@@ -912,8 +912,8 @@ void InfectionSeeder::infectPerson(Person* person,
                                         seed.infector_symptom_id,
                                         seed.transmission_mode_index};
   person->infection = std::make_unique<Infection>(
-      disease_, current_simulation_time_, person,
-      static_cast<unsigned int>(infection_seed), transmission, &world_,
+      disease_, current_simulation_time_, person, infection_seed, transmission,
+      &world_,
       "seed",  // venue type
       INFECTION_SEED_VENUE_ID, seed.trajectory_key, seed.start_symptom);
 

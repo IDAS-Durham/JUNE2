@@ -364,9 +364,8 @@ void InteractionManager::applyVenueInfection(
       mix_seed(base_seed_, susceptible_id,
                static_cast<uint64_t>(current_time * 1000), venue_key);
   susc_person->infection = std::make_unique<Infection>(
-      disease_, current_time, susc_person,
-      static_cast<unsigned int>(infection_seed), transmission, &world_,
-      venue_type_name, actual_venue_id);
+      disease_, current_time, susc_person, infection_seed, transmission,
+      &world_, venue_type_name, actual_venue_id);
   infector_symptom_lookup_.countIfGap(transmission);
 
   if (event_logger_ != nullptr) {

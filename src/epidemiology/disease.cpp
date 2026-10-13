@@ -282,7 +282,7 @@ double Disease::evaluateStageDrivenInfectiousness(int mode_index,
 // =============================================================================
 
 Infection::Infection(const Disease* disease, double infection_time,
-                     const Person* person, unsigned int random_seed,
+                     const Person* person, uint64_t random_seed,
                      const TransmissionRecord& transmission,
                      const WorldState* world, const std::string& venue_type,
                      int venue_id, const std::string& trajectory_key_override,
