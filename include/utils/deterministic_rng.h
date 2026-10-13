@@ -161,6 +161,95 @@ inline int binomial(Rng& g, int n, double p) {
   return count;
 }
 
+// Standard normal by the Box-Muller transform, from exactly two uniform01
+// draws. The transform also yields a second, independent variate (the sine
+// term); it is thrown away. Keeping it for the next call would halve the
+// draws, but it would tie a call to whatever the previous call on the same
+// generator did, so a result would depend on call order and on hidden state.
+// Throwing it away keeps every call a pure function of its two draws. The log
+// argument is 1 - u1, which lies in (0, 1], so a draw of exactly 0 is safe.
+template <typename Rng>
+inline double normal01(Rng& g) {
+  constexpr double kTwoPi = 6.283185307179586476925286766559;
+  const double u1 = uniform01(g);
+  const double u2 = uniform01(g);
+  return std::sqrt(-2.0 * std::log(1.0 - u1)) * std::cos(kTwoPi * u2);
+}
+
+// Lognormal in the scipy convention the disease configs use: the value is
+// loc + scale * exp(s * z) with z standard normal, so `scale` is the median of
+// the part above loc and `s` is the standard deviation of the log. Exactly two
+// draws.
+template <typename Rng>
+inline double lognormal(Rng& g, double loc, double scale, double s) {
+  if (!(scale > 0.0) || !std::isfinite(scale) || !(s >= 0.0) ||
+      !std::isfinite(s) || !std::isfinite(loc))
+    throw std::runtime_error("lognormal: loc " + std::to_string(loc) +
+                             ", scale " + std::to_string(scale) + ", s " +
+                             std::to_string(s) +
+                             " must be finite with scale > 0 and s >= 0");
+  return loc + scale * std::exp(s * normal01(g));
+}
+
+// Gamma by Marsaglia and Tsang (2000), shape > 0, with the given scale.
+//
+// The number of draws is variable. Each try draws a normal (two uniforms) and
+// one uniform to accept or reject, about 3 draws, and the chance a try is
+// rejected is under 5%. That is acceptable here because every infection owns
+// its stream and uses it in a fixed order: a variable count only moves that
+// infection's later draws, in a way fixed by its seed and parameters, and
+// never depends on other people, on rank count or on container order.
+//
+// For a shape below 1 the method is applied at shape + 1 and the result is
+// multiplied by U^(1/shape), where U is one extra uniform drawn first.
+//
+// The loop is capped at kGammaMaxTries. The chance of one try being rejected is
+// below 0.05, so the chance of reaching the cap is below 1e-1300 and it cannot
+// be reached; it throws if it ever is.
+inline constexpr int kGammaMaxTries = 1000;
+
+template <typename Rng>
+inline double gamma(Rng& g, double shape, double scale) {
+  if (!(shape > 0.0) || !std::isfinite(shape) || !(scale > 0.0) ||
+      !std::isfinite(scale))
+    throw std::runtime_error("gamma: shape " + std::to_string(shape) +
+                             " and scale " + std::to_string(scale) +
+                             " must be finite and positive");
+  if (shape < 1.0) {
+    const double boost = uniform01(g);
+    return gamma(g, shape + 1.0, scale) * std::pow(boost, 1.0 / shape);
+  }
+  const double d = shape - 1.0 / 3.0;
+  const double c = 1.0 / std::sqrt(9.0 * d);
+  for (int attempt = 0; attempt < kGammaMaxTries; ++attempt) {
+    const double x = normal01(g);
+    double v = 1.0 + c * x;
+    if (v <= 0.0) continue;
+    v = v * v * v;
+    const double u = uniform01(g);
+    // Quick acceptance, then the exact test.
+    if (u < 1.0 - 0.0331 * x * x * x * x) return d * v * scale;
+    if (std::log(u) < 0.5 * x * x + d * (1.0 - v + std::log(v)))
+      return d * v * scale;
+  }
+  throw std::runtime_error("gamma: no draw accepted in " +
+                           std::to_string(kGammaMaxTries) +
+                           " tries for shape " + std::to_string(shape));
+}
+
+// Beta from two gammas, x / (x + y). Variable draws, as for gamma. If both
+// gammas come out as zero the ratio is undefined, and that is an error, not a
+// number.
+template <typename Rng>
+inline double beta(Rng& g, double a, double b) {
+  const double x = gamma(g, a, 1.0);
+  const double y = gamma(g, b, 1.0);
+  if (x + y == 0.0)
+    throw std::runtime_error("beta: both gamma draws are zero for shapes a " +
+                             std::to_string(a) + " and b " + std::to_string(b));
+  return x / (x + y);
+}
+
 // SplitMix64: lightweight RNG satisfying C++ UniformRandomBitGenerator.
 // 8 bytes state, ~1 ns/draw, excellent statistical quality.
 // Designed for per-entity ephemeral use; construct from mix_seed() output.

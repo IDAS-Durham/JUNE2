@@ -375,27 +375,23 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
   } else if (dist.type == "normal") {
     double loc = dist.params.count("loc") ? dist.params.at("loc") : 0.0;
     double scale = dist.params.count("scale") ? dist.params.at("scale") : 1.0;
-    std::normal_distribution<double> d(loc, scale);
-    return std::max(0.0, d(rng));
+    if (!std::isfinite(loc) || !std::isfinite(scale))
+      throw std::runtime_error(
+          "normal distribution needs a finite loc and scale");
+    return std::max(0.0, loc + scale * normal01(rng));
   } else if (dist.type == "lognormal") {
     double s = dist.params.at("s");
     double loc = dist.params.at("loc");
     double scale = dist.params.at("scale");
-    std::lognormal_distribution<double> d(std::log(scale), s);
-    return loc + d(rng);
+    return lognormal(rng, loc, scale, s);
   } else if (dist.type == "beta") {
     double a = dist.params.at("a");
     double b = dist.params.at("b");
     double loc = dist.params.at("loc");
     double scale = dist.params.at("scale");
 
-    // Beta distribution using gamma distributions
-    std::gamma_distribution<double> gamma_a(a, 1.0);
-    std::gamma_distribution<double> gamma_b(b, 1.0);
-    double x = gamma_a(rng);
-    double y = gamma_b(rng);
-    double beta_sample = x / (x + y);
-    return loc + scale * beta_sample;
+    // Beta distribution from two gamma draws
+    return loc + scale * beta(rng, a, b);
   } else if (dist.type == "exponweib") {
     double a = dist.params.at("a");
     double c = dist.params.at("c");
@@ -411,12 +407,13 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
     double shape = dist.params.at("shape");
     double scale = dist.params.at("scale");
     double loc = dist.params.count("loc") ? dist.params.at("loc") : 0.0;
-    std::gamma_distribution<double> d(shape, scale);
-    return loc + d(rng);
+    return loc + gamma(rng, shape, scale);
   }
 
-  // Default: return 0
-  std::cerr << "Unknown distribution type: " << dist.type << std::endl;
+  // An unset parameter (shape, rate, shift) has an empty type and means 0.
+  // Any other type that is not handled above is a config error.
+  if (!dist.type.empty())
+    throw std::runtime_error("Unknown distribution type '" + dist.type + "'");
   return 0.0;
 }
 
