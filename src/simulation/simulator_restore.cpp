@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "simulation/simulator.h"
@@ -305,13 +306,22 @@ void overlayShardCalendarEvents(H5::H5File& f, WorldState& world,
 // Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
 // matches the configured seed (no silent override), and return the
 // completed_day to resume from. The caller has already canonicalised cp.
-int readAndValidateManifest(const fs::path& cp, unsigned int config_seed) {
+// format_version comes back through the out parameter.
+int readAndValidateManifest(const fs::path& cp, unsigned int config_seed,
+                            int& format_version) {
   if (!fs::exists(cp / "manifest.yaml"))
     throw std::runtime_error(
         "restoreFromCheckpoint: no manifest.yaml (incomplete/invalid "
         "checkpoint): " +
         cp.string());
   YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
+  format_version = man["format_version"].as<int>();
+  if (format_version != 1 && format_version != 2) {
+    throw std::runtime_error(
+        "restoreFromCheckpoint: unsupported checkpoint format_version " +
+        std::to_string(format_version) +
+        " (this build reads 1 and 2): " + cp.string());
+  }
   int completed_day = man["completed_day"].as<int>();
   unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
   if (cp_seed != config_seed) {
@@ -321,6 +331,27 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed) {
         "). Resume with the checkpoint's seed (no silent override).");
   }
   return completed_day;
+}
+
+// Observed metric totals stored in state.h5, name order. Absent group means
+// the checkpoint was written with no active metric.
+std::vector<std::pair<std::string, int64_t>> readStoredMetrics(
+    const fs::path& cp) {
+  H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
+  if (H5Lexists(f.getId(), "/observed_metrics", H5P_DEFAULT) <= 0) return {};
+  const auto names = readStrs(f, "/observed_metrics/names");
+  const auto values = readVec<int64_t>(f, "/observed_metrics/values",
+                                       H5::PredType::NATIVE_INT64);
+  if (names.size() != values.size()) {
+    throw std::runtime_error(
+        "restoreFromCheckpoint: observed_metrics names and values differ in "
+        "length in " +
+        (cp / "state.h5").string());
+  }
+  std::vector<std::pair<std::string, int64_t>> out;
+  for (size_t i = 0; i < names.size(); ++i)
+    out.emplace_back(names[i], values[i]);
+  return out;
 }
 
 }  // namespace
@@ -354,10 +385,26 @@ void Simulator::restoreCheckpointStateFile(const fs::path& cp) {
 void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   const int rank = getRank();
   fs::path cp = fs::canonical(checkpoint_dir);  // resolves 'latest' symlink
-  int completed_day =
-      readAndValidateManifest(cp, config_.simulation.random_seed);
+  int format_version = 0;
+  int completed_day = readAndValidateManifest(
+      cp, config_.simulation.random_seed, format_version);
 
   restoreCheckpointStateFile(cp);
+
+  // A cumulative counter cannot be rebuilt, so a checkpoint that does not
+  // hold exactly the active metrics is refused rather than restarted at zero.
+  if (policy_manager_) {
+    auto& metrics = policy_manager_->observedMetrics();
+    if (format_version == 1 && metrics.anyActive()) {
+      throw std::runtime_error(
+          "restoreFromCheckpoint: checkpoint is format_version 1 and holds no "
+          "observed metric totals, but this run has active metrics. Resume "
+          "with no triggered Policy, or restart from day 0.");
+    }
+    if (format_version >= 2) {
+      metrics.restoreActiveValues(readStoredMetrics(cp));
+    }
+  }
 
   // frozen_states_ + lpt + follows are per-rank: accumulated from the shards.
   // Follows accumulate one entry per rule, matched to its shard by name.

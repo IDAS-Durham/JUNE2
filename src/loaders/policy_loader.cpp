@@ -19,8 +19,14 @@ void loadPolicies(PolicyManager& policy_manager, const std::string& filename,
   try {
     YAML::Node root = YAML::LoadFile(filename);
 
+    if (root["observed_metrics"]) {
+      loadObservedMetrics(policy_manager, root["observed_metrics"], filename);
+    }
+
     if (!root["policies"]) {
-      std::cout << "No policies section found in " << filename << std::endl;
+      if (!root["observed_metrics"]) {
+        std::cout << "No policies section found in " << filename << std::endl;
+      }
       return;
     }
 
@@ -38,6 +44,40 @@ void loadPolicies(PolicyManager& policy_manager, const std::string& filename,
   } catch (const YAML::Exception& e) {
     throw std::runtime_error("Error loading policy file '" + filename +
                              "': " + e.what());
+  }
+}
+
+void loadObservedMetrics(PolicyManager& policy_manager, const YAML::Node& node,
+                         const std::string& policies_filename) {
+  if (!node.IsMap()) {
+    throw std::runtime_error("observed_metrics in '" + policies_filename +
+                             "' must be a mapping of metric name to fields.");
+  }
+  static const std::unordered_set<std::string> kFields = {"source", "scope",
+                                                          "activity", "stage"};
+  for (const auto& kv : node) {
+    const std::string name = kv.first.as<std::string>();
+    const YAML::Node& body = kv.second;
+    if (!body.IsMap()) {
+      throw std::runtime_error("observed_metrics '" + name + "' in '" +
+                               policies_filename + "' must be a mapping.");
+    }
+    ObservedMetricConfig cfg;
+    for (const auto& field : body) {
+      const std::string key = field.first.as<std::string>();
+      if (!kFields.count(key)) {
+        throw std::runtime_error(
+            "observed_metrics '" + name + "' in '" + policies_filename +
+            "': unknown field '" + key +
+            "'. Fields are source, scope, activity, stage.");
+      }
+      const std::string value = field.second.as<std::string>();
+      if (key == "source") cfg.source = value;
+      if (key == "scope") cfg.scope = value;
+      if (key == "activity") cfg.activity = value;
+      if (key == "stage") cfg.stage = value;
+    }
+    policy_manager.observedMetrics().declare(name, cfg);
   }
 }
 

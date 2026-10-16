@@ -1,6 +1,7 @@
 #include "epidemiology/epidemiology.h"
 
 #include "epidemiology/fomite/fomite_sub_bins.h"
+#include "epidemiology/observed_metrics.h"
 #include "epidemiology/policy.h"
 
 namespace june {
@@ -17,6 +18,10 @@ EpiSlotStats Epidemiology::updateInfectionStates(
   int total_transitions_processed = 0;
 
   std::vector<PersonId> to_remove;  // Track people to remove from active set
+
+  // Null in every run that has no active metric.
+  ObservedMetrics* const metrics = observed_metrics_;
+  if (metrics) last_update_time_ = current_simulation_time;
 
   for (PersonId pid : active_infections_) {
     Person* person = world_.getPerson(pid);
@@ -68,6 +73,7 @@ EpiSlotStats Epidemiology::updateInfectionStates(
               static_cast<uint8_t>(symptom_id));
         }
         total_transitions_processed++;
+        if (metrics) metrics->onTransition(previous_symptom_id, symptom_id);
 
         // Check for hospital admission (entering hospital system)
         bool now_in_hospital = disease_->isHospitalisedStage(symptom) ||
@@ -164,6 +170,7 @@ EpiSlotStats Epidemiology::updateInfectionStates(
         last_processed_transition_time_.erase(pid);
         to_remove.push_back(pid);
         deaths++;
+        if (metrics) metrics->onDeath();
       }
     } else {
       // Person has no infection but is in active set (shouldn't happen, but
@@ -180,6 +187,20 @@ EpiSlotStats Epidemiology::updateInfectionStates(
 
   return {total_transitions_processed, recoveries, deaths,
           static_cast<int>(active_infections_.size())};
+}
+
+void Epidemiology::reduceObservedMetrics() {
+  if (!observed_metrics_ || !observed_metrics_->anyActive()) return;
+  if (observed_metrics_->tracksPresent()) {
+    for (PersonId pid : active_infections_) {
+      const Person* person = world_.getPerson(pid);
+      if (!person || person->is_dead || !person->infection) continue;
+      observed_metrics_->onPresent(
+          person->infection->getTrajectory().getCurrentSymptomId(
+              last_update_time_));
+    }
+  }
+  observed_metrics_->reduce();
 }
 
 void Epidemiology::updateVenueFomites(double current_simulation_time,

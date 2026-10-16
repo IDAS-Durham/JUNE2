@@ -469,7 +469,7 @@ void writeManifest(const fs::path& tmp, int completed_day,
                    double current_simulation_time, unsigned int random_seed) {
   YAML::Emitter m;
   m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 1;
+  m << YAML::Key << "format_version" << YAML::Value << 2;
   m << YAML::Key << "completed_day" << YAML::Value << completed_day;
   m << YAML::Key << "date" << YAML::Value << date_iso;
   m << YAML::Key << "current_simulation_time" << YAML::Value
@@ -602,6 +602,24 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
       (int64_t)event_logger_.getCoordinatedEncounterCount()};
   writeVec(f, "/event_log/rank0_buffered_counts", ec,
            H5::PredType::NATIVE_INT64, 0);
+  // Observed metric totals. Already reduced at the day boundary, so every
+  // rank holds the same numbers and one global file is enough. Written only
+  // when a metric is active, so a run without one adds nothing here.
+  if (policy_manager_) {
+    const auto metrics = policy_manager_->observedMetrics().activeValues();
+    if (!metrics.empty()) {
+      f.createGroup("/observed_metrics");
+      std::vector<std::string> names;
+      std::vector<int64_t> values;
+      for (const auto& [n, v] : metrics) {
+        names.push_back(n);
+        values.push_back(v);
+      }
+      writeStrs(f, "/observed_metrics/names", names);
+      writeVec(f, "/observed_metrics/values", values,
+               H5::PredType::NATIVE_INT64, 0);
+    }
+  }
   f.close();
 }
 

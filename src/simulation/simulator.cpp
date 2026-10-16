@@ -507,6 +507,15 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Recovery and death end any policy freeze the person is under
   epidemiology_->setPolicyManager(policy_manager_.get());
 
+  // Declared metrics are validated here even when there are no Policies, so
+  // a bad declaration fails at load. Only a metric that a trigger reads is
+  // active, and the Epidemiology pointer stays null when none is.
+  {
+    ObservedMetrics& metrics = policy_manager_->observedMetrics();
+    metrics.resolve(world_, *disease_);
+    if (metrics.anyActive()) epidemiology_->setObservedMetrics(&metrics);
+  }
+
   // Precompute which policies apply to each person (based on selection
   // criteria) This must be done AFTER schedules are assigned (person properties
   // are set)
@@ -677,6 +686,10 @@ void Simulator::runOneDay(int day, int rank) {
   }
 
   simulateDay(day);
+
+  // Day boundary: metrics are read from here, so any change takes effect from
+  // the first slot of the next day.
+  epidemiology_->reduceObservedMetrics();
 
   dumpDayHashIfEnabled(day, rank, world_, domain_mgr_);
 

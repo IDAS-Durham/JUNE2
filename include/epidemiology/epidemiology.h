@@ -12,6 +12,7 @@
 namespace june {
 
 class PolicyManager;
+class ObservedMetrics;
 
 struct EpiSlotStats {
   int transitions = 0;
@@ -41,6 +42,16 @@ class Epidemiology {
   void setPolicyManager(PolicyManager* policy_manager) {
     policy_manager_ = policy_manager;
   }
+
+  // Observed metrics. Left null unless some Policy trigger reads a metric, so
+  // a run with none pays one hoisted pointer test per update and nothing else.
+  void setObservedMetrics(ObservedMetrics* metrics) {
+    observed_metrics_ = metrics;
+  }
+
+  // End of day: scan present state for current metrics, then reduce all
+  // active metrics across ranks. No-op when no metric is active.
+  void reduceObservedMetrics();
 
   // Track a newly infected person
   void trackInfection(PersonId pid);
@@ -84,6 +95,10 @@ class Epidemiology {
   const Disease* disease_;
   EventLogger* event_logger_;
   PolicyManager* policy_manager_ = nullptr;
+  ObservedMetrics* observed_metrics_ = nullptr;
+  // Time of the last updateInfectionStates, so the daily scan reads the same
+  // present state the engine itself last acted on.
+  double last_update_time_ = 0.0;
 
   // Only track people who are currently infected
   std::unordered_set<PersonId> active_infections_;

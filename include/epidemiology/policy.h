@@ -13,6 +13,7 @@
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
+#include "epidemiology/observed_metrics.h"
 #include "epidemiology/transmission_modifiers.h"
 
 namespace june {
@@ -482,6 +483,10 @@ class PolicyManager {
     frozen_states_ = s;
   }
 
+  // Metrics declared in the policy file. Triggers will read them by name.
+  ObservedMetrics& observedMetrics() { return observed_metrics_; }
+  const ObservedMetrics& observedMetrics() const { return observed_metrics_; }
+
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);
   void addTemporalPolicy(const TemporalPolicy& policy);
@@ -615,6 +620,7 @@ class PolicyManager {
   std::vector<SymptomPolicy> symptom_policies_;
   std::vector<TemporalPolicy> temporal_policies_;
   std::vector<PolicyTransmissionEffect> transmission_effects_;
+  ObservedMetrics observed_metrics_;
   TransmissionModifierTable transmission_modifier_table_;
   bool transmission_modifiers_initialized_ = false;
   size_t transmission_mode_count_ = 0;
