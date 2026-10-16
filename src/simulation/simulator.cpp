@@ -513,6 +513,7 @@ Simulator::Simulator(WorldState& world, Config& config,
   {
     ObservedMetrics& metrics = policy_manager_->observedMetrics();
     metrics.resolve(world_, *disease_);
+    policy_manager_->requireTriggerMetrics();
     if (metrics.anyActive()) epidemiology_->setObservedMetrics(&metrics);
   }
 
@@ -690,6 +691,7 @@ void Simulator::runOneDay(int day, int rank) {
   // Day boundary: metrics are read from here, so any change takes effect from
   // the first slot of the next day.
   epidemiology_->reduceObservedMetrics();
+  policy_manager_->advanceTriggers(day);
 
   dumpDayHashIfEnabled(day, rank, world_, domain_mgr_);
 

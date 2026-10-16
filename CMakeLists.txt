@@ -162,6 +162,7 @@ set(JUNE_CORE_SOURCES
     src/epidemiology/epidemiology.cpp
     src/epidemiology/observed_metrics.cpp
     src/epidemiology/policy.cpp
+    src/epidemiology/policy_trigger.cpp
     src/epidemiology/calendar_event.cpp
     src/loaders/calendar_event_loader.cpp
     src/loaders/catchment_rule_loader.cpp
@@ -319,6 +320,7 @@ if(BUILD_TESTING)
       test_integration
       test_epidemiology
       test_observed_metrics
+      test_policy_trigger
       test_simulator
 
       test_deterministic_rng
@@ -387,6 +389,7 @@ if(BUILD_TESTING)
     add_june_test(test_mpi_advanced "tests/test_mpi_advanced.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_registry_sync "tests/test_mpi_registry_sync.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_observed_metrics "tests/test_mpi_observed_metrics.cpp" "${MPIEXEC_EXECUTABLE}")
+    add_june_test(test_mpi_policy_trigger "tests/test_mpi_policy_trigger.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" "${MPIEXEC_EXECUTABLE}" 4)
 

@@ -469,7 +469,7 @@ void writeManifest(const fs::path& tmp, int completed_day,
                    double current_simulation_time, unsigned int random_seed) {
   YAML::Emitter m;
   m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 2;
+  m << YAML::Key << "format_version" << YAML::Value << 3;
   m << YAML::Key << "completed_day" << YAML::Value << completed_day;
   m << YAML::Key << "date" << YAML::Value << date_iso;
   m << YAML::Key << "current_simulation_time" << YAML::Value
@@ -618,6 +618,23 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
       writeStrs(f, "/observed_metrics/names", names);
       writeVec(f, "/observed_metrics/values", values,
                H5::PredType::NATIVE_INT64, 0);
+    }
+    // Trigger state, same reasoning: derived from reduced totals, so identical
+    // on every rank. Three numbers per trigger: closed, anchor day, anchor
+    // value.
+    const auto triggers = policy_manager_->triggerStates();
+    if (!triggers.empty()) {
+      f.createGroup("/policy_triggers");
+      std::vector<std::string> keys;
+      std::vector<int64_t> state;
+      for (const auto& t : triggers) {
+        keys.push_back(t.key);
+        state.insert(state.end(),
+                     {t.closed ? 1 : 0, t.anchor_day, t.anchor_value});
+      }
+      writeStrs(f, "/policy_triggers/keys", keys);
+      writeVec(f, "/policy_triggers/state", state, H5::PredType::NATIVE_INT64,
+               0);
     }
   }
   f.close();

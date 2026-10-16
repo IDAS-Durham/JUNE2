@@ -316,11 +316,11 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed,
         cp.string());
   YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
   format_version = man["format_version"].as<int>();
-  if (format_version != 1 && format_version != 2) {
+  if (format_version < 1 || format_version > 3) {
     throw std::runtime_error(
         "restoreFromCheckpoint: unsupported checkpoint format_version " +
         std::to_string(format_version) +
-        " (this build reads 1 and 2): " + cp.string());
+        " (this build reads 1, 2 and 3): " + cp.string());
   }
   int completed_day = man["completed_day"].as<int>();
   unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
@@ -351,6 +351,28 @@ std::vector<std::pair<std::string, int64_t>> readStoredMetrics(
   std::vector<std::pair<std::string, int64_t>> out;
   for (size_t i = 0; i < names.size(); ++i)
     out.emplace_back(names[i], values[i]);
+  return out;
+}
+
+// Policy trigger state stored in state.h5. Absent group means the checkpoint
+// was written with no triggered Policy.
+std::vector<PolicyManager::TriggerState> readStoredTriggers(
+    const fs::path& cp) {
+  H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
+  if (H5Lexists(f.getId(), "/policy_triggers", H5P_DEFAULT) <= 0) return {};
+  const auto keys = readStrs(f, "/policy_triggers/keys");
+  const auto state =
+      readVec<int64_t>(f, "/policy_triggers/state", H5::PredType::NATIVE_INT64);
+  if (state.size() != 3 * keys.size()) {
+    throw std::runtime_error(
+        "restoreFromCheckpoint: policy_triggers keys and state differ in "
+        "length in " +
+        (cp / "state.h5").string());
+  }
+  std::vector<PolicyManager::TriggerState> out;
+  for (size_t i = 0; i < keys.size(); ++i)
+    out.push_back(
+        {keys[i], state[3 * i] != 0, state[3 * i + 1], state[3 * i + 2]});
   return out;
 }
 
@@ -404,6 +426,11 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     if (format_version >= 2) {
       metrics.restoreActiveValues(readStoredMetrics(cp));
     }
+    // Older checkpoints hold no trigger state; a run that has triggered
+    // Policies is refused by the same check that refuses a different set.
+    policy_manager_->restoreTriggerStates(
+        format_version >= 3 ? readStoredTriggers(cp)
+                            : std::vector<PolicyManager::TriggerState>{});
   }
 
   // frozen_states_ + lpt + follows are per-rank: accumulated from the shards.

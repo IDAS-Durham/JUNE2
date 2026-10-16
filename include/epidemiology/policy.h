@@ -14,6 +14,7 @@
 #include "core/types.h"
 #include "core/world_state.h"
 #include "epidemiology/observed_metrics.h"
+#include "epidemiology/policy_trigger.h"
 #include "epidemiology/transmission_modifiers.h"
 
 namespace june {
@@ -336,11 +337,17 @@ struct PolicyAction {
 // adjacent windows abut exactly, with no slot where both are active.
 // No end is an empty end_time, not a magic value: any number, -1 included, is
 // a real day (an end_date one day before the simulation starts is day -1).
+//
+// A trigger can also hold a policy off: trigger_state is false while it does.
+// A policy with no trigger leaves it true, so contains() is the one place that
+// answers whether a policy is in force.
 struct ActiveWindow {
   double start_time = 0.0;         // days from simulation start
   std::optional<double> end_time;  // empty = no end
+  bool trigger_state = true;
 
   bool contains(double current_time) const {
+    if (!trigger_state) return false;
     if (current_time < start_time) return false;
     if (end_time && current_time >= *end_time) return false;
     return true;
@@ -356,6 +363,9 @@ struct SymptomPolicy {
 
   // Span of simulation time this policy is in force for
   ActiveWindow window;
+
+  // Optional: ties activation to an observed metric
+  std::optional<PolicyTrigger> trigger;
 
   // Symptoms that trigger this policy
   std::vector<std::string> trigger_symptoms;
@@ -422,6 +432,9 @@ struct TemporalPolicy {
   // Span of simulation time this policy is in force for
   ActiveWindow window;
 
+  // Optional: ties activation to an observed metric
+  std::optional<PolicyTrigger> trigger;
+
   // What to do
   PolicyAction action;
 
@@ -486,6 +499,26 @@ class PolicyManager {
   // Metrics declared in the policy file. Triggers will read them by name.
   ObservedMetrics& observedMetrics() { return observed_metrics_; }
   const ObservedMetrics& observedMetrics() const { return observed_metrics_; }
+
+  // Mark the metrics the triggers read as active. Run once, after the metrics
+  // resolve and before anything asks whether a metric is active.
+  void requireTriggerMetrics();
+
+  // Evaluate every trigger once. `day` is the day that just ended, and the
+  // metrics must already be reduced for it. A change holds from the first slot
+  // of the next day.
+  void advanceTriggers(int64_t day);
+
+  // Trigger state for the checkpoint, symptom policies first, keyed by kind and
+  // policy name. Restoring needs exactly the same keys.
+  struct TriggerState {
+    std::string key;
+    bool closed = false;
+    int64_t anchor_day = 0;
+    int64_t anchor_value = 0;
+  };
+  std::vector<TriggerState> triggerStates() const;
+  void restoreTriggerStates(const std::vector<TriggerState>& stored);
 
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);

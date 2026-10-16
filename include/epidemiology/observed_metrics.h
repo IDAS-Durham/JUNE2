@@ -67,6 +67,12 @@ class ObservedMetrics {
   // was never declared.
   void require(const std::string& name);
 
+  // Questions a Policy trigger asks of a declared metric. The last two throw
+  // for an unknown name, so check declaredNames() first for a better message.
+  std::vector<std::string> declaredNames() const;
+  bool isCumulative(const std::string& name) const;
+  bool isWorldScope(const std::string& name) const;
+
   bool anyDeclared() const { return !entries_.empty(); }
   bool anyActive() const { return !active_.empty(); }
   // Does the daily scan of infected people have anything to feed?

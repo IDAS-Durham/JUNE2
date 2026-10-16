@@ -207,6 +207,20 @@ const ObservedMetrics::Entry& ObservedMetrics::find(
   return const_cast<ObservedMetrics*>(this)->find(name);
 }
 
+std::vector<std::string> ObservedMetrics::declaredNames() const {
+  std::vector<std::string> names;
+  for (const auto& e : entries_) names.push_back(e.name);
+  return names;
+}
+
+bool ObservedMetrics::isCumulative(const std::string& name) const {
+  return find(name).source->cumulative();
+}
+
+bool ObservedMetrics::isWorldScope(const std::string& name) const {
+  return find(name).scope == MetricScope::World;
+}
+
 void ObservedMetrics::require(const std::string& name) {
   if (!resolved_) {
     throw std::logic_error("observed_metrics: require('" + name +

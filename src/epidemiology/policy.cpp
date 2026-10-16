@@ -33,6 +33,17 @@ class LazySlotVenueTypeResolver {
   bool resolved_ = false;
 };
 
+// Visit every triggered policy, symptom policies first. Works for the const
+// and non-const vectors alike.
+template <typename Symptom, typename Temporal, typename Visit>
+void eachTriggered(Symptom& symptom_policies, Temporal& temporal_policies,
+                   Visit&& visit) {
+  for (auto& policy : symptom_policies)
+    if (policy.trigger) visit(std::string("symptom"), policy);
+  for (auto& policy : temporal_policies)
+    if (policy.trigger) visit(std::string("temporal"), policy);
+}
+
 }  // namespace
 
 PolicyManager::PolicyManager(WorldState& world)
@@ -40,10 +51,73 @@ PolicyManager::PolicyManager(WorldState& world)
 
 void PolicyManager::addSymptomPolicy(const SymptomPolicy& policy) {
   symptom_policies_.push_back(policy);
+  // A triggered policy starts off until its trigger closes.
+  if (policy.trigger)
+    symptom_policies_.back().window.trigger_state = policy.trigger->closed;
 }
 
 void PolicyManager::addTemporalPolicy(const TemporalPolicy& policy) {
   temporal_policies_.push_back(policy);
+  if (policy.trigger)
+    temporal_policies_.back().window.trigger_state = policy.trigger->closed;
+}
+
+void PolicyManager::requireTriggerMetrics() {
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string&, const auto& policy) {
+                  observed_metrics_.require(policy.trigger->metric);
+                });
+}
+
+void PolicyManager::advanceTriggers(int64_t day) {
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string&, auto& policy) {
+                  policy.trigger->step(
+                      day, observed_metrics_.value(policy.trigger->metric));
+                  policy.window.trigger_state = policy.trigger->closed;
+                });
+}
+
+std::vector<PolicyManager::TriggerState> PolicyManager::triggerStates() const {
+  std::vector<TriggerState> out;
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string& kind, const auto& policy) {
+        out.push_back({kind + "/" + policy.name, policy.trigger->closed,
+                       policy.trigger->anchor_day,
+                       policy.trigger->anchor_value});
+      });
+  return out;
+}
+
+void PolicyManager::restoreTriggerStates(
+    const std::vector<TriggerState>& stored) {
+  const auto current = triggerStates();
+  bool same = stored.size() == current.size();
+  for (size_t i = 0; same && i < stored.size(); ++i)
+    same = stored[i].key == current[i].key;
+  if (!same) {
+    const auto join = [](const std::vector<TriggerState>& states) {
+      std::string out;
+      for (const auto& state : states)
+        out += (out.empty() ? "" : ", ") + state.key;
+      return out;
+    };
+    throw std::runtime_error(
+        "policy triggers: the checkpoint holds triggers [" + join(stored) +
+        "] but this run has [" + join(current) +
+        "]. A trigger's state cannot be rebuilt; resume with the same "
+        "triggered Policies.");
+  }
+  size_t next = 0;
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string&, auto& policy) {
+                  const TriggerState& state = stored[next++];
+                  policy.trigger->closed = state.closed;
+                  policy.trigger->anchor_day = state.anchor_day;
+                  policy.trigger->anchor_value = state.anchor_value;
+                  policy.window.trigger_state = state.closed;
+                });
 }
 
 void PolicyManager::resolveTransmissionEffects(const Disease& disease) {
