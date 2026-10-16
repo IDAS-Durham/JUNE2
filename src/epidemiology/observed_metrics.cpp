@@ -46,16 +46,18 @@ class DeathSource : public MetricSource {
   }
 };
 
-// Transitions into the named stage. Going from the stage to itself is not an
-// admission. A stage a person starts in at the moment of infection is not a
-// transition, so it is not counted.
+// People entering the named stage: placed in it at the moment of infection, or
+// moved into it from another stage. Going from the stage to itself is not an
+// admission.
 class StageAdmissionSource : public MetricSource {
  public:
   bool cumulative() const override { return true; }
   bool needsStage() const override { return true; }
   bool counts(const Observation& obs, uint16_t stage_id) const override {
-    return obs.kind == ObservationKind::Transition &&
-           obs.symptom_id == stage_id && obs.previous_symptom_id != stage_id;
+    if (obs.symptom_id != stage_id) return false;
+    return obs.kind == ObservationKind::Start ||
+           (obs.kind == ObservationKind::Transition &&
+            obs.previous_symptom_id != stage_id);
   }
 };
 
@@ -227,6 +229,10 @@ void ObservedMetrics::count(const Observation& obs) {
     Entry& e = entries_[i];
     if (e.source->counts(obs, e.stage_id)) ++e.local;
   }
+}
+
+void ObservedMetrics::onInfection(uint16_t symptom_id) {
+  count({ObservationKind::Start, symptom_id, 0});
 }
 
 void ObservedMetrics::onTransition(uint16_t previous_symptom_id,

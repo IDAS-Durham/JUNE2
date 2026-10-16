@@ -11,13 +11,14 @@ class Disease;
 class WorldState;
 
 // What happened to an infected person that a metric source may want to count.
-// Present is the daily look at who is infected now, Transition is one replayed
-// stage change, Death is the moment a person is marked dead.
-enum class ObservationKind : uint8_t { Present, Transition, Death };
+// Present is the daily look at who is infected now, Start is the stage a person
+// is placed in at the moment of infection, Transition is one replayed stage
+// change, Death is the moment a person is marked dead.
+enum class ObservationKind : uint8_t { Present, Start, Transition, Death };
 
 struct Observation {
   ObservationKind kind = ObservationKind::Present;
-  uint16_t symptom_id = 0;           // Present: current. Transition: entered.
+  uint16_t symptom_id = 0;  // Present: current. Start, Transition: entered.
   uint16_t previous_symptom_id = 0;  // Transition only
 };
 
@@ -72,6 +73,7 @@ class ObservedMetrics {
   bool tracksPresent() const { return tracks_present_; }
 
   // Counting hooks, called where the engine already detects the event.
+  void onInfection(uint16_t symptom_id);
   void onTransition(uint16_t previous_symptom_id, uint16_t symptom_id);
   void onDeath();
   void onPresent(uint16_t symptom_id);

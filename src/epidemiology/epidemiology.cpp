@@ -46,13 +46,17 @@ EpiSlotStats Epidemiology::updateInfectionStates(
       // Get last processed time (or infection time if first check)
       double last_processed_time = trajectory.infection_time;
       auto it = last_processed_transition_time_.find(pid);
-      if (it != last_processed_transition_time_.end()) {
+      const bool first_check = it == last_processed_transition_time_.end();
+      if (!first_check) {
         last_processed_time = it->second;
       }
 
       // Replay all transitions that occurred since last check
       uint16_t previous_symptom_id =
           trajectory.getCurrentSymptomId(last_processed_time);
+      // The replay below skips the stage a person is placed in at infection,
+      // so count it here, once.
+      if (metrics && first_check) metrics->onInfection(previous_symptom_id);
       bool was_in_hospital = false;
       bool was_in_icu = false;
 

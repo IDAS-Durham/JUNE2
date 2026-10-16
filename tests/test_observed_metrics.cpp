@@ -236,6 +236,89 @@ TEST_CASE("Epidemiology - cumulative and current metric counts") {
   }
 }
 
+TEST_CASE(
+    "Epidemiology - stage_admission counts the stage placed in at infection") {
+  WorldState world;
+  world.activity_names = {"residence"};
+  const Disease disease = makeMetricDisease();
+  Epidemiology epi(world, &disease);
+
+  constexpr int kPeople = 4;
+  for (int i = 0; i < kPeople; ++i) {
+    auto& p = world.people.emplace_back();
+    p.id = i;
+    p.age = 30.0f;
+    p.geo_unit_id = -1;
+  }
+  world.buildIndices();
+
+  ObservedMetrics m;
+  m.declare("entered_mild", cfg("stage_admission", "world", "", "mild"));
+  m.declare("entered_severe", cfg("stage_admission", "world", "", "severe"));
+  m.declare("now_mild", cfg("stage", "world", "", "mild"));
+  m.resolve(world, disease);
+  for (const char* n : {"entered_mild", "entered_severe", "now_mild"})
+    m.require(n);
+  epi.setObservedMetrics(&m);
+
+  auto infect = [&](int i, double t, const std::string& start = "") {
+    world.people[i].infection = std::make_unique<Infection>(
+        &disease, t, &world.people[i], 100 + i, kNoTransmissionContext, nullptr,
+        "office", 0, "", start);
+    epi.trackInfection(i);
+  };
+  auto day_boundary = [&](double t) {
+    epi.updateInfectionStates(t, {});
+    epi.reduceObservedMetrics();
+  };
+
+  SUBCASE("every newly infected person is an admission to the starting stage") {
+    infect(0, 0.0);
+    infect(1, 0.0);
+    day_boundary(0.5);
+    // Both are still in their starting stage, and both entered it.
+    CHECK(m.value("entered_mild") == 2);
+    CHECK(m.value("now_mild") == 2);
+    CHECK(m.value("entered_severe") == 0);
+
+    // Counted once: later checks do not count the starting stage again.
+    day_boundary(1.0);
+    day_boundary(2.5);
+    CHECK(m.value("entered_mild") == 2);
+    CHECK(m.value("entered_severe") == 2);
+  }
+
+  SUBCASE("a person is counted at their own infection, not before") {
+    infect(0, 0.0);
+    day_boundary(0.5);
+    CHECK(m.value("entered_mild") == 1);
+    infect(1, 1.0);
+    day_boundary(1.0);
+    CHECK(m.value("entered_mild") == 2);
+    day_boundary(1.5);
+    CHECK(m.value("entered_mild") == 2);
+  }
+
+  SUBCASE("totals do not depend on how the days are sliced") {
+    infect(0, 0.0);
+    infect(1, 0.0);
+    infect(2, 0.0);
+    // One check long after infection replays the whole trajectory at once.
+    day_boundary(12.0);
+    CHECK(m.value("entered_mild") == 3);
+    CHECK(m.value("entered_severe") == 3);
+    CHECK(m.value("now_mild") == 0);
+  }
+
+  SUBCASE(
+      "a trajectory that starts in a later stage is admitted to that stage") {
+    infect(0, 0.0, "severe");
+    day_boundary(0.5);
+    CHECK(m.value("entered_severe") == 1);
+    CHECK(m.value("entered_mild") == 0);
+  }
+}
+
 TEST_CASE("ObservedMetrics - stored totals restore exactly or throw") {
   WorldState world;
   const Disease disease = makeMetricDisease();
