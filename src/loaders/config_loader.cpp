@@ -111,20 +111,31 @@ void parseSimulationConfigPaths(const YAML::Node& paths,
         paths["on_the_fly_venues_file"].as<std::string>();
 }
 
+// Set `mode` from output[key] when the key is present. The writers only know
+// "none", "all" and "infected_only", and any other spelling would save no
+// table and say nothing, so it throws here instead.
+void readLookupMode(const YAML::Node& output, const std::string& key,
+                    std::string& mode) {
+  if (!output[key]) return;
+  const std::string value = output[key].as<std::string>();
+  if (value != "none" && value != "all" && value != "infected_only") {
+    throw std::runtime_error("output." + key + " is '" + value +
+                             "'; valid values are 'none', 'all' and "
+                             "'infected_only'.");
+  }
+  mode = value;
+}
+
 // Read the `output:` block onto the SimulationConfig output fields.
 // `stats_interval_days` is required when the block is present; everything
 // else is optional.
 void parseSimulationOutput(const YAML::Node& output, SimulationConfig& config) {
   config.stats_interval_days = output["stats_interval_days"].as<int>();
 
-  if (output["save_full_person_details"]) {
-    config.save_full_person_details =
-        output["save_full_person_details"].as<std::string>();
-  }
-  if (output["save_person_activities"]) {
-    config.save_person_activities =
-        output["save_person_activities"].as<std::string>();
-  }
+  readLookupMode(output, "save_full_person_details",
+                 config.save_full_person_details);
+  readLookupMode(output, "save_person_activities",
+                 config.save_person_activities);
   if (output["compression_level"]) {
     config.compression_level = output["compression_level"].as<int>();
   }

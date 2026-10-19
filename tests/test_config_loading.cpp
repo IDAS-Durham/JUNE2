@@ -394,6 +394,53 @@ TEST_CASE("SimulationConfig - save_coordinated_encounters parsed from output") {
   }
 }
 
+TEST_CASE("SimulationConfig - lookup table modes are validated") {
+  const std::string yaml_head =
+      "time:\n"
+      "  start_date: \"2020-01-01\"\n"
+      "  end_date: \"2020-01-10\"\n"
+      "config_paths: {}\n"
+      "output:\n"
+      "  stats_interval_days: 1\n";
+  // Loads a simulation.yaml whose output block sets `key` to `value`.
+  auto load = [&](const std::string& key, const std::string& value) {
+    ScopedTestFiles files("june_config_lookup_mode_test");
+    const auto yaml_path = files.write(
+        "simulation.yaml", yaml_head + "  " + key + ": \"" + value + "\"\n");
+    return ConfigLoader::loadSimulation(yaml_path.string());
+  };
+
+  SUBCASE("every valid value loads") {
+    for (const char* value : {"none", "all", "infected_only"}) {
+      CHECK(load("save_full_person_details", value).save_full_person_details ==
+            value);
+      CHECK(load("save_person_activities", value).save_person_activities ==
+            value);
+    }
+  }
+
+  SUBCASE("absent keys keep their defaults") {
+    ScopedTestFiles files("june_config_lookup_mode_default_test");
+    const auto yaml_path = files.write("simulation.yaml", yaml_head);
+    SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path.string());
+    CHECK(cfg.save_full_person_details == "infected_only");
+    CHECK(cfg.save_person_activities == "none");
+  }
+
+  SUBCASE("an unknown value throws and says what is valid") {
+    CHECK_THROWS_WITH_AS(
+        load("save_full_person_details", "infected-only"),
+        "output.save_full_person_details is 'infected-only'; valid values "
+        "are 'none', 'all' and 'infected_only'.",
+        std::runtime_error);
+    CHECK_THROWS_WITH_AS(
+        load("save_person_activities", "All"),
+        "output.save_person_activities is 'All'; valid values are 'none', "
+        "'all' and 'infected_only'.",
+        std::runtime_error);
+  }
+}
+
 TEST_CASE("ConfigLoader - Optional Files Handling") {
   SUBCASE("Missing vaccines file is optional and disables the module") {
     // Vaccines is the only truly-optional sub-config: a missing file means
