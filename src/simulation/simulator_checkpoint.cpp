@@ -647,14 +647,37 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
       f.createGroup("/policy_triggers");
       std::vector<std::string> keys;
       std::vector<int64_t> state;
+      // A trigger counted per unit keeps one cell per unit it has touched in
+      // three flat arrays: the cells of trigger i are unit_ids[unit_offsets[i]
+      // .. unit_offsets[i + 1]), three numbers each in unit_state.
+      std::vector<int64_t> scopes;
+      std::vector<int64_t> unit_offsets = {0};
+      std::vector<int64_t> unit_ids;
+      std::vector<int64_t> unit_state;
       for (const auto& t : triggers) {
         keys.push_back(t.key);
         state.insert(state.end(),
                      {t.closed ? 1 : 0, t.anchor_day, t.anchor_value});
+        scopes.push_back(static_cast<int64_t>(t.scope));
+        for (const auto& [unit, cell] : t.units) {
+          unit_ids.push_back(unit);
+          unit_state.insert(
+              unit_state.end(),
+              {cell.closed ? 1 : 0, cell.anchor_day, cell.anchor_value});
+        }
+        unit_offsets.push_back(static_cast<int64_t>(unit_ids.size()));
       }
       writeStrs(f, "/policy_triggers/keys", keys);
       writeVec(f, "/policy_triggers/state", state, H5::PredType::NATIVE_INT64,
                0);
+      writeVec(f, "/policy_triggers/scopes", scopes, H5::PredType::NATIVE_INT64,
+               0);
+      writeVec(f, "/policy_triggers/unit_offsets", unit_offsets,
+               H5::PredType::NATIVE_INT64, 0);
+      writeVec(f, "/policy_triggers/unit_ids", unit_ids,
+               H5::PredType::NATIVE_INT64, 0);
+      writeVec(f, "/policy_triggers/unit_state", unit_state,
+               H5::PredType::NATIVE_INT64, 0);
     }
   }
   f.close();

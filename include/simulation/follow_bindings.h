@@ -63,11 +63,13 @@ bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
 // about the latter would miss. The activity stays the follower's, since the
 // mirror leaves it alone. The type comes off the broadcastHostLocations wire,
 // since a cross-rank host's venue is outside this rank's halo and cannot be
-// typed locally. An unresolvable type throws.
+// typed locally. An unresolvable type throws. The host's venue goes along with
+// its type, so a venue a trigger has closed is closed to a mirroring follower.
 bool policySuppressesMirror(PolicyManager* policy_manager,
                             const Person& follower,
                             int16_t follower_activity_index,
-                            uint8_t host_venue_type, double current_time);
+                            uint8_t host_venue_type, VenueId host_venue,
+                            double current_time);
 
 // Stochastic enrolment: each host rolls once and gathers followers from its
 // pool. Returns {hosts that gained followers, total local followers enrolled}.

@@ -379,9 +379,10 @@ std::vector<MetricSnapshot> readStoredMetrics(const fs::path& cp,
 }
 
 // Policy trigger state stored in state.h5. Absent group means the checkpoint
-// was written with no triggered Policy.
+// was written with no triggered Policy. Before format 4 every trigger had
+// world scope and the per unit arrays did not exist.
 std::vector<PolicyManager::TriggerState> readStoredTriggers(
-    const fs::path& cp) {
+    const fs::path& cp, int format_version) {
   H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
   if (H5Lexists(f.getId(), "/policy_triggers", H5P_DEFAULT) <= 0) return {};
   const auto keys = readStrs(f, "/policy_triggers/keys");
@@ -393,10 +394,43 @@ std::vector<PolicyManager::TriggerState> readStoredTriggers(
         "length in " +
         (cp / "state.h5").string());
   }
+  std::vector<int64_t> scopes(keys.size(), 0);
+  std::vector<int64_t> offsets(keys.size() + 1, 0);
+  std::vector<int64_t> unit_ids;
+  std::vector<int64_t> unit_state;
+  if (format_version >= 4) {
+    scopes = readVec<int64_t>(f, "/policy_triggers/scopes",
+                              H5::PredType::NATIVE_INT64);
+    offsets = readVec<int64_t>(f, "/policy_triggers/unit_offsets",
+                               H5::PredType::NATIVE_INT64);
+    unit_ids = readVec<int64_t>(f, "/policy_triggers/unit_ids",
+                                H5::PredType::NATIVE_INT64);
+    unit_state = readVec<int64_t>(f, "/policy_triggers/unit_state",
+                                  H5::PredType::NATIVE_INT64);
+  }
+  if (scopes.size() != keys.size() || offsets.size() != keys.size() + 1 ||
+      unit_state.size() != 3 * unit_ids.size() ||
+      offsets.back() != static_cast<int64_t>(unit_ids.size())) {
+    throw std::runtime_error(
+        "restoreFromCheckpoint: policy_triggers arrays differ in length in " +
+        (cp / "state.h5").string());
+  }
   std::vector<PolicyManager::TriggerState> out;
-  for (size_t i = 0; i < keys.size(); ++i)
-    out.push_back(
-        {keys[i], state[3 * i] != 0, state[3 * i + 1], state[3 * i + 2]});
+  for (size_t i = 0; i < keys.size(); ++i) {
+    PolicyManager::TriggerState t{keys[i],
+                                  state[3 * i] != 0,
+                                  state[3 * i + 1],
+                                  state[3 * i + 2],
+                                  static_cast<MetricScope>(scopes[i]),
+                                  {}};
+    for (int64_t k = offsets[i]; k < offsets[i + 1]; ++k) {
+      t.units.emplace_back(
+          static_cast<VenueId>(unit_ids[k]),
+          TriggerCell{unit_state[3 * k] != 0, unit_state[3 * k + 1],
+                      unit_state[3 * k + 2]});
+    }
+    out.push_back(std::move(t));
+  }
   return out;
 }
 
@@ -453,7 +487,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     // Older checkpoints hold no trigger state; a run that has triggered
     // Policies is refused by the same check that refuses a different set.
     policy_manager_->restoreTriggerStates(
-        format_version >= 3 ? readStoredTriggers(cp)
+        format_version >= 3 ? readStoredTriggers(cp, format_version)
                             : std::vector<PolicyManager::TriggerState>{});
   }
 

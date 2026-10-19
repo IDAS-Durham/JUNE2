@@ -33,6 +33,13 @@ class LazySlotVenueTypeResolver {
   bool resolved_ = false;
 };
 
+// The trigger of a policy that closes venues one at a time, or null.
+template <typename Policy>
+const PolicyTrigger* unitTrigger(const Policy& policy) {
+  return policy.trigger && policy.trigger->perUnit() ? &*policy.trigger
+                                                     : nullptr;
+}
+
 // Visit every triggered policy, symptom policies first. Works for the const
 // and non-const vectors alike.
 template <typename Symptom, typename Temporal, typename Visit>
@@ -51,15 +58,18 @@ PolicyManager::PolicyManager(WorldState& world)
 
 void PolicyManager::addSymptomPolicy(const SymptomPolicy& policy) {
   symptom_policies_.push_back(policy);
-  // A triggered policy starts off until its trigger closes.
+  // A triggered policy starts off until its trigger closes. One triggered per
+  // venue is in force from the start and starts with every venue open.
   if (policy.trigger)
-    symptom_policies_.back().window.trigger_state = policy.trigger->closed;
+    symptom_policies_.back().window.trigger_state =
+        policy.trigger->perUnit() || policy.trigger->closed;
 }
 
 void PolicyManager::addTemporalPolicy(const TemporalPolicy& policy) {
   temporal_policies_.push_back(policy);
   if (policy.trigger)
-    temporal_policies_.back().window.trigger_state = policy.trigger->closed;
+    temporal_policies_.back().window.trigger_state =
+        policy.trigger->perUnit() || policy.trigger->closed;
 }
 
 void PolicyManager::requireTriggerMetrics() {
@@ -70,23 +80,98 @@ void PolicyManager::requireTriggerMetrics() {
 }
 
 void PolicyManager::advanceTriggers(int64_t day) {
-  eachTriggered(symptom_policies_, temporal_policies_,
-                [&](const std::string&, auto& policy) {
-                  policy.trigger->step(
-                      day, observed_metrics_.value(policy.trigger->metric));
-                  policy.window.trigger_state = policy.trigger->closed;
-                });
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string&, auto& policy) {
+        PolicyTrigger& trigger = *policy.trigger;
+        if (!trigger.perUnit()) {
+          trigger.step(day, observed_metrics_.value(trigger.metric));
+          policy.window.trigger_state = trigger.closed;
+          return;
+        }
+        // The units the metric counted today, plus the closed ones, which can
+        // reopen on a day with no count at all. Every other unit's answer
+        // cannot change.
+        std::vector<VenueId> visit =
+            observed_metrics_.changedUnits(trigger.metric);
+        for (VenueId unit : trigger.closedUnits()) visit.push_back(unit);
+        std::sort(visit.begin(), visit.end());
+        visit.erase(std::unique(visit.begin(), visit.end()), visit.end());
+        for (VenueId unit : visit) {
+          trigger.stepUnit(unit, day,
+                           observed_metrics_.unitValue(trigger.metric, unit));
+        }
+      });
+}
+
+bool PolicyManager::unitClosedAt(const PolicyTrigger& trigger,
+                                 VenueId venue) const {
+  if (venue < 0) return false;
+  return trigger.unitClosed(trigger.scope == MetricScope::ParentVenue
+                                ? world_.parentUnitOf(venue)
+                                : venue);
+}
+
+std::vector<std::string> PolicyManager::describeVenueTriggers() const {
+  const auto join = [](std::vector<std::string> names) {
+    std::sort(names.begin(), names.end());
+    std::string out;
+    for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
+    return out;
+  };
+  std::vector<std::string> lines;
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string& kind, const auto& policy) {
+        const PolicyTrigger& trigger = *policy.trigger;
+        if (!trigger.perUnit()) return;
+        const PolicyAction& action = policy.action;
+        const std::string activities =
+            action.override_all
+                ? "all activities"
+                : "activities " + join({action.override_activities.begin(),
+                                        action.override_activities.end()});
+        std::string types = "any venue type";
+        if (!action.override_venue_types.empty()) {
+          types = "venue types " + join({action.override_venue_types.begin(),
+                                         action.override_venue_types.end()});
+        } else if (!action.exempt_venue_types.empty()) {
+          types = "every venue type except " +
+                  join({action.exempt_venue_types.begin(),
+                        action.exempt_venue_types.end()});
+        }
+        const std::string rule =
+            trigger.cumulative
+                ? "after " + std::to_string(trigger.activate_at) +
+                      " more, reopening after " +
+                      std::to_string(trigger.calm_days) + " calm days"
+                : "at " + std::to_string(trigger.activate_at) +
+                      ", reopening at " +
+                      std::to_string(trigger.deactivate_at.value());
+        lines.push_back(
+            "[policy trigger] " + kind + "_policy '" + policy.name +
+            "': closes a " +
+            (trigger.scope == MetricScope::ParentVenue ? "parent venue"
+                                                       : "venue") +
+            " " + rule + " on metric '" + trigger.metric + "' (activity " +
+            observed_metrics_.activityOf(trigger.metric) + "); acts on " +
+            activities + " at " + types + ".");
+      });
+  return lines;
 }
 
 std::vector<PolicyManager::TriggerState> PolicyManager::triggerStates() const {
   std::vector<TriggerState> out;
-  eachTriggered(
-      symptom_policies_, temporal_policies_,
-      [&](const std::string& kind, const auto& policy) {
-        out.push_back({kind + "/" + policy.name, policy.trigger->closed,
-                       policy.trigger->anchor_day,
-                       policy.trigger->anchor_value});
-      });
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string& kind, const auto& policy) {
+                  TriggerState state{
+                      kind + "/" + policy.name,   policy.trigger->closed,
+                      policy.trigger->anchor_day, policy.trigger->anchor_value,
+                      policy.trigger->scope,      {}};
+                  for (const auto& [unit, cell] : policy.trigger->unitCells())
+                    state.units.emplace_back(unit, cell);
+                  out.push_back(std::move(state));
+                });
   return out;
 }
 
@@ -109,6 +194,16 @@ void PolicyManager::restoreTriggerStates(
         "]. A trigger's state cannot be rebuilt; resume with the same "
         "triggered Policies.");
   }
+  // The same name counted per unit in one run and as a world total in the
+  // other is not the same trigger, whatever the key says.
+  for (size_t i = 0; i < stored.size(); ++i) {
+    if (stored[i].scope == current[i].scope) continue;
+    throw std::runtime_error(
+        "policy triggers: '" + stored[i].key +
+        "' reads a metric of another scope than the checkpoint's. A "
+        "trigger's state cannot be rebuilt under another scope; resume with "
+        "the same metrics.");
+  }
   size_t next = 0;
   eachTriggered(symptom_policies_, temporal_policies_,
                 [&](const std::string&, auto& policy) {
@@ -116,7 +211,9 @@ void PolicyManager::restoreTriggerStates(
                   policy.trigger->closed = state.closed;
                   policy.trigger->anchor_day = state.anchor_day;
                   policy.trigger->anchor_value = state.anchor_value;
-                  policy.window.trigger_state = state.closed;
+                  policy.trigger->restoreUnits(state.units);
+                  policy.window.trigger_state =
+                      policy.trigger->perUnit() || state.closed;
                 });
 }
 
@@ -437,7 +534,7 @@ std::optional<PersonLocation> PolicyManager::getOverride(
       if (!is_participating) continue;
 
       if (!actionApplies(policy.action, person, scheduled_activity_index,
-                         slotVenueType, partner)) {
+                         slotVenueType, partner, nullptr, kInvalidVenueId)) {
         continue;
       }
 
@@ -526,8 +623,12 @@ std::optional<PersonLocation> PolicyManager::getOverride(
 
     if (!is_participating) continue;
 
+    // Where the person is scheduled, not where a freeze would pin them: a
+    // traveller in transit is pinned at their last overnight venue while
+    // occupying none.
     if (!actionApplies(policy.action, person, scheduled_activity_index,
-                       slotVenueType, partner)) {
+                       slotVenueType, partner, unitTrigger(policy),
+                       slot_venue_type.venueId())) {
       continue;
     }
 
@@ -576,7 +677,7 @@ bool PolicyManager::suppressesParticipation(
       }
 
       if (actionApplies(policy.action, person, activity_index, slotVenueType,
-                        partner)) {
+                        partner, nullptr, kInvalidVenueId)) {
         return true;
       }
     }
@@ -598,7 +699,8 @@ bool PolicyManager::suppressesParticipation(
     }
 
     if (actionApplies(policy.action, person, activity_index, slotVenueType,
-                      partner)) {
+                      partner, unitTrigger(policy),
+                      slot_venue_type.venueId())) {
       return true;
     }
   }

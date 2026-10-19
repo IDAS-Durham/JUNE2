@@ -261,11 +261,6 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
         where + "unknown metric '" + metric +
         "'. Declared metrics: " + (known.empty() ? "none" : known) + ".");
   }
-  if (!metrics.isWorldScope(metric)) {
-    throw std::runtime_error(where + "metric '" + metric +
-                             "' has scope 'venue'; a trigger on a venue scope "
-                             "metric is not built yet.");
-  }
 
   const auto number = [&](const char* key) -> std::optional<int64_t> {
     if (!node[key]) return std::nullopt;
@@ -299,6 +294,7 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
   PolicyTrigger trigger;
   trigger.metric = metric;
   trigger.cumulative = metrics.isCumulative(metric);
+  trigger.scope = metrics.scope(metric);
   if (!activate_at) {
     throw std::runtime_error(where + "'activate_at' is required.");
   }
@@ -362,6 +358,38 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
   return trigger;
 }
 
+// A Policy triggered per venue closes a venue for everyone scheduled there.
+// Whatever would make that partial, or would need venue by venue rebuilding of
+// the transmission modifiers, is refused here rather than half honoured.
+void checkVenueTriggeredPolicy(const TemporalPolicy& policy,
+                               const YAML::Node& node,
+                               const ObservedMetrics& metrics) {
+  const std::string where = "temporal_policy '" + policy.name + "' trigger: ";
+  const std::string& metric = policy.trigger->metric;
+  if (policy.action.compliance_rate != 1.0) {
+    throw std::runtime_error(
+        where +
+        "'compliance_rate' must be 1 on a policy triggered per venue, "
+        "because a closed venue closes for everyone scheduled there; "
+        "got " +
+        std::to_string(policy.action.compliance_rate) + ".");
+  }
+  if (node["transmission_effects_file"]) {
+    throw std::runtime_error(
+        where +
+        "transmission effects on a policy triggered per venue are not "
+        "built yet; the policy can only send people elsewhere.");
+  }
+  const auto& listed = policy.action.override_activities;
+  const std::string& activity = metrics.activityOf(metric);
+  if (!listed.empty() && !listed.count("*") && !listed.count(activity)) {
+    throw std::runtime_error(
+        where + "'override_activities' must include '" + activity +
+        "', the activity of metric '" + metric +
+        "'; otherwise the policy never acts on the venues the metric closes.");
+  }
+}
+
 }  // namespace
 
 void loadSymptomPolicies(PolicyManager& policy_manager, const YAML::Node& node,
@@ -388,6 +416,13 @@ void loadSymptomPolicies(PolicyManager& policy_manager, const YAML::Node& node,
       policy.trigger =
           loadTrigger(policy_node["trigger"], policy_manager.observedMetrics(),
                       "symptom_policy '" + policy.name + "'");
+      if (policy.trigger->perUnit()) {
+        throw std::runtime_error(
+            "symptom_policy '" + policy.name + "' trigger: metric '" +
+            policy.trigger->metric +
+            "' is counted per venue, which is not built yet for a symptom "
+            "policy. To close a venue for everyone, write a temporal policy.");
+      }
     }
 
     if (policy_node["transmission_effects_file"]) {
@@ -432,6 +467,10 @@ void loadTemporalPolicies(PolicyManager& policy_manager, const YAML::Node& node,
       policy.trigger =
           loadTrigger(policy_node["trigger"], policy_manager.observedMetrics(),
                       "temporal_policy '" + policy.name + "'");
+      if (policy.trigger->perUnit()) {
+        checkVenueTriggeredPolicy(policy, policy_node,
+                                  policy_manager.observedMetrics());
+      }
     }
 
     if (policy_node["transmission_effects_file"]) {

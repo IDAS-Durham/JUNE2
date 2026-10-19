@@ -364,14 +364,17 @@ bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
 bool policySuppressesMirror(PolicyManager* policy_manager,
                             const Person& follower,
                             int16_t follower_activity_index,
-                            uint8_t host_venue_type, double current_time) {
+                            uint8_t host_venue_type, VenueId host_venue,
+                            double current_time) {
   if (!policy_manager) return false;
   // known(), not fromVenue(): the host's type travelled with its venue, so no
   // local lookup is needed and none would succeed for a cross-rank host. A host
-  // only enters host_loc with a venue, so the type is never absent here.
+  // only enters host_loc with a venue, so the type is never absent here. The
+  // venue goes along too, so a venue a trigger has closed is closed to a
+  // follower mirroring into it.
   return policy_manager->suppressesParticipation(
-      follower, follower_activity_index, SlotVenueType::known(host_venue_type),
-      current_time);
+      follower, follower_activity_index,
+      SlotVenueType::known(host_venue_type, host_venue), current_time);
 }
 
 // The host's candidate pool: co-members of its venue of the configured type, or
@@ -867,7 +870,8 @@ void Simulator::processFollowRule(
     // the venue exceptions below.
     if (follow_detail::policySuppressesMirror(
             policy_manager_.get(), world_.people[fi->second],
-            floc.activity_index, host_venue_type, current_simulation_time_))
+            floc.activity_index, host_venue_type, hl->second.venue,
+            current_simulation_time_))
       continue;
 
     // Travelling with the host means riding the host's whole journey, not the

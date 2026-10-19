@@ -11,6 +11,7 @@
 #include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
 #include "test_utils.h"
+#include "venue_scope_fixtures.h"
 
 using namespace june;
 
@@ -79,8 +80,8 @@ const std::string kMetrics =
     "  deaths: {source: death, scope: world}\n"
     "  infected: {source: infection, scope: world}\n";
 
-// Declared only where a test loads a policy file without resolving it: the
-// metrics refuse to resolve a venue scope.
+// A venue scope metric for tests that load a policy file against an empty
+// world, where the activity does not resolve.
 const std::string kVenueMetric =
     "  pub_cases: {source: infection, scope: venue, activity: leisure}\n";
 
@@ -349,10 +350,6 @@ TEST_CASE("PolicyLoader - every bad trigger is refused with a reason") {
        "never both"},
       {"{metric: deaths, response: []}", "'response' list is not built yet"},
       {"{metric: deaths}", "needs the threshold fields"},
-      {"{metric: pub_cases, activate_at: 5, deactivate_at: 1}",
-       "scope 'venue'"},
-      {"{metric: pub_cases, activate_at: 5, deactivate_at: 1}",
-       "is not built yet"},
       {"{metric: deaths, activate_at: 5, calm_days: 3, decision_unit: person}",
        "'decision_unit' is not built yet"},
       {"{metric: deaths, activate_at: 0, calm_days: 3}",
@@ -524,4 +521,476 @@ TEST_CASE("Trigger - restoring a different set of triggers is refused") {
     CHECK(has(thrown([&] { with.pm.restoreTriggerStates(renamed); }),
               "temporal/other"));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Triggers counted per venue and per parent venue
+// ---------------------------------------------------------------------------
+
+namespace vs = june::venue_scope_fixture;
+
+namespace {
+
+// A policy file with one temporal policy that closes venues, triggered by a
+// metric counted over primary_activity. `policy_lines` are extra policy fields,
+// already indented.
+std::string venuePolicyText(
+    const std::string& scope,
+    const std::string& trigger =
+        "{metric: cases, activate_at: 2, "
+        "deactivate_at: 0}",
+    const std::string& policy_lines =
+        "      override_activities: [primary_activity]\n",
+    const std::string& source = "infection") {
+  return "observed_metrics:\n"
+         "  cases: {source: " +
+         source + ", scope: " + scope +
+         ", activity: primary_activity}\n"
+         "policies:\n"
+         "  temporal_policies:\n"
+         "    - name: close_venue\n" +
+         policy_lines +
+         "      replacement: residence\n"
+         "      trigger: " +
+         trigger + "\n";
+}
+
+// The fixture world with one venue triggered Policy, driven the way the
+// simulator drives it: count, reduce, advance.
+struct VenueTriggered {
+  WorldState world = vs::makeWorld();
+  Disease disease = makeDisease();
+  PolicyManager pm{world};
+
+  explicit VenueTriggered(const std::string& text) {
+    REQUIRE(loadPolicyText(pm, text) == "");
+    pm.observedMetrics().resolve(world, disease);
+    pm.requireTriggerMetrics();
+    pm.observedMetrics().buildVenueParents(world);
+    for (Person& p : world.people) p.applicable_temporal_policy_mask = 1;
+    pm.resolveAll(disease);
+  }
+
+  void endDay(int day, std::vector<PersonId> present = {},
+              std::vector<PersonId> died = {}) {
+    for (PersonId id : present)
+      pm.observedMetrics().onPresent(world.people[id], 1);
+    for (PersonId id : died) pm.observedMetrics().onDeath(world.people[id]);
+    pm.observedMetrics().reduce();
+    pm.advanceTriggers(day);
+  }
+
+  bool closed(VenueId unit) const {
+    return pm.getTemporalPolicies()[0].trigger->unitClosed(unit);
+  }
+
+  bool overridden(PersonId who, VenueId at, double time,
+                  int16_t activity = vs::kPrimary) {
+    return pm
+        .getOverride(world.people[who], activity, at, 0,
+                     SlotVenueType::fromVenue(at), time, 0)
+        .has_value();
+  }
+
+  bool suppressed(PersonId who, VenueId at, uint8_t type, double time,
+                  int16_t activity = vs::kPrimary) const {
+    return pm.suppressesParticipation(world.people[who], activity,
+                                      SlotVenueType::known(type, at), time);
+  }
+};
+
+}  // namespace
+
+TEST_CASE("VenueTrigger - two venues are in different states at once") {
+  VenueTriggered t(venuePolicyText("venue"));
+
+  // Class A has two people infected and class B one: only A reaches 2.
+  t.endDay(0, {vs::kPupilA, vs::kTwoClasses});
+  CHECK(t.closed(vs::kClassA));
+  CHECK_FALSE(t.closed(vs::kClassB));
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+  CHECK_FALSE(t.overridden(vs::kPupilB, vs::kClassB, 1.0));
+
+  // Class B reaches 2 and closes. A is down to 1, which is above the reopening
+  // level of 0, so it stays closed: the hysteresis is per venue.
+  t.endDay(1, {vs::kPupilB, vs::kTwoClasses});
+  CHECK(t.closed(vs::kClassA));
+  CHECK(t.closed(vs::kClassB));
+
+  // A is clear and reopens while B, at 1, stays closed. Opposite states.
+  t.endDay(2, {vs::kPupilB});
+  CHECK_FALSE(t.closed(vs::kClassA));
+  CHECK(t.closed(vs::kClassB));
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 3.0));
+  CHECK(t.overridden(vs::kPupilB, vs::kClassB, 3.0));
+  // The other school's classroom was never counted.
+  CHECK_FALSE(t.overridden(vs::kOtherSchool, vs::kClassC, 3.0));
+}
+
+TEST_CASE("VenueTrigger - a venue closes, reopens and closes again") {
+  VenueTriggered t(venuePolicyText("venue"));
+  const std::vector<PersonId> both = {vs::kPupilA, vs::kTwoClasses};
+
+  t.endDay(0, both);  // 2: closes
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+  t.endDay(1, {vs::kPupilA});  // 1: stays closed, hysteresis
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 2.0));
+  t.endDay(2);  // 0: reopens
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 3.0));
+  t.endDay(3, {vs::kPupilA});  // 1: below 2, still open
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 4.0));
+  t.endDay(4, both);  // 2: closes a second time
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 5.0));
+  t.endDay(5);
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 6.0));
+}
+
+TEST_CASE("VenueTrigger - a closure takes effect from the next day") {
+  VenueTriggered t(venuePolicyText("venue"));
+  for (PersonId id : {vs::kPupilA, vs::kTwoClasses})
+    t.pm.observedMetrics().onPresent(t.world.people[id], 1);
+  // Counted but not yet reduced and advanced: still open.
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 0.9));
+  t.pm.observedMetrics().reduce();
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 0.9));
+  t.pm.advanceTriggers(0);
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+}
+
+TEST_CASE("VenueTrigger - everyone scheduled at a closed venue is overridden") {
+  VenueTriggered t(venuePolicyText("venue"));
+  t.endDay(0, {vs::kPupilA, vs::kTwoClasses});
+
+  // A visitor whose own registration is elsewhere, scheduled at class A today.
+  CHECK(t.overridden(vs::kOtherSchool, vs::kClassA, 1.0));
+  CHECK(t.overridden(vs::kPubWorker, vs::kClassA, 1.0));
+  // Only the activity the policy names: a leisure visit is untouched.
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 1.0, vs::kLeisure));
+  // The override sends people to their residence.
+  const auto loc = t.pm.getOverride(
+      t.world.people[vs::kOtherSchool], vs::kPrimary, vs::kClassA, 0,
+      SlotVenueType::fromVenue(vs::kClassA), 1.0, 0);
+  REQUIRE(loc.has_value());
+  CHECK(loc->venue_id == vs::kHome);
+  CHECK(loc->activity_index == vs::kResidence);
+}
+
+TEST_CASE(
+    "VenueTrigger - an empty activity list closes the venue for every "
+    "activity") {
+  VenueTriggered t(venuePolicyText("venue",
+                                   "{metric: cases, activate_at: 2, "
+                                   "deactivate_at: 0}",
+                                   ""));
+  t.endDay(0, {vs::kPupilA, vs::kTwoClasses});
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0, vs::kPrimary));
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0, vs::kLeisure));
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassB, 1.0, vs::kLeisure));
+}
+
+TEST_CASE(
+    "VenueTrigger - an exempt person stays, a non-exempt one goes, same venue "
+    "same day") {
+  VenueTriggered t(venuePolicyText(
+      "venue", "{metric: cases, activate_at: 2, deactivate_at: 0}",
+      "      override_activities: [primary_activity]\n"
+      "      exempt:\n"
+      "        - activity: primary_activity\n"
+      "          selection:\n"
+      "            - property: age\n"
+      "              operator: \">=\"\n"
+      "              value: 60\n"));
+  t.world.people[vs::kTwoClasses].age = 61.0f;  // the exempt one
+  t.endDay(0, {vs::kPupilA, vs::kTwoClasses});
+  REQUIRE(t.closed(vs::kClassA));
+
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+  CHECK_FALSE(t.overridden(vs::kTwoClasses, vs::kClassA, 1.0));
+  // The same gates apply to the encounter and follow checks.
+  CHECK(t.suppressed(vs::kPupilA, vs::kClassA, vs::kClassroomType, 1.0));
+  CHECK_FALSE(
+      t.suppressed(vs::kTwoClasses, vs::kClassA, vs::kClassroomType, 1.0));
+}
+
+TEST_CASE("VenueTrigger - the venue type gate still narrows what closes") {
+  VenueTriggered t(venuePolicyText(
+      "parent_venue", "{metric: cases, activate_at: 2, deactivate_at: 0}",
+      "      override_activities: [primary_activity]\n"
+      "      override_venue_types: [classroom]\n"));
+  t.endDay(0, {vs::kPupilA, vs::kPupilB});
+  REQUIRE(t.closed(vs::kSchool));
+
+  // Classrooms of the closed school go, the school building itself is not a
+  // classroom, so the gate lets its staff through.
+  CHECK(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+  CHECK(t.overridden(vs::kPupilB, vs::kClassB, 1.0));
+  CHECK_FALSE(t.overridden(vs::kSchoolStaff, vs::kSchool, 1.0));
+}
+
+TEST_CASE(
+    "VenueTrigger - closing a parent venue closes every child and the parent "
+    "itself") {
+  VenueTriggered t(venuePolicyText("parent_venue"));
+  t.endDay(0, {vs::kPupilA, vs::kPupilB});  // two pupils of school 3
+
+  CHECK(t.closed(vs::kSchool));
+  // Children the infected pupils do not attend are closed too.
+  CHECK(t.overridden(vs::kTwoClasses, vs::kClassA, 1.0));
+  CHECK(t.overridden(vs::kTwoClasses, vs::kClassB, 1.0));
+  // A person scheduled at the school itself.
+  CHECK(t.overridden(vs::kSchoolStaff, vs::kSchool, 1.0));
+  // The other school and an unrelated venue stay open.
+  CHECK_FALSE(t.overridden(vs::kOtherSchool, vs::kClassC, 1.0));
+  CHECK_FALSE(t.overridden(vs::kPubWorker, vs::kPub, 1.0));
+  // The child is not itself the unit that closed.
+  CHECK_FALSE(t.closed(vs::kClassA));
+}
+
+TEST_CASE(
+    "VenueTrigger - one person in two children counts once at the parent") {
+  VenueTriggered t(venuePolicyText("parent_venue"));
+  // The person registered to both classrooms is the only one infected. Per
+  // venue that is one at each classroom; per parent it is one, not two.
+  t.endDay(0, {vs::kTwoClasses});
+  CHECK_FALSE(t.closed(vs::kSchool));
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+  // A second infected pupil takes the school to two.
+  t.endDay(1, {vs::kTwoClasses, vs::kPupilB});
+  CHECK(t.closed(vs::kSchool));
+}
+
+TEST_CASE("VenueTrigger - a venue with no parent is its own unit") {
+  VenueTriggered t(venuePolicyText(
+      "parent_venue", "{metric: cases, activate_at: 1, deactivate_at: 0}"));
+  t.endDay(0, {vs::kPubWorker});  // registered to the pub for primary_activity
+  CHECK(t.closed(vs::kPub));
+  CHECK(t.overridden(vs::kPubWorker, vs::kPub, 1.0));
+  CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 1.0));
+  CHECK_FALSE(t.closed(vs::kSchool));
+}
+
+TEST_CASE(
+    "VenueTrigger - a cumulative venue metric keeps its own baseline per "
+    "venue") {
+  VenueTriggered t(
+      venuePolicyText("venue", "{metric: cases, activate_at: 1, calm_days: 2}",
+                      "      "
+                      "override_activities: [primary_activity]\n",
+                      "death"));
+  t.endDay(0, {}, {vs::kPupilA});  // class A: 1 death, closes
+  CHECK(t.closed(vs::kClassA));
+  CHECK_FALSE(t.closed(vs::kClassB));
+  t.endDay(1);
+  CHECK(t.closed(vs::kClassA));
+  t.endDay(2, {}, {vs::kPupilB});  // A calm for 2 days: reopens; B closes
+  CHECK_FALSE(t.closed(vs::kClassA));
+  CHECK(t.closed(vs::kClassB));
+  // A's baseline is now 1, so one more death is growth of 1 and closes it.
+  t.endDay(3, {}, {vs::kTwoClasses});
+  CHECK(t.closed(vs::kClassA));
+  CHECK(t.closed(vs::kClassB));
+}
+
+TEST_CASE("VenueTrigger - the scheduled venue decides, not the pin venue") {
+  VenueTriggered t(venuePolicyText("venue"));
+  t.endDay(0, {vs::kPupilA, vs::kTwoClasses});
+  Person& traveller = t.world.people[vs::kPupilB];
+
+  // In transit: pinned at closed class A but occupying no venue this slot.
+  auto in_transit = t.pm.getOverride(traveller, vs::kPrimary, vs::kClassA, 0,
+                                     SlotVenueType::absent(), 1.0, 0);
+  CHECK_FALSE(in_transit.has_value());
+  // Scheduled at closed class A while pinned somewhere open.
+  auto scheduled =
+      t.pm.getOverride(traveller, vs::kPrimary, vs::kClassB, 0,
+                       SlotVenueType::fromVenue(vs::kClassA), 1.0, 0);
+  CHECK(scheduled.has_value());
+}
+
+TEST_CASE("VenueTrigger - encounters and follows are asked about the venue") {
+  VenueTriggered t(venuePolicyText("venue"));
+  t.endDay(0, {vs::kPupilA, vs::kTwoClasses});
+
+  CHECK(t.suppressed(vs::kPupilB, vs::kClassA, vs::kClassroomType, 1.0));
+  CHECK_FALSE(t.suppressed(vs::kPupilB, vs::kClassB, vs::kClassroomType, 1.0));
+  // No venue named, or a virtual encounter: nothing to be closed.
+  CHECK_FALSE(t.pm.suppressesParticipation(
+      t.world.people[vs::kPupilB], vs::kPrimary,
+      SlotVenueType::known(vs::kClassroomType), 1.0));
+  CHECK_FALSE(t.pm.suppressesParticipation(
+      t.world.people[vs::kPupilB], vs::kPrimary, SlotVenueType::absent(), 1.0));
+}
+
+TEST_CASE(
+    "PolicyLoader - a trigger counted per venue loads and starts with every "
+    "venue open") {
+  for (const char* scope : {"venue", "parent_venue"}) {
+    INFO(scope);
+    VenueTriggered t(venuePolicyText(scope));
+    const auto& trigger = t.pm.getTemporalPolicies()[0].trigger;
+    REQUIRE(trigger.has_value());
+    CHECK(trigger->perUnit());
+    CHECK(trigger->closedUnits().empty());
+    // In force from the start; the closed venues are what hold it back.
+    CHECK(t.pm.getTemporalPolicies()[0].window.contains(0.5));
+    CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 0.5));
+  }
+}
+
+TEST_CASE("PolicyLoader - every bad venue trigger is refused with a reason") {
+  struct Bad {
+    std::string text;
+    const char* expected;
+  };
+  const std::string metric =
+      "observed_metrics:\n"
+      "  cases: {source: infection, scope: venue, activity: "
+      "primary_activity}\n";
+  const std::string trig = "{metric: cases, activate_at: 2, deactivate_at: 0}";
+  const std::vector<Bad> cases = {
+      {metric +
+           "policies:\n  symptom_policies:\n    - name: stay_home\n"
+           "      symptoms: [mild]\n      override_activities: "
+           "[primary_activity]\n"
+           "      trigger: " +
+           trig + "\n",
+       "is counted per venue, which is not built yet for a symptom policy"},
+      {venuePolicyText("venue", trig,
+                       "      override_activities: [primary_activity]\n"
+                       "      compliance_rate: 0.7\n"),
+       "'compliance_rate' must be 1 on a policy triggered per venue"},
+      {venuePolicyText("venue", trig,
+                       "      override_activities: [primary_activity]\n"
+                       "      transmission_effects_file: effects.csv\n"),
+       "transmission effects on a policy triggered per venue are not built "
+       "yet"},
+      {venuePolicyText("venue", trig, "      override_activities: [leisure]\n"),
+       "'override_activities' must include 'primary_activity'"},
+      {venuePolicyText("parent_venue", trig,
+                       "      override_activities: [leisure, residence]\n"),
+       "'override_activities' must include 'primary_activity'"},
+  };
+  for (const auto& c : cases) {
+    WorldState world;
+    PolicyManager pm(world);
+    INFO(c.text);
+    CHECK(has(loadPolicyText(pm, c.text), c.expected));
+  }
+
+  SUBCASE("a list that includes the activity, '*' and an empty list all load") {
+    for (const char* lines :
+         {"      override_activities: [primary_activity, leisure]\n",
+          "      override_activities: ['*']\n", ""}) {
+      WorldState world;
+      PolicyManager pm(world);
+      INFO(lines);
+      CHECK(loadPolicyText(pm, venuePolicyText("venue", trig, lines)) == "");
+    }
+  }
+}
+
+TEST_CASE("VenueTrigger - the startup line says what the policy acts on") {
+  SUBCASE("a listed activity and a venue type") {
+    VenueTriggered t(venuePolicyText(
+        "parent_venue", "{metric: cases, activate_at: 2, deactivate_at: 0}",
+        "      override_activities: [primary_activity]\n"
+        "      override_venue_types: [classroom]\n"));
+    const auto lines = t.pm.describeVenueTriggers();
+    REQUIRE(lines.size() == 1);
+    CHECK(has(lines[0], "temporal_policy 'close_venue'"));
+    CHECK(has(lines[0], "closes a parent venue at 2, reopening at 0"));
+    CHECK(has(lines[0], "(activity primary_activity)"));
+    CHECK(has(lines[0], "acts on activities primary_activity"));
+    CHECK(has(lines[0], "at venue types classroom"));
+  }
+  SUBCASE("everything left open says so") {
+    VenueTriggered t(venuePolicyText(
+        "venue", "{metric: cases, activate_at: 2, deactivate_at: 0}", ""));
+    const auto lines = t.pm.describeVenueTriggers();
+    REQUIRE(lines.size() == 1);
+    CHECK(has(lines[0], "acts on all activities at any venue type"));
+  }
+  SUBCASE("a world scope trigger has no line") {
+    TriggeredWorld w(policyText(kDeathsTrigger));
+    CHECK(w.pm.describeVenueTriggers().empty());
+  }
+}
+
+TEST_CASE(
+    "VenueTrigger - closed venues and a reopened baseline survive a round "
+    "trip") {
+  const std::string text = venuePolicyText(
+      "venue", "{metric: cases, activate_at: 1, calm_days: 2}",
+      "      override_activities: [primary_activity]\n", "death");
+  VenueTriggered before(text);
+  before.endDay(0, {}, {vs::kPupilA});  // A closes
+  before.endDay(1);
+  before.endDay(2, {}, {vs::kPupilB});  // A reopens with baseline 1, B closes
+  REQUIRE_FALSE(before.closed(vs::kClassA));
+  REQUIRE(before.closed(vs::kClassB));
+
+  const auto states = before.pm.triggerStates();
+  REQUIRE(states.size() == 1);
+  CHECK(states[0].key == "temporal/close_venue");
+  CHECK(states[0].scope == MetricScope::Venue);
+  REQUIRE(states[0].units.size() == 2);
+  CHECK(states[0].units[0].first == vs::kClassA);
+  CHECK_FALSE(states[0].units[0].second.closed);
+  CHECK(states[0].units[0].second.anchor_value == 1);  // the baseline
+  CHECK(states[0].units[1].first == vs::kClassB);
+  CHECK(states[0].units[1].second.closed);
+
+  VenueTriggered after(text);
+  after.pm.observedMetrics().restoreSnapshot(
+      before.pm.observedMetrics().snapshot());
+  after.pm.restoreTriggerStates(states);
+  CHECK_FALSE(after.closed(vs::kClassA));
+  CHECK(after.closed(vs::kClassB));
+  CHECK(after.overridden(vs::kPupilB, vs::kClassB, 3.0));
+
+  // From here the two runs agree every day: A closes again on a death (its
+  // baseline survived), B's anchor moves with the death, both reopen together.
+  const std::vector<std::vector<PersonId>> deaths = {
+      {vs::kTwoClasses}, {}, {}, {}};
+  for (size_t i = 0; i < deaths.size(); ++i) {
+    const int day = 3 + static_cast<int>(i);
+    before.endDay(day, {}, deaths[i]);
+    after.endDay(day, {}, deaths[i]);
+    for (VenueId v : {vs::kClassA, vs::kClassB}) {
+      INFO("day " << day << " venue " << v);
+      CHECK(before.closed(v) == after.closed(v));
+    }
+    CHECK(before.overridden(vs::kPupilA, vs::kClassA, day + 1.0) ==
+          after.overridden(vs::kPupilA, vs::kClassA, day + 1.0));
+  }
+  // Day 3: both closed. Reopened together two calm days later, at day 5.
+  CHECK_FALSE(before.closed(vs::kClassA));
+  CHECK_FALSE(before.closed(vs::kClassB));
+}
+
+TEST_CASE("VenueTrigger - restoring under another scope is refused") {
+  const std::string venue_text = venuePolicyText(
+      "venue", "{metric: cases, activate_at: 1, calm_days: 2}",
+      "      override_activities: [primary_activity]\n", "death");
+  const std::string world_text =
+      "observed_metrics:\n"
+      "  cases: {source: death, scope: world}\n"
+      "policies:\n  temporal_policies:\n    - name: close_venue\n"
+      "      override_activities: [primary_activity]\n"
+      "      replacement: residence\n"
+      "      trigger: {metric: cases, activate_at: 1, calm_days: 2}\n";
+
+  VenueTriggered per_venue(venue_text);
+  per_venue.endDay(0, {}, {vs::kPupilA});
+  VenueTriggered world_total(world_text);
+  world_total.endDay(0, {}, {vs::kPupilA});
+
+  CHECK(has(thrown([&] {
+              world_total.pm.restoreTriggerStates(per_venue.pm.triggerStates());
+            }),
+            "another scope than the checkpoint's"));
+  CHECK(has(thrown([&] {
+              per_venue.pm.restoreTriggerStates(world_total.pm.triggerStates());
+            }),
+            "another scope than the checkpoint's"));
 }

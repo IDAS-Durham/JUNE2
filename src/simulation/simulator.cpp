@@ -514,6 +514,14 @@ Simulator::Simulator(WorldState& world, Config& config,
     ObservedMetrics& metrics = policy_manager_->observedMetrics();
     metrics.resolve(world_, *disease_);
     policy_manager_->requireTriggerMetrics();
+    metrics.buildVenueParents(world_);
+    if (getRank() == 0 && !world_.venue_parent_by_id.empty()) {
+      const size_t bytes = world_.venue_parent_by_id.size() *
+                           sizeof(world_.venue_parent_by_id[0]);
+      std::cout << "[observed metrics] parent venue index: "
+                << world_.venue_parent_by_id.size() << " venues, " << bytes
+                << " bytes per rank." << std::endl;
+    }
     if (metrics.anyActive()) epidemiology_->setObservedMetrics(&metrics);
   }
 
@@ -523,6 +531,10 @@ Simulator::Simulator(WorldState& world, Config& config,
   if (policy_manager_->getSymptomPolicyCount() > 0 ||
       policy_manager_->getTemporalPolicyCount() > 0) {
     policy_manager_->resolveAll(*disease_);
+    if (getRank() == 0) {
+      for (const std::string& line : policy_manager_->describeVenueTriggers())
+        std::cout << line << std::endl;
+    }
     policy_manager_->precomputePolicyApplicability(world_.people);
     policy_manager_->initializeTransmissionModifiers(*disease_,
                                                      current_simulation_time_);

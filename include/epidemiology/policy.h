@@ -80,14 +80,17 @@ class SlotVenueType {
 
   // The caller already resolved the type. Handing over kUnknownVenueTypeId
   // while claiming to know it is the defect this mission exists to catch, so
-  // it throws here, at the producer.
-  static SlotVenueType known(uint8_t type_id) {
+  // it throws here, at the producer. A caller that also knows the venue passes
+  // it, because a policy triggered per venue asks about that venue and not
+  // only about its type.
+  static SlotVenueType known(uint8_t type_id,
+                             VenueId venue_id = kInvalidVenueId) {
     if (type_id == kUnknownVenueTypeId) {
       throw std::runtime_error(
           "SlotVenueType::known: caller claims a known venue type but passed "
           "kUnknownVenueTypeId (255); the slot venue type is unresolvable.");
     }
-    return SlotVenueType(SlotVenueTypeState::Known, type_id, kInvalidVenueId);
+    return SlotVenueType(SlotVenueTypeState::Known, type_id, venue_id);
   }
 
   // Look the type up later, if anything asks. A negative id is absent.
@@ -112,6 +115,11 @@ class SlotVenueType {
   }
 
   bool isAbsent() const { return state_ == SlotVenueTypeState::Absent; }
+
+  // The venue the person occupies this slot, or kInvalidVenueId when there is
+  // none or the caller did not say. Unlike the Pin Venue this is where the
+  // person is scheduled, so it is what a closed venue is checked against.
+  VenueId venueId() const { return venue_id_; }
 
   // Precondition: Known. A sentinel must never survive to the gate, so an
   // unresolved value is a programming error rather than a return value.
@@ -516,9 +524,17 @@ class PolicyManager {
     bool closed = false;
     int64_t anchor_day = 0;
     int64_t anchor_value = 0;
+    MetricScope scope = MetricScope::World;
+    // Scopes counted per unit: one cell per unit the trigger has touched, in
+    // unit order. The three fields above are unused then.
+    std::vector<std::pair<VenueId, TriggerCell>> units;
   };
   std::vector<TriggerState> triggerStates() const;
   void restoreTriggerStates(const std::vector<TriggerState>& stored);
+
+  // One line per Policy triggered per venue, saying what it will act on, for
+  // the start of the run. Needs the policies resolved.
+  std::vector<std::string> describeVenueTriggers() const;
 
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);
@@ -725,15 +741,24 @@ class PolicyManager {
   // Takes a resolver rather than a resolved SlotVenueType so an ungated action
   // never pays for the venue-type lookup — and never throws on a venue this
   // rank cannot type when no policy was asking about venues in the first place.
+  //
+  // A Policy triggered per venue (unit_trigger non-null) reaches only the
+  // venues its metric has closed. That is one lookup, made after the activity
+  // gate and before anything dearer, and it applies to everyone scheduled at a
+  // closed venue who is not exempt.
   template <typename SlotVenueTypeResolver>
   bool actionApplies(const PolicyAction& action, const Person& person,
                      int16_t activity_index,
                      SlotVenueTypeResolver&& resolve_slot_venue_type,
-                     const Person* partner) const {
+                     const Person* partner, const PolicyTrigger* unit_trigger,
+                     VenueId slot_venue_id) const {
     if (!action.has_location_override) return false;
     action.throwIfVenueGateUnresolved();
 
     if (!action.shouldOverride(activity_index)) return false;
+
+    if (unit_trigger && !unitClosedAt(*unit_trigger, slot_venue_id))
+      return false;
 
     if (action.hasVenueGate() &&
         !action.passesVenueGate(resolve_slot_venue_type())) {
@@ -744,6 +769,9 @@ class PolicyManager {
 
     return true;
   }
+
+  // Is the unit this venue counts toward closed by this trigger?
+  bool unitClosedAt(const PolicyTrigger& trigger, VenueId venue) const;
 
   // Helper: Get replacement location for a given activity name
   std::optional<PersonLocation> getReplacementLocation(
