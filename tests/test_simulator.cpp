@@ -1,3 +1,10 @@
+#include <H5Cpp.h>
+
+#include <cstdio>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
@@ -5,45 +12,10 @@
 
 using namespace june;
 
-TEST_CASE("Simulator Initialization") {
-  WorldState world;
-  Config config;
-  config.simulation.start_date = "2020-01-01";
-  config.simulation.end_date = "2020-01-02";  // 1 day simulation
-  config.simulation.disease_file = "tests/configs/simulator_disease.yaml";
+namespace {
 
-  // Minimal valid config setup for Simulator
-  TimeSlot slot;
-  slot.name = "Morning";
-  slot.start = "08:00";
-  slot.end = "12:00";
-
-  config.schedule.day_type_cycle = {"workday"};
-  config.schedule.day_type_names = {"workday"};
-
-  ScheduleType st;
-  st.slots_by_day_type["workday"].push_back(slot);
-  config.schedule.schedule_types.push_back(st);
-
-  // Flat default contact matrix so every disease mode has somewhere to
-  // fall back to (finalizeDefaultModeMatrices requires this).
-  ContactMatrix default_contact_matrix;
-  default_contact_matrix.bins = {"all"};
-  default_contact_matrix.contacts = {{0.2}};
-  config.contact_matrices.default_matrix = default_contact_matrix;
-  // This scenario declares no per-venue-type matrices; it means the default.
-  config.contact_matrices.allow_default_matrix = true;
-
-  // Initialise Simulator
-  Simulator sim(world, config, nullptr,
-                "tests/configs/simulator_infection_seeds.yaml", "test_sim.h5");
-
-  CHECK(sim.getEventLogger() != nullptr);
-}
-
-TEST_CASE("Simulator run() multi-day smoke test") {
-  // Create a small world with 20 people and 2 venues
-  WorldState world;
+// Twenty people who all share one office and one home.
+void buildSmallWorld(WorldState& world) {
   world.venue_type_names = {"office", "home"};
   world.activity_names = {"primary_activity", "residence"};
   world.geo_level_names = {"city"};
@@ -96,11 +68,14 @@ TEST_CASE("Simulator run() multi-day smoke test") {
     world.activity_venues.push_back({1, -1});  // venue 1, no subset
   }
   world.buildIndices();
+}
 
-  // Config
+// Config for the small world: the run starts on 2020-01-01 and stops before
+// end_date.
+Config makeSmallWorldConfig(WorldState& world, const std::string& end_date) {
   Config config;
   config.simulation.start_date = "2020-01-01";
-  config.simulation.end_date = "2020-01-04";  // 3 day simulation
+  config.simulation.end_date = end_date;
   config.simulation.disease_file = "tests/configs/simulator_disease.yaml";
   config.simulation.random_seed = 12345;
 
@@ -133,6 +108,66 @@ TEST_CASE("Simulator run() multi-day smoke test") {
 
   // Resolve schedule indices (maps string-keyed slots to indexed lookups)
   config.schedule.resolveSlots(world);
+  return config;
+}
+
+// The person_id column of a dataset in an events file, in file order.
+std::vector<int> readPersonIds(const std::string& file,
+                               const std::string& dataset_path) {
+  H5::H5File h5(file, H5F_ACC_RDONLY);
+  H5::DataSet ds = h5.openDataSet(dataset_path);
+  hsize_t rows = 0;
+  ds.getSpace().getSimpleExtentDims(&rows);
+  H5::CompType id_only(sizeof(int));
+  id_only.insertMember("person_id", 0, H5::PredType::NATIVE_INT);
+  std::vector<int> ids(rows);
+  ds.read(ids.data(), id_only);
+  return ids;
+}
+
+}  // namespace
+
+TEST_CASE("Simulator Initialization") {
+  WorldState world;
+  Config config;
+  config.simulation.start_date = "2020-01-01";
+  config.simulation.end_date = "2020-01-02";  // 1 day simulation
+  config.simulation.disease_file = "tests/configs/simulator_disease.yaml";
+
+  // Minimal valid config setup for Simulator
+  TimeSlot slot;
+  slot.name = "Morning";
+  slot.start = "08:00";
+  slot.end = "12:00";
+
+  config.schedule.day_type_cycle = {"workday"};
+  config.schedule.day_type_names = {"workday"};
+
+  ScheduleType st;
+  st.slots_by_day_type["workday"].push_back(slot);
+  config.schedule.schedule_types.push_back(st);
+
+  // Flat default contact matrix so every disease mode has somewhere to
+  // fall back to (finalizeDefaultModeMatrices requires this).
+  ContactMatrix default_contact_matrix;
+  default_contact_matrix.bins = {"all"};
+  default_contact_matrix.contacts = {{0.2}};
+  config.contact_matrices.default_matrix = default_contact_matrix;
+  // This scenario declares no per-venue-type matrices; it means the default.
+  config.contact_matrices.allow_default_matrix = true;
+
+  // Initialise Simulator
+  Simulator sim(world, config, nullptr,
+                "tests/configs/simulator_infection_seeds.yaml", "test_sim.h5");
+
+  CHECK(sim.getEventLogger() != nullptr);
+}
+
+TEST_CASE("Simulator run() multi-day smoke test") {
+  WorldState world;
+  buildSmallWorld(world);
+  // 3 day simulation
+  Config config = makeSmallWorldConfig(world, "2020-01-04");
 
   // Build and run simulator
   Simulator sim(world, config, nullptr,
@@ -147,4 +182,30 @@ TEST_CASE("Simulator run() multi-day smoke test") {
 
   // Clean up test output file
   std::remove("test_sim_run.h5");
+}
+
+TEST_CASE("Every infected person has exactly one /lookups/people row") {
+  // Nobody keeps immunity, so people are infected again and again, and a
+  // one record buffer flushes after every slot. After the first days nearly
+  // every flush holds only people who already have a row.
+  const std::string out = "test_sim_lookup_rows.h5";
+  WorldState world;
+  buildSmallWorld(world);
+  Config config = makeSmallWorldConfig(world, "2020-01-31");
+  config.contact_matrices.default_matrix->contacts = {{5.0}};
+  config.simulation.max_event_buffer_size = 1;
+
+  Simulator sim(world, config, nullptr,
+                "tests/configs/simulator_infection_seeds.yaml", out);
+  REQUIRE_NOTHROW(sim.run());
+
+  std::vector<int> infections = readPersonIds(out, "/events/infections");
+  std::vector<int> rows = readPersonIds(out, "/lookups/people");
+  std::remove(out.c_str());
+
+  const std::set<int> infected(infections.begin(), infections.end());
+  // The run must contain repeat infections, or it checks nothing.
+  REQUIRE(infections.size() > infected.size());
+  CHECK(rows.size() == infected.size());
+  CHECK(std::set<int>(rows.begin(), rows.end()) == infected);
 }

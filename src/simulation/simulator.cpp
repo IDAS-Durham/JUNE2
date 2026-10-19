@@ -730,13 +730,11 @@ void Simulator::writeFinalEventsAndLookups(int rank) {
   }
 
   // saveToHDF5WithLookups handles appending if file exists (from previous
-  // flushes)
-  event_logger_.saveToHDF5WithLookups(
-      events_filename_, world_, config_,
-      remaining_ids.empty() &&
-              config_.simulation.save_full_person_details == "infected_only"
-          ? nullptr
-          : &remaining_ids);
+  // flushes). Pass the set even when it is empty: a null filter means every
+  // infectee in the buffer, which would write a second row for anyone who was
+  // infected again after an earlier flush.
+  event_logger_.saveToHDF5WithLookups(events_filename_, world_, config_,
+                                      &remaining_ids);
 }
 
 void Simulator::printRunSummary() {
@@ -870,12 +868,9 @@ void Simulator::checkAndFlushEvents(bool is_day_end) {
       }
     }
 
-    event_logger_.flush(
-        events_filename_, config_, world_,
-        newly_infected.empty() &&
-                config_.simulation.save_full_person_details == "infected_only"
-            ? nullptr
-            : &newly_infected);
+    // Pass the set even when it is empty: a null filter would write every
+    // infectee in the buffer again.
+    event_logger_.flush(events_filename_, config_, world_, &newly_infected);
   }
 }
 void Simulator::initFomiteState() {
