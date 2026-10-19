@@ -56,7 +56,8 @@ EpiSlotStats Epidemiology::updateInfectionStates(
           trajectory.getCurrentSymptomId(last_processed_time);
       // The replay below skips the stage a person is placed in at infection,
       // so count it here, once.
-      if (metrics && first_check) metrics->onInfection(previous_symptom_id);
+      if (metrics && first_check)
+        metrics->onInfection(*person, previous_symptom_id);
       bool was_in_hospital = false;
       bool was_in_icu = false;
 
@@ -77,7 +78,8 @@ EpiSlotStats Epidemiology::updateInfectionStates(
               static_cast<uint8_t>(symptom_id));
         }
         total_transitions_processed++;
-        if (metrics) metrics->onTransition(previous_symptom_id, symptom_id);
+        if (metrics)
+          metrics->onTransition(*person, previous_symptom_id, symptom_id);
 
         // Check for hospital admission (entering hospital system)
         bool now_in_hospital = disease_->isHospitalisedStage(symptom) ||
@@ -174,7 +176,7 @@ EpiSlotStats Epidemiology::updateInfectionStates(
         last_processed_transition_time_.erase(pid);
         to_remove.push_back(pid);
         deaths++;
-        if (metrics) metrics->onDeath();
+        if (metrics) metrics->onDeath(*person);
       }
     } else {
       // Person has no infection but is in active set (shouldn't happen, but
@@ -200,8 +202,8 @@ void Epidemiology::reduceObservedMetrics() {
       const Person* person = world_.getPerson(pid);
       if (!person || person->is_dead || !person->infection) continue;
       observed_metrics_->onPresent(
-          person->infection->getTrajectory().getCurrentSymptomId(
-              last_update_time_));
+          *person, person->infection->getTrajectory().getCurrentSymptomId(
+                       last_update_time_));
     }
   }
   observed_metrics_->reduce();

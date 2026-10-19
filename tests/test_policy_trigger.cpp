@@ -127,6 +127,9 @@ PolicyTrigger cumulativeTrigger(int64_t activate_at, int64_t calm_days,
   return t;
 }
 
+// The person a world scope death is counted for; a world total ignores them.
+const Person nobody{};
+
 // A loaded world with one triggered leisure closure, driven day by day the way
 // the simulator drives it: count, reduce, advance.
 struct TriggeredWorld {
@@ -142,7 +145,7 @@ struct TriggeredWorld {
   }
 
   void endDay(int day, int deaths) {
-    for (int i = 0; i < deaths; ++i) pm.observedMetrics().onDeath();
+    for (int i = 0; i < deaths; ++i) pm.observedMetrics().onDeath(nobody);
     pm.observedMetrics().reduce();
     pm.advanceTriggers(day);
   }
@@ -481,8 +484,8 @@ TEST_CASE("Trigger - closed state survives a round trip and resumes the same") {
   // A fresh run restored the way the simulator does: metric totals, then
   // trigger state.
   TriggeredWorld after(text);
-  after.pm.observedMetrics().restoreActiveValues(
-      before.pm.observedMetrics().activeValues());
+  after.pm.observedMetrics().restoreSnapshot(
+      before.pm.observedMetrics().snapshot());
   after.pm.restoreTriggerStates(states);
   CHECK(after.overridden(3.0));
 

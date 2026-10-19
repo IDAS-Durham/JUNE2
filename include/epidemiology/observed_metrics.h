@@ -1,9 +1,13 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "core/types.h"
 
 namespace june {
 
@@ -37,14 +41,28 @@ class MetricSource {
 const MetricSource* findMetricSource(const std::string& name);
 std::vector<std::string> metricSourceNames();
 
-enum class MetricScope : uint8_t { World, Venue };
+// World is one total. Venue counts a person toward every venue registered to
+// them for the metric's activity. ParentVenue counts them toward the parent of
+// each of those venues, or the venue itself when it has none. Either way a
+// person counts at most once per unit, whatever the source.
+enum class MetricScope : uint8_t { World, Venue, ParentVenue };
+
+// What a checkpoint keeps of one active metric: a world scope total, or for a
+// cumulative metric counted per unit, its running total per unit in unit order.
+// A current metric counted per unit is rebuilt by the next daily scan.
+struct MetricSnapshot {
+  std::string name;
+  MetricScope scope = MetricScope::World;
+  int64_t value = 0;
+  std::vector<std::pair<VenueId, int64_t>> units;
+};
 
 // One declared metric, keyed by name in observed_metrics. Fields are the raw
 // YAML strings; an empty string means the field was not given.
 struct ObservedMetricConfig {
   std::string source;
   std::string scope;
-  std::string activity;  // required iff scope is venue
+  std::string activity;  // required iff scope is venue or parent_venue
   std::string stage;     // required iff the source needs a stage
 };
 
@@ -59,9 +77,16 @@ class ObservedMetrics {
   // descriptive error naming the metric.
   void declare(const std::string& name, const ObservedMetricConfig& cfg);
 
-  // World dependent checks (activity, stage), then rejects scopes that are not
-  // built yet. Must run before require() or any counting.
+  // World dependent checks (activity, stage). Must run before require() or any
+  // counting, and the world must outlive the metrics.
   void resolve(const WorldState& world, const Disease& disease);
+
+  // Does some active metric count per parent venue? Then the world needs its
+  // parent index before the first count.
+  bool needsVenueParents() const;
+  // Fill world.venue_parent_by_id from every rank's venues. Collective when
+  // needed: every rank must call it. Does nothing otherwise.
+  void buildVenueParents(WorldState& world) const;
 
   // Mark a declared metric as read by a Policy trigger. Throws when the name
   // was never declared.
@@ -72,35 +97,47 @@ class ObservedMetrics {
   std::vector<std::string> declaredNames() const;
   bool isCumulative(const std::string& name) const;
   bool isWorldScope(const std::string& name) const;
+  MetricScope scope(const std::string& name) const;
+  const std::string& activityOf(const std::string& name) const;
 
   bool anyDeclared() const { return !entries_.empty(); }
   bool anyActive() const { return !active_.empty(); }
   // Does the daily scan of infected people have anything to feed?
   bool tracksPresent() const { return tracks_present_; }
 
-  // Counting hooks, called where the engine already detects the event.
-  void onInfection(uint16_t symptom_id);
-  void onTransition(uint16_t previous_symptom_id, uint16_t symptom_id);
-  void onDeath();
-  void onPresent(uint16_t symptom_id);
+  // Counting hooks, called where the engine already detects the event. The
+  // person says which units the event counts toward, on the person's home rank.
+  void onInfection(const Person& person, uint16_t symptom_id);
+  void onTransition(const Person& person, uint16_t previous_symptom_id,
+                    uint16_t symptom_id);
+  void onDeath(const Person& person);
+  void onPresent(const Person& person, uint16_t symptom_id);
 
-  // Sum every active metric across ranks (one integer MPI_Allreduce) and fold
-  // the result in: a current metric takes the sum, a cumulative one adds it.
-  // Collective; every rank must call it the same days.
+  // Sum every active metric across ranks and fold the result in: a current
+  // metric takes the sum, a cumulative one adds it. World scope metrics share
+  // one integer MPI_Allreduce. Metrics counted per unit swap their sparse
+  // (unit, count) lists in one more exchange for all of them, because the units
+  // a rank has seen differ from rank to rank; every rank then merges the same
+  // integers. Collective; every rank must call it the same days.
   void reduce();
 
-  // Reduced value as of the last reduce(). Throws for an unknown name.
+  // Reduced value of a world scope metric as of the last reduce(). Throws for
+  // an unknown name, or for a metric counted per unit (use unitValue).
   int64_t value(const std::string& name) const;
   // The rank local part not yet reduced (for tests and diagnostics).
   int64_t localCount(const std::string& name) const;
 
-  // Active metrics in name order, with their reduced values. This is what a
-  // checkpoint stores.
-  std::vector<std::pair<std::string, int64_t>> activeValues() const;
-  // Put stored values back. The stored names must be exactly the active
-  // names; a mismatch in either direction throws.
-  void restoreActiveValues(
-      const std::vector<std::pair<std::string, int64_t>>& stored);
+  // A metric counted per unit, as of the last reduce(): the value at one unit
+  // (0 for a unit never counted), and the units the last reduce saw any count
+  // for, in unit order. Throw for a world scope metric.
+  int64_t unitValue(const std::string& name, VenueId unit) const;
+  const std::vector<VenueId>& changedUnits(const std::string& name) const;
+
+  // Active metrics in name order. This is what a checkpoint stores.
+  std::vector<MetricSnapshot> snapshot() const;
+  // Put stored values back. The stored names and scopes must be exactly the
+  // active ones; a mismatch in either direction throws.
+  void restoreSnapshot(const std::vector<MetricSnapshot>& stored);
 
  private:
   struct Entry {
@@ -109,21 +146,34 @@ class ObservedMetrics {
     const MetricSource* source = nullptr;
     MetricScope scope = MetricScope::World;
     uint16_t stage_id = 0;
+    int16_t activity_index = -1;
     bool active = false;
     int64_t local = 0;
     int64_t reduced = 0;
+    // Scopes counted per unit. local_units is this rank's part since the last
+    // reduce; units is the reduced total (cumulative) or the last reduce's
+    // counts (current); changed lists the units the last reduce saw counts for.
+    std::unordered_map<VenueId, int64_t> local_units;
+    std::map<VenueId, int64_t> units;
+    std::vector<VenueId> changed;
+
+    bool perUnit() const { return scope != MetricScope::World; }
   };
 
   Entry& find(const std::string& name);
   const Entry& find(const std::string& name) const;
-  // World scope is one total, so there is one counter per metric. A level
-  // scope would key the counter by the unit a person counts toward, here.
-  void count(const Observation& obs);
+  // The scope key: which units this person counts toward for this metric,
+  // sorted and without repeats, so a person counts once per unit.
+  void unitsOf(const Entry& entry, const Person& person,
+               std::vector<VenueId>& out) const;
+  void count(const Person& person, const Observation& obs);
 
   std::vector<Entry> entries_;  // sorted by name, so every rank agrees
   std::vector<size_t> active_;  // indices into entries_, in name order
   bool tracks_present_ = false;
   bool resolved_ = false;
+  const WorldState* world_ = nullptr;
+  std::vector<VenueId> scratch_units_;
 };
 
 }  // namespace june

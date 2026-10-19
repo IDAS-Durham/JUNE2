@@ -316,11 +316,11 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed,
         cp.string());
   YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
   format_version = man["format_version"].as<int>();
-  if (format_version < 1 || format_version > 3) {
+  if (format_version < 1 || format_version > 4) {
     throw std::runtime_error(
         "restoreFromCheckpoint: unsupported checkpoint format_version " +
         std::to_string(format_version) +
-        " (this build reads 1, 2 and 3): " + cp.string());
+        " (this build reads 1 to 4): " + cp.string());
   }
   int completed_day = man["completed_day"].as<int>();
   unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
@@ -334,23 +334,47 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed,
 }
 
 // Observed metric totals stored in state.h5, name order. Absent group means
-// the checkpoint was written with no active metric.
-std::vector<std::pair<std::string, int64_t>> readStoredMetrics(
-    const fs::path& cp) {
+// the checkpoint was written with no active metric. Before format 4 every
+// stored metric had world scope and the per unit arrays did not exist.
+std::vector<MetricSnapshot> readStoredMetrics(const fs::path& cp,
+                                              int format_version) {
   H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
   if (H5Lexists(f.getId(), "/observed_metrics", H5P_DEFAULT) <= 0) return {};
   const auto names = readStrs(f, "/observed_metrics/names");
   const auto values = readVec<int64_t>(f, "/observed_metrics/values",
                                        H5::PredType::NATIVE_INT64);
-  if (names.size() != values.size()) {
+  std::vector<int64_t> scopes(names.size(), 0);
+  std::vector<int64_t> offsets(names.size() + 1, 0);
+  std::vector<int64_t> unit_ids;
+  std::vector<int64_t> unit_values;
+  if (format_version >= 4) {
+    scopes = readVec<int64_t>(f, "/observed_metrics/scopes",
+                              H5::PredType::NATIVE_INT64);
+    offsets = readVec<int64_t>(f, "/observed_metrics/unit_offsets",
+                               H5::PredType::NATIVE_INT64);
+    unit_ids = readVec<int64_t>(f, "/observed_metrics/unit_ids",
+                                H5::PredType::NATIVE_INT64);
+    unit_values = readVec<int64_t>(f, "/observed_metrics/unit_values",
+                                   H5::PredType::NATIVE_INT64);
+  }
+  if (names.size() != values.size() || names.size() != scopes.size() ||
+      offsets.size() != names.size() + 1 ||
+      unit_ids.size() != unit_values.size() ||
+      offsets.back() != static_cast<int64_t>(unit_ids.size())) {
     throw std::runtime_error(
-        "restoreFromCheckpoint: observed_metrics names and values differ in "
-        "length in " +
+        "restoreFromCheckpoint: observed_metrics arrays differ in length in " +
         (cp / "state.h5").string());
   }
-  std::vector<std::pair<std::string, int64_t>> out;
-  for (size_t i = 0; i < names.size(); ++i)
-    out.emplace_back(names[i], values[i]);
+  std::vector<MetricSnapshot> out;
+  for (size_t i = 0; i < names.size(); ++i) {
+    MetricSnapshot m;
+    m.name = names[i];
+    m.scope = static_cast<MetricScope>(scopes[i]);
+    m.value = values[i];
+    for (int64_t k = offsets[i]; k < offsets[i + 1]; ++k)
+      m.units.emplace_back(static_cast<VenueId>(unit_ids[k]), unit_values[k]);
+    out.push_back(std::move(m));
+  }
   return out;
 }
 
@@ -424,7 +448,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
           "with no triggered Policy, or restart from day 0.");
     }
     if (format_version >= 2) {
-      metrics.restoreActiveValues(readStoredMetrics(cp));
+      metrics.restoreSnapshot(readStoredMetrics(cp, format_version));
     }
     // Older checkpoints hold no trigger state; a run that has triggered
     // Policies is refused by the same check that refuses a different set.

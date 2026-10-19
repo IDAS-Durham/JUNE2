@@ -49,6 +49,7 @@ TEST_CASE("Trigger - activation days do not depend on rank count") {
   pm.observedMetrics().resolve(world, disease);
   pm.requireTriggerMetrics();
 
+  const Person nobody{};
   // Deaths per day: 2, 3, 0, 5 reach 10 on day 3; four calm days then reopen
   // it on day 7. Deaths are numbered from 0 each day and dealt to ranks by
   // number, so the ranks' local counts differ.
@@ -58,7 +59,7 @@ TEST_CASE("Trigger - activation days do not depend on rank count") {
   for (int day = 0; day < 10; ++day) {
     for (int id = 0; id < deaths_per_day[day]; ++id) {
       if (id % size == rank) {
-        pm.observedMetrics().onDeath();
+        pm.observedMetrics().onDeath(nobody);
         ++local_total;
       }
     }

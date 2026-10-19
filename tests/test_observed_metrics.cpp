@@ -16,6 +16,7 @@
 #include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
 #include "transmission_fixtures.h"
+#include "venue_scope_fixtures.h"
 
 using namespace june;
 
@@ -72,6 +73,12 @@ TEST_CASE("ObservedMetrics - declaration rejects each malformed case") {
             "unknown scope 'region'"));
   CHECK(has(thrown([&] { m.declare("a", cfg("death", "venue")); }),
             "requires an 'activity'"));
+  CHECK(has(thrown([&] { m.declare("a", cfg("death", "parent_venue")); }),
+            "scope 'parent_venue' requires an 'activity'"));
+  CHECK(has(thrown([&] { m.declare("a", cfg("death", "region")); }),
+            "Known scopes: world, venue, parent_venue"));
+  CHECK(has(thrown([&] { m.declare("a", cfg("death", "world", "school")); }),
+            "only valid with scope 'venue' or 'parent_venue'"));
   CHECK(has(thrown([&] { m.declare("a", cfg("death", "world", "school")); }),
             "'activity' is only valid with scope 'venue'"));
   CHECK(has(thrown([&] { m.declare("a", cfg("stage", "world")); }),
@@ -83,7 +90,7 @@ TEST_CASE("ObservedMetrics - declaration rejects each malformed case") {
   CHECK_FALSE(m.anyDeclared());
 }
 
-TEST_CASE("ObservedMetrics - resolve rejects unknown names and venue scope") {
+TEST_CASE("ObservedMetrics - resolve rejects unknown names") {
   WorldState world;
   world.activity_names = {"residence", "school"};
   const Disease disease = makeMetricDisease();
@@ -101,11 +108,14 @@ TEST_CASE("ObservedMetrics - resolve rejects unknown names and venue scope") {
     CHECK(has(thrown([&] { m.resolve(world, disease); }),
               "unknown activity 'casino'"));
   }
-  SUBCASE("venue scope is refused as not built") {
+  SUBCASE("venue and parent venue scopes resolve against a known activity") {
     ObservedMetrics m;
     m.declare("a", cfg("infection", "venue", "school"));
-    CHECK(has(thrown([&] { m.resolve(world, disease); }),
-              "scope 'venue' is not supported yet"));
+    m.declare("b", cfg("death", "parent_venue", "school"));
+    CHECK_NOTHROW(m.resolve(world, disease));
+    CHECK(m.scope("a") == MetricScope::Venue);
+    CHECK(m.scope("b") == MetricScope::ParentVenue);
+    CHECK(m.activityOf("b") == "school");
   }
   SUBCASE("a valid world metric resolves and can be required") {
     ObservedMetrics m;
@@ -336,28 +346,260 @@ TEST_CASE("ObservedMetrics - stored totals restore exactly or throw") {
   };
 
   auto before = make(false);
-  before->onDeath();
-  before->onDeath();
-  before->onTransition(1, 2);
+  const Person nobody{};
+  before->onDeath(nobody);
+  before->onDeath(nobody);
+  before->onTransition(nobody, 1, 2);
   before->reduce();  // single process: local becomes the total
-  const auto stored = before->activeValues();
+  const auto stored = before->snapshot();
   REQUIRE(stored.size() == 2);
 
   auto after = make(false);
-  after->restoreActiveValues(stored);
+  after->restoreSnapshot(stored);
   CHECK(after->value("deaths") == 2);
   CHECK(after->value("severe") == 1);
   // Counting continues from the restored total, not from zero.
-  after->onDeath();
+  after->onDeath(nobody);
   after->reduce();
   CHECK(after->value("deaths") == 3);
 
   // A different active set is refused in both directions.
   auto more = make(true);
-  CHECK(has(thrown([&] { more->restoreActiveValues(stored); }),
+  CHECK(has(thrown([&] { more->restoreSnapshot(stored); }),
             "cannot be rebuilt or dropped"));
   auto fewer = make(false);
-  auto three = make(true).get()->activeValues();
-  CHECK(has(thrown([&] { fewer->restoreActiveValues(three); }),
+  auto three = make(true).get()->snapshot();
+  CHECK(has(thrown([&] { fewer->restoreSnapshot(three); }),
             "cannot be rebuilt or dropped"));
+}
+
+// ---------------------------------------------------------------------------
+// Metrics counted per venue and per parent venue
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using namespace june::venue_scope_fixture;
+
+// A metric set over the fixture world, all four active.
+struct UnitMetrics {
+  WorldState world = makeWorld();
+  Disease disease = makeMetricDisease();
+  ObservedMetrics m;
+
+  UnitMetrics() {
+    m.declare("class_now", cfg("infection", "venue", "primary_activity"));
+    m.declare("school_now",
+              cfg("infection", "parent_venue", "primary_activity"));
+    m.declare("class_deaths", cfg("death", "venue", "primary_activity"));
+    m.declare("school_deaths",
+              cfg("death", "parent_venue", "primary_activity"));
+    m.declare("pub_now", cfg("infection", "venue", "leisure"));
+    m.declare("world_total", cfg("death", "world"));
+    m.resolve(world, disease);
+    for (const char* n : {"class_now", "school_now", "class_deaths",
+                          "school_deaths", "pub_now"})
+      m.require(n);
+    m.buildVenueParents(world);
+  }
+
+  const Person& person(PersonId id) const { return world.people[id]; }
+};
+
+}  // namespace
+
+TEST_CASE("Metrics per venue - a person counts at every registered venue") {
+  UnitMetrics u;
+  for (PersonId id = 0; id < kPeople; ++id) u.m.onPresent(u.person(id), 1);
+  u.m.reduce();
+
+  // Class A: pupil A and the person registered to both classrooms.
+  CHECK(u.m.unitValue("class_now", kClassA) == 2);
+  CHECK(u.m.unitValue("class_now", kClassB) == 2);
+  CHECK(u.m.unitValue("class_now", kClassC) == 1);
+  // The metric counts every registered venue of the activity whatever its
+  // type: the pub worker's primary venue is a pub, the staff member's the
+  // school.
+  CHECK(u.m.unitValue("class_now", kPub) == 1);
+  CHECK(u.m.unitValue("class_now", kSchool) == 1);
+  // Only the named activity counts, so nobody is counted at the household.
+  CHECK(u.m.unitValue("class_now", kHome) == 0);
+
+  // A person with two leisure venues counts at both of them.
+  CHECK(u.m.unitValue("pub_now", kPub) == 2);
+  CHECK(u.m.unitValue("pub_now", kPubTwo) == 1);
+  const auto& seen = u.m.changedUnits("pub_now");
+  CHECK(seen == std::vector<VenueId>{kPub, kPubTwo});
+}
+
+TEST_CASE("Metrics per parent venue - one unit per parent, once per person") {
+  UnitMetrics u;
+  for (PersonId id = 0; id < kPeople; ++id) u.m.onPresent(u.person(id), 1);
+  u.m.reduce();
+
+  // School 3 holds class A, class B and the school itself. The person
+  // registered to both classrooms counts once, not twice: pupil A, pupil B,
+  // that person and the staff member registered to the school are four.
+  CHECK(u.m.unitValue("school_now", kSchool) == 4);
+  // A venue with no parent is its own unit.
+  CHECK(u.m.unitValue("school_now", kPub) == 1);
+  // The other school holds class C only.
+  CHECK(u.m.unitValue("school_now", kSchoolTwo) == 1);
+  // Nothing is counted at a child of a parent.
+  CHECK(u.m.unitValue("school_now", kClassA) == 0);
+  CHECK(u.m.unitValue("school_now", kClassC) == 0);
+  CHECK(u.m.changedUnits("school_now") ==
+        std::vector<VenueId>{kPub, kSchool, kSchoolTwo});
+}
+
+TEST_CASE(
+    "Metrics per unit - a dead person is counted where they were registered") {
+  UnitMetrics u;
+  Person& dead = u.world.people[kTwoClasses];
+  dead.is_dead = true;  // as the engine sets it just before the death hook
+  u.m.onDeath(dead);
+  u.m.reduce();
+
+  CHECK(u.m.unitValue("class_deaths", kClassA) == 1);
+  CHECK(u.m.unitValue("class_deaths", kClassB) == 1);
+  CHECK(u.m.unitValue("school_deaths", kSchool) ==
+        1);  // once for two classrooms
+
+  // Cumulative: another death adds, and a day with none leaves the total.
+  u.m.onDeath(u.person(kPupilA));
+  u.m.reduce();
+  CHECK(u.m.unitValue("class_deaths", kClassA) == 2);
+  CHECK(u.m.unitValue("school_deaths", kSchool) == 2);
+  u.m.reduce();
+  CHECK(u.m.unitValue("class_deaths", kClassA) == 2);
+  CHECK(u.m.changedUnits("class_deaths").empty());
+}
+
+TEST_CASE(
+    "Metrics per unit - a current metric forgets units it no longer sees") {
+  UnitMetrics u;
+  u.m.onPresent(u.person(kPupilA), 1);
+  u.m.onPresent(u.person(kPupilB), 1);
+  u.m.reduce();
+  CHECK(u.m.unitValue("class_now", kClassA) == 1);
+  CHECK(u.m.unitValue("class_now", kClassB) == 1);
+
+  u.m.onPresent(u.person(kPupilB), 1);
+  u.m.reduce();
+  CHECK(u.m.unitValue("class_now", kClassA) == 0);
+  CHECK(u.m.unitValue("class_now", kClassB) == 1);
+  CHECK(u.m.changedUnits("class_now") == std::vector<VenueId>{kClassB});
+}
+
+TEST_CASE("Metrics per unit - reading the wrong kind of metric is refused") {
+  UnitMetrics u;
+  CHECK(has(thrown([&] { u.m.value("class_now"); }), "read it with unitValue"));
+  CHECK(has(thrown([&] { u.m.unitValue("world_total", kPub); }),
+            "has scope 'world'"));
+  CHECK(has(thrown([&] { u.m.changedUnits("world_total"); }),
+            "has scope 'world'"));
+}
+
+TEST_CASE("Metrics per unit - the parent index is built only when needed") {
+  SUBCASE("a parent venue metric fills it from the venues") {
+    UnitMetrics u;
+    REQUIRE(u.world.venue_parent_by_id.size() == kVenueCount);
+    CHECK(u.world.parentUnitOf(kClassA) == kSchool);
+    CHECK(u.world.parentUnitOf(kClassC) == kSchoolTwo);
+    CHECK(u.world.parentUnitOf(kPub) == kPub);        // no parent: itself
+    CHECK(u.world.parentUnitOf(kSchool) == kSchool);  // the parent itself
+    CHECK(has(thrown([&] { u.world.parentUnitOf(99); }),
+              "outside the parent index"));
+  }
+  SUBCASE("venue and world metrics leave it empty") {
+    WorldState world = makeWorld();
+    const Disease disease = makeMetricDisease();
+    ObservedMetrics m;
+    m.declare("a", cfg("infection", "venue", "primary_activity"));
+    m.declare("b", cfg("death", "world"));
+    m.resolve(world, disease);
+    m.require("a");
+    m.require("b");
+    CHECK_FALSE(m.needsVenueParents());
+    m.buildVenueParents(world);
+    CHECK(world.venue_parent_by_id.empty());
+  }
+  SUBCASE("a declared but unreferenced parent venue metric costs nothing") {
+    WorldState world = makeWorld();
+    const Disease disease = makeMetricDisease();
+    ObservedMetrics m;
+    m.declare("a", cfg("infection", "parent_venue", "primary_activity"));
+    m.resolve(world, disease);
+    CHECK_FALSE(m.needsVenueParents());
+    m.buildVenueParents(world);
+    CHECK(world.venue_parent_by_id.empty());
+  }
+}
+
+TEST_CASE("Metrics per unit - stored totals restore exactly or throw") {
+  UnitMetrics before;
+  before.m.onDeath(before.person(kTwoClasses));
+  before.m.onDeath(before.person(kPupilA));
+  before.m.onPresent(before.person(kPupilA), 1);
+  before.m.reduce();
+  const auto stored = before.m.snapshot();
+
+  UnitMetrics after;
+  after.m.restoreSnapshot(stored);
+  CHECK(after.m.unitValue("class_deaths", kClassA) == 2);
+  CHECK(after.m.unitValue("class_deaths", kClassB) == 1);
+  CHECK(after.m.unitValue("school_deaths", kSchool) == 2);
+  // Counting goes on from the restored totals.
+  after.m.onDeath(after.person(kPupilB));
+  after.m.reduce();
+  CHECK(after.m.unitValue("class_deaths", kClassB) == 2);
+  CHECK(after.m.unitValue("school_deaths", kSchool) == 3);
+  // A current metric is not stored: the next daily scan rebuilds it.
+  CHECK(after.m.unitValue("class_now", kClassA) == 0);
+
+  // The same name under another scope is refused.
+  WorldState world = makeWorld();
+  const Disease disease = makeMetricDisease();
+  ObservedMetrics other;
+  other.declare("class_deaths", cfg("death", "world"));
+  other.declare("school_deaths",
+                cfg("death", "parent_venue", "primary_activity"));
+  other.declare("class_now", cfg("infection", "venue", "primary_activity"));
+  other.declare("school_now",
+                cfg("infection", "parent_venue", "primary_activity"));
+  other.declare("pub_now", cfg("infection", "venue", "leisure"));
+  other.resolve(world, disease);
+  for (const char* n :
+       {"class_now", "school_now", "class_deaths", "school_deaths", "pub_now"})
+    other.require(n);
+  CHECK(has(thrown([&] { other.restoreSnapshot(stored); }),
+            "different scope than this run"));
+}
+
+TEST_CASE(
+    "Epidemiology - hooks count a real trajectory at the person's venues") {
+  UnitMetrics u;
+  Epidemiology epi(u.world, &u.disease);
+  epi.setObservedMetrics(&u.m);
+
+  // Two people infected at t = 0: mild until 2, severe until 3, dead after.
+  for (PersonId id : {kPupilA, kTwoClasses}) {
+    u.world.people[id].infection = std::make_unique<Infection>(
+        &u.disease, 0.0, &u.world.people[id], 100 + id, kNoTransmissionContext,
+        nullptr, "office", 0);
+    epi.trackInfection(id);
+  }
+
+  epi.updateInfectionStates(1.0, {});
+  epi.reduceObservedMetrics();
+  CHECK(u.m.unitValue("class_now", kClassA) == 2);
+  CHECK(u.m.unitValue("class_now", kClassB) == 1);
+  CHECK(u.m.unitValue("school_now", kSchool) == 2);
+
+  epi.updateInfectionStates(5.0, {});
+  epi.reduceObservedMetrics();
+  CHECK(u.m.unitValue("class_now", kClassA) == 0);  // nobody is infected now
+  CHECK(u.m.unitValue("class_deaths", kClassA) == 2);
+  CHECK(u.m.unitValue("class_deaths", kClassB) == 1);
+  CHECK(u.m.unitValue("school_deaths", kSchool) == 2);
 }

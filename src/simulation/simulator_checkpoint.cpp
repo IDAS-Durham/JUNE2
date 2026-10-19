@@ -469,7 +469,7 @@ void writeManifest(const fs::path& tmp, int completed_day,
                    double current_simulation_time, unsigned int random_seed) {
   YAML::Emitter m;
   m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 3;
+  m << YAML::Key << "format_version" << YAML::Value << 4;
   m << YAML::Key << "completed_day" << YAML::Value << completed_day;
   m << YAML::Key << "date" << YAML::Value << date_iso;
   m << YAML::Key << "current_simulation_time" << YAML::Value
@@ -604,19 +604,39 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
            H5::PredType::NATIVE_INT64, 0);
   // Observed metric totals. Already reduced at the day boundary, so every
   // rank holds the same numbers and one global file is enough. Written only
-  // when a metric is active, so a run without one adds nothing here.
+  // when a metric is active, so a run without one adds nothing here. A metric
+  // counted per unit keeps its cumulative totals in three flat arrays: the
+  // units of metric i are unit_ids[unit_offsets[i] .. unit_offsets[i + 1]).
   if (policy_manager_) {
-    const auto metrics = policy_manager_->observedMetrics().activeValues();
+    const auto metrics = policy_manager_->observedMetrics().snapshot();
     if (!metrics.empty()) {
       f.createGroup("/observed_metrics");
       std::vector<std::string> names;
       std::vector<int64_t> values;
-      for (const auto& [n, v] : metrics) {
-        names.push_back(n);
-        values.push_back(v);
+      std::vector<int64_t> scopes;
+      std::vector<int64_t> unit_offsets = {0};
+      std::vector<int64_t> unit_ids;
+      std::vector<int64_t> unit_values;
+      for (const auto& m : metrics) {
+        names.push_back(m.name);
+        values.push_back(m.value);
+        scopes.push_back(static_cast<int64_t>(m.scope));
+        for (const auto& [unit, total] : m.units) {
+          unit_ids.push_back(unit);
+          unit_values.push_back(total);
+        }
+        unit_offsets.push_back(static_cast<int64_t>(unit_ids.size()));
       }
       writeStrs(f, "/observed_metrics/names", names);
       writeVec(f, "/observed_metrics/values", values,
+               H5::PredType::NATIVE_INT64, 0);
+      writeVec(f, "/observed_metrics/scopes", scopes,
+               H5::PredType::NATIVE_INT64, 0);
+      writeVec(f, "/observed_metrics/unit_offsets", unit_offsets,
+               H5::PredType::NATIVE_INT64, 0);
+      writeVec(f, "/observed_metrics/unit_ids", unit_ids,
+               H5::PredType::NATIVE_INT64, 0);
+      writeVec(f, "/observed_metrics/unit_values", unit_values,
                H5::PredType::NATIVE_INT64, 0);
     }
     // Trigger state, same reasoning: derived from reduced totals, so identical
