@@ -37,20 +37,22 @@ std::string jsonString(const std::string& value) {
 
 // Resolve which people should appear in a /lookups/* table for this write
 // call. `mode` is the config switch ("none"/"all"/"infected_only"). Empty
-// result means "skip the whole table". The mode=="all" + append branch
-// returns empty intentionally (already written on first call).
+// result means "skip the whole table". A table in "all" mode is written on
+// the first call only (the append branch returns empty intentionally, it is
+// already written) and ignores the filter. The filter only narrows an
+// "infected_only" table to the people it still needs; an empty filter means
+// nobody, and no filter means every infectee in the buffer.
 std::unordered_set<june::PersonId> selectPeopleToSave(
     const june::WorldState& world, const std::string& mode,
     const std::unordered_set<june::PersonId>& infected_person_ids, bool append,
     const std::unordered_set<june::PersonId>* person_ids_filter) {
   std::unordered_set<june::PersonId> people_to_save;
-  if (person_ids_filter) {
-    people_to_save = *person_ids_filter;
-  } else if (mode == "all") {
+  if (mode == "all") {
     if (append) return people_to_save;
     for (const auto& person : world.people) people_to_save.insert(person.id);
   } else if (mode == "infected_only") {
-    people_to_save = infected_person_ids;
+    people_to_save =
+        person_ids_filter ? *person_ids_filter : infected_person_ids;
   }
   return people_to_save;
 }
