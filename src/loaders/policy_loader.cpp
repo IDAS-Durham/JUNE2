@@ -3,6 +3,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -224,6 +225,147 @@ int64_t readWholeNumber(const YAML::Node& value, const std::string& where,
   }
 }
 
+double readNumber(const YAML::Node& value, const std::string& where,
+                  const std::string& key) {
+  try {
+    const double number = value.as<double>();
+    if (std::isfinite(number)) return number;
+  } catch (const YAML::Exception&) {
+  }
+  throw std::runtime_error(where + "'" + key + "' must be a finite number.");
+}
+
+void requireDeclaredMetric(const ObservedMetrics& metrics,
+                           const std::string& metric,
+                           const std::string& where) {
+  const auto declared = metrics.declaredNames();
+  if (std::find(declared.begin(), declared.end(), metric) != declared.end())
+    return;
+  std::string known;
+  for (const auto& n : declared) known += (known.empty() ? "" : ", ") + n;
+  throw std::runtime_error(
+      where + "unknown metric '" + metric +
+      "'. Declared metrics: " + (known.empty() ? "none" : known) + ".");
+}
+
+// The response form of a trigger: a base level, terms of metric and weight, and
+// the decision unit. The level is base + sum(weight * count), read at the day
+// boundary and clamped to 1 where it is used.
+PolicyTrigger loadResponse(const YAML::Node& node,
+                           const ObservedMetrics& metrics,
+                           const std::string& where) {
+  for (const char* key : {"metric", "activate_at", "deactivate_at", "calm_days",
+                          "tolerance", "tolerance_pct"}) {
+    if (node[key]) {
+      throw std::runtime_error(where +
+                               "takes either the threshold fields or a "
+                               "'response' list, never both; found '" +
+                               key + "' next to 'response'.");
+    }
+  }
+  const YAML::Node response = node["response"];
+  if (!response.IsMap()) {
+    throw std::runtime_error(where +
+                             "'response' must be a mapping with 'base' and "
+                             "'terms'.");
+  }
+  for (const auto& kv : response) {
+    const std::string key = kv.first.as<std::string>();
+    if (key != "base" && key != "terms") {
+      throw std::runtime_error(where + "unknown field '" + key +
+                               "' in 'response'. Fields are base, terms.");
+    }
+  }
+
+  PolicyTrigger trigger;
+  if (response["base"]) {
+    trigger.base = readNumber(response["base"], where, "base");
+    if (trigger.base < 0.0 || trigger.base > 1.0) {
+      throw std::runtime_error(where + "'base' must be from 0 to 1, got " +
+                               std::to_string(trigger.base) + ".");
+    }
+  }
+  trigger.world_level = trigger.base;
+
+  if (!response["terms"] || !response["terms"].IsSequence() ||
+      response["terms"].size() == 0) {
+    throw std::runtime_error(where +
+                             "'response' needs a non empty 'terms' list of "
+                             "{metric, weight}.");
+  }
+  for (const auto& term_node : response["terms"]) {
+    if (!term_node.IsMap()) {
+      throw std::runtime_error(where +
+                               "each term must be a mapping with 'metric' and "
+                               "'weight'.");
+    }
+    for (const auto& kv : term_node) {
+      const std::string key = kv.first.as<std::string>();
+      if (key != "metric" && key != "weight") {
+        throw std::runtime_error(where + "unknown field '" + key +
+                                 "' in a term. Fields are metric, weight.");
+      }
+    }
+    if (!term_node["metric"] || !term_node["weight"]) {
+      throw std::runtime_error(where +
+                               "each term needs both 'metric' and 'weight'.");
+    }
+    ResponseTerm term;
+    term.metric = term_node["metric"].as<std::string>();
+    requireDeclaredMetric(metrics, term.metric, where);
+    term.weight = readNumber(term_node["weight"], where, "weight");
+    if (term.weight <= 0.0) {
+      throw std::runtime_error(where + "the weight of '" + term.metric +
+                               "' must be above 0, got " +
+                               std::to_string(term.weight) + ".");
+    }
+    for (const auto& earlier : trigger.terms) {
+      if (earlier.metric == term.metric) {
+        throw std::runtime_error(where + "metric '" + term.metric +
+                                 "' appears in two terms; give it one weight.");
+      }
+    }
+    trigger.terms.push_back(term);
+  }
+
+  // One scope and one activity for all terms. A world term next to a venue term
+  // is a known limitation, not a mode.
+  const std::string& first = trigger.terms[0].metric;
+  trigger.scope = metrics.scope(first);
+  for (const auto& term : trigger.terms) {
+    if (metrics.scope(term.metric) != trigger.scope ||
+        metrics.activityOf(term.metric) != metrics.activityOf(first)) {
+      throw std::runtime_error(
+          where + "metrics '" + first + "' and '" + term.metric +
+          "' differ in scope or activity. A response reads one scope and one "
+          "activity; mixing them is not built yet.");
+    }
+  }
+
+  if (!node["decision_unit"]) {
+    throw std::runtime_error(where +
+                             "a 'response' needs 'decision_unit': 'person' or "
+                             "'{shared_venue: <activity>}'.");
+  }
+  const YAML::Node unit = node["decision_unit"];
+  if (unit.IsScalar() && unit.as<std::string>() == "person") {
+    // each person decides alone
+  } else if (unit.IsMap() && unit.size() == 1 && unit["shared_venue"] &&
+             unit["shared_venue"].IsScalar()) {
+    trigger.decision_unit.shared_activity =
+        unit["shared_venue"].as<std::string>();
+    if (trigger.decision_unit.shared_activity.empty()) {
+      throw std::runtime_error(where +
+                               "'shared_venue' needs an activity name.");
+    }
+  } else {
+    throw std::runtime_error(where +
+                             "'decision_unit' must be 'person' or "
+                             "'{shared_venue: <activity>}'.");
+  }
+  return trigger;
+}
+
 // Parse and check one policy's trigger block. Everything that needs only the
 // YAML and the declared metrics is checked here, so a bad trigger fails at
 // load with the policy and metric named.
@@ -242,25 +384,19 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
       throw std::runtime_error(
           where + "unknown field '" + key +
           "'. Fields are metric, activate_at, deactivate_at, calm_days, "
-          "tolerance, tolerance_pct.");
+          "tolerance, tolerance_pct, response, decision_unit.");
     }
   }
+  if (node["response"]) return loadResponse(node, metrics, where);
   if (node["decision_unit"]) {
     throw std::runtime_error(where +
-                             "'decision_unit' is not built yet; it belongs to "
-                             "the voluntary response form.");
+                             "'decision_unit' belongs to the 'response' form; "
+                             "a threshold trigger has no decision unit.");
   }
   if (!node["metric"])
     throw std::runtime_error(where + "'metric' is required.");
   const std::string metric = node["metric"].as<std::string>();
-  const auto declared = metrics.declaredNames();
-  if (std::find(declared.begin(), declared.end(), metric) == declared.end()) {
-    std::string known;
-    for (const auto& n : declared) known += (known.empty() ? "" : ", ") + n;
-    throw std::runtime_error(
-        where + "unknown metric '" + metric +
-        "'. Declared metrics: " + (known.empty() ? "none" : known) + ".");
-  }
+  requireDeclaredMetric(metrics, metric, where);
 
   const auto number = [&](const char* key) -> std::optional<int64_t> {
     if (!node[key]) return std::nullopt;
@@ -274,16 +410,6 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
 
   const bool has_threshold =
       activate_at || deactivate_at || calm_days || tolerance || tolerance_pct;
-  if (node["response"]) {
-    if (has_threshold) {
-      throw std::runtime_error(where +
-                               "takes either the threshold fields or a "
-                               "'response' list, never both.");
-    }
-    throw std::runtime_error(where +
-                             "a 'response' list is not built yet; only the "
-                             "threshold form is.");
-  }
   if (!has_threshold) {
     throw std::runtime_error(where +
                              "needs the threshold fields ('activate_at' and "
@@ -358,6 +484,68 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
   return trigger;
 }
 
+// A Policy that acts on venues of one activity must be allowed to touch them.
+void checkActivityListed(const std::string& where, const PolicyAction& action,
+                         const ObservedMetrics& metrics,
+                         const std::string& metric) {
+  const auto& listed = action.override_activities;
+  const std::string& activity = metrics.activityOf(metric);
+  if (!listed.empty() && !listed.count("*") && !listed.count(activity)) {
+    throw std::runtime_error(
+        where + "'override_activities' must include '" + activity +
+        "', the activity of metric '" + metric +
+        "'; otherwise the policy never acts on the venues the metric counts.");
+  }
+}
+
+// A voluntary Policy derives who avoids from the metric every time it is asked.
+// The compliance rate it replaces must be absent, and whatever assumes a
+// latched decision is refused rather than half honoured.
+void checkVoluntaryPolicy(const std::string& kind, const std::string& name,
+                          const YAML::Node& node, const PolicyTrigger& trigger,
+                          const ObservedMetrics& metrics,
+                          const PolicyAction& action) {
+  const std::string where = kind + "_policy '" + name + "' trigger: ";
+  if (node["compliance_rate"]) {
+    throw std::runtime_error(
+        where +
+        "'compliance_rate' must be absent on a policy with a 'response', "
+        "because the avoidance level replaces it. Remove the key, even a "
+        "value of 1.");
+  }
+  if (node["transmission_effects_file"]) {
+    throw std::runtime_error(
+        where +
+        "transmission effects on a policy with a 'response' are not built "
+        "yet; the policy can only send people elsewhere.");
+  }
+  if (kind == "symptom") {
+    if (trigger.perUnit()) {
+      throw std::runtime_error(
+          where + "metric '" + trigger.terms[0].metric +
+          "' is counted per venue, which is not built yet for a symptom "
+          "policy; a response on a symptom policy reads a world scope "
+          "metric.");
+    }
+    if (trigger.decision_unit.shared()) {
+      throw std::runtime_error(
+          where +
+          "'shared_venue' is not built yet for a symptom policy; use "
+          "'decision_unit: person'.");
+    }
+    for (const char* key : {"replacement_schedule", "follow_up_policy"}) {
+      if (node[key]) {
+        throw std::runtime_error(
+            where + "'" + key +
+            "' is not built yet on a policy with a 'response': it assumes a "
+            "decision that stays latched, and a voluntary policy keeps none.");
+      }
+    }
+  } else if (trigger.perUnit()) {
+    checkActivityListed(where, action, metrics, trigger.terms[0].metric);
+  }
+}
+
 // A Policy triggered per venue closes a venue for everyone scheduled there.
 // Whatever would make that partial, or would need venue by venue rebuilding of
 // the transmission modifiers, is refused here rather than half honoured.
@@ -380,14 +568,7 @@ void checkVenueTriggeredPolicy(const TemporalPolicy& policy,
         "transmission effects on a policy triggered per venue are not "
         "built yet; the policy can only send people elsewhere.");
   }
-  const auto& listed = policy.action.override_activities;
-  const std::string& activity = metrics.activityOf(metric);
-  if (!listed.empty() && !listed.count("*") && !listed.count(activity)) {
-    throw std::runtime_error(
-        where + "'override_activities' must include '" + activity +
-        "', the activity of metric '" + metric +
-        "'; otherwise the policy never acts on the venues the metric closes.");
-  }
+  checkActivityListed(where, policy.action, metrics, metric);
 }
 
 }  // namespace
@@ -416,7 +597,11 @@ void loadSymptomPolicies(PolicyManager& policy_manager, const YAML::Node& node,
       policy.trigger =
           loadTrigger(policy_node["trigger"], policy_manager.observedMetrics(),
                       "symptom_policy '" + policy.name + "'");
-      if (policy.trigger->perUnit()) {
+      if (policy.trigger->voluntary()) {
+        checkVoluntaryPolicy("symptom", policy.name, policy_node,
+                             *policy.trigger, policy_manager.observedMetrics(),
+                             policy.action);
+      } else if (policy.trigger->perUnit()) {
         throw std::runtime_error(
             "symptom_policy '" + policy.name + "' trigger: metric '" +
             policy.trigger->metric +
@@ -467,7 +652,11 @@ void loadTemporalPolicies(PolicyManager& policy_manager, const YAML::Node& node,
       policy.trigger =
           loadTrigger(policy_node["trigger"], policy_manager.observedMetrics(),
                       "temporal_policy '" + policy.name + "'");
-      if (policy.trigger->perUnit()) {
+      if (policy.trigger->voluntary()) {
+        checkVoluntaryPolicy("temporal", policy.name, policy_node,
+                             *policy.trigger, policy_manager.observedMetrics(),
+                             policy.action);
+      } else if (policy.trigger->perUnit()) {
         checkVenueTriggeredPolicy(policy, policy_node,
                                   policy_manager.observedMetrics());
       }

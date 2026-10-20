@@ -469,7 +469,7 @@ void writeManifest(const fs::path& tmp, int completed_day,
                    double current_simulation_time, unsigned int random_seed) {
   YAML::Emitter m;
   m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 4;
+  m << YAML::Key << "format_version" << YAML::Value << 5;
   m << YAML::Key << "completed_day" << YAML::Value << completed_day;
   m << YAML::Key << "date" << YAML::Value << date_iso;
   m << YAML::Key << "current_simulation_time" << YAML::Value
@@ -605,7 +605,9 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
   // Observed metric totals. Already reduced at the day boundary, so every
   // rank holds the same numbers and one global file is enough. Written only
   // when a metric is active, so a run without one adds nothing here. A metric
-  // counted per unit keeps its cumulative totals in three flat arrays: the
+  // counted per unit keeps its value per unit in three flat arrays (running
+  // totals for a cumulative metric, the last day's counts for a current one,
+  // which a voluntary response reads on the first day after a resume): the
   // units of metric i are unit_ids[unit_offsets[i] .. unit_offsets[i + 1]).
   if (policy_manager_) {
     const auto metrics = policy_manager_->observedMetrics().snapshot();
@@ -651,11 +653,13 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
       // three flat arrays: the cells of trigger i are unit_ids[unit_offsets[i]
       // .. unit_offsets[i + 1]), three numbers each in unit_state.
       std::vector<int64_t> scopes;
+      std::vector<int64_t> voluntary;
       std::vector<int64_t> unit_offsets = {0};
       std::vector<int64_t> unit_ids;
       std::vector<int64_t> unit_state;
       for (const auto& t : triggers) {
         keys.push_back(t.key);
+        voluntary.push_back(t.voluntary ? 1 : 0);
         state.insert(state.end(),
                      {t.closed ? 1 : 0, t.anchor_day, t.anchor_value});
         scopes.push_back(static_cast<int64_t>(t.scope));
@@ -672,6 +676,8 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
                0);
       writeVec(f, "/policy_triggers/scopes", scopes, H5::PredType::NATIVE_INT64,
                0);
+      writeVec(f, "/policy_triggers/voluntary", voluntary,
+               H5::PredType::NATIVE_INT64, 0);
       writeVec(f, "/policy_triggers/unit_offsets", unit_offsets,
                H5::PredType::NATIVE_INT64, 0);
       writeVec(f, "/policy_triggers/unit_ids", unit_ids,

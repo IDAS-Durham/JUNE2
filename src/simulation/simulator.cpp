@@ -536,6 +536,10 @@ Simulator::Simulator(WorldState& world, Config& config,
         std::cout << line << std::endl;
     }
     policy_manager_->precomputePolicyApplicability(world_.people);
+    // Collective: every rank checks its own people and all throw together.
+    for (const std::string& line : policy_manager_->checkDecisionUnits()) {
+      if (getRank() == 0) std::cout << line << std::endl;
+    }
     policy_manager_->initializeTransmissionModifiers(*disease_,
                                                      current_simulation_time_);
   }

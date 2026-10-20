@@ -48,8 +48,9 @@ std::vector<std::string> metricSourceNames();
 enum class MetricScope : uint8_t { World, Venue, ParentVenue };
 
 // What a checkpoint keeps of one active metric: a world scope total, or for a
-// cumulative metric counted per unit, its running total per unit in unit order.
-// A current metric counted per unit is rebuilt by the next daily scan.
+// metric counted per unit, its value per unit in unit order (the running total
+// of a cumulative metric, the last day's counts of a current one). The day
+// after a resume reads the current counts before the next daily scan has run.
 struct MetricSnapshot {
   std::string name;
   MetricScope scope = MetricScope::World;
@@ -99,6 +100,9 @@ class ObservedMetrics {
   bool isWorldScope(const std::string& name) const;
   MetricScope scope(const std::string& name) const;
   const std::string& activityOf(const std::string& name) const;
+  // The activity's index in the world, as resolved. -1 for a world scope
+  // metric.
+  int16_t activityIndexOf(const std::string& name) const;
 
   bool anyDeclared() const { return !entries_.empty(); }
   bool anyActive() const { return !active_.empty(); }
@@ -132,6 +136,8 @@ class ObservedMetrics {
   // for, in unit order. Throw for a world scope metric.
   int64_t unitValue(const std::string& name, VenueId unit) const;
   const std::vector<VenueId>& changedUnits(const std::string& name) const;
+  // Every unit with a count as of the last reduce(), in unit order.
+  const std::map<VenueId, int64_t>& unitValues(const std::string& name) const;
 
   // Active metrics in name order. This is what a checkpoint stores.
   std::vector<MetricSnapshot> snapshot() const;

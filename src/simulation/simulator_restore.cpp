@@ -316,11 +316,11 @@ int readAndValidateManifest(const fs::path& cp, unsigned int config_seed,
         cp.string());
   YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
   format_version = man["format_version"].as<int>();
-  if (format_version < 1 || format_version > 4) {
+  if (format_version < 1 || format_version > 5) {
     throw std::runtime_error(
         "restoreFromCheckpoint: unsupported checkpoint format_version " +
         std::to_string(format_version) +
-        " (this build reads 1 to 4): " + cp.string());
+        " (this build reads 1 to 5): " + cp.string());
   }
   int completed_day = man["completed_day"].as<int>();
   unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
@@ -380,7 +380,8 @@ std::vector<MetricSnapshot> readStoredMetrics(const fs::path& cp,
 
 // Policy trigger state stored in state.h5. Absent group means the checkpoint
 // was written with no triggered Policy. Before format 4 every trigger had
-// world scope and the per unit arrays did not exist.
+// world scope and the per unit arrays did not exist. Before format 5 no
+// trigger was voluntary.
 std::vector<PolicyManager::TriggerState> readStoredTriggers(
     const fs::path& cp, int format_version) {
   H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
@@ -395,9 +396,14 @@ std::vector<PolicyManager::TriggerState> readStoredTriggers(
         (cp / "state.h5").string());
   }
   std::vector<int64_t> scopes(keys.size(), 0);
+  std::vector<int64_t> voluntary(keys.size(), 0);
   std::vector<int64_t> offsets(keys.size() + 1, 0);
   std::vector<int64_t> unit_ids;
   std::vector<int64_t> unit_state;
+  if (format_version >= 5) {
+    voluntary = readVec<int64_t>(f, "/policy_triggers/voluntary",
+                                 H5::PredType::NATIVE_INT64);
+  }
   if (format_version >= 4) {
     scopes = readVec<int64_t>(f, "/policy_triggers/scopes",
                               H5::PredType::NATIVE_INT64);
@@ -408,7 +414,8 @@ std::vector<PolicyManager::TriggerState> readStoredTriggers(
     unit_state = readVec<int64_t>(f, "/policy_triggers/unit_state",
                                   H5::PredType::NATIVE_INT64);
   }
-  if (scopes.size() != keys.size() || offsets.size() != keys.size() + 1 ||
+  if (scopes.size() != keys.size() || voluntary.size() != keys.size() ||
+      offsets.size() != keys.size() + 1 ||
       unit_state.size() != 3 * unit_ids.size() ||
       offsets.back() != static_cast<int64_t>(unit_ids.size())) {
     throw std::runtime_error(
@@ -422,7 +429,8 @@ std::vector<PolicyManager::TriggerState> readStoredTriggers(
                                   state[3 * i + 1],
                                   state[3 * i + 2],
                                   static_cast<MetricScope>(scopes[i]),
-                                  {}};
+                                  {},
+                                  voluntary[i] != 0};
     for (int64_t k = offsets[i]; k < offsets[i + 1]; ++k) {
       t.units.emplace_back(
           static_cast<VenueId>(unit_ids[k]),
@@ -481,6 +489,18 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
           "observed metric totals, but this run has active metrics. Resume "
           "with no triggered Policy, or restart from day 0.");
     }
+    // A voluntary response reads the current per venue counts of the last day,
+    // which older checkpoints did not keep, so the first day after a resume
+    // would read zero. Refused rather than resumed with the wrong avoidance.
+    if (format_version < 5 && policy_manager_->anyVoluntary()) {
+      throw std::runtime_error(
+          "restoreFromCheckpoint: checkpoint is format_version " +
+          std::to_string(format_version) +
+          ", which does not hold the metric counts a voluntary response "
+          "reads on the first day after a resume, but this run has a Policy "
+          "with a 'response'. Resume from a format 5 checkpoint or restart "
+          "from day 0.");
+    }
     if (format_version >= 2) {
       metrics.restoreSnapshot(readStoredMetrics(cp, format_version));
     }
@@ -489,6 +509,8 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
     policy_manager_->restoreTriggerStates(
         format_version >= 3 ? readStoredTriggers(cp, format_version)
                             : std::vector<PolicyManager::TriggerState>{});
+    // The levels are derived from the metric counts just put back.
+    policy_manager_->rebuildResponseLevels();
   }
 
   // frozen_states_ + lpt + follows are per-rank: accumulated from the shards.

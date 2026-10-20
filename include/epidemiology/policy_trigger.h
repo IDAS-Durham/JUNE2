@@ -1,9 +1,11 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -25,8 +27,29 @@ struct TriggerCell {
   bool operator==(const TriggerCell&) const = default;
 };
 
+// One term of a response: a metric's reduced count times a weight.
+struct ResponseTerm {
+  std::string metric;
+  double weight = 0.0;
+};
+
+// Who shares one avoidance draw. A person decides alone, or everyone registered
+// to the same venue for a named activity decides together.
+struct DecisionUnit {
+  std::string shared_activity;  // empty: the person decides alone
+  int16_t activity_index = -1;  // shared_activity in the world, set on resolve
+
+  bool shared() const { return !shared_activity.empty(); }
+};
+
 // Ties a Policy's activation to an observed metric. "Closed" means the trigger
 // holds the Policy in force, the way a venue closes; "open" means it does not.
+//
+// A trigger takes one of two forms. The threshold form closes and reopens as
+// the metric crosses its thresholds. The response form (voluntary) keeps no
+// open or closed state: a daily avoidance level is derived from the metric
+// counts, and each decision unit avoids exactly when the level is above its own
+// fixed draw.
 //
 // The state is read once per day, after the metric is reduced, so every rank
 // reaches the same answer from the same integers. A world scope trigger keeps
@@ -46,6 +69,27 @@ struct PolicyTrigger : TriggerCell {
   MetricScope scope = MetricScope::World;  // taken from the metric at load
 
   bool perUnit() const { return scope != MetricScope::World; }
+
+  // Response form. level = base + sum(weight * count) over the terms, clamped
+  // to 1 where it is read. All terms share one scope and one activity.
+  double base = 0.0;
+  std::vector<ResponseTerm> terms;
+  DecisionUnit decision_unit;
+  int16_t metric_activity_index = -1;  // the terms' activity, set on resolve
+
+  bool voluntary() const { return !terms.empty(); }
+
+  // The level as of the last day boundary, before the clamp. A world scope
+  // trigger has one; a trigger counted per unit has one for each unit whose
+  // terms are not all zero, and every other unit sits at the base.
+  double world_level = 0.0;
+  std::unordered_map<VenueId, double> unit_levels;
+
+  double levelAtWorld() const { return std::min(1.0, world_level); }
+  double levelAtUnit(VenueId unit) const {
+    const auto it = unit_levels.find(unit);
+    return std::min(1.0, it == unit_levels.end() ? base : it->second);
+  }
 
   // One evaluation of the world scope state. `day` is the day that just ended
   // and `value` the reduced metric at its end.

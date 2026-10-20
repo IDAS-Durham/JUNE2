@@ -321,6 +321,7 @@ if(BUILD_TESTING)
       test_epidemiology
       test_observed_metrics
       test_policy_trigger
+      test_policy_response
       test_simulator
 
       test_deterministic_rng

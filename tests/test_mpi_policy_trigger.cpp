@@ -172,6 +172,148 @@ TEST_CASE("Trigger - venue closures do not depend on rank count") {
   }
 }
 
+// A voluntary response counted per classroom. Each rank counts only its share
+// of the infected people and holds only its own venues, yet the level at every
+// classroom must be the same double on every rank and match the one worked out
+// by hand from the whole count, and every rank must reach the same verdict for
+// every person, including a person registered to a venue it does not hold.
+TEST_CASE("Response - levels and verdicts do not depend on rank count") {
+  using namespace venue_scope_fixture;
+  int rank = 0;
+  int size = 1;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+  WorldState world = makeWorld(rank, size);
+  const Disease disease =
+      makeStageDisease(std::make_shared<ConstantCurve>(1.0));
+  PolicyManager pm(world);
+  pm.setBaseSeed(77);
+  pm.observedMetrics().declare("cases",
+                               {"infection", "venue", "primary_activity", ""});
+  TemporalPolicy policy;
+  policy.name = "keep_home";
+  policy.action.override_activities = {"primary_activity"};
+  PolicyTrigger trigger;
+  trigger.scope = MetricScope::Venue;
+  trigger.terms = {{"cases", 0.25}};
+  policy.trigger = trigger;
+  pm.addTemporalPolicy(policy);
+  pm.observedMetrics().resolve(world, disease);
+  pm.requireTriggerMetrics();
+  pm.observedMetrics().buildVenueParents(world);
+  for (Person& p : world.people) p.applicable_temporal_policy_mask = 1;
+  pm.resolveAll(disease);
+
+  // Class A has two cases (pupil A and the person in both classes), class B
+  // two (pupil B and the person in both), class C one. Each is counted by the
+  // rank that owns the person, so the ranks' local counts differ.
+  const std::vector<PersonId> present = {kPupilA, kPupilB, kTwoClasses,
+                                         kOtherSchool};
+  for (PersonId id : present)
+    if (id % size == rank) pm.observedMetrics().onPresent(world.people[id], 1);
+  pm.observedMetrics().reduce();
+  pm.advanceTriggers(0);
+
+  const PolicyTrigger& t = *pm.getTemporalPolicies()[0].trigger;
+  CHECK(t.unit_levels.at(kClassA) == 0.0 + 0.25 * 2.0);
+  CHECK(t.unit_levels.at(kClassB) == 0.0 + 0.25 * 2.0);
+  CHECK(t.unit_levels.at(kClassC) == 0.0 + 0.25 * 1.0);
+  CHECK(t.unit_levels.size() == 3);
+
+  // Every person registered to a classroom, asked at that classroom, against
+  // the draw worked out here from the specification.
+  struct Seat {
+    PersonId person;
+    VenueId classroom;
+    double level;
+  };
+  const std::vector<Seat> seats = {{kPupilA, kClassA, 0.5},
+                                   {kPupilB, kClassB, 0.5},
+                                   {kTwoClasses, kClassA, 0.5},
+                                   {kTwoClasses, kClassB, 0.5},
+                                   {kOtherSchool, kClassC, 0.25}};
+  std::vector<int64_t> verdicts;
+  for (const Seat& seat : seats) {
+    const bool avoids =
+        pm.getOverride(world.people[seat.person], kPrimary, seat.classroom, 0,
+                       SlotVenueType::fromVenue(seat.classroom), 1.0, 0)
+            .has_value();
+    SplitMix64 rng(mix_seed(77, seat.person, 100, 0xA701D4ULL));
+    CHECK(avoids == (seat.level > uniform01(rng)));
+    verdicts.push_back(avoids ? 1 : 0);
+  }
+
+  // Identical on every rank, bit for bit.
+  std::vector<int64_t> lo(verdicts.size()), hi(verdicts.size());
+  MPI_Allreduce(verdicts.data(), lo.data(), static_cast<int>(verdicts.size()),
+                MPI_INT64_T, MPI_MIN, MPI_COMM_WORLD);
+  MPI_Allreduce(verdicts.data(), hi.data(), static_cast<int>(verdicts.size()),
+                MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
+  CHECK(lo == hi);
+
+  std::vector<double> levels = {t.unit_levels.at(kClassA),
+                                t.unit_levels.at(kClassB),
+                                t.unit_levels.at(kClassC)};
+  std::vector<double> level_lo(levels.size()), level_hi(levels.size());
+  MPI_Allreduce(levels.data(), level_lo.data(), static_cast<int>(levels.size()),
+                MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+  MPI_Allreduce(levels.data(), level_hi.data(), static_cast<int>(levels.size()),
+                MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  CHECK(level_lo == level_hi);
+}
+
+// The startup check sums its counts across ranks and every rank names the same
+// lowest failing person, though only one of them holds that person's record.
+TEST_CASE("Response - the startup check agrees on every rank") {
+  using namespace venue_scope_fixture;
+  int rank = 0;
+  int size = 1;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+  // Every rank holds only the people it owns, as in the real partition.
+  WorldState world = makeWorld(rank, size);
+  std::erase_if(world.people,
+                [&](const Person& p) { return p.id % size != rank; });
+
+  const Disease disease =
+      makeStageDisease(std::make_shared<ConstantCurve>(1.0));
+  PolicyManager pm(world);
+  pm.observedMetrics().declare("deaths", {"death", "world", "", ""});
+  TemporalPolicy policy;
+  policy.name = "keep_home";
+  policy.action.override_activities = {"primary_activity"};
+  PolicyTrigger trigger;
+  trigger.terms = {{"deaths", 0.1}};
+  trigger.decision_unit.shared_activity = "residence";
+  policy.trigger = trigger;
+  pm.addTemporalPolicy(policy);
+  pm.observedMetrics().resolve(world, disease);
+  pm.requireTriggerMetrics();
+  pm.resolveAll(disease);
+
+  const auto lines = pm.checkDecisionUnits();
+  REQUIRE(lines.size() == 1);
+  CHECK(lines[0].find("6 people checked, 0 failed") != std::string::npos);
+
+  // Person 3 and person 4 lose their residence; the owner of 3 knows it.
+  for (const PersonId id : {kPubWorker, kSchoolStaff}) {
+    for (Person& p : world.people)
+      if (p.id == id)
+        world.activity_meta[p.activity_meta_start].venue_count = 0;
+  }
+  std::string msg;
+  try {
+    pm.checkDecisionUnits();
+  } catch (const std::exception& e) {
+    msg = e.what();
+  }
+  CHECK(msg.find("person 3 has 0 venues for activity 'residence'") !=
+        std::string::npos);
+  CHECK(msg.find("2 of 6 people checked failed") != std::string::npos);
+}
+
 #else
 TEST_CASE("MPI policy trigger requires MPI") {}
 #endif

@@ -286,6 +286,10 @@ const std::string& ObservedMetrics::activityOf(const std::string& name) const {
   return find(name).cfg.activity;
 }
 
+int16_t ObservedMetrics::activityIndexOf(const std::string& name) const {
+  return find(name).activity_index;
+}
+
 void ObservedMetrics::require(const std::string& name) {
   if (!resolved_) {
     throw std::logic_error("observed_metrics: require('" + name +
@@ -448,6 +452,16 @@ const std::vector<VenueId>& ObservedMetrics::changedUnits(
   return e.changed;
 }
 
+const std::map<VenueId, int64_t>& ObservedMetrics::unitValues(
+    const std::string& name) const {
+  const Entry& e = find(name);
+  if (!e.perUnit()) {
+    throw std::runtime_error(metricLabel(name) +
+                             "has scope 'world'; it has no units.");
+  }
+  return e.units;
+}
+
 std::vector<MetricSnapshot> ObservedMetrics::snapshot() const {
   std::vector<MetricSnapshot> out;
   for (size_t i : active_) {
@@ -457,7 +471,7 @@ std::vector<MetricSnapshot> ObservedMetrics::snapshot() const {
     s.scope = e.scope;
     if (!e.perUnit()) {
       s.value = e.reduced;
-    } else if (e.source->cumulative()) {
+    } else {
       s.units.assign(e.units.begin(), e.units.end());
     }
     out.push_back(std::move(s));

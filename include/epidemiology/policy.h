@@ -517,6 +517,21 @@ class PolicyManager {
   // of the next day.
   void advanceTriggers(int64_t day);
 
+  // Recompute the avoidance level of every voluntary trigger from the reduced
+  // metrics. advanceTriggers does it each day; a checkpoint restore calls it
+  // once after the metrics are put back.
+  void rebuildResponseLevels();
+
+  bool anyVoluntary() const;
+
+  // For every voluntary Policy that shares a decision among the members of a
+  // venue, check at startup that each person it can affect has exactly one
+  // such venue. Collective: every rank must call it. Throws the same message
+  // on every rank for the lowest failing person id, and otherwise returns one
+  // line per voluntary Policy saying how many people were checked. Needs the
+  // policies resolved and their applicability computed.
+  std::vector<std::string> checkDecisionUnits();
+
   // Trigger state for the checkpoint, symptom policies first, keyed by kind and
   // policy name. Restoring needs exactly the same keys.
   struct TriggerState {
@@ -528,6 +543,9 @@ class PolicyManager {
     // Scopes counted per unit: one cell per unit the trigger has touched, in
     // unit order. The three fields above are unused then.
     std::vector<std::pair<VenueId, TriggerCell>> units;
+    // A voluntary trigger keeps no state of its own; the flag only lets a
+    // restore refuse a checkpoint that read the same Policy in the other form.
+    bool voluntary = false;
   };
   std::vector<TriggerState> triggerStates() const;
   void restoreTriggerStates(const std::vector<TriggerState>& stored);
@@ -647,6 +665,7 @@ class PolicyManager {
 
     for (auto& p : symptom_policies_) p.resolve(world_, disease);
     for (auto& p : temporal_policies_) p.resolve(world_);
+    resolveResponses();
     resolveTransmissionEffects(disease);
 
     // Resolve follow-up policy indices
@@ -658,6 +677,20 @@ class PolicyManager {
             break;
           }
         }
+      }
+    }
+
+    // A follow-up inherits a latched decision, and a voluntary policy keeps
+    // none.
+    for (const auto& p : symptom_policies_) {
+      if (p.follow_up_policy_index < 0) continue;
+      const auto& target = symptom_policies_[p.follow_up_policy_index];
+      if (target.trigger && target.trigger->voluntary()) {
+        throw std::runtime_error(
+            "symptom_policy '" + p.name + "' names the voluntary policy '" +
+            target.name +
+            "' as its follow_up_policy, which is not built yet: a voluntary "
+            "policy keeps no decision for a follow-up to inherit.");
       }
     }
   }
@@ -677,6 +710,9 @@ class PolicyManager {
   std::unordered_map<PersonId, uint16_t> last_symptom_ids_;
 
   void resolveTransmissionEffects(const Disease& disease);
+  // Look up the activities a voluntary trigger names and start its level at the
+  // base. Needs the metrics resolved.
+  void resolveResponses();
   uint64_t policyWindowBits(double current_time) const;
   void rebuildTransmissionModifiers(double current_time);
   void rebuildPersonTransmissionModifier(Person& person, double current_time);
@@ -742,23 +778,31 @@ class PolicyManager {
   // never pays for the venue-type lookup — and never throws on a venue this
   // rank cannot type when no policy was asking about venues in the first place.
   //
-  // A Policy triggered per venue (unit_trigger non-null) reaches only the
-  // venues its metric has closed. That is one lookup, made after the activity
-  // gate and before anything dearer, and it applies to everyone scheduled at a
-  // closed venue who is not exempt.
+  // A Policy triggered per venue (slot_trigger non-null, threshold form)
+  // reaches only the venues its metric has closed. That is one lookup, made
+  // after the activity gate and before anything dearer, and it applies to
+  // everyone scheduled at a closed venue who is not exempt. A voluntary trigger
+  // (draw_index names the Policy in the draw) asks instead whether this
+  // person's decision unit avoids the venue.
   template <typename SlotVenueTypeResolver>
   bool actionApplies(const PolicyAction& action, const Person& person,
                      int16_t activity_index,
                      SlotVenueTypeResolver&& resolve_slot_venue_type,
-                     const Person* partner, const PolicyTrigger* unit_trigger,
-                     VenueId slot_venue_id) const {
+                     const Person* partner, const PolicyTrigger* slot_trigger,
+                     VenueId slot_venue_id, uint32_t draw_index) const {
     if (!action.has_location_override) return false;
     action.throwIfVenueGateUnresolved();
 
     if (!action.shouldOverride(activity_index)) return false;
 
-    if (unit_trigger && !unitClosedAt(*unit_trigger, slot_venue_id))
-      return false;
+    if (slot_trigger) {
+      if (slot_trigger->voluntary()) {
+        if (!avoids(*slot_trigger, person, slot_venue_id, draw_index))
+          return false;
+      } else if (!unitClosedAt(*slot_trigger, slot_venue_id)) {
+        return false;
+      }
+    }
 
     if (action.hasVenueGate() &&
         !action.passesVenueGate(resolve_slot_venue_type())) {
@@ -772,6 +816,15 @@ class PolicyManager {
 
   // Is the unit this venue counts toward closed by this trigger?
   bool unitClosedAt(const PolicyTrigger& trigger, VenueId venue) const;
+
+  // Does this person's decision unit avoid the venue they are scheduled at?
+  // Pure: the level is the one derived at the last day boundary and the draw is
+  // fixed by the base seed, the decision unit and the Policy, so asking changes
+  // nothing and the answer never depends on the process count. A trigger
+  // counted per unit only reaches people the metric counts at that venue's
+  // unit.
+  bool avoids(const PolicyTrigger& trigger, const Person& person,
+              VenueId slot_venue_id, uint32_t draw_index) const;
 
   // Helper: Get replacement location for a given activity name
   std::optional<PersonLocation> getReplacementLocation(
