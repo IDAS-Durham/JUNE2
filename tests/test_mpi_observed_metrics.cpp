@@ -89,10 +89,10 @@ TEST_CASE("ObservedMetrics - reduced totals do not depend on rank count") {
   CHECK(lo == hi);
 }
 
-// The fixture deals a venue and its parent to one rank and the people out by
-// id, so most people are registered to venues another rank holds. Counted on
-// each person's own rank, the per unit totals must still equal what one process
-// would count.
+// The fixture deals a venue and its parent to one rank, and each person is
+// counted on the rank given by id modulo the rank count, so a person is often
+// registered to venues another rank holds. The per unit totals must still equal
+// what one process would count.
 TEST_CASE("ObservedMetrics - per unit totals do not depend on rank count") {
   using namespace venue_scope_fixture;
   int rank = 0;

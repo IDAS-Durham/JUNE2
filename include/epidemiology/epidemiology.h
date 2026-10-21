@@ -44,7 +44,7 @@ class Epidemiology {
   }
 
   // Observed metrics. Left null unless some Policy trigger reads a metric, so
-  // a run with none pays one hoisted pointer test per update and nothing else.
+  // a run with none only tests a null pointer where the counting hooks sit.
   void setObservedMetrics(ObservedMetrics* metrics) {
     observed_metrics_ = metrics;
   }
@@ -97,7 +97,8 @@ class Epidemiology {
   PolicyManager* policy_manager_ = nullptr;
   ObservedMetrics* observed_metrics_ = nullptr;
   // Time of the last updateInfectionStates, so the daily scan reads the same
-  // present state the engine itself last acted on.
+  // present state the engine itself last acted on. Only kept while observed
+  // metrics are attached.
   double last_update_time_ = 0.0;
 
   // Only track people who are currently infected

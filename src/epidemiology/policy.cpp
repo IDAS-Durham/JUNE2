@@ -74,8 +74,9 @@ PolicyManager::PolicyManager(WorldState& world)
 
 void PolicyManager::addSymptomPolicy(const SymptomPolicy& policy) {
   symptom_policies_.push_back(policy);
-  // A triggered policy starts off until its trigger closes. One triggered per
-  // venue is in force from the start and starts with every venue open.
+  // A policy with a world scope threshold trigger starts off until the trigger
+  // closes. One triggered per venue, or a voluntary one, is in force from the
+  // start: the closed venues, or the avoidance level, decide where it acts.
   if (policy.trigger)
     symptom_policies_.back().window.trigger_state =
         policy.trigger->perUnit() || policy.trigger->voluntary() ||

@@ -250,7 +250,8 @@ void requireDeclaredMetric(const ObservedMetrics& metrics,
 
 // The response form of a trigger: a base level, terms of metric and weight, and
 // the decision unit. The level is base + sum(weight * count), read at the day
-// boundary and clamped to 1 where it is used.
+// boundary and clamped to 1 where it is used. Base is held to 0 to 1 and every
+// weight above 0, so the level never needs a lower clamp.
 PolicyTrigger loadResponse(const YAML::Node& node,
                            const ObservedMetrics& metrics,
                            const std::string& where) {
@@ -328,8 +329,8 @@ PolicyTrigger loadResponse(const YAML::Node& node,
     trigger.terms.push_back(term);
   }
 
-  // One scope and one activity for all terms. A world term next to a venue term
-  // is a known limitation, not a mode.
+  // One scope and one activity for all terms. Mixing them in one response is
+  // not supported yet.
   const std::string& first = trigger.terms[0].metric;
   trigger.scope = metrics.scope(first);
   for (const auto& term : trigger.terms) {
@@ -484,7 +485,8 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
   return trigger;
 }
 
-// A Policy that acts on venues of one activity must be allowed to touch them.
+// A Policy whose trigger counts venues of one activity must be allowed to act
+// on that activity: an empty list or '*' means all.
 void checkActivityListed(const std::string& where, const PolicyAction& action,
                          const ObservedMetrics& metrics,
                          const std::string& metric) {

@@ -15,10 +15,11 @@
 namespace june {
 
 // The state of a trigger at one unit: whether it holds the Policy in force
-// there, and one (day, value) pair. While open the pair holds the baseline
-// (0 at the start, then the value at the last reopening). While closed it
-// holds the anchor: the last time the metric grew beyond the tolerance, or the
-// moment of closing if it has not.
+// there, and one (day, value) pair that only a cumulative metric uses. While
+// open the value is the baseline (0 at the start, then the value at the last
+// reopening) and the day is not read. While closed the pair is the anchor: the
+// last time the metric grew beyond the tolerance, or the moment of closing if
+// it has not.
 struct TriggerCell {
   bool closed = false;
   int64_t anchor_day = 0;
@@ -57,8 +58,10 @@ struct DecisionUnit {
 // cell per unit it has touched, and a bit per unit for the closed ones so the
 // per slot question "is this unit closed" is a single lookup.
 struct PolicyTrigger : TriggerCell {
-  // Configuration. deactivate_at belongs to current metrics, calm_days and the
-  // two tolerances to cumulative ones; the loader rejects the other mix.
+  // Configuration. activate_at is a value of a current metric, or growth since
+  // the baseline for a cumulative one. deactivate_at belongs to current
+  // metrics, calm_days and the two tolerances to cumulative ones; the loader
+  // rejects the other mix.
   std::string metric;
   int64_t activate_at = 0;
   std::optional<int64_t> deactivate_at;
@@ -71,7 +74,9 @@ struct PolicyTrigger : TriggerCell {
   bool perUnit() const { return scope != MetricScope::World; }
 
   // Response form. level = base + sum(weight * count) over the terms, clamped
-  // to 1 where it is read. All terms share one scope and one activity.
+  // to 1 where it is read. The loader keeps base within 0 to 1 and every weight
+  // above 0, so there is no lower clamp. All terms share one scope and one
+  // activity.
   double base = 0.0;
   std::vector<ResponseTerm> terms;
   DecisionUnit decision_unit;
@@ -80,8 +85,8 @@ struct PolicyTrigger : TriggerCell {
   bool voluntary() const { return !terms.empty(); }
 
   // The level as of the last day boundary, before the clamp. A world scope
-  // trigger has one; a trigger counted per unit has one for each unit whose
-  // terms are not all zero, and every other unit sits at the base.
+  // trigger has one; a trigger counted per unit has one for each unit some
+  // term counted, and every other unit sits at the base.
   double world_level = 0.0;
   std::unordered_map<VenueId, double> unit_levels;
 

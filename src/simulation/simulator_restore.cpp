@@ -306,7 +306,8 @@ void overlayShardCalendarEvents(H5::H5File& f, WorldState& world,
 // Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
 // matches the configured seed (no silent override), and return the
 // completed_day to resume from. The caller has already canonicalised cp.
-// format_version comes back through the out parameter.
+// format_version comes back through the out parameter; one outside the range
+// this build reads throws.
 int readAndValidateManifest(const fs::path& cp, unsigned int config_seed,
                             int& format_version) {
   if (!fs::exists(cp / "manifest.yaml"))

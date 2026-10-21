@@ -582,7 +582,7 @@ TEST_CASE(
   };
   CHECK(disagreeing(kHousehold) == 0);
   // Three pupils each, level one half: a household splits with probability
-  // 3/4, so some of 300 certainly do.
+  // 3/4, so about 225 of 300 do and the bound below is loose.
   CHECK(disagreeing("person") > 100);
 }
 
@@ -723,8 +723,8 @@ TEST_CASE("Response - a death count at a venue keeps that venue's level") {
                temporalFile(keepHome(
                    "keep_home", response("{metric: class_deaths, weight: 0.5}",
                                          kHousehold))));
-  // The first pupil of classroom 0 dies. Everyone registered there is counted
-  // once at that classroom, and nowhere else.
+  // The first pupil of classroom 0 dies. The death counts once, at that
+  // classroom, and the level there reaches only the pupils registered to it.
   std::vector<PersonId> classmates;
   for (int h = 0; h < shape.households; ++h)
     if (shape.classroomOf(h, 0) == shape.school() + 1)
@@ -772,7 +772,7 @@ TEST_CASE("Response - only people the metric counts at a venue avoid it") {
   CHECK_FALSE(r.avoids(vs::kOtherSchool, vs::kClassA, 1.0));
   // Pupil B is not registered to class A either.
   CHECK_FALSE(r.avoids(vs::kPupilB, vs::kClassA, 1.0));
-  // A venue with no case, which the pupil is not registered to, is untouched.
+  // A venue with no case is untouched, even one the pupil visits for leisure.
   CHECK_FALSE(r.avoids(vs::kPupilA, vs::kPub, 1.0));
 }
 

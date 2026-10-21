@@ -381,7 +381,7 @@ namespace {
 
 using namespace june::venue_scope_fixture;
 
-// A metric set over the fixture world, all four active.
+// Six metrics over the fixture world, all active except world_total.
 struct UnitMetrics {
   WorldState world = makeWorld();
   Disease disease = makeMetricDisease();
@@ -554,7 +554,8 @@ TEST_CASE("Metrics per unit - stored totals restore exactly or throw") {
   after.m.reduce();
   CHECK(after.m.unitValue("class_deaths", kClassB) == 2);
   CHECK(after.m.unitValue("school_deaths", kSchool) == 3);
-  // A current metric is not stored: the next daily scan rebuilds it.
+  // A current metric holds only the last reduce's counts, and the reduce above
+  // saw nobody present.
   CHECK(after.m.unitValue("class_now", kClassA) == 0);
 
   // The same name under another scope is refused.

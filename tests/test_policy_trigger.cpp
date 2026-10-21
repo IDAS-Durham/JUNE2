@@ -832,7 +832,7 @@ TEST_CASE(
     REQUIRE(trigger.has_value());
     CHECK(trigger->perUnit());
     CHECK(trigger->closedUnits().empty());
-    // In force from the start; the closed venues are what hold it back.
+    // In force from the start; the set of closed venues decides where it acts.
     CHECK(t.pm.getTemporalPolicies()[0].window.contains(0.5));
     CHECK_FALSE(t.overridden(vs::kPupilA, vs::kClassA, 0.5));
   }

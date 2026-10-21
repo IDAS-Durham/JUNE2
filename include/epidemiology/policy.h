@@ -65,6 +65,10 @@ enum class VenueGateDirection : uint8_t {
 // consulted — getOverride runs once per Person per slot, so an ungated run
 // must pay nothing.
 //
+// It also carries the VenueId whenever the caller has one (known() and
+// fromVenue() take it, venueId() returns it), because a policy triggered per
+// venue is decided on the venue itself and not only on its type.
+//
 // A Venue that exists but cannot be typed on this rank is a defect, not a
 // state: resolveAgainst throws rather than admitting kUnknownVenueTypeId,
 // which is exactly the silent fail-open this type exists to remove.
@@ -347,8 +351,11 @@ struct PolicyAction {
 // a real day (an end_date one day before the simulation starts is day -1).
 //
 // A trigger can also hold a policy off: trigger_state is false while it does.
-// A policy with no trigger leaves it true, so contains() is the one place that
-// answers whether a policy is in force.
+// Only a threshold trigger on a world scope metric sets it, from its closed
+// state. A policy with no trigger, one triggered per venue, or a voluntary one
+// leaves it true, so contains() is the one place that answers whether a policy
+// is in force at all. A per venue or voluntary trigger then decides slot by
+// slot where it acts.
 struct ActiveWindow {
   double start_time = 0.0;         // days from simulation start
   std::optional<double> end_time;  // empty = no end
@@ -504,7 +511,8 @@ class PolicyManager {
     frozen_states_ = s;
   }
 
-  // Metrics declared in the policy file. Triggers will read them by name.
+  // Metrics declared in the policy file. A Policy trigger names the ones it
+  // reads.
   ObservedMetrics& observedMetrics() { return observed_metrics_; }
   const ObservedMetrics& observedMetrics() const { return observed_metrics_; }
 
@@ -528,8 +536,9 @@ class PolicyManager {
   // venue, check at startup that each person it can affect has exactly one
   // such venue. Collective: every rank must call it. Throws the same message
   // on every rank for the lowest failing person id, and otherwise returns one
-  // line per voluntary Policy saying how many people were checked. Needs the
-  // policies resolved and their applicability computed.
+  // status line per voluntary Policy, with the number of people checked when
+  // the decision is shared. Needs the policies resolved and their applicability
+  // computed.
   std::vector<std::string> checkDecisionUnits();
 
   // Trigger state for the checkpoint, symptom policies first, keyed by kind and
@@ -550,8 +559,9 @@ class PolicyManager {
   std::vector<TriggerState> triggerStates() const;
   void restoreTriggerStates(const std::vector<TriggerState>& stored);
 
-  // One line per Policy triggered per venue, saying what it will act on, for
-  // the start of the run. Needs the policies resolved.
+  // One line per Policy with a per venue threshold trigger or a voluntary one,
+  // saying what it will act on, for the start of the run. Needs the policies
+  // resolved.
   std::vector<std::string> describeVenueTriggers() const;
 
   // Register policies
@@ -596,7 +606,8 @@ class PolicyManager {
   //
   // pin_venue_id/pin_subset_index are the Pin Venue: where a freeze_in_place
   // override anchors the person. slot_venue_type is the Slot Venue Type: the
-  // key a venue-gated action is decided on. The two are separate arguments
+  // key a venue-gated action is decided on, and through its venue id the venue
+  // a per venue trigger is checked against. The two are separate arguments
   // because callers legitimately differ on them — a traveller in transit is
   // pinned at their last overnight venue while occupying no venue at all.
   std::optional<PersonLocation> getOverride(
@@ -609,6 +620,10 @@ class PolicyManager {
   // question, not an instruction: no freeze is established or released, no
   // schedule hop swapped, no compliance decision latched. There is deliberately
   // no Pin Venue argument, because nothing is pinned.
+  //
+  // A per venue trigger never reaches a slot whose slot_venue_type carries no
+  // venue, so pass the venue (SlotVenueType::known(type, venue)) when it is
+  // known.
   //
   // Asked by the subsystems that only need the verdict — coordinated-encounter
   // eligibility and follow mirroring — so that reading the answer cannot commit
@@ -779,11 +794,11 @@ class PolicyManager {
   // rank cannot type when no policy was asking about venues in the first place.
   //
   // A Policy triggered per venue (slot_trigger non-null, threshold form)
-  // reaches only the venues its metric has closed. That is one lookup, made
-  // after the activity gate and before anything dearer, and it applies to
-  // everyone scheduled at a closed venue who is not exempt. A voluntary trigger
-  // (draw_index names the Policy in the draw) asks instead whether this
-  // person's decision unit avoids the venue.
+  // reaches only the venues its metric has closed. That is one bit lookup, made
+  // after the activity gate and before the venue type gate and the exemptions,
+  // and it applies to everyone scheduled at a closed venue who is not exempt.
+  // A voluntary trigger (draw_index names the Policy in the draw) asks instead
+  // whether this person's decision unit avoids the venue.
   template <typename SlotVenueTypeResolver>
   bool actionApplies(const PolicyAction& action, const Person& person,
                      int16_t activity_index,
@@ -822,7 +837,8 @@ class PolicyManager {
   // fixed by the base seed, the decision unit and the Policy, so asking changes
   // nothing and the answer never depends on the process count. A trigger
   // counted per unit only reaches people the metric counts at that venue's
-  // unit.
+  // unit. Throws when a shared decision unit finds the person with other than
+  // exactly one such venue; checkDecisionUnits rules that out at startup.
   bool avoids(const PolicyTrigger& trigger, const Person& person,
               VenueId slot_venue_id, uint32_t draw_index) const;
 

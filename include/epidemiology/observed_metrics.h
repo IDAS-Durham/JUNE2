@@ -43,8 +43,8 @@ std::vector<std::string> metricSourceNames();
 
 // World is one total. Venue counts a person toward every venue registered to
 // them for the metric's activity. ParentVenue counts them toward the parent of
-// each of those venues, or the venue itself when it has none. Either way a
-// person counts at most once per unit, whatever the source.
+// each of those venues, or the venue itself when it has none. Either way one
+// observation counts a person at most once per unit, whatever the source.
 enum class MetricScope : uint8_t { World, Venue, ParentVenue };
 
 // What a checkpoint keeps of one active metric: a world scope total, or for a
@@ -74,8 +74,9 @@ struct ObservedMetricConfig {
 // the daily scan or the reduce.
 class ObservedMetrics {
  public:
-  // Syntactic checks only: the source, scope and conditional fields. Throws a
-  // descriptive error naming the metric.
+  // Checks that need no world: the name, the source, the scope and the fields
+  // each combination requires. Throws a descriptive error naming the metric,
+  // or std::logic_error when called after resolve().
   void declare(const std::string& name, const ObservedMetricConfig& cfg);
 
   // World dependent checks (activity, stage). Must run before require() or any
@@ -90,18 +91,19 @@ class ObservedMetrics {
   void buildVenueParents(WorldState& world) const;
 
   // Mark a declared metric as read by a Policy trigger. Throws when the name
-  // was never declared.
+  // was never declared, or std::logic_error before resolve().
   void require(const std::string& name);
 
-  // Questions a Policy trigger asks of a declared metric. The last two throw
-  // for an unknown name, so check declaredNames() first for a better message.
+  // Questions a Policy trigger asks of a declared metric. All but
+  // declaredNames() throw for an unknown name, so check declaredNames() first
+  // to give a better message.
   std::vector<std::string> declaredNames() const;
   bool isCumulative(const std::string& name) const;
   bool isWorldScope(const std::string& name) const;
   MetricScope scope(const std::string& name) const;
   const std::string& activityOf(const std::string& name) const;
-  // The activity's index in the world, as resolved. -1 for a world scope
-  // metric.
+  // The activity's index in the world, as resolve() found it. -1 for a world
+  // scope metric, and before resolve().
   int16_t activityIndexOf(const std::string& name) const;
 
   bool anyDeclared() const { return !entries_.empty(); }
@@ -109,8 +111,10 @@ class ObservedMetrics {
   // Does the daily scan of infected people have anything to feed?
   bool tracksPresent() const { return tracks_present_; }
 
-  // Counting hooks, called where the engine already detects the event. The
-  // person says which units the event counts toward, on the person's home rank.
+  // Counting hooks, called where the engine already detects the event. Call
+  // them on the rank that owns the person, so each event is counted once across
+  // ranks. The person's registrations for the metric's activity say which units
+  // it counts toward.
   void onInfection(const Person& person, uint16_t symptom_id);
   void onTransition(const Person& person, uint16_t previous_symptom_id,
                     uint16_t symptom_id);
@@ -128,11 +132,12 @@ class ObservedMetrics {
   // Reduced value of a world scope metric as of the last reduce(). Throws for
   // an unknown name, or for a metric counted per unit (use unitValue).
   int64_t value(const std::string& name) const;
-  // The rank local part not yet reduced (for tests and diagnostics).
+  // The rank local part not yet reduced (for tests and diagnostics). Always 0
+  // for a metric counted per unit, which keeps its local part per unit.
   int64_t localCount(const std::string& name) const;
 
   // A metric counted per unit, as of the last reduce(): the value at one unit
-  // (0 for a unit never counted), and the units the last reduce saw any count
+  // (0 for a unit with no count), and the units the last reduce saw any count
   // for, in unit order. Throw for a world scope metric.
   int64_t unitValue(const std::string& name, VenueId unit) const;
   const std::vector<VenueId>& changedUnits(const std::string& name) const;
