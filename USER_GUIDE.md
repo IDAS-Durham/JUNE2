@@ -58,7 +58,7 @@ contact_matrices.yaml         ← per-venue contact rates and β (transmission r
 schedules.yaml                ← weekly time-use templates
 activity_preferences.yaml     ← which leisure venue each person prefers
 coordinated_encounters.yaml   ← coordinated multi-person encounter recipes
-policies.yaml                 ← lockdowns, isolation, behavioural overrides
+policies.yaml                 ← lockdowns, isolation, behavioural overrides, observed metrics
 vaccines.yaml                 ← vaccine products and rollout campaigns
 parallel.yaml                 ← MPI domain decomposition
 performance.yaml              ← schedule pre-compute toggles
@@ -513,6 +513,9 @@ policies:
 - `applies_to` uses the same selection grammar as everywhere else
   (`property`, `operator`, `value`).
 - Use `follow_up_policy` to chain policies (e.g. mild ⇒ severe).
+- Either kind can carry a `trigger:` that ties it to an observed count, such as
+  deaths or cases in a classroom, instead of (or as well as) a date. See
+  [Observed metrics](#observed-metrics) below.
 
 ### Transmission effects
 
@@ -559,6 +562,360 @@ all distinct matching rows and active policies multiply. A missing effect uses
 venue and require a temporal policy with `compliance_rate: 1`; symptom policies
 can carry person effects. Source/target person effects share their policy's
 sticky compliance decision with any location action.
+
+### Observed metrics
+
+A policy can follow the epidemic instead of the calendar. That takes two
+steps: declare a count in an `observed_metrics:` block at the top level of
+`policies.yaml` (next to `policies:`), then give a policy a `trigger:` that
+names it.
+
+```yaml
+observed_metrics:
+  deaths:               {source: death,     scope: world}
+  icu_now:              {source: stage,     scope: world, stage: intensive_care}
+  primary_venue_cases:  {source: infection, scope: venue,        activity: primary_activity}
+  primary_parent_cases: {source: infection, scope: parent_venue, activity: primary_activity}
+```
+
+The name on the left is only a label. A policy refers to the metric by it, and
+the engine reads nothing into the words, so choose a name that says what is
+counted. These four count:
+
+- `deaths`: every death in the whole population so far.
+- `icu_now`: the number of people in the `intensive_care` stage right now, across
+  the whole population.
+- `primary_venue_cases`: for each venue separately, the infected people
+  registered to that venue for `primary_activity`. A classroom's count comes from
+  its pupils and any staff registered to it, an office's from its workers, a care
+  home's from the people who have it as their primary activity, and so on.
+  Counts are never mixed between venues.
+- `primary_parent_cases`: the same people, pooled by parent venue. A school's
+  count adds up its classrooms, a company's adds up its offices, and a venue with
+  no parent counts on its own.
+
+| Field | What it controls |
+|---|---|
+| `source` | What is counted. One of the four sources below. |
+| `scope` | Where it is counted: `world`, `venue` or `parent_venue`. |
+| `activity` | An activity name known to the world, such as `primary_activity`. Required for `venue` and `parent_venue`, and not allowed for `world`. |
+| `stage` | A symptom tag from `disease.yaml`. Required by `stage` and `stage_admission`, not allowed with the other sources. |
+
+| Source | Kind | Counts |
+|---|---|---|
+| `infection` | current | People infected right now, from the moment of exposure, so exposed people are included. A person leaves the count when they recover or die. |
+| `stage` | current | Infected people whose current stage is the named one. |
+| `death` | cumulative | Deaths so far. |
+| `stage_admission` | cumulative | Entries into the named stage, including the stage a person is placed in when infected. A person moving from the stage to itself is not an entry, and `stage_admission` on `exposed` counts every new infection. |
+
+A current metric goes up and down, and a cumulative one only rises. The source
+decides which, and the trigger fields a metric needs depend on it.
+
+`world` is a single total. `venue` keeps a separate count for each venue and
+counts a person toward every venue the world registers to them for the
+metric's `activity`. `parent_venue` counts them toward the parent of each of
+those venues instead (the school for a classroom, the company for an office),
+or toward the venue itself when it has no parent. A person counts at most once
+per venue or parent venue, whatever the source, so someone registered to two
+classrooms of one school counts once at that school. People who die keep their
+registrations, so a death counts at the venues the person was registered to.
+
+A metric cannot be limited to one venue type. It counts at every venue that
+people are registered to for its activity, and only the policy's
+`override_venue_types` narrows where the policy acts. A metric on
+`primary_activity` therefore keeps a count for every office and care home too.
+A policy that names only classrooms never uses those counts. Venue scope suits
+activities with one home venue, such as school or work. For an activity like
+`leisure`, where a person is registered to several venues, a venue count is a
+weaker signal.
+
+Counts are read once a day, after the last slot, and a change applies from the
+first slot of the next day. A death is counted when the engine detects it, so a
+total can trail the logged death time by up to a day. Counts are sums of whole
+numbers across ranks, so results do not depend on the number of MPI processes.
+
+A metric is only counted when a trigger reads it. Declared metrics that nothing
+reads are still checked at startup (an unknown activity or stage is an error)
+but cost nothing, and a run with no triggers does no counting at all.
+
+### Triggering a policy from a metric
+
+Add `trigger:` to a symptom or temporal policy. With a world scope metric, the
+policy is in force when its date window holds and its trigger is closed.
+Closing a trigger puts the policy in force and reopening it lifts the policy.
+`start_date` and `end_date` are optional on a triggered policy, and without
+them the trigger alone decides. (Venue scope metrics and responses work per
+venue, as the next two sections describe.)
+
+```yaml
+observed_metrics:
+  icu_now: {source: stage, scope: world, stage: intensive_care}
+  deaths:  {source: death, scope: world}
+
+policies:
+  temporal_policies:
+    - name: "stay_home_when_icu_is_busy"
+      override_activities: ["primary_activity", "leisure"]
+      replacement: "residence"
+      compliance_rate: 0.8
+      trigger:
+        metric: icu_now          # a current metric
+        activate_at: 50          # close at 50 or more
+        deactivate_at: 20        # reopen at 20 or fewer
+
+    - name: "stay_home_after_deaths"
+      override_activities: ["primary_activity", "leisure"]
+      replacement: "residence"
+      trigger:
+        metric: deaths           # a cumulative metric
+        activate_at: 100         # close after 100 deaths
+        calm_days: 14            # reopen after 14 days without a rise
+        tolerance: 2             # a rise of 2 or fewer still counts as calm
+```
+
+`icu_now` is the number of people in intensive care right now, so it goes up and
+down. `deaths` is the running total of deaths, so it only rises.
+
+The fields you write depend on whether the metric is current or cumulative.
+The loader rejects any other mix.
+
+| Field | Current metric | Cumulative metric |
+|---|---|---|
+| `activate_at` | Required, a whole number of at least 1. Closes at this value or above. | Required, at least 1. Closes once the metric has grown by this much since the baseline. |
+| `deactivate_at` | Required, from 0 up to below `activate_at`. Reopens at this value or below. | Not allowed. |
+| `calm_days` | Not allowed. | Required, at least 1. |
+| `tolerance` | Not allowed. | Optional whole number, default 0. |
+| `tolerance_pct` | Not allowed. | Optional whole percent from 0 to 100, default 0. |
+
+For a current metric the gap between `activate_at` and `deactivate_at` stops
+the policy from flickering on and off around one value.
+
+For a cumulative metric `activate_at` is growth and not a level. The baseline is
+0 at the start of the run and the current value after each reopening. Once
+closed, the trigger keeps a reference point: the value at closing, and later the
+value each time the metric rose by more than the tolerance. When `calm_days`
+days pass since the reference point without such a rise, the trigger reopens.
+The tolerance is `tolerance` or `tolerance_pct` percent of the reference value,
+whichever is larger, so a reference of 400 deaths with `tolerance_pct: 2`
+tolerates 8 more. Rises are measured against the reference point and not
+against yesterday, so a slow trickle that adds up past the tolerance still
+moves the reference forward and restarts the clock.
+
+For example, `activate_at: 100`, `calm_days: 200` and `tolerance: 5` closes at
+100 deaths, reopens after 200 days with at most 5 further deaths, and closes
+again after another 100.
+
+A trigger starts open, so the policy starts out of force. The trigger is first
+evaluated at the end of day 0, so a scenario that is already above
+`activate_at` at the start closes from the second day. The trigger keeps
+updating while the date window is closed, so a threshold crossed before
+`start_date` takes effect when the window opens.
+
+On a world scope metric the trigger switches the whole policy on and off. A
+symptom policy still only affects people with its listed symptoms while it is in
+force.
+
+### Closing venues one at a time
+
+When the metric has `scope: venue` or `scope: parent_venue`, the trigger keeps
+its own state for every venue (or parent venue) it has seen, so one classroom
+can be closed while the next stays open.
+
+```yaml
+observed_metrics:
+  primary_venue_cases:  {source: infection, scope: venue,        activity: primary_activity}
+  primary_parent_cases: {source: infection, scope: parent_venue, activity: primary_activity}
+
+policies:
+  temporal_policies:
+    - name: "close_classroom"
+      override_activities: ["primary_activity"]
+      override_venue_types: ["classroom"]
+      replacement: "residence"
+      trigger:
+        metric: primary_venue_cases    # infected people per venue
+        activate_at: 2
+        deactivate_at: 0
+
+    - name: "close_school"
+      override_activities: ["primary_activity"]
+      override_venue_types: ["school", "classroom"]
+      replacement: "residence"
+      trigger:
+        metric: primary_parent_cases   # infected people per parent venue
+        activate_at: 5
+        deactivate_at: 0
+```
+
+`close_classroom` closes a single classroom once 2 of the people registered to it
+are infected, and reopens it when none are. `close_school` uses the count pooled
+over a school's classrooms, so it closes every classroom of that school at 5 and
+reopens them at 0. Both metrics also count offices and other venues that use
+`primary_activity`. These policies leave those alone because
+`override_venue_types` names only classrooms and schools.
+
+`override_venue_types` limits a policy to venues of those types, using the venue
+type names in your world. Without it (and without `exempt_venue_types`) the
+policy acts on every venue the metric closes, and with no `override_activities`
+it acts on every activity. Check that `override_activities` and
+`override_venue_types` match where the metric counts, because a policy only acts
+on the venues its metric closes.
+
+A closed venue sends everyone scheduled there for a listed activity to the
+replacement: pupils, staff and visitors, whatever household they come from. The
+policy's `applies_to` and exemptions still apply. A closed venue also
+hosts no coordinated encounter and takes in no follower mirroring a host. A
+closed parent venue closes the parent and all of its children. A person who is
+scheduled at no venue in a slot is not affected.
+
+The loader refuses a venue triggered policy that:
+
+- is a symptom policy (write a temporal policy instead);
+- has a `compliance_rate` other than 1, since a closed venue closes for
+  everyone;
+- uses `transmission_effects_file`;
+- lists `override_activities` without the metric's activity (an empty list or
+  `"*"` means every activity).
+
+Policies are checked in order and the first match wins, as everywhere else in
+this file.
+
+### Voluntary avoidance
+
+A trigger can also model people choosing to stay away from a venue that is still
+officially open. Instead of the threshold fields it takes a `response`, which
+replaces `compliance_rate`.
+
+```yaml
+observed_metrics:
+  primary_venue_cases: {source: infection, scope: venue, activity: primary_activity}
+
+policies:
+  temporal_policies:
+    - name: "keep_children_home"
+      override_activities: ["primary_activity"]
+      override_venue_types: ["classroom"]
+      replacement: "residence"
+      applies_to:
+        - {property: age, operator: "<", value: 18}
+      trigger:
+        response:
+          base: 0.02
+          terms:
+            - {metric: primary_venue_cases, weight: 0.05}
+        decision_unit: {shared_venue: residence}
+```
+
+Here `primary_venue_cases` counts the people who are infected right now, exposed
+ones included, separately for each venue. A person counts toward the venue they
+are registered to for `primary_activity`: for a classroom that is its pupils and
+any staff registered to it, and for an office its workers. The policy only
+acts on classrooms because of `override_venue_types`, so the offices' counts go
+unused.
+
+Each day the engine works out an avoidance level:
+
+```
+level = base + weight_1 * metric_1 + weight_2 * metric_2 + ...     (capped at 1)
+```
+
+Every decision unit has one fixed random draw between 0 and 1, set by the run
+seed, the unit and the policy. A unit avoids exactly when the level is above its
+draw. At a level of 0.3 about 30% of units avoid. If the level rises to 0.5 the
+same 30% still avoid, plus more, and if it falls they return in the reverse
+order. Nothing is re-rolled during the run, and the draws do not depend on the
+number of ranks.
+
+| Field | What it controls |
+|---|---|
+| `base` | Optional level before any count, from 0 to 1. Default 0. |
+| `terms` | A non-empty list of `{metric, weight}`. Each weight is above 0, and a metric appears once. All terms must share one scope and one activity. |
+| `decision_unit` | Required. `person` makes each person decide alone. `{shared_venue: <activity>}` makes everyone registered to the same venue for that activity decide together, for example `residence` so that people from one household avoid together. |
+
+For a venue or parent venue metric the level is worked out per venue. Venues the
+metric has not counted sit at `base`. Only people the metric counts at a venue
+can avoid it, meaning those registered to it for the metric's activity. A
+visitor, or someone scheduled at a venue they are not registered to, is not
+reached, which differs from a closure. The policy's `override_activities` must
+include the metric's activity.
+
+#### Who a response reaches
+
+A response acts on the person who is scheduled at the venue, in their own slot.
+In the example above that is the child, who is sent to the replacement. A
+parent's `primary_activity` slot is at a workplace, not a classroom, so nothing
+changes for them, and nobody decides on a child's behalf. Whether a child
+avoids depends only on the level at their venue and the draw of their decision
+unit.
+
+With `shared_venue: residence` every member of a household has the same draw,
+which acts as that household's tolerance for risk. Each child compares the level
+at their own venue with it:
+
+- Siblings in one classroom, or at venues with equal levels, always match. One
+  is never home while the other is at school.
+- Siblings in different classrooms or at different schools each use their own
+  venue's level against the same draw. The child at the busier venue goes home
+  first, and the sibling follows once their own level also passes the draw.
+- With a `parent_venue` metric the level is the school's, so siblings at one
+  school match and siblings at different schools can differ.
+- With `decision_unit: person` every child has their own draw, so siblings can
+  differ even at equal levels.
+
+Without `applies_to`, the policy also reaches adults who are registered to and
+scheduled at a classroom, such as teachers. They follow the same rule with their
+own household's draw. Add `applies_to` as above to limit the policy to children.
+
+`applies_to` selects on properties of the person, such as age or a property the
+world carries (`properties.<name>`). It cannot select on a person's role within a
+venue, such as the `student` and `worker` subsets of a classroom, so age stands
+in for "pupil" here. If your world has a person property for occupation, use that
+instead.
+
+With a cumulative metric such as deaths the level only rises, so avoidance is
+permanent. With a current metric it falls when the venue calms down and people
+return.
+
+On day 0 the level is `base`, because nothing has been counted yet. With a
+`base` above 0 avoidance therefore starts in the first slot, where a threshold
+trigger would still be open.
+
+A shared decision unit needs every person it covers to have exactly one venue
+for the shared activity. That is checked once at startup for the people the
+policy applies to and the metric can count. If anyone fails, the run stops with
+an error naming the lowest failing person id, the activity and the number of
+venues found. Fix the world data or use `decision_unit: person`.
+
+Symptom policies can use a response too, for example symptomatic people staying
+home more as the total number of deaths rises:
+
+```yaml
+observed_metrics:
+  deaths: {source: death, scope: world}
+
+policies:
+  symptom_policies:
+    - name: "stay_home_as_deaths_rise"
+      symptoms: ["mild", "severe"]
+      override_activities: ["primary_activity", "leisure"]
+      replacement: "residence"
+      trigger:
+        response:
+          terms:
+            - {metric: deaths, weight: 0.002}
+        decision_unit: person
+```
+
+A symptom policy with a response needs a world scope metric and
+`decision_unit: person`, and cannot set `replacement_schedule` or
+`follow_up_policy`. A symptom policy cannot name a policy with a response as its
+`follow_up_policy` either.
+
+The loader refuses any policy with a response that also sets `compliance_rate`
+(even 1) or `transmission_effects_file`, or that mixes the threshold fields
+(`metric`, `activate_at`, `deactivate_at`, `calm_days`, `tolerance`,
+`tolerance_pct`) into the same trigger. `decision_unit` belongs to the response
+form only.
 
 ---
 
@@ -800,6 +1157,16 @@ start); the resumed run fills `[completed_day + 1, total_days)`. To run
   serialize/deserialize hooks are a planned follow-up.)
 - Checkpoints are valid only against the exact world they were taken
   from.
+- A checkpoint stores the running totals of every metric a trigger reads
+  and the state of every trigger. A cumulative total cannot be rebuilt, so
+  a resume must use the same triggered policies (same kind, name and form,
+  counted over the same scope) and read the same set of metrics. Anything
+  else stops the run with an error that lists both sets. Declared metrics
+  that no trigger reads are not stored and may change freely.
+- A checkpoint written by an older build (see `format_version` in its
+  `manifest.yaml`) may be refused by a run that uses metrics or triggers,
+  and the error says why. Resume without the triggers, or start the run
+  again from day 0.
 
 ### 17.5 Verifying determinism
 
@@ -824,6 +1191,12 @@ ctest -R test_checkpoint_determinism --output-on-failure
 | Low/zero infections despite seeds | Check `contact_matrices.yaml` betas, not seed counts. β is the dominant knob. |
 | `--restart-from` aborts on seed mismatch | The checkpoint's effective seed is authoritative; drop the conflicting `--seed`. |
 | Checkpointing aborts immediately | A `compartmental_model_sidecar` is set — checkpointing is unsupported for compartmental scenarios. |
+| Load error `observed_metrics '<name>': unknown activity` or `unknown stage` | The activity is not in the world, or the stage is not a symptom tag in `disease.yaml`. The stage error lists the known tags. |
+| Load error `... trigger: 'deactivate_at' is required` (or `'calm_days' is required`) | A current metric needs `deactivate_at`, and a cumulative metric needs `calm_days` and rejects `deactivate_at`. |
+| Load error `'compliance_rate' must be absent on a policy with a 'response'` | Remove the key, even a value of 1. The avoidance level replaces it. |
+| Startup error `... exactly 1 is required` naming a person | That person has no venue, or several, for the `shared_venue` activity. Fix the world data or use `decision_unit: person`. |
+| A triggered policy never seems to act | Check the metric name and scope, and that `override_activities` and `override_venue_types` match where the metric counts. A trigger is first evaluated at the end of day 0. |
+| Resume fails with `the checkpoint holds metrics [...] but this run has [...]` | The run reads a different set of metrics than the one that wrote the checkpoint. Resume with the same triggered policies. |
 
 ---
 

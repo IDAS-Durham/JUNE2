@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <initializer_list>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -16,6 +17,32 @@
 namespace june {
 
 namespace PolicyLoader {
+
+namespace {
+
+// Throws on the first key of `node` that is not one of `fields`, naming it and
+// listing the ones that are. `within` says where the key was found when `where`
+// does not already.
+void rejectUnknownKeys(const YAML::Node& node,
+                       std::initializer_list<const char*> fields,
+                       const std::string& where,
+                       const std::string& within = "") {
+  for (const auto& kv : node) {
+    const std::string key = kv.first.as<std::string>();
+    if (std::find_if(fields.begin(), fields.end(), [&](const char* field) {
+          return key == field;
+        }) != fields.end()) {
+      continue;
+    }
+    std::string known;
+    for (const char* field : fields)
+      known += (known.empty() ? "" : ", ") + std::string(field);
+    throw std::runtime_error(where + "unknown field '" + key + "'" + within +
+                             ". Fields are " + known + ".");
+  }
+}
+
+}  // namespace
 
 void loadPolicies(PolicyManager& policy_manager, const std::string& filename,
                   const std::string& simulation_start_date) {
@@ -56,8 +83,6 @@ void loadObservedMetrics(PolicyManager& policy_manager, const YAML::Node& node,
     throw std::runtime_error("observed_metrics in '" + policies_filename +
                              "' must be a mapping of metric name to fields.");
   }
-  static const std::unordered_set<std::string> kFields = {"source", "scope",
-                                                          "activity", "stage"};
   for (const auto& kv : node) {
     const std::string name = kv.first.as<std::string>();
     const YAML::Node& body = kv.second;
@@ -65,15 +90,12 @@ void loadObservedMetrics(PolicyManager& policy_manager, const YAML::Node& node,
       throw std::runtime_error("observed_metrics '" + name + "' in '" +
                                policies_filename + "' must be a mapping.");
     }
+    rejectUnknownKeys(
+        body, {"source", "scope", "activity", "stage"},
+        "observed_metrics '" + name + "' in '" + policies_filename + "': ");
     ObservedMetricConfig cfg;
     for (const auto& field : body) {
       const std::string key = field.first.as<std::string>();
-      if (!kFields.count(key)) {
-        throw std::runtime_error(
-            "observed_metrics '" + name + "' in '" + policies_filename +
-            "': unknown field '" + key +
-            "'. Fields are source, scope, activity, stage.");
-      }
       const std::string value = field.second.as<std::string>();
       if (key == "source") cfg.source = value;
       if (key == "scope") cfg.scope = value;
@@ -235,19 +257,6 @@ double readNumber(const YAML::Node& value, const std::string& where,
   throw std::runtime_error(where + "'" + key + "' must be a finite number.");
 }
 
-void requireDeclaredMetric(const ObservedMetrics& metrics,
-                           const std::string& metric,
-                           const std::string& where) {
-  const auto declared = metrics.declaredNames();
-  if (std::find(declared.begin(), declared.end(), metric) != declared.end())
-    return;
-  std::string known;
-  for (const auto& n : declared) known += (known.empty() ? "" : ", ") + n;
-  throw std::runtime_error(
-      where + "unknown metric '" + metric +
-      "'. Declared metrics: " + (known.empty() ? "none" : known) + ".");
-}
-
 // The response form of a trigger: a base level, terms of metric and weight, and
 // the decision unit. The level is base + sum(weight * count), read at the day
 // boundary and clamped to 1 where it is used. Base is held to 0 to 1 and every
@@ -270,13 +279,7 @@ PolicyTrigger loadResponse(const YAML::Node& node,
                              "'response' must be a mapping with 'base' and "
                              "'terms'.");
   }
-  for (const auto& kv : response) {
-    const std::string key = kv.first.as<std::string>();
-    if (key != "base" && key != "terms") {
-      throw std::runtime_error(where + "unknown field '" + key +
-                               "' in 'response'. Fields are base, terms.");
-    }
-  }
+  rejectUnknownKeys(response, {"base", "terms"}, where, " in 'response'");
 
   PolicyTrigger trigger;
   if (response["base"]) {
@@ -300,20 +303,14 @@ PolicyTrigger loadResponse(const YAML::Node& node,
                                "each term must be a mapping with 'metric' and "
                                "'weight'.");
     }
-    for (const auto& kv : term_node) {
-      const std::string key = kv.first.as<std::string>();
-      if (key != "metric" && key != "weight") {
-        throw std::runtime_error(where + "unknown field '" + key +
-                                 "' in a term. Fields are metric, weight.");
-      }
-    }
+    rejectUnknownKeys(term_node, {"metric", "weight"}, where, " in a term");
     if (!term_node["metric"] || !term_node["weight"]) {
       throw std::runtime_error(where +
                                "each term needs both 'metric' and 'weight'.");
     }
     ResponseTerm term;
     term.metric = term_node["metric"].as<std::string>();
-    requireDeclaredMetric(metrics, term.metric, where);
+    metrics.requireDeclared(term.metric, where);
     term.weight = readNumber(term_node["weight"], where, "weight");
     if (term.weight <= 0.0) {
       throw std::runtime_error(where + "the weight of '" + term.metric +
@@ -376,18 +373,10 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
   const std::string where = label + " trigger: ";
   if (!node.IsMap()) throw std::runtime_error(where + "must be a mapping.");
 
-  static const std::unordered_set<std::string> kFields = {
-      "metric",    "activate_at",   "deactivate_at", "calm_days",
-      "tolerance", "tolerance_pct", "response",      "decision_unit"};
-  for (const auto& kv : node) {
-    const std::string key = kv.first.as<std::string>();
-    if (!kFields.count(key)) {
-      throw std::runtime_error(
-          where + "unknown field '" + key +
-          "'. Fields are metric, activate_at, deactivate_at, calm_days, "
-          "tolerance, tolerance_pct, response, decision_unit.");
-    }
-  }
+  rejectUnknownKeys(node,
+                    {"metric", "activate_at", "deactivate_at", "calm_days",
+                     "tolerance", "tolerance_pct", "response", "decision_unit"},
+                    where);
   if (node["response"]) return loadResponse(node, metrics, where);
   if (node["decision_unit"]) {
     throw std::runtime_error(where +
@@ -397,7 +386,7 @@ PolicyTrigger loadTrigger(const YAML::Node& node,
   if (!node["metric"])
     throw std::runtime_error(where + "'metric' is required.");
   const std::string metric = node["metric"].as<std::string>();
-  requireDeclaredMetric(metrics, metric, where);
+  metrics.requireDeclared(metric, where);
 
   const auto number = [&](const char* key) -> std::optional<int64_t> {
     if (!node[key]) return std::nullopt;
@@ -522,13 +511,6 @@ void checkVoluntaryPolicy(const std::string& kind, const std::string& name,
         "yet; the policy can only send people elsewhere.");
   }
   if (kind == "symptom") {
-    if (trigger.perUnit()) {
-      throw std::runtime_error(
-          where + "metric '" + trigger.terms[0].metric +
-          "' is counted per venue, which is not built yet for a symptom "
-          "policy; a response on a symptom policy reads a world scope "
-          "metric.");
-    }
     if (trigger.decision_unit.shared()) {
       throw std::runtime_error(
           where +
@@ -551,18 +533,17 @@ void checkVoluntaryPolicy(const std::string& kind, const std::string& name,
 // A Policy triggered per venue closes a venue for everyone scheduled there.
 // Whatever would make that partial, or would need venue by venue rebuilding of
 // the transmission modifiers, is refused here rather than half honoured.
-void checkVenueTriggeredPolicy(const TemporalPolicy& policy,
-                               const YAML::Node& node,
-                               const ObservedMetrics& metrics) {
-  const std::string where = "temporal_policy '" + policy.name + "' trigger: ";
-  const std::string& metric = policy.trigger->metric;
-  if (policy.action.compliance_rate != 1.0) {
+void checkVenueTriggeredPolicy(const std::string& where, const YAML::Node& node,
+                               const PolicyTrigger& trigger,
+                               const ObservedMetrics& metrics,
+                               const PolicyAction& action) {
+  if (action.compliance_rate != 1.0) {
     throw std::runtime_error(
         where +
         "'compliance_rate' must be 1 on a policy triggered per venue, "
         "because a closed venue closes for everyone scheduled there; "
         "got " +
-        std::to_string(policy.action.compliance_rate) + ".");
+        std::to_string(action.compliance_rate) + ".");
   }
   if (node["transmission_effects_file"]) {
     throw std::runtime_error(
@@ -570,7 +551,36 @@ void checkVenueTriggeredPolicy(const TemporalPolicy& policy,
         "transmission effects on a policy triggered per venue are not "
         "built yet; the policy can only send people elsewhere.");
   }
-  checkActivityListed(where, policy.action, metrics, metric);
+  checkActivityListed(where, action, metrics, trigger.metric);
+}
+
+// Load the trigger of one policy, if it has one, and check what the form of
+// the trigger rules out. `kind` is "symptom" or "temporal".
+template <typename Policy>
+void loadPolicyTrigger(Policy& policy, const YAML::Node& node,
+                       const ObservedMetrics& metrics,
+                       const std::string& kind) {
+  if (!node["trigger"]) return;
+  const std::string label = kind + "_policy '" + policy.name + "'";
+  policy.trigger = loadTrigger(node["trigger"], metrics, label);
+  const PolicyTrigger& trigger = *policy.trigger;
+  // A threshold trigger on a world scope metric has nothing more to check.
+  if (!trigger.decidesPerSlot()) return;
+
+  const std::string where = label + " trigger: ";
+  if (kind == "symptom" && trigger.perUnit()) {
+    throw std::runtime_error(
+        where + "metric '" +
+        (trigger.voluntary() ? trigger.terms[0].metric : trigger.metric) +
+        "' is counted per venue, which is not built yet for a symptom "
+        "policy. Use a world scope metric, or write a temporal policy.");
+  }
+  if (trigger.voluntary()) {
+    checkVoluntaryPolicy(kind, policy.name, node, trigger, metrics,
+                         policy.action);
+  } else {
+    checkVenueTriggeredPolicy(where, node, trigger, metrics, policy.action);
+  }
 }
 
 }  // namespace
@@ -595,22 +605,8 @@ void loadSymptomPolicies(PolicyManager& policy_manager, const YAML::Node& node,
         policy_node["symptoms"].as<std::vector<std::string>>();
 
     loadCommonPolicyFields(policy, policy_node, simulation_start_date);
-    if (policy_node["trigger"]) {
-      policy.trigger =
-          loadTrigger(policy_node["trigger"], policy_manager.observedMetrics(),
-                      "symptom_policy '" + policy.name + "'");
-      if (policy.trigger->voluntary()) {
-        checkVoluntaryPolicy("symptom", policy.name, policy_node,
-                             *policy.trigger, policy_manager.observedMetrics(),
-                             policy.action);
-      } else if (policy.trigger->perUnit()) {
-        throw std::runtime_error(
-            "symptom_policy '" + policy.name + "' trigger: metric '" +
-            policy.trigger->metric +
-            "' is counted per venue, which is not built yet for a symptom "
-            "policy. To close a venue for everyone, write a temporal policy.");
-      }
-    }
+    loadPolicyTrigger(policy, policy_node, policy_manager.observedMetrics(),
+                      "symptom");
 
     if (policy_node["transmission_effects_file"]) {
       if (!hasExplicitLocationAction(policy_node))
@@ -650,19 +646,8 @@ void loadTemporalPolicies(PolicyManager& policy_manager, const YAML::Node& node,
 
     loadPolicyName(policy.name, policy_node, "temporal_policy");
     loadCommonPolicyFields(policy, policy_node, simulation_start_date);
-    if (policy_node["trigger"]) {
-      policy.trigger =
-          loadTrigger(policy_node["trigger"], policy_manager.observedMetrics(),
-                      "temporal_policy '" + policy.name + "'");
-      if (policy.trigger->voluntary()) {
-        checkVoluntaryPolicy("temporal", policy.name, policy_node,
-                             *policy.trigger, policy_manager.observedMetrics(),
-                             policy.action);
-      } else if (policy.trigger->perUnit()) {
-        checkVenueTriggeredPolicy(policy, policy_node,
-                                  policy_manager.observedMetrics());
-      }
-    }
+    loadPolicyTrigger(policy, policy_node, policy_manager.observedMetrics(),
+                      "temporal");
 
     if (policy_node["transmission_effects_file"]) {
       if (!hasExplicitLocationAction(policy_node))

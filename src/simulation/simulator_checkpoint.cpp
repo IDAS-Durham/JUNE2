@@ -469,7 +469,7 @@ void writeManifest(const fs::path& tmp, int completed_day,
                    double current_simulation_time, unsigned int random_seed) {
   YAML::Emitter m;
   m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 5;
+  m << YAML::Key << "format_version" << YAML::Value << 2;
   m << YAML::Key << "completed_day" << YAML::Value << completed_day;
   m << YAML::Key << "date" << YAML::Value << date_iso;
   m << YAML::Key << "current_simulation_time" << YAML::Value
@@ -602,13 +602,16 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
       (int64_t)event_logger_.getCoordinatedEncounterCount()};
   writeVec(f, "/event_log/rank0_buffered_counts", ec,
            H5::PredType::NATIVE_INT64, 0);
-  // Observed metric totals. Already reduced at the day boundary, so every
-  // rank holds the same numbers and one global file is enough. Written only
-  // when a metric is active, so a run without one adds nothing here. A metric
-  // counted per unit keeps its value per unit in three flat arrays (running
-  // totals for a cumulative metric, the last day's counts for a current one,
-  // which a voluntary response reads on the first day after a resume): the
-  // units of metric i are unit_ids[unit_offsets[i] .. unit_offsets[i + 1]).
+  // Observed metric totals and trigger state. Already reduced at the day
+  // boundary, so every rank holds the same numbers and one global file is
+  // enough. Written only when a metric is active, so a run without one adds
+  // nothing here. What is kept per unit (a metric counted per unit, or a
+  // trigger counted per unit) goes in one table of flat rows, led by the index
+  // of the metric or trigger it belongs to: a metric row is (metric, unit,
+  // value), holding the running total of a cumulative metric or the last day's
+  // count of a current one, which a voluntary response reads on the first day
+  // after a resume. A trigger row is (trigger, unit, closed, anchor day, anchor
+  // value).
   if (policy_manager_) {
     const auto metrics = policy_manager_->observedMetrics().snapshot();
     if (!metrics.empty()) {
@@ -616,60 +619,44 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
       std::vector<std::string> names;
       std::vector<int64_t> values;
       std::vector<int64_t> scopes;
-      std::vector<int64_t> unit_offsets = {0};
-      std::vector<int64_t> unit_ids;
-      std::vector<int64_t> unit_values;
+      std::vector<int64_t> unit_rows;
       for (const auto& m : metrics) {
+        for (const auto& [unit, total] : m.units)
+          unit_rows.insert(unit_rows.end(),
+                           {static_cast<int64_t>(names.size()), unit, total});
         names.push_back(m.name);
         values.push_back(m.value);
         scopes.push_back(static_cast<int64_t>(m.scope));
-        for (const auto& [unit, total] : m.units) {
-          unit_ids.push_back(unit);
-          unit_values.push_back(total);
-        }
-        unit_offsets.push_back(static_cast<int64_t>(unit_ids.size()));
       }
       writeStrs(f, "/observed_metrics/names", names);
       writeVec(f, "/observed_metrics/values", values,
                H5::PredType::NATIVE_INT64, 0);
       writeVec(f, "/observed_metrics/scopes", scopes,
                H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/observed_metrics/unit_offsets", unit_offsets,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/observed_metrics/unit_ids", unit_ids,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/observed_metrics/unit_values", unit_values,
+      writeVec(f, "/observed_metrics/unit_rows", unit_rows,
                H5::PredType::NATIVE_INT64, 0);
     }
-    // Trigger state, same reasoning: derived from reduced totals, so identical
-    // on every rank. Three numbers per trigger: closed, anchor day, anchor
-    // value.
+    // Three numbers per trigger for a world scope state: closed, anchor day,
+    // anchor value.
     const auto triggers = policy_manager_->triggerStates();
     if (!triggers.empty()) {
       f.createGroup("/policy_triggers");
       std::vector<std::string> keys;
       std::vector<int64_t> state;
-      // A trigger counted per unit keeps one cell per unit it has touched in
-      // three flat arrays: the cells of trigger i are unit_ids[unit_offsets[i]
-      // .. unit_offsets[i + 1]), three numbers each in unit_state.
       std::vector<int64_t> scopes;
       std::vector<int64_t> voluntary;
-      std::vector<int64_t> unit_offsets = {0};
-      std::vector<int64_t> unit_ids;
-      std::vector<int64_t> unit_state;
+      std::vector<int64_t> unit_rows;
       for (const auto& t : triggers) {
+        const int64_t index = static_cast<int64_t>(keys.size());
+        for (const auto& [unit, cell] : t.units)
+          unit_rows.insert(unit_rows.end(),
+                           {index, unit, cell.closed ? 1 : 0, cell.anchor_day,
+                            cell.anchor_value});
         keys.push_back(t.key);
-        voluntary.push_back(t.voluntary ? 1 : 0);
-        state.insert(state.end(),
-                     {t.closed ? 1 : 0, t.anchor_day, t.anchor_value});
+        state.insert(state.end(), {t.cell.closed ? 1 : 0, t.cell.anchor_day,
+                                   t.cell.anchor_value});
         scopes.push_back(static_cast<int64_t>(t.scope));
-        for (const auto& [unit, cell] : t.units) {
-          unit_ids.push_back(unit);
-          unit_state.insert(
-              unit_state.end(),
-              {cell.closed ? 1 : 0, cell.anchor_day, cell.anchor_value});
-        }
-        unit_offsets.push_back(static_cast<int64_t>(unit_ids.size()));
+        voluntary.push_back(t.voluntary ? 1 : 0);
       }
       writeStrs(f, "/policy_triggers/keys", keys);
       writeVec(f, "/policy_triggers/state", state, H5::PredType::NATIVE_INT64,
@@ -678,11 +665,7 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
                0);
       writeVec(f, "/policy_triggers/voluntary", voluntary,
                H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/policy_triggers/unit_offsets", unit_offsets,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/policy_triggers/unit_ids", unit_ids,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/policy_triggers/unit_state", unit_state,
+      writeVec(f, "/policy_triggers/unit_rows", unit_rows,
                H5::PredType::NATIVE_INT64, 0);
     }
   }

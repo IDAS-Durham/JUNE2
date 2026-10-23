@@ -75,12 +75,7 @@ TEST_CASE("Trigger - activation days do not depend on rank count") {
   CHECK(in_force_next_day == expected);
 
   // Every rank holds the identical answer, though its own count differs.
-  std::vector<int64_t> lo(10), hi(10);
-  MPI_Allreduce(in_force_next_day.data(), lo.data(), 10, MPI_INT64_T, MPI_MIN,
-                MPI_COMM_WORLD);
-  MPI_Allreduce(in_force_next_day.data(), hi.data(), 10, MPI_INT64_T, MPI_MAX,
-                MPI_COMM_WORLD);
-  CHECK(lo == hi);
+  expectSameOnAllRanks(in_force_next_day);
 
   int64_t min_local = 0;
   int64_t max_local = 0;
@@ -162,14 +157,8 @@ TEST_CASE("Trigger - venue closures do not depend on rank count") {
   CHECK(child_overridden == school_closed_next_day);
   CHECK(pub_closed == std::vector<int64_t>(present.size(), 0));
 
-  for (const auto* mine : {&school_closed, &child_overridden}) {
-    std::vector<int64_t> lo(mine->size()), hi(mine->size());
-    MPI_Allreduce(mine->data(), lo.data(), static_cast<int>(mine->size()),
-                  MPI_INT64_T, MPI_MIN, MPI_COMM_WORLD);
-    MPI_Allreduce(mine->data(), hi.data(), static_cast<int>(mine->size()),
-                  MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
-    CHECK(lo == hi);
-  }
+  for (const auto* mine : {&school_closed, &child_overridden})
+    expectSameOnAllRanks(*mine);
 }
 
 // A voluntary response counted per classroom. Each rank counts only its share
@@ -245,22 +234,10 @@ TEST_CASE("Response - levels and verdicts do not depend on rank count") {
   }
 
   // Identical on every rank, bit for bit.
-  std::vector<int64_t> lo(verdicts.size()), hi(verdicts.size());
-  MPI_Allreduce(verdicts.data(), lo.data(), static_cast<int>(verdicts.size()),
-                MPI_INT64_T, MPI_MIN, MPI_COMM_WORLD);
-  MPI_Allreduce(verdicts.data(), hi.data(), static_cast<int>(verdicts.size()),
-                MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
-  CHECK(lo == hi);
-
-  std::vector<double> levels = {t.unit_levels.at(kClassA),
-                                t.unit_levels.at(kClassB),
-                                t.unit_levels.at(kClassC)};
-  std::vector<double> level_lo(levels.size()), level_hi(levels.size());
-  MPI_Allreduce(levels.data(), level_lo.data(), static_cast<int>(levels.size()),
-                MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-  MPI_Allreduce(levels.data(), level_hi.data(), static_cast<int>(levels.size()),
-                MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-  CHECK(level_lo == level_hi);
+  expectSameOnAllRanks(verdicts);
+  expectSameOnAllRanks(std::vector<double>{t.unit_levels.at(kClassA),
+                                           t.unit_levels.at(kClassB),
+                                           t.unit_levels.at(kClassC)});
 }
 
 // The startup check sums its counts across ranks and every rank names the same
@@ -293,9 +270,7 @@ TEST_CASE("Response - the startup check agrees on every rank") {
   pm.requireTriggerMetrics();
   pm.resolveAll(disease);
 
-  const auto lines = pm.checkDecisionUnits();
-  REQUIRE(lines.size() == 1);
-  CHECK(lines[0].find("6 people checked, 0 failed") != std::string::npos);
+  CHECK_NOTHROW(pm.checkDecisionUnits());
 
   // Person 3 and person 4 lose their residence; the owner of 3 knows it.
   for (const PersonId id : {kPubWorker, kSchoolStaff}) {

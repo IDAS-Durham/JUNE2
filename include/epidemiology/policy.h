@@ -530,27 +530,21 @@ class PolicyManager {
   // once after the metrics are put back.
   void rebuildResponseLevels();
 
-  bool anyVoluntary() const;
-
   // For every voluntary Policy that shares a decision among the members of a
   // venue, check at startup that each person it can affect has exactly one
   // such venue. Collective: every rank must call it. Throws the same message
-  // on every rank for the lowest failing person id, and otherwise returns one
-  // status line per voluntary Policy, with the number of people checked when
-  // the decision is shared. Needs the policies resolved and their applicability
-  // computed.
-  std::vector<std::string> checkDecisionUnits();
+  // on every rank for the lowest failing person id. Needs the policies
+  // resolved and their applicability computed.
+  void checkDecisionUnits();
 
   // Trigger state for the checkpoint, symptom policies first, keyed by kind and
   // policy name. Restoring needs exactly the same keys.
   struct TriggerState {
     std::string key;
-    bool closed = false;
-    int64_t anchor_day = 0;
-    int64_t anchor_value = 0;
+    TriggerCell cell;  // the world scope state
     MetricScope scope = MetricScope::World;
     // Scopes counted per unit: one cell per unit the trigger has touched, in
-    // unit order. The three fields above are unused then.
+    // unit order. The cell above is unused then.
     std::vector<std::pair<VenueId, TriggerCell>> units;
     // A voluntary trigger keeps no state of its own; the flag only lets a
     // restore refuse a checkpoint that read the same Policy in the other form.
@@ -558,11 +552,6 @@ class PolicyManager {
   };
   std::vector<TriggerState> triggerStates() const;
   void restoreTriggerStates(const std::vector<TriggerState>& stored);
-
-  // One line per Policy with a per venue threshold trigger or a voluntary one,
-  // saying what it will act on, for the start of the run. Needs the policies
-  // resolved.
-  std::vector<std::string> describeVenueTriggers() const;
 
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);

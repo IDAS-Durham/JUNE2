@@ -10,10 +10,12 @@
 #include "epidemiology/disease.h"
 #include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
+#include "policy_test_helpers.h"
 #include "test_utils.h"
 #include "venue_scope_fixtures.h"
 
 using namespace june;
+using namespace june::policy_test;
 
 namespace {
 
@@ -22,36 +24,9 @@ constexpr int16_t kLeisure = 1;
 constexpr VenueId kHome = 0;
 constexpr VenueId kPub = 1;
 
-// Message of the exception a call throws, or "" if it does not throw.
-std::string thrown(const std::function<void()>& f) {
-  try {
-    f();
-  } catch (const std::exception& e) {
-    return e.what();
-  }
-  return "";
-}
-
-bool has(const std::string& text, const std::string& part) {
-  return text.find(part) != std::string::npos;
-}
-
-// healthy(0) -> mild(1) -> dead(2). Only here so the metrics can resolve.
+// Mild ends after two days, so a case sees a person die.
 Disease makeDisease() {
-  TransmissionParams trans;
-  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
-  auto curve = std::make_shared<ConstantCurve>(1.0);
-  trans.symptom_id_curves = {nullptr, curve, curve};
-  std::vector<SymptomTag> tags = {
-      {"healthy", -1, 0}, {"mild", 1, 1}, {"dead", 2, 2}};
-  DiseaseStageSettings settings;
-  settings.fatality_stages = {"dead"};
-  TrajectoryDefinition td;
-  td.selection_key = "general";
-  td.severity = 1.0;
-  td.stages.push_back({"mild", {"constant", {{"value", 2.0}}}});
-  td.stages.push_back({"dead", {"constant", {{"value", 100.0}}}});
-  return Disease("TriggerDisease", tags, settings, {td}, {}, trans);
+  return makeMildDeadDisease("TriggerDisease", 2.0, 100.0);
 }
 
 // One person whose residence is the home venue; a leisure closure sends them
@@ -100,20 +75,6 @@ std::string policyText(const std::string& trigger,
          "      compliance_rate: 1.0\n"
          "      trigger: " +
          trigger + "\n";
-}
-
-// Loads `text` into `pm`; returns the thrown message or "".
-std::string loadPolicyText(PolicyManager& pm, const std::string& text) {
-  const auto path =
-      std::filesystem::temp_directory_path() / "june_policy_trigger.yaml";
-  {
-    std::ofstream out(path);
-    out << text;
-  }
-  const std::string msg = thrown(
-      [&] { PolicyLoader::loadPolicies(pm, path.string(), "2020-02-03"); });
-  std::filesystem::remove(path);
-  return msg;
 }
 
 PolicyTrigger cumulativeTrigger(int64_t activate_at, int64_t calm_days,
@@ -475,9 +436,9 @@ TEST_CASE("Trigger - closed state survives a round trip and resumes the same") {
   const auto states = before.pm.triggerStates();
   REQUIRE(states.size() == 1);
   CHECK(states[0].key == "temporal/close_leisure");
-  CHECK(states[0].closed);
-  CHECK(states[0].anchor_day == 1);
-  CHECK(states[0].anchor_value == 3);
+  CHECK(states[0].cell.closed);
+  CHECK(states[0].cell.anchor_day == 1);
+  CHECK(states[0].cell.anchor_value == 3);
 
   // A fresh run restored the way the simulator does: metric totals, then
   // trigger state.
@@ -887,33 +848,6 @@ TEST_CASE("PolicyLoader - every bad venue trigger is refused with a reason") {
       INFO(lines);
       CHECK(loadPolicyText(pm, venuePolicyText("venue", trig, lines)) == "");
     }
-  }
-}
-
-TEST_CASE("VenueTrigger - the startup line says what the policy acts on") {
-  SUBCASE("a listed activity and a venue type") {
-    VenueTriggered t(venuePolicyText(
-        "parent_venue", "{metric: cases, activate_at: 2, deactivate_at: 0}",
-        "      override_activities: [primary_activity]\n"
-        "      override_venue_types: [classroom]\n"));
-    const auto lines = t.pm.describeVenueTriggers();
-    REQUIRE(lines.size() == 1);
-    CHECK(has(lines[0], "temporal_policy 'close_venue'"));
-    CHECK(has(lines[0], "closes a parent venue at 2, reopening at 0"));
-    CHECK(has(lines[0], "(activity primary_activity)"));
-    CHECK(has(lines[0], "acts on activities primary_activity"));
-    CHECK(has(lines[0], "at venue types classroom"));
-  }
-  SUBCASE("everything left open says so") {
-    VenueTriggered t(venuePolicyText(
-        "venue", "{metric: cases, activate_at: 2, deactivate_at: 0}", ""));
-    const auto lines = t.pm.describeVenueTriggers();
-    REQUIRE(lines.size() == 1);
-    CHECK(has(lines[0], "acts on all activities at any venue type"));
-  }
-  SUBCASE("a world scope trigger has no line") {
-    TriggeredWorld w(policyText(kDeathsTrigger));
-    CHECK(w.pm.describeVenueTriggers().empty());
   }
 }
 

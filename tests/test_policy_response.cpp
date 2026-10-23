@@ -14,12 +14,14 @@
 #include "epidemiology/epidemiology.h"
 #include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
+#include "policy_test_helpers.h"
 #include "test_utils.h"
 #include "transmission_fixtures.h"
 #include "utils/deterministic_rng.h"
 #include "venue_scope_fixtures.h"
 
 using namespace june;
+using namespace june::policy_test;
 namespace vs = june::venue_scope_fixture;
 
 namespace {
@@ -31,35 +33,9 @@ constexpr uint8_t kSchoolType = 1;
 constexpr uint8_t kClassroomType = 2;
 constexpr uint64_t kSeed = 2024;
 
-std::string thrown(const std::function<void()>& f) {
-  try {
-    f();
-  } catch (const std::exception& e) {
-    return e.what();
-  }
-  return "";
-}
-
-bool has(const std::string& text, const std::string& part) {
-  return text.find(part) != std::string::npos;
-}
-
-// healthy(0) -> mild(1) -> dead(2). Only here so the metrics can resolve.
+// Mild lasts the whole run, so a case follows one stage unless it moves people.
 Disease makeDisease() {
-  TransmissionParams trans;
-  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
-  auto curve = std::make_shared<ConstantCurve>(1.0);
-  trans.symptom_id_curves = {nullptr, curve, curve};
-  std::vector<SymptomTag> tags = {
-      {"healthy", -1, 0}, {"mild", 1, 1}, {"dead", 2, 2}};
-  DiseaseStageSettings settings;
-  settings.fatality_stages = {"dead"};
-  TrajectoryDefinition td;
-  td.selection_key = "general";
-  td.severity = 1.0;
-  td.stages.push_back({"mild", {"constant", {{"value", 100.0}}}});
-  td.stages.push_back({"dead", {"constant", {{"value", 1000.0}}}});
-  return Disease("ResponseDisease", tags, settings, {td}, {}, trans);
+  return makeMildDeadDisease("ResponseDisease", 100.0, 1000.0);
 }
 
 // Households of one adult and `kids` pupils each. Pupil j of household h is
@@ -155,19 +131,6 @@ std::string response(const std::string& terms,
 
 const std::string kHousehold = "{shared_venue: residence}";
 const std::string kDeaths = "{metric: deaths, weight: 0.1}";
-
-std::string loadPolicyText(PolicyManager& pm, const std::string& text) {
-  const auto path =
-      std::filesystem::temp_directory_path() / "june_policy_response.yaml";
-  {
-    std::ofstream out(path);
-    out << text;
-  }
-  const std::string msg = thrown(
-      [&] { PolicyLoader::loadPolicies(pm, path.string(), "2020-02-03"); });
-  std::filesystem::remove(path);
-  return msg;
-}
 
 // The draw a unit is held to, written out from the specification: a pure
 // function of the base seed, the unit key and the policy index. The temporal
@@ -939,42 +902,42 @@ TEST_CASE("Response - symptomatic people stay home more as deaths rise") {
 // Startup check of the decision unit
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Response - the startup check counts who it looked at") {
+TEST_CASE("Response - a good world passes the startup check") {
   const Shape shape{50, 2, 4};
-  SUBCASE("a venue metric checks only people it can count") {
+  SUBCASE("a shared decision unit with a venue metric") {
     Responding r(makeSchoolWorld(shape),
                  temporalFile(keepHome(
                      "keep_home", response("{metric: class_cases, weight: 0.1}",
                                            kHousehold))));
-    const auto lines = r.pm.checkDecisionUnits();
-    REQUIRE(lines.size() == 1);
-    // Only pupils are registered to primary_activity: 50 households of 2.
-    CHECK(has(lines[0], "temporal_policy 'keep_home'"));
-    CHECK(has(lines[0], "decision unit shared_venue 'residence'"));
-    CHECK(has(lines[0], "100 people checked, 0 failed"));
+    CHECK_NOTHROW(r.pm.checkDecisionUnits());
   }
-  SUBCASE("a world metric checks everyone the policy applies to") {
+  SUBCASE("a shared decision unit with a world metric") {
     Responding r(
         makeSchoolWorld(shape),
         temporalFile(keepHome("keep_home", response(kDeaths, kHousehold))));
-    const auto lines = r.pm.checkDecisionUnits();
-    REQUIRE(lines.size() == 1);
-    CHECK(has(lines[0], "150 people checked, 0 failed"));
+    CHECK_NOTHROW(r.pm.checkDecisionUnits());
   }
-  SUBCASE("a decision unit of one person needs no check") {
+}
+
+TEST_CASE("Response - a decision unit of one person needs no startup check") {
+  const Shape shape{50, 2, 4};
+  const auto lose_residence = [&](Responding& r, PersonId who) {
+    const Person& p = r.world.people[static_cast<size_t>(who)];
+    r.world.activity_meta[p.activity_meta_start].venue_count = 0;
+  };
+  SUBCASE("a response whose members decide alone") {
     Responding r(makeSchoolWorld(shape),
                  temporalFile(keepHome("keep_home", response(kDeaths))));
-    const auto lines = r.pm.checkDecisionUnits();
-    REQUIRE(lines.size() == 1);
-    CHECK(has(lines[0], "decision unit person"));
+    lose_residence(r, shape.adult(3));
+    CHECK_NOTHROW(r.pm.checkDecisionUnits());
   }
-  SUBCASE("a policy that is not voluntary has no line") {
+  SUBCASE("a policy that is not voluntary") {
     Responding r(
         makeSchoolWorld(shape),
         temporalFile("    - name: plain\n"
                      "      override_activities: [primary_activity]\n"));
-    CHECK(r.pm.checkDecisionUnits().empty());
-    CHECK_FALSE(r.pm.anyVoluntary());
+    lose_residence(r, shape.adult(3));
+    CHECK_NOTHROW(r.pm.checkDecisionUnits());
   }
 }
 
@@ -1036,24 +999,8 @@ TEST_CASE(
 }
 
 // ---------------------------------------------------------------------------
-// Startup line and checkpoint
+// Checkpoint
 // ---------------------------------------------------------------------------
-
-TEST_CASE("Response - the startup line says how the level is made") {
-  Responding r(
-      vs::makeWorld(),
-      temporalFile(keepHome(
-          "keep_home",
-          response("{metric: school_cases, weight: 0.25}", kHousehold, "0.1"),
-          "      override_venue_types: [classroom]\n")));
-  const auto lines = r.pm.describeVenueTriggers();
-  REQUIRE(lines.size() == 1);
-  CHECK(has(lines[0], "temporal_policy 'keep_home': voluntary avoidance"));
-  CHECK(has(lines[0], "school_cases x 0.25"));
-  CHECK(has(lines[0], "read at the parent venue (activity primary_activity)"));
-  CHECK(has(lines[0], "everyone sharing a 'residence' venue"));
-  CHECK(has(lines[0], "at venue types classroom"));
-}
 
 TEST_CASE(
     "Response - a restored run reads the same levels and gives the same "

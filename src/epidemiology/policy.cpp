@@ -50,10 +50,8 @@ bool isVoluntary(const Policy& policy) {
 // at a time, or a voluntary one.
 template <typename Policy>
 const PolicyTrigger* slotTrigger(const Policy& policy) {
-  return policy.trigger &&
-                 (policy.trigger->perUnit() || policy.trigger->voluntary())
-             ? &*policy.trigger
-             : nullptr;
+  return policy.trigger && policy.trigger->decidesPerSlot() ? &*policy.trigger
+                                                            : nullptr;
 }
 
 // Visit every triggered policy, symptom policies first. Works for the const
@@ -79,16 +77,14 @@ void PolicyManager::addSymptomPolicy(const SymptomPolicy& policy) {
   // start: the closed venues, or the avoidance level, decide where it acts.
   if (policy.trigger)
     symptom_policies_.back().window.trigger_state =
-        policy.trigger->perUnit() || policy.trigger->voluntary() ||
-        policy.trigger->closed;
+        policy.trigger->holdsPolicy();
 }
 
 void PolicyManager::addTemporalPolicy(const TemporalPolicy& policy) {
   temporal_policies_.push_back(policy);
   if (policy.trigger)
     temporal_policies_.back().window.trigger_state =
-        policy.trigger->perUnit() || policy.trigger->voluntary() ||
-        policy.trigger->closed;
+        policy.trigger->holdsPolicy();
 }
 
 void PolicyManager::requireTriggerMetrics() {
@@ -161,15 +157,6 @@ void PolicyManager::resolveResponses() {
       });
 }
 
-bool PolicyManager::anyVoluntary() const {
-  bool any = false;
-  eachTriggered(symptom_policies_, temporal_policies_,
-                [&](const std::string&, const auto& policy) {
-                  any = any || policy.trigger->voluntary();
-                });
-  return any;
-}
-
 void PolicyManager::rebuildResponseLevels() {
   eachTriggered(
       symptom_policies_, temporal_policies_,
@@ -205,9 +192,7 @@ bool PolicyManager::avoids(const PolicyTrigger& trigger, const Person& person,
   VenueId unit = kInvalidVenueId;
   if (trigger.perUnit()) {
     if (slot_venue_id < 0) return false;
-    unit = trigger.scope == MetricScope::ParentVenue
-               ? world_.parentUnitOf(slot_venue_id)
-               : slot_venue_id;
+    unit = unitOf(world_, trigger.scope, slot_venue_id);
     level = trigger.levelAtUnit(unit);
   } else {
     level = trigger.levelAtWorld();
@@ -219,10 +204,7 @@ bool PolicyManager::avoids(const PolicyTrigger& trigger, const Person& person,
     bool counted = false;
     for (const auto& registration :
          world_.getActivityVenues(person, trigger.metric_activity_index)) {
-      const VenueId venue = registration.first;
-      if ((trigger.scope == MetricScope::ParentVenue
-               ? world_.parentUnitOf(venue)
-               : venue) == unit) {
+      if (unitOf(world_, trigger.scope, registration.first) == unit) {
         counted = true;
         break;
       }
@@ -249,19 +231,14 @@ bool PolicyManager::avoids(const PolicyTrigger& trigger, const Person& person,
   return level > uniform01(rng);
 }
 
-std::vector<std::string> PolicyManager::checkDecisionUnits() {
-  std::vector<std::string> lines;
+void PolicyManager::checkDecisionUnits() {
   eachTriggered(
       symptom_policies_, temporal_policies_,
       [&](const std::string& kind, const auto& policy) {
         const PolicyTrigger& trigger = *policy.trigger;
         if (!trigger.voluntary()) return;
         const std::string label = kind + "_policy '" + policy.name + "'";
-        if (!trigger.decision_unit.shared()) {
-          lines.push_back("[policy trigger] " + label +
-                          ": decision unit person.");
-          return;
-        }
+        if (!trigger.decision_unit.shared()) return;
 
         // People the Policy applies to (exemptions are per activity and cannot
         // be settled here) whom the metric can count.
@@ -317,105 +294,26 @@ std::vector<std::string> PolicyManager::checkDecisionUnits() {
               " people checked failed. Fix the world data or use "
               "'decision_unit: person'.");
         }
-        lines.push_back("[policy trigger] " + label + ": " + unit_text + ", " +
-                        std::to_string(counts[0]) + " people checked, " +
-                        std::to_string(counts[1]) + " failed.");
       });
-  return lines;
 }
 
 bool PolicyManager::unitClosedAt(const PolicyTrigger& trigger,
                                  VenueId venue) const {
   if (venue < 0) return false;
-  return trigger.unitClosed(trigger.scope == MetricScope::ParentVenue
-                                ? world_.parentUnitOf(venue)
-                                : venue);
-}
-
-std::vector<std::string> PolicyManager::describeVenueTriggers() const {
-  const auto join = [](std::vector<std::string> names) {
-    std::sort(names.begin(), names.end());
-    std::string out;
-    for (const auto& n : names) out += (out.empty() ? "" : ", ") + n;
-    return out;
-  };
-  std::vector<std::string> lines;
-  eachTriggered(
-      symptom_policies_, temporal_policies_,
-      [&](const std::string& kind, const auto& policy) {
-        const PolicyTrigger& trigger = *policy.trigger;
-        if (!trigger.perUnit() && !trigger.voluntary()) return;
-        const PolicyAction& action = policy.action;
-        const std::string activities =
-            action.override_all
-                ? "all activities"
-                : "activities " + join({action.override_activities.begin(),
-                                        action.override_activities.end()});
-        std::string types = "any venue type";
-        if (!action.override_venue_types.empty()) {
-          types = "venue types " + join({action.override_venue_types.begin(),
-                                         action.override_venue_types.end()});
-        } else if (!action.exempt_venue_types.empty()) {
-          types = "every venue type except " +
-                  join({action.exempt_venue_types.begin(),
-                        action.exempt_venue_types.end()});
-        }
-        if (trigger.voluntary()) {
-          std::string terms;
-          for (const auto& term : trigger.terms)
-            terms += (terms.empty() ? "" : ", ") + term.metric + " x " +
-                     std::to_string(term.weight);
-          lines.push_back(
-              "[policy trigger] " + kind + "_policy '" + policy.name +
-              "': voluntary avoidance, level = " +
-              std::to_string(trigger.base) + " + " + terms +
-              (trigger.perUnit()
-                   ? std::string(", read at the ") +
-                         (trigger.scope == MetricScope::ParentVenue
-                              ? "parent venue"
-                              : "venue") +
-                         " (activity " +
-                         observed_metrics_.activityOf(trigger.terms[0].metric) +
-                         ")"
-                   : std::string(", read for the world")) +
-              ", decided by " +
-              (trigger.decision_unit.shared()
-                   ? "everyone sharing a '" +
-                         trigger.decision_unit.shared_activity + "' venue"
-                   : std::string("each person")) +
-              "; acts on " + activities + " at " + types + ".");
-          return;
-        }
-        const std::string rule =
-            trigger.cumulative
-                ? "after " + std::to_string(trigger.activate_at) +
-                      " more, reopening after " +
-                      std::to_string(trigger.calm_days) + " calm days"
-                : "at " + std::to_string(trigger.activate_at) +
-                      ", reopening at " +
-                      std::to_string(trigger.deactivate_at.value());
-        lines.push_back(
-            "[policy trigger] " + kind + "_policy '" + policy.name +
-            "': closes a " +
-            (trigger.scope == MetricScope::ParentVenue ? "parent venue"
-                                                       : "venue") +
-            " " + rule + " on metric '" + trigger.metric + "' (activity " +
-            observed_metrics_.activityOf(trigger.metric) + "); acts on " +
-            activities + " at " + types + ".");
-      });
-  return lines;
+  return trigger.unitClosed(unitOf(world_, trigger.scope, venue));
 }
 
 std::vector<PolicyManager::TriggerState> PolicyManager::triggerStates() const {
   std::vector<TriggerState> out;
   eachTriggered(symptom_policies_, temporal_policies_,
                 [&](const std::string& kind, const auto& policy) {
-                  TriggerState state{
-                      kind + "/" + policy.name,   policy.trigger->closed,
-                      policy.trigger->anchor_day, policy.trigger->anchor_value,
-                      policy.trigger->scope,      {},
-                      policy.trigger->voluntary()};
-                  for (const auto& [unit, cell] : policy.trigger->unitCells())
+                  const PolicyTrigger& trigger = *policy.trigger;
+                  TriggerState state{kind + "/" + policy.name,
+                                     trigger,
+                                     trigger.scope,
+                                     {},
+                                     trigger.voluntary()};
+                  for (const auto& [unit, cell] : trigger.unitCells())
                     state.units.emplace_back(unit, cell);
                   out.push_back(std::move(state));
                 });
@@ -425,54 +323,48 @@ std::vector<PolicyManager::TriggerState> PolicyManager::triggerStates() const {
 void PolicyManager::restoreTriggerStates(
     const std::vector<TriggerState>& stored) {
   const auto current = triggerStates();
-  bool same = stored.size() == current.size();
-  for (size_t i = 0; same && i < stored.size(); ++i)
-    same = stored[i].key == current[i].key;
-  if (!same) {
+  const auto refuse = [&](const std::string& why) {
+    throw std::runtime_error("policy triggers: " + why);
+  };
+  const auto wrongSet = [&] {
     const auto join = [](const std::vector<TriggerState>& states) {
       std::string out;
       for (const auto& state : states)
         out += (out.empty() ? "" : ", ") + state.key;
       return out;
     };
-    throw std::runtime_error(
-        "policy triggers: the checkpoint holds triggers [" + join(stored) +
-        "] but this run has [" + join(current) +
-        "]. A trigger's state cannot be rebuilt; resume with the same "
-        "triggered Policies.");
-  }
-  // The same name counted per unit in one run and as a world total in the
-  // other is not the same trigger, whatever the key says.
+    refuse("the checkpoint holds triggers [" + join(stored) +
+           "] but this run has [" + join(current) +
+           "]. A trigger's state cannot be rebuilt; resume with the same "
+           "triggered Policies.");
+  };
+  if (stored.size() != current.size()) wrongSet();
   for (size_t i = 0; i < stored.size(); ++i) {
-    if (stored[i].scope == current[i].scope) continue;
-    throw std::runtime_error(
-        "policy triggers: '" + stored[i].key +
-        "' reads a metric of another scope than the checkpoint's. A "
-        "trigger's state cannot be rebuilt under another scope; resume with "
-        "the same metrics.");
-  }
-  // A Policy read as a threshold in one run and as a response in the other is
-  // not the same trigger either.
-  for (size_t i = 0; i < stored.size(); ++i) {
-    if (stored[i].voluntary == current[i].voluntary) continue;
-    throw std::runtime_error(
-        "policy triggers: '" + stored[i].key + "' is " +
-        (stored[i].voluntary ? "a voluntary response" : "a threshold") +
-        " trigger in the checkpoint and " +
-        (current[i].voluntary ? "a voluntary response" : "a threshold") +
-        " trigger in this run. Resume with the same triggered Policies.");
+    if (stored[i].key != current[i].key) wrongSet();
+    // The same name counted per unit in one run and as a world total in the
+    // other is not the same trigger, whatever the key says. Nor is a Policy
+    // read as a threshold in one run and as a response in the other.
+    if (stored[i].scope != current[i].scope) {
+      refuse("'" + stored[i].key +
+             "' reads a metric of another scope than the checkpoint's. A "
+             "trigger's state cannot be rebuilt under another scope; resume "
+             "with the same metrics.");
+    }
+    if (stored[i].voluntary != current[i].voluntary) {
+      refuse("'" + stored[i].key + "' is " +
+             (stored[i].voluntary ? "a voluntary response" : "a threshold") +
+             " trigger in the checkpoint and " +
+             (current[i].voluntary ? "a voluntary response" : "a threshold") +
+             " trigger in this run. Resume with the same triggered Policies.");
+    }
   }
   size_t next = 0;
   eachTriggered(symptom_policies_, temporal_policies_,
                 [&](const std::string&, auto& policy) {
                   const TriggerState& state = stored[next++];
-                  policy.trigger->closed = state.closed;
-                  policy.trigger->anchor_day = state.anchor_day;
-                  policy.trigger->anchor_value = state.anchor_value;
+                  static_cast<TriggerCell&>(*policy.trigger) = state.cell;
                   policy.trigger->restoreUnits(state.units);
-                  policy.window.trigger_state = policy.trigger->perUnit() ||
-                                                policy.trigger->voluntary() ||
-                                                state.closed;
+                  policy.window.trigger_state = policy.trigger->holdsPolicy();
                 });
 }
 

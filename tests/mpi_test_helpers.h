@@ -5,6 +5,7 @@
 
 #include <mpi.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -13,12 +14,31 @@
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
+#include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/infectiousness_curves.h"
 #include "parallel/domain.h"
 #include "parallel/domain_manager.h"
 
 namespace june {
+
+// ---------------------------------------------------------------------------
+// Checks that every rank holds these same values: the smallest and the largest
+// of each element across the ranks must be equal. Collective.
+// ---------------------------------------------------------------------------
+inline MPI_Datatype mpiTypeOf(int64_t) { return MPI_INT64_T; }
+inline MPI_Datatype mpiTypeOf(double) { return MPI_DOUBLE; }
+
+template <typename T>
+void expectSameOnAllRanks(const std::vector<T>& mine) {
+  std::vector<T> lo(mine.size()), hi(mine.size());
+  const int count = static_cast<int>(mine.size());
+  MPI_Allreduce(mine.data(), lo.data(), count, mpiTypeOf(T{}), MPI_MIN,
+                MPI_COMM_WORLD);
+  MPI_Allreduce(mine.data(), hi.data(), count, mpiTypeOf(T{}), MPI_MAX,
+                MPI_COMM_WORLD);
+  CHECK(lo == hi);
+}
 
 // ---------------------------------------------------------------------------
 // Rank r owns geo unit r, venue r and person r.

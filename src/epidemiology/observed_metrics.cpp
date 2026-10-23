@@ -17,69 +17,45 @@ namespace june {
 
 namespace {
 
-// Every infected person, present now.
-class InfectionSource : public MetricSource {
- public:
-  bool cumulative() const override { return false; }
-  bool needsStage() const override { return false; }
-  bool counts(const Observation& obs, uint16_t) const override {
-    return obs.kind == ObservationKind::Present;
-  }
-};
-
-// Infected people whose current stage is the named one.
-class StageSource : public MetricSource {
- public:
-  bool cumulative() const override { return false; }
-  bool needsStage() const override { return true; }
-  bool counts(const Observation& obs, uint16_t stage_id) const override {
-    return obs.kind == ObservationKind::Present && obs.symptom_id == stage_id;
-  }
-};
-
-// People marked dead, counted once at the death site.
-class DeathSource : public MetricSource {
- public:
-  bool cumulative() const override { return true; }
-  bool needsStage() const override { return false; }
-  bool counts(const Observation& obs, uint16_t) const override {
-    return obs.kind == ObservationKind::Death;
-  }
-};
-
-// People entering the named stage: placed in it at the moment of infection, or
-// moved into it from another stage. Going from the stage to itself is not an
-// admission.
-class StageAdmissionSource : public MetricSource {
- public:
-  bool cumulative() const override { return true; }
-  bool needsStage() const override { return true; }
-  bool counts(const Observation& obs, uint16_t stage_id) const override {
-    if (obs.symptom_id != stage_id) return false;
-    return obs.kind == ObservationKind::Start ||
-           (obs.kind == ObservationKind::Transition &&
-            obs.previous_symptom_id != stage_id);
-  }
-};
-
-struct SourceEntry {
+// How each source turns observations into a count. A source is either current
+// (a function of present state, read from Present observations) or cumulative
+// (an event counter that only rises). That comes from the source, never from
+// YAML.
+struct SourceDef {
   const char* name;
-  const MetricSource* source;
+  bool cumulative;
+  bool needs_stage;
+  bool (*counts)(const Observation& obs, uint16_t stage_id);
 };
 
-const std::vector<SourceEntry>& sourceTable() {
-  static const InfectionSource infection;
-  static const StageSource stage;
-  static const DeathSource death;
-  static const StageAdmissionSource stage_admission;
-  static const std::vector<SourceEntry> table = {
-      {"infection", &infection},
-      {"stage", &stage},
-      {"death", &death},
-      {"stage_admission", &stage_admission},
-  };
-  return table;
-}
+const SourceDef kSources[] = {
+    // Every infected person, present now.
+    {"infection", false, false,
+     [](const Observation& obs, uint16_t) {
+       return obs.kind == ObservationKind::Present;
+     }},
+    // Infected people whose current stage is the named one.
+    {"stage", false, true,
+     [](const Observation& obs, uint16_t stage_id) {
+       return obs.kind == ObservationKind::Present &&
+              obs.symptom_id == stage_id;
+     }},
+    // People marked dead, counted once at the death site.
+    {"death", true, false,
+     [](const Observation& obs, uint16_t) {
+       return obs.kind == ObservationKind::Death;
+     }},
+    // People entering the named stage: placed in it at the moment of
+    // infection, or moved into it from another stage. Going from the stage to
+    // itself is not an admission.
+    {"stage_admission", true, true,
+     [](const Observation& obs, uint16_t stage_id) {
+       if (obs.symptom_id != stage_id) return false;
+       return obs.kind == ObservationKind::Start ||
+              (obs.kind == ObservationKind::Transition &&
+               obs.previous_symptom_id != stage_id);
+     }},
+};
 
 std::string joinNames(const std::vector<std::string>& names) {
   std::string out;
@@ -110,23 +86,11 @@ std::vector<int64_t> allGatherInt64(const std::vector<int64_t>& mine,
 
 }  // namespace
 
-const MetricSource* findMetricSource(const std::string& name) {
-  for (const auto& e : sourceTable())
-    if (name == e.name) return e.source;
-  return nullptr;
-}
-
-std::vector<std::string> metricSourceNames() {
-  std::vector<std::string> names;
-  for (const auto& e : sourceTable()) names.push_back(e.name);
-  return names;
-}
-
 void ObservedMetrics::declare(const std::string& name,
                               const ObservedMetricConfig& cfg) {
-  if (name.empty() || name.find('/') != std::string::npos) {
-    throw std::runtime_error("observed_metrics: metric name '" + name +
-                             "' must be non-empty and must not contain '/'.");
+  if (name.empty()) {
+    throw std::runtime_error(
+        "observed_metrics: a metric name must not be empty.");
   }
   if (resolved_) {
     throw std::logic_error(metricLabel(name) +
@@ -142,12 +106,19 @@ void ObservedMetrics::declare(const std::string& name,
   entry.name = name;
   entry.cfg = cfg;
 
-  entry.source = findMetricSource(cfg.source);
-  if (!entry.source) {
-    throw std::runtime_error(
-        metricLabel(name) + "unknown source '" + cfg.source +
-        "'. Known sources: " + joinNames(metricSourceNames()) + ".");
+  const SourceDef* source = nullptr;
+  std::string known_sources;
+  for (const SourceDef& s : kSources) {
+    if (cfg.source == s.name) source = &s;
+    known_sources += (known_sources.empty() ? "" : ", ") + std::string(s.name);
   }
+  if (!source) {
+    throw std::runtime_error(metricLabel(name) + "unknown source '" +
+                             cfg.source + "'. Known sources: " + known_sources +
+                             ".");
+  }
+  entry.cumulative = source->cumulative;
+  entry.counts = source->counts;
 
   if (cfg.scope == "world") {
     entry.scope = MetricScope::World;
@@ -170,11 +141,11 @@ void ObservedMetrics::declare(const std::string& name,
                              "'parent_venue', but scope is '" +
                              cfg.scope + "'.");
   }
-  if (entry.source->needsStage() && cfg.stage.empty()) {
+  if (source->needs_stage && cfg.stage.empty()) {
     throw std::runtime_error(metricLabel(name) + "source '" + cfg.source +
                              "' requires a 'stage'.");
   }
-  if (!entry.source->needsStage() && !cfg.stage.empty()) {
+  if (!source->needs_stage && !cfg.stage.empty()) {
     throw std::runtime_error(metricLabel(name) +
                              "'stage' is not valid with "
                              "source '" +
@@ -252,11 +223,26 @@ void ObservedMetrics::buildVenueParents(WorldState& world) const {
   }
 }
 
+void ObservedMetrics::throwUnknown(const std::string& name,
+                                   const std::string& where) const {
+  std::string known;
+  for (const auto& e : entries_) known += (known.empty() ? "" : ", ") + e.name;
+  throw std::runtime_error(
+      where + "unknown metric '" + name +
+      "'. Declared metrics: " + (known.empty() ? "none" : known) + ".");
+}
+
+void ObservedMetrics::requireDeclared(const std::string& name,
+                                      const std::string& where) const {
+  for (const auto& e : entries_)
+    if (e.name == name) return;
+  throwUnknown(name, where);
+}
+
 ObservedMetrics::Entry& ObservedMetrics::find(const std::string& name) {
   for (auto& e : entries_)
     if (e.name == name) return e;
-  throw std::runtime_error("observed_metrics: no metric named '" + name +
-                           "' is declared.");
+  throwUnknown(name, "observed_metrics: ");
 }
 
 const ObservedMetrics::Entry& ObservedMetrics::find(
@@ -264,18 +250,8 @@ const ObservedMetrics::Entry& ObservedMetrics::find(
   return const_cast<ObservedMetrics*>(this)->find(name);
 }
 
-std::vector<std::string> ObservedMetrics::declaredNames() const {
-  std::vector<std::string> names;
-  for (const auto& e : entries_) names.push_back(e.name);
-  return names;
-}
-
 bool ObservedMetrics::isCumulative(const std::string& name) const {
-  return find(name).source->cumulative();
-}
-
-bool ObservedMetrics::isWorldScope(const std::string& name) const {
-  return find(name).scope == MetricScope::World;
+  return find(name).cumulative;
 }
 
 MetricScope ObservedMetrics::scope(const std::string& name) const {
@@ -303,7 +279,7 @@ void ObservedMetrics::require(const std::string& name) {
   for (size_t i = 0; i < entries_.size(); ++i) {
     if (!entries_[i].active) continue;
     active_.push_back(i);
-    if (!entries_[i].source->cumulative()) tracks_present_ = true;
+    if (!entries_[i].cumulative) tracks_present_ = true;
   }
 }
 
@@ -313,10 +289,7 @@ void ObservedMetrics::unitsOf(const Entry& entry, const Person& person,
   // Registrations are static world data, so a dead person still has theirs.
   for (const auto& registration :
        world_->getActivityVenues(person, entry.activity_index)) {
-    const VenueId venue = registration.first;
-    out.push_back(entry.scope == MetricScope::ParentVenue
-                      ? world_->parentUnitOf(venue)
-                      : venue);
+    out.push_back(unitOf(*world_, entry.scope, registration.first));
   }
   std::sort(out.begin(), out.end());
   out.erase(std::unique(out.begin(), out.end()), out.end());
@@ -325,7 +298,7 @@ void ObservedMetrics::unitsOf(const Entry& entry, const Person& person,
 void ObservedMetrics::count(const Person& person, const Observation& obs) {
   for (size_t i : active_) {
     Entry& e = entries_[i];
-    if (!e.source->counts(obs, e.stage_id)) continue;
+    if (!e.counts(obs, e.stage_id)) continue;
     if (!e.perUnit()) {
       ++e.local;
       continue;
@@ -376,7 +349,7 @@ void ObservedMetrics::reduce() {
 #endif
   for (size_t k = 0; k < world_entries.size(); ++k) {
     Entry& e = entries_[world_entries[k]];
-    e.reduced = e.source->cumulative() ? e.reduced + sums[k] : sums[k];
+    e.reduced = e.cumulative ? e.reduced + sums[k] : sums[k];
     e.local = 0;
   }
 
@@ -409,7 +382,7 @@ void ObservedMetrics::reduce() {
     Entry& e = entries_[active_[k]];
     if (!e.perUnit()) continue;
     e.changed.clear();
-    if (!e.source->cumulative()) e.units.clear();
+    if (!e.cumulative) e.units.clear();
     for (const auto& [unit, count] : today[k]) {
       e.changed.push_back(unit);
       e.units[unit] += count;
@@ -425,10 +398,6 @@ int64_t ObservedMetrics::value(const std::string& name) const {
                              "is counted per unit; read it with unitValue.");
   }
   return e.reduced;
-}
-
-int64_t ObservedMetrics::localCount(const std::string& name) const {
-  return find(name).local;
 }
 
 int64_t ObservedMetrics::unitValue(const std::string& name,

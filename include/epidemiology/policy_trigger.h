@@ -84,6 +84,13 @@ struct PolicyTrigger : TriggerCell {
 
   bool voluntary() const { return !terms.empty(); }
 
+  // Does the trigger hold the Policy in force as a whole? A threshold trigger
+  // on a world scope metric does while it is closed. A trigger counted per
+  // unit and a voluntary one always do, and then decide slot by slot where the
+  // Policy acts.
+  bool holdsPolicy() const { return decidesPerSlot() || closed; }
+  bool decidesPerSlot() const { return perUnit() || voluntary(); }
+
   // The level as of the last day boundary, before the clamp. A world scope
   // trigger has one; a trigger counted per unit has one for each unit some
   // term counted, and every other unit sits at the base.

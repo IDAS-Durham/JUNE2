@@ -142,15 +142,14 @@ void EventLogger::printEncounterStats(
 
 void EventLogger::saveToHDF5WithLookups(
     const std::string& filename, const WorldState& world, const Config& config,
-    const std::unordered_set<PersonId>* person_ids_filter) {
+    const std::unordered_set<PersonId>& person_ids_filter) {
   event_writer::saveToHDF5WithLookups(*this, filename, world, config,
-                                      getInfectedPersonIds(),
                                       person_ids_filter);
 }
 
 void EventLogger::flush(const std::string& filename, const Config& config,
                         const WorldState& world,
-                        const std::unordered_set<PersonId>* person_ids_filter) {
+                        const std::unordered_set<PersonId>& person_ids_filter) {
   if (getTotalRecordCount() == 0) return;
 
   // Save current buffers and update lookups incrementally.

@@ -16,8 +16,7 @@ namespace event_writer {
 void saveToHDF5WithLookups(
     const EventLogger& logger, const std::string& filename,
     const WorldState& world, const Config& config,
-    const std::unordered_set<PersonId>& infected_person_ids,
-    const std::unordered_set<PersonId>* person_ids_filter);
+    const std::unordered_set<PersonId>& person_ids_filter);
 }
 
 // =============================================================================
@@ -54,15 +53,17 @@ class EventLogger {
 
   // Save all events + lookup tables to HDF5 file (with config-based selective
   // saving)
+  // `person_ids_filter` is the people whose lookup rows this write adds; an
+  // empty one adds none.
   void saveToHDF5WithLookups(
       const std::string& filename, const WorldState& world,
       const Config& config,
-      const std::unordered_set<PersonId>* person_ids_filter = nullptr);
+      const std::unordered_set<PersonId>& person_ids_filter);
 
   // Flush current buffers to a specific file (incremental)
   void flush(const std::string& filename, const Config& config,
              const WorldState& world,
-             const std::unordered_set<PersonId>* person_ids_filter = nullptr);
+             const std::unordered_set<PersonId>& person_ids_filter);
 
   // Clear all events (useful for starting fresh)
   void clear();
@@ -119,8 +120,7 @@ class EventLogger {
   friend void event_writer::saveToHDF5WithLookups(
       const EventLogger& logger, const std::string& filename,
       const WorldState& world, const Config& config,
-      const std::unordered_set<PersonId>& infected_person_ids,
-      const std::unordered_set<PersonId>* person_ids_filter);
+      const std::unordered_set<PersonId>& person_ids_filter);
 
   std::vector<InfectionEvent> infections_;
   std::vector<SymptomChangeEvent> symptom_changes_;

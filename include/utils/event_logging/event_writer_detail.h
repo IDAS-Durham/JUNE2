@@ -24,16 +24,12 @@ namespace june::event_writer {
 
 void writePersonLookupTable(
     H5::H5File& file, const WorldState& world, const Config& config,
-    const std::unordered_set<PersonId>& infected_person_ids,
-    bool append = false,
-    const std::unordered_set<PersonId>* person_ids_filter = nullptr);
+    const std::unordered_set<PersonId>& person_ids_filter, bool append = false);
 void writeVenueLookupTable(H5::H5File& file, const WorldState& world,
                            const Config& config);
 void writePersonActivitiesTable(
     H5::H5File& file, const WorldState& world, const Config& config,
-    const std::unordered_set<PersonId>& infected_person_ids,
-    bool append = false,
-    const std::unordered_set<PersonId>* person_ids_filter = nullptr);
+    const std::unordered_set<PersonId>& person_ids_filter, bool append = false);
 void writePopulationSummary(H5::H5File& file, const WorldState& world,
                             const Config& config);
 void writePopulationNetworks(H5::H5File& file, const WorldState& world,

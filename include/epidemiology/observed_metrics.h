@@ -8,11 +8,11 @@
 #include <vector>
 
 #include "core/types.h"
+#include "core/world_state.h"
 
 namespace june {
 
 class Disease;
-class WorldState;
 
 // What happened to an infected person that a metric source may want to count.
 // Present is the daily look at who is infected now, Start is the stage a person
@@ -26,26 +26,19 @@ struct Observation {
   uint16_t previous_symptom_id = 0;  // Transition only
 };
 
-// One way of turning observations into a count. A source is either current (a
-// function of present state, read from Present observations) or cumulative (an
-// event counter that only rises). That comes from the source, never from YAML.
-class MetricSource {
- public:
-  virtual ~MetricSource() = default;
-  virtual bool cumulative() const = 0;
-  virtual bool needsStage() const = 0;
-  virtual bool counts(const Observation& obs, uint16_t stage_id) const = 0;
-};
-
-// Registry lookup by source name. Null when the name is not registered.
-const MetricSource* findMetricSource(const std::string& name);
-std::vector<std::string> metricSourceNames();
-
 // World is one total. Venue counts a person toward every venue registered to
 // them for the metric's activity. ParentVenue counts them toward the parent of
 // each of those venues, or the venue itself when it has none. Either way one
 // observation counts a person at most once per unit, whatever the source.
 enum class MetricScope : uint8_t { World, Venue, ParentVenue };
+
+// The unit a venue counts toward under a scope: the venue itself, or its parent
+// venue (the venue again when it has none). Counting and closing both key on
+// it.
+inline VenueId unitOf(const WorldState& world, MetricScope scope,
+                      VenueId venue) {
+  return scope == MetricScope::ParentVenue ? world.parentUnitOf(venue) : venue;
+}
 
 // What a checkpoint keeps of one active metric: a world scope total, or for a
 // metric counted per unit, its value per unit in unit order (the running total
@@ -94,19 +87,19 @@ class ObservedMetrics {
   // was never declared, or std::logic_error before resolve().
   void require(const std::string& name);
 
-  // Questions a Policy trigger asks of a declared metric. All but
-  // declaredNames() throw for an unknown name, so check declaredNames() first
-  // to give a better message.
-  std::vector<std::string> declaredNames() const;
+  // Throws, with `where` in front and the declared names listed, unless the
+  // name was declared. For a caller that knows which Policy asked.
+  void requireDeclared(const std::string& name, const std::string& where) const;
+
+  // Questions a Policy trigger asks of a declared metric. All throw for an
+  // unknown name.
   bool isCumulative(const std::string& name) const;
-  bool isWorldScope(const std::string& name) const;
   MetricScope scope(const std::string& name) const;
   const std::string& activityOf(const std::string& name) const;
   // The activity's index in the world, as resolve() found it. -1 for a world
   // scope metric, and before resolve().
   int16_t activityIndexOf(const std::string& name) const;
 
-  bool anyDeclared() const { return !entries_.empty(); }
   bool anyActive() const { return !active_.empty(); }
   // Does the daily scan of infected people have anything to feed?
   bool tracksPresent() const { return tracks_present_; }
@@ -132,9 +125,6 @@ class ObservedMetrics {
   // Reduced value of a world scope metric as of the last reduce(). Throws for
   // an unknown name, or for a metric counted per unit (use unitValue).
   int64_t value(const std::string& name) const;
-  // The rank local part not yet reduced (for tests and diagnostics). Always 0
-  // for a metric counted per unit, which keeps its local part per unit.
-  int64_t localCount(const std::string& name) const;
 
   // A metric counted per unit, as of the last reduce(): the value at one unit
   // (0 for a unit with no count), and the units the last reduce saw any count
@@ -154,7 +144,9 @@ class ObservedMetrics {
   struct Entry {
     std::string name;
     ObservedMetricConfig cfg;
-    const MetricSource* source = nullptr;
+    // The source's rule, copied from the source table when declared.
+    bool cumulative = false;
+    bool (*counts)(const Observation& obs, uint16_t stage_id) = nullptr;
     MetricScope scope = MetricScope::World;
     uint16_t stage_id = 0;
     int16_t activity_index = -1;
@@ -173,6 +165,9 @@ class ObservedMetrics {
 
   Entry& find(const std::string& name);
   const Entry& find(const std::string& name) const;
+  // The error for a name that was never declared, listing the ones that were.
+  [[noreturn]] void throwUnknown(const std::string& name,
+                                 const std::string& where) const;
   // The scope key: which units this person counts toward for this metric,
   // sorted and without repeats, so a person counts once per unit.
   void unitsOf(const Entry& entry, const Person& person,

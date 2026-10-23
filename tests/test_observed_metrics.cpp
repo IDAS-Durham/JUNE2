@@ -15,26 +15,14 @@
 #include "epidemiology/observed_metrics.h"
 #include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
+#include "policy_test_helpers.h"
 #include "transmission_fixtures.h"
 #include "venue_scope_fixtures.h"
 
 using namespace june;
+using namespace june::policy_test;
 
 namespace {
-
-// Message of the exception a call throws, or "" if it does not throw.
-std::string thrown(const std::function<void()>& f) {
-  try {
-    f();
-  } catch (const std::exception& e) {
-    return e.what();
-  }
-  return "";
-}
-
-bool has(const std::string& text, const std::string& part) {
-  return text.find(part) != std::string::npos;
-}
 
 // healthy(0) -> mild(1) -> severe(2) -> dead(3), mild 2 days, severe 1 day.
 Disease makeMetricDisease() {
@@ -85,9 +73,60 @@ TEST_CASE("ObservedMetrics - declaration rejects each malformed case") {
             "requires a 'stage'"));
   CHECK(has(thrown([&] { m.declare("a", cfg("death", "world", "", "mild")); }),
             "'stage' is not valid with source 'death'"));
-  CHECK(has(thrown([&] { m.declare("a/b", cfg("death", "world")); }),
-            "must not contain '/'"));
-  CHECK_FALSE(m.anyDeclared());
+  CHECK(has(thrown([&] { m.declare("", cfg("death", "world")); }),
+            "must not be empty"));
+  // None of the refusals above kept a metric behind.
+  CHECK_NOTHROW(m.declare("a", cfg("death", "world")));
+}
+
+TEST_CASE("ObservedMetrics - a name is any non empty text") {
+  const Disease disease = makeMetricDisease();
+  WorldState world;
+  ObservedMetrics m;
+  // A slash is just a character: names only ever travel as text.
+  m.declare("a/b", cfg("death", "world"));
+  m.resolve(world, disease);
+  m.require("a/b");
+  m.onDeath(Person{});
+  m.reduce();
+  CHECK(m.value("a/b") == 1);
+
+  ObservedMetrics other;
+  other.declare("a/b", cfg("death", "world"));
+  other.resolve(world, disease);
+  other.require("a/b");
+  other.restoreSnapshot(m.snapshot());
+  CHECK(other.value("a/b") == 1);
+}
+
+TEST_CASE(
+    "ObservedMetrics - requireDeclared names the caller and the choices") {
+  ObservedMetrics m;
+  CHECK(thrown([&] { m.requireDeclared("x", "ctx: "); }) ==
+        "ctx: unknown metric 'x'. Declared metrics: none.");
+  m.declare("b", cfg("death", "world"));
+  m.declare("a", cfg("death", "world"));
+  CHECK_NOTHROW(m.requireDeclared("a", "ctx: "));
+  CHECK(thrown([&] { m.requireDeclared("x", "ctx: "); }) ==
+        "ctx: unknown metric 'x'. Declared metrics: a, b.");
+}
+
+TEST_CASE(
+    "ObservedMetrics - stage_admission counts entering a stage, not staying") {
+  WorldState world;
+  const Disease disease = makeMetricDisease();  // healthy, mild, severe, dead
+  ObservedMetrics m;
+  m.declare("entered_severe", cfg("stage_admission", "world", "", "severe"));
+  m.resolve(world, disease);
+  m.require("entered_severe");
+  const Person person{};
+  m.onInfection(person, 2);      // placed in severe at the moment of infection
+  m.onInfection(person, 1);      // placed in mild: not severe
+  m.onTransition(person, 1, 2);  // mild to severe
+  m.onTransition(person, 2, 2);  // severe to severe: staying is not entering
+  m.onTransition(person, 2, 3);  // severe to dead: leaving is not entering
+  m.reduce();
+  CHECK(m.value("entered_severe") == 2);
 }
 
 TEST_CASE("ObservedMetrics - resolve rejects unknown names") {
@@ -121,7 +160,8 @@ TEST_CASE("ObservedMetrics - resolve rejects unknown names") {
     ObservedMetrics m;
     m.declare("a", cfg("stage_admission", "world", "", "severe"));
     CHECK_NOTHROW(m.resolve(world, disease));
-    CHECK(has(thrown([&] { m.require("nope"); }), "no metric named 'nope'"));
+    CHECK(has(thrown([&] { m.require("nope"); }),
+              "unknown metric 'nope'. Declared metrics: a."));
     CHECK_NOTHROW(m.require("a"));
     CHECK(m.anyActive());
   }
@@ -144,7 +184,7 @@ TEST_CASE("PolicyLoader - observed_metrics alone is parsed, not ignored") {
   WorldState world;
   PolicyManager pm(world);
   PolicyLoader::loadPolicies(pm, path.string(), "2020-02-03");
-  CHECK(pm.observedMetrics().anyDeclared());
+  CHECK(pm.observedMetrics().isCumulative("deaths_so_far"));  // declared
   CHECK_FALSE(pm.observedMetrics().anyActive());
 
   {
@@ -242,7 +282,8 @@ TEST_CASE("Epidemiology - cumulative and current metric counts") {
     CHECK(m.value("entered_severe") == kPeople);
     CHECK(m.value("infected") == 0);
     CHECK(m.value("now_mild") == 0);
-    CHECK(m.localCount("deaths") == 0);  // folded into the total
+    m.reduce();  // the day's counts were folded into the total, not kept
+    CHECK(m.value("deaths") == kPeople);
   }
 }
 
@@ -407,6 +448,19 @@ struct UnitMetrics {
 };
 
 }  // namespace
+
+TEST_CASE("Metrics per unit - a venue counts toward the unit its scope names") {
+  UnitMetrics u;  // builds the parent index
+  // Per venue, every venue is its own unit.
+  CHECK(unitOf(u.world, MetricScope::Venue, kClassA) == kClassA);
+  CHECK(unitOf(u.world, MetricScope::Venue, kPub) == kPub);
+  // Per parent venue, a classroom counts toward its school and a venue with no
+  // parent toward itself.
+  CHECK(unitOf(u.world, MetricScope::ParentVenue, kClassA) == kSchool);
+  CHECK(unitOf(u.world, MetricScope::ParentVenue, kClassC) == kSchoolTwo);
+  CHECK(unitOf(u.world, MetricScope::ParentVenue, kSchool) == kSchool);
+  CHECK(unitOf(u.world, MetricScope::ParentVenue, kPub) == kPub);
+}
 
 TEST_CASE("Metrics per venue - a person counts at every registered venue") {
   UnitMetrics u;

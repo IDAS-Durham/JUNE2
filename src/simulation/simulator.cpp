@@ -515,13 +515,6 @@ Simulator::Simulator(WorldState& world, Config& config,
     metrics.resolve(world_, *disease_);
     policy_manager_->requireTriggerMetrics();
     metrics.buildVenueParents(world_);
-    if (getRank() == 0 && !world_.venue_parent_by_id.empty()) {
-      const size_t bytes = world_.venue_parent_by_id.size() *
-                           sizeof(world_.venue_parent_by_id[0]);
-      std::cout << "[observed metrics] parent venue index: "
-                << world_.venue_parent_by_id.size() << " venues, " << bytes
-                << " bytes per rank." << std::endl;
-    }
     if (metrics.anyActive()) epidemiology_->setObservedMetrics(&metrics);
   }
 
@@ -531,15 +524,9 @@ Simulator::Simulator(WorldState& world, Config& config,
   if (policy_manager_->getSymptomPolicyCount() > 0 ||
       policy_manager_->getTemporalPolicyCount() > 0) {
     policy_manager_->resolveAll(*disease_);
-    if (getRank() == 0) {
-      for (const std::string& line : policy_manager_->describeVenueTriggers())
-        std::cout << line << std::endl;
-    }
     policy_manager_->precomputePolicyApplicability(world_.people);
     // Collective: every rank checks its own people and all throw together.
-    for (const std::string& line : policy_manager_->checkDecisionUnits()) {
-      if (getRank() == 0) std::cout << line << std::endl;
-    }
+    policy_manager_->checkDecisionUnits();
     policy_manager_->initializeTransmissionModifiers(*disease_,
                                                      current_simulation_time_);
   }
@@ -761,11 +748,9 @@ void Simulator::writeFinalEventsAndLookups(int rank) {
   }
 
   // saveToHDF5WithLookups handles appending if file exists (from previous
-  // flushes). Pass the set even when it is empty: a null filter means every
-  // infectee in the buffer, which would write a second row for anyone who was
-  // infected again after an earlier flush.
+  // flushes).
   event_logger_.saveToHDF5WithLookups(events_filename_, world_, config_,
-                                      &remaining_ids);
+                                      remaining_ids);
 }
 
 void Simulator::printRunSummary() {
@@ -899,9 +884,7 @@ void Simulator::checkAndFlushEvents(bool is_day_end) {
       }
     }
 
-    // Pass the set even when it is empty: a null filter would write every
-    // infectee in the buffer again.
-    event_logger_.flush(events_filename_, config_, world_, &newly_infected);
+    event_logger_.flush(events_filename_, config_, world_, newly_infected);
   }
 }
 void Simulator::initFomiteState() {

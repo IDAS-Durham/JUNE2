@@ -70,7 +70,6 @@ TEST_CASE("ObservedMetrics - reduced totals do not depend on rank count") {
   m.reduce();
   CHECK(m.value("deaths") == kDeaths);
   CHECK(m.value("infected") == kInfected);
-  CHECK(m.localCount("deaths") == 0);
 
   // Next day: another death on rank 0, the same infected set re-observed.
   if (rank == 0) m.onDeath(nobody);
@@ -81,12 +80,7 @@ TEST_CASE("ObservedMetrics - reduced totals do not depend on rank count") {
   CHECK(m.value("infected") == kInfected);  // current replaces
 
   // Every rank holds the identical value.
-  int64_t d = m.value("deaths");
-  int64_t lo = 0;
-  int64_t hi = 0;
-  MPI_Allreduce(&d, &lo, 1, MPI_INT64_T, MPI_MIN, MPI_COMM_WORLD);
-  MPI_Allreduce(&d, &hi, 1, MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
-  CHECK(lo == hi);
+  expectSameOnAllRanks(std::vector<int64_t>{m.value("deaths")});
 }
 
 // The fixture deals a venue and its parent to one rank, and each person is
@@ -180,13 +174,7 @@ TEST_CASE("ObservedMetrics - per unit totals do not depend on rank count") {
     got.push_back(m.unitValue("pub_now", v));
   }
   // Every rank holds the identical numbers.
-  std::vector<int64_t> min_got(got.size());
-  std::vector<int64_t> max_got(got.size());
-  MPI_Allreduce(got.data(), min_got.data(), static_cast<int>(got.size()),
-                MPI_INT64_T, MPI_MIN, MPI_COMM_WORLD);
-  MPI_Allreduce(got.data(), max_got.data(), static_cast<int>(got.size()),
-                MPI_INT64_T, MPI_MAX, MPI_COMM_WORLD);
-  CHECK(min_got == max_got);
+  expectSameOnAllRanks(got);
 }
 
 #else
