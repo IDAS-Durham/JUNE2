@@ -7,6 +7,11 @@
 #include "epidemiology/disease.h"
 #include "utils/deterministic_rng.h"
 #include "utils/filtering.h"
+#include "utils/mpi_utils.h"
+
+#ifdef USE_MPI
+#include <mpi.h>
+#endif
 
 namespace june {
 
@@ -33,6 +38,33 @@ class LazySlotVenueTypeResolver {
   bool resolved_ = false;
 };
 
+// Tag for the avoidance draw, so it never repeats a compliance draw.
+constexpr uint64_t kAvoidanceDrawTag = 0xA701D4ULL;
+
+template <typename Policy>
+bool isVoluntary(const Policy& policy) {
+  return policy.trigger && policy.trigger->voluntary();
+}
+
+// The trigger a slot has to ask about, or null: a policy that closes venues one
+// at a time, or a voluntary one.
+template <typename Policy>
+const PolicyTrigger* slotTrigger(const Policy& policy) {
+  return policy.trigger && policy.trigger->decidesPerSlot() ? &*policy.trigger
+                                                            : nullptr;
+}
+
+// Visit every triggered policy, symptom policies first. Works for the const
+// and non-const vectors alike.
+template <typename Symptom, typename Temporal, typename Visit>
+void eachTriggered(Symptom& symptom_policies, Temporal& temporal_policies,
+                   Visit&& visit) {
+  for (auto& policy : symptom_policies)
+    if (policy.trigger) visit(std::string("symptom"), policy);
+  for (auto& policy : temporal_policies)
+    if (policy.trigger) visit(std::string("temporal"), policy);
+}
+
 }  // namespace
 
 PolicyManager::PolicyManager(WorldState& world)
@@ -40,10 +72,300 @@ PolicyManager::PolicyManager(WorldState& world)
 
 void PolicyManager::addSymptomPolicy(const SymptomPolicy& policy) {
   symptom_policies_.push_back(policy);
+  // A policy with a world scope threshold trigger starts off until the trigger
+  // closes. One triggered per venue, or a voluntary one, is in force from the
+  // start: the closed venues, or the avoidance level, decide where it acts.
+  if (policy.trigger)
+    symptom_policies_.back().window.trigger_state =
+        policy.trigger->holdsPolicy();
 }
 
 void PolicyManager::addTemporalPolicy(const TemporalPolicy& policy) {
   temporal_policies_.push_back(policy);
+  if (policy.trigger)
+    temporal_policies_.back().window.trigger_state =
+        policy.trigger->holdsPolicy();
+}
+
+void PolicyManager::requireTriggerMetrics() {
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string&, const auto& policy) {
+                  if (!policy.trigger->voluntary()) {
+                    observed_metrics_.require(policy.trigger->metric);
+                    return;
+                  }
+                  for (const auto& term : policy.trigger->terms)
+                    observed_metrics_.require(term.metric);
+                });
+}
+
+void PolicyManager::advanceTriggers(int64_t day) {
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string&, auto& policy) {
+        PolicyTrigger& trigger = *policy.trigger;
+        if (trigger.voluntary()) return;  // derived below, nothing to step
+        if (!trigger.perUnit()) {
+          trigger.step(day, observed_metrics_.value(trigger.metric));
+          policy.window.trigger_state = trigger.closed;
+          return;
+        }
+        // The units the metric counted today, plus the closed ones, which can
+        // reopen on a day with no count at all. Every other unit's answer
+        // cannot change.
+        std::vector<VenueId> visit =
+            observed_metrics_.changedUnits(trigger.metric);
+        for (VenueId unit : trigger.closedUnits()) visit.push_back(unit);
+        std::sort(visit.begin(), visit.end());
+        visit.erase(std::unique(visit.begin(), visit.end()), visit.end());
+        for (VenueId unit : visit) {
+          trigger.stepUnit(unit, day,
+                           observed_metrics_.unitValue(trigger.metric, unit));
+        }
+      });
+  rebuildResponseLevels();
+}
+
+void PolicyManager::resolveResponses() {
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string& kind, auto& policy) {
+        PolicyTrigger& trigger = *policy.trigger;
+        if (!trigger.voluntary()) return;
+        const std::string label =
+            kind + "_policy '" + policy.name + "' trigger";
+        if (trigger.decision_unit.shared()) {
+          const int activity =
+              world_.getActivityIndex(trigger.decision_unit.shared_activity);
+          if (activity < 0) {
+            throw std::runtime_error(
+                label + ": decision_unit names the unknown activity '" +
+                trigger.decision_unit.shared_activity + "'.");
+          }
+          trigger.decision_unit.activity_index = static_cast<int16_t>(activity);
+        }
+        if (trigger.perUnit()) {
+          trigger.metric_activity_index =
+              observed_metrics_.activityIndexOf(trigger.terms[0].metric);
+          if (trigger.metric_activity_index < 0) {
+            throw std::logic_error(label +
+                                   ": the metrics were not resolved before "
+                                   "the policies.");
+          }
+        }
+        trigger.world_level = trigger.base;
+      });
+}
+
+void PolicyManager::rebuildResponseLevels() {
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string&, auto& policy) {
+        PolicyTrigger& trigger = *policy.trigger;
+        if (!trigger.voluntary()) return;
+        // The same integers and the same order of operations on every rank, so
+        // the level is the same double at any process count. A unit a term
+        // does not count adds nothing, exactly as a term of zero would.
+        if (!trigger.perUnit()) {
+          double level = trigger.base;
+          for (const auto& term : trigger.terms)
+            level += term.weight *
+                     static_cast<double>(observed_metrics_.value(term.metric));
+          trigger.world_level = level;
+          return;
+        }
+        trigger.unit_levels.clear();
+        for (const auto& term : trigger.terms) {
+          for (const auto& [unit, count] :
+               observed_metrics_.unitValues(term.metric)) {
+            const auto it =
+                trigger.unit_levels.try_emplace(unit, trigger.base).first;
+            it->second += term.weight * static_cast<double>(count);
+          }
+        }
+      });
+}
+
+bool PolicyManager::avoids(const PolicyTrigger& trigger, const Person& person,
+                           VenueId slot_venue_id, uint32_t draw_index) const {
+  double level = 0.0;
+  VenueId unit = kInvalidVenueId;
+  if (trigger.perUnit()) {
+    if (slot_venue_id < 0) return false;
+    unit = unitOf(world_, trigger.scope, slot_venue_id);
+    level = trigger.levelAtUnit(unit);
+  } else {
+    level = trigger.levelAtWorld();
+  }
+  if (level <= 0.0) return false;
+
+  if (trigger.perUnit()) {
+    // Only people the metric counts at this unit are affected by its level.
+    bool counted = false;
+    for (const auto& registration :
+         world_.getActivityVenues(person, trigger.metric_activity_index)) {
+      if (unitOf(world_, trigger.scope, registration.first) == unit) {
+        counted = true;
+        break;
+      }
+    }
+    if (!counted) return false;
+  }
+
+  int64_t key = person.id;
+  if (trigger.decision_unit.shared()) {
+    const auto venues =
+        world_.getActivityVenues(person, trigger.decision_unit.activity_index);
+    if (venues.size() != 1) {
+      throw std::runtime_error(
+          "policy trigger: person " + std::to_string(person.id) + " has " +
+          std::to_string(venues.size()) + " venues for activity '" +
+          trigger.decision_unit.shared_activity +
+          "', but a shared decision unit needs exactly 1. The startup check "
+          "should have caught this.");
+    }
+    key = venues[0].first;
+  }
+  SplitMix64 rng(mix_seed(base_seed_, static_cast<uint64_t>(key), draw_index,
+                          kAvoidanceDrawTag));
+  return level > uniform01(rng);
+}
+
+void PolicyManager::checkDecisionUnits() {
+  eachTriggered(
+      symptom_policies_, temporal_policies_,
+      [&](const std::string& kind, const auto& policy) {
+        const PolicyTrigger& trigger = *policy.trigger;
+        if (!trigger.voluntary()) return;
+        const std::string label = kind + "_policy '" + policy.name + "'";
+        if (!trigger.decision_unit.shared()) return;
+
+        // People the Policy applies to (exemptions are per activity and cannot
+        // be settled here) whom the metric can count.
+        int64_t counts[2] = {0, 0};  // checked, failed
+        int64_t worst = INT64_MAX;   // lowest failing person id
+        int64_t worst_venues = 0;
+        for (const Person& person : world_.people) {
+          if (person.is_dead || !policy.appliesTo(person, &world_)) continue;
+          if (trigger.perUnit() &&
+              world_.getActivityVenues(person, trigger.metric_activity_index)
+                  .empty()) {
+            continue;
+          }
+          ++counts[0];
+          const auto n = world_
+                             .getActivityVenues(
+                                 person, trigger.decision_unit.activity_index)
+                             .size();
+          if (n == 1) continue;
+          ++counts[1];
+          if (person.id < worst) {
+            worst = person.id;
+            worst_venues = static_cast<int64_t>(n);
+          }
+        }
+#ifdef USE_MPI
+        const auto mpi = mpi_runtime::state();
+        if (mpi.active && mpi.size > 1) {
+          MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_INT64_T, MPI_SUM,
+                        MPI_COMM_WORLD);
+          int64_t lowest = worst;
+          MPI_Allreduce(MPI_IN_PLACE, &lowest, 1, MPI_INT64_T, MPI_MIN,
+                        MPI_COMM_WORLD);
+          // Only the rank that owns the lowest failing person knows their
+          // venue count; the others add 0.
+          int64_t venues = lowest == worst ? worst_venues : 0;
+          MPI_Allreduce(MPI_IN_PLACE, &venues, 1, MPI_INT64_T, MPI_SUM,
+                        MPI_COMM_WORLD);
+          worst = lowest;
+          worst_venues = venues;
+        }
+#endif
+        const std::string unit_text = "decision unit shared_venue '" +
+                                      trigger.decision_unit.shared_activity +
+                                      "'";
+        if (counts[1] > 0) {
+          throw std::runtime_error(
+              "policy trigger: " + label + " " + unit_text + ": person " +
+              std::to_string(worst) + " has " + std::to_string(worst_venues) +
+              " venues for activity '" + trigger.decision_unit.shared_activity +
+              "', exactly 1 is required. " + std::to_string(counts[1]) +
+              " of " + std::to_string(counts[0]) +
+              " people checked failed. Fix the world data or use "
+              "'decision_unit: person'.");
+        }
+      });
+}
+
+bool PolicyManager::unitClosedAt(const PolicyTrigger& trigger,
+                                 VenueId venue) const {
+  if (venue < 0) return false;
+  return trigger.unitClosed(unitOf(world_, trigger.scope, venue));
+}
+
+std::vector<PolicyManager::TriggerState> PolicyManager::triggerStates() const {
+  std::vector<TriggerState> out;
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string& kind, const auto& policy) {
+                  const PolicyTrigger& trigger = *policy.trigger;
+                  TriggerState state{kind + "/" + policy.name,
+                                     trigger,
+                                     trigger.scope,
+                                     {},
+                                     trigger.voluntary()};
+                  for (const auto& [unit, cell] : trigger.unitCells())
+                    state.units.emplace_back(unit, cell);
+                  out.push_back(std::move(state));
+                });
+  return out;
+}
+
+void PolicyManager::restoreTriggerStates(
+    const std::vector<TriggerState>& stored) {
+  const auto current = triggerStates();
+  const auto refuse = [&](const std::string& why) {
+    throw std::runtime_error("policy triggers: " + why);
+  };
+  const auto wrongSet = [&] {
+    const auto join = [](const std::vector<TriggerState>& states) {
+      std::string out;
+      for (const auto& state : states)
+        out += (out.empty() ? "" : ", ") + state.key;
+      return out;
+    };
+    refuse("the checkpoint holds triggers [" + join(stored) +
+           "] but this run has [" + join(current) +
+           "]. A trigger's state cannot be rebuilt; resume with the same "
+           "triggered Policies.");
+  };
+  if (stored.size() != current.size()) wrongSet();
+  for (size_t i = 0; i < stored.size(); ++i) {
+    if (stored[i].key != current[i].key) wrongSet();
+    // The same name counted per unit in one run and as a world total in the
+    // other is not the same trigger, whatever the key says. Nor is a Policy
+    // read as a threshold in one run and as a response in the other.
+    if (stored[i].scope != current[i].scope) {
+      refuse("'" + stored[i].key +
+             "' reads a metric of another scope than the checkpoint's. A "
+             "trigger's state cannot be rebuilt under another scope; resume "
+             "with the same metrics.");
+    }
+    if (stored[i].voluntary != current[i].voluntary) {
+      refuse("'" + stored[i].key + "' is " +
+             (stored[i].voluntary ? "a voluntary response" : "a threshold") +
+             " trigger in the checkpoint and " +
+             (current[i].voluntary ? "a voluntary response" : "a threshold") +
+             " trigger in this run. Resume with the same triggered Policies.");
+    }
+  }
+  size_t next = 0;
+  eachTriggered(symptom_policies_, temporal_policies_,
+                [&](const std::string&, auto& policy) {
+                  const TriggerState& state = stored[next++];
+                  static_cast<TriggerCell&>(*policy.trigger) = state.cell;
+                  policy.trigger->restoreUnits(state.units);
+                  policy.window.trigger_state = policy.trigger->holdsPolicy();
+                });
 }
 
 void PolicyManager::resolveTransmissionEffects(const Disease& disease) {
@@ -349,21 +671,26 @@ std::optional<PersonLocation> PolicyManager::getOverride(
         continue;
       }
 
-      bool has_made_decision = (person.symptom_policy_decisions & (1u << i));
-      if (!has_made_decision) {
-        if (checkCompliance(policy.action.compliance_rate, person.id,
-                            static_cast<uint32_t>(i))) {
-          person.active_symptom_policy_participation |= (1u << i);
+      // A voluntary policy keeps no latched decision: whether the person
+      // avoids is derived from the draw and the level every time it is asked.
+      if (!isVoluntary(policy)) {
+        bool has_made_decision = (person.symptom_policy_decisions & (1u << i));
+        if (!has_made_decision) {
+          if (checkCompliance(policy.action.compliance_rate, person.id,
+                              static_cast<uint32_t>(i))) {
+            person.active_symptom_policy_participation |= (1u << i);
+          }
+          person.symptom_policy_decisions |= (1u << i);
         }
-        person.symptom_policy_decisions |= (1u << i);
+
+        bool is_participating =
+            (person.active_symptom_policy_participation & (1u << i));
+        if (!is_participating) continue;
       }
 
-      bool is_participating =
-          (person.active_symptom_policy_participation & (1u << i));
-      if (!is_participating) continue;
-
       if (!actionApplies(policy.action, person, scheduled_activity_index,
-                         slotVenueType, partner)) {
+                         slotVenueType, partner, slotTrigger(policy),
+                         slot_venue_type.venueId(), static_cast<uint32_t>(i))) {
         continue;
       }
 
@@ -438,22 +765,29 @@ std::optional<PersonLocation> PolicyManager::getOverride(
       continue;
     }
 
-    bool has_made_decision = (person.temporal_policy_decisions & (1u << i));
-    if (!has_made_decision) {
-      if (checkCompliance(policy.action.compliance_rate, person.id,
-                          static_cast<uint32_t>(i + 100))) {
-        person.active_temporal_policy_participation |= (1u << i);
+    if (!isVoluntary(policy)) {
+      bool has_made_decision = (person.temporal_policy_decisions & (1u << i));
+      if (!has_made_decision) {
+        if (checkCompliance(policy.action.compliance_rate, person.id,
+                            static_cast<uint32_t>(i + 100))) {
+          person.active_temporal_policy_participation |= (1u << i);
+        }
+        person.temporal_policy_decisions |= (1u << i);
       }
-      person.temporal_policy_decisions |= (1u << i);
+
+      bool is_participating =
+          (person.active_temporal_policy_participation & (1u << i));
+
+      if (!is_participating) continue;
     }
 
-    bool is_participating =
-        (person.active_temporal_policy_participation & (1u << i));
-
-    if (!is_participating) continue;
-
+    // Where the person is scheduled, not where a freeze would pin them: a
+    // traveller in transit is pinned at their last overnight venue while
+    // occupying none.
     if (!actionApplies(policy.action, person, scheduled_activity_index,
-                       slotVenueType, partner)) {
+                       slotVenueType, partner, slotTrigger(policy),
+                       slot_venue_type.venueId(),
+                       static_cast<uint32_t>(i + 100))) {
       continue;
     }
 
@@ -494,7 +828,8 @@ bool PolicyManager::suppressesParticipation(
       if (!policy.window.contains(current_time)) continue;
       if (!policy.triggeredBy(current_symptom_id)) continue;
 
-      if (!isParticipating(person.symptom_policy_decisions,
+      if (!isVoluntary(policy) &&
+          !isParticipating(person.symptom_policy_decisions,
                            person.active_symptom_policy_participation, i,
                            policy.action.compliance_rate, person.id,
                            static_cast<uint32_t>(i))) {
@@ -502,7 +837,8 @@ bool PolicyManager::suppressesParticipation(
       }
 
       if (actionApplies(policy.action, person, activity_index, slotVenueType,
-                        partner)) {
+                        partner, slotTrigger(policy), slot_venue_type.venueId(),
+                        static_cast<uint32_t>(i))) {
         return true;
       }
     }
@@ -516,7 +852,8 @@ bool PolicyManager::suppressesParticipation(
     const auto& policy = temporal_policies_[i];
     if (!policy.window.contains(current_time)) continue;
 
-    if (!isParticipating(person.temporal_policy_decisions,
+    if (!isVoluntary(policy) &&
+        !isParticipating(person.temporal_policy_decisions,
                          person.active_temporal_policy_participation, i,
                          policy.action.compliance_rate, person.id,
                          static_cast<uint32_t>(i + 100))) {
@@ -524,7 +861,8 @@ bool PolicyManager::suppressesParticipation(
     }
 
     if (actionApplies(policy.action, person, activity_index, slotVenueType,
-                      partner)) {
+                      partner, slotTrigger(policy), slot_venue_type.venueId(),
+                      static_cast<uint32_t>(i + 100))) {
       return true;
     }
   }

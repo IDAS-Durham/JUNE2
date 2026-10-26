@@ -17,6 +17,11 @@ namespace PolicyLoader {
 void loadPolicies(PolicyManager& policy_manager, const std::string& filename,
                   const std::string& simulation_start_date);
 
+// Parse the root level observed_metrics block into the manager's metrics.
+// Declaration only: the world dependent checks run at resolve time.
+void loadObservedMetrics(PolicyManager& policy_manager, const YAML::Node& node,
+                         const std::string& policies_filename);
+
 // Load a policy action.
 PolicyAction loadPolicyAction(const YAML::Node& node);
 

@@ -507,6 +507,17 @@ Simulator::Simulator(WorldState& world, Config& config,
   // Recovery and death end any policy freeze the person is under
   epidemiology_->setPolicyManager(policy_manager_.get());
 
+  // Declared metrics are validated here even when there are no Policies, so
+  // a bad declaration fails at load. Only a metric that a trigger reads is
+  // active, and the Epidemiology pointer stays null when none is.
+  {
+    ObservedMetrics& metrics = policy_manager_->observedMetrics();
+    metrics.resolve(world_, *disease_);
+    policy_manager_->requireTriggerMetrics();
+    metrics.buildVenueParents(world_);
+    if (metrics.anyActive()) epidemiology_->setObservedMetrics(&metrics);
+  }
+
   // Precompute which policies apply to each person (based on selection
   // criteria) This must be done AFTER schedules are assigned (person properties
   // are set)
@@ -514,6 +525,8 @@ Simulator::Simulator(WorldState& world, Config& config,
       policy_manager_->getTemporalPolicyCount() > 0) {
     policy_manager_->resolveAll(*disease_);
     policy_manager_->precomputePolicyApplicability(world_.people);
+    // Collective: every rank checks its own people and all throw together.
+    policy_manager_->checkDecisionUnits();
     policy_manager_->initializeTransmissionModifiers(*disease_,
                                                      current_simulation_time_);
   }
@@ -678,6 +691,11 @@ void Simulator::runOneDay(int day, int rank) {
 
   simulateDay(day);
 
+  // Day boundary: metrics are read from here, so any change takes effect from
+  // the first slot of the next day.
+  epidemiology_->reduceObservedMetrics();
+  policy_manager_->advanceTriggers(day);
+
   dumpDayHashIfEnabled(day, rank, world_, domain_mgr_);
 
   // Output statistics periodically
@@ -730,11 +748,9 @@ void Simulator::writeFinalEventsAndLookups(int rank) {
   }
 
   // saveToHDF5WithLookups handles appending if file exists (from previous
-  // flushes). Pass the set even when it is empty: a null filter means every
-  // infectee in the buffer, which would write a second row for anyone who was
-  // infected again after an earlier flush.
+  // flushes).
   event_logger_.saveToHDF5WithLookups(events_filename_, world_, config_,
-                                      &remaining_ids);
+                                      remaining_ids);
 }
 
 void Simulator::printRunSummary() {
@@ -868,9 +884,7 @@ void Simulator::checkAndFlushEvents(bool is_day_end) {
       }
     }
 
-    // Pass the set even when it is empty: a null filter would write every
-    // infectee in the buffer again.
-    event_logger_.flush(events_filename_, config_, world_, &newly_infected);
+    event_logger_.flush(events_filename_, config_, world_, newly_infected);
   }
 }
 void Simulator::initFomiteState() {

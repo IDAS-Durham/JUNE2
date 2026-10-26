@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -168,6 +169,29 @@ class WorldState {
     if (id < 0 || static_cast<size_t>(id) >= venue_type_by_id.size())
       return kUnknownVenueTypeId;
     return venue_type_by_id[static_cast<size_t>(id)];
+  }
+
+  // Parent of every Venue, indexed by VenueId, -1 for a Venue with none. Empty
+  // until a metric counted per parent venue asks for it (see
+  // ObservedMetrics::buildVenueParents); a run that never does pays nothing.
+  // Like venue_type_by_id it covers the whole world, not just this rank's
+  // Venues. A Venue and its parent are always on one rank, but a person can be
+  // registered or scheduled at a Venue another rank owns, and this rank holds
+  // neither that Venue nor its parent.
+  std::vector<VenueId> venue_parent_by_id;
+
+  // The parent venue of `id`, or `id` itself when it has none. This is the one
+  // place that rule lives: counting and closing both key on it.
+  VenueId parentUnitOf(VenueId id) const {
+    if (id < 0 || static_cast<size_t>(id) >= venue_parent_by_id.size()) {
+      throw std::runtime_error(
+          "parentUnitOf: venue " + std::to_string(id) +
+          " is outside the parent index (size " +
+          std::to_string(venue_parent_by_id.size()) +
+          "); the index is built only when a parent_venue metric is active.");
+    }
+    const VenueId parent = venue_parent_by_id[static_cast<size_t>(id)];
+    return parent >= 0 ? parent : id;
   }
 
   // Record the type of `venue_id` in venue_type_by_id, growing it with

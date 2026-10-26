@@ -63,8 +63,7 @@ void writeHospitalDischargeEvents(
 void saveToHDF5WithLookups(
     const EventLogger& logger, const std::string& filename,
     const WorldState& world, const Config& config,
-    const std::unordered_set<PersonId>& infected_person_ids,
-    const std::unordered_set<PersonId>* person_ids_filter) {
+    const std::unordered_set<PersonId>& person_ids_filter) {
   if (mpi_runtime::state().rank == 0) {
     std::cout << "\n=== Saving Events + Lookup Tables to HDF5: " << filename
               << " ===" << std::endl;
@@ -114,8 +113,7 @@ void saveToHDF5WithLookups(
     event_writer_detail::openOrCreateGroup(file, "/lookups");
 
     if (config.simulation.save_full_person_details != "none") {
-      writePersonLookupTable(file, world, config, infected_person_ids, exists,
-                             person_ids_filter);
+      writePersonLookupTable(file, world, config, person_ids_filter, exists);
     }
     if (config.simulation.save_population_summary && !exists) {
       // Only write population summary once
@@ -126,8 +124,8 @@ void saveToHDF5WithLookups(
       writeVenueLookupTable(file, world, config);
     }
     if (config.simulation.save_person_activities != "none") {
-      writePersonActivitiesTable(file, world, config, infected_person_ids,
-                                 exists, person_ids_filter);
+      writePersonActivitiesTable(file, world, config, person_ids_filter,
+                                 exists);
     }
 
     H5::Group metadata_group =

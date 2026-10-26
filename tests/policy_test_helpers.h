@@ -1,0 +1,66 @@
+#pragma once
+
+// Helpers the observed metric and Policy trigger tests share.
+
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "epidemiology/disease.h"
+#include "epidemiology/policy.h"
+#include "loaders/policy_loader.h"
+
+namespace june::policy_test {
+
+// Message of the exception a call throws, or "" if it does not throw.
+inline std::string thrown(const std::function<void()>& f) {
+  try {
+    f();
+  } catch (const std::exception& e) {
+    return e.what();
+  }
+  return "";
+}
+
+inline bool has(const std::string& text, const std::string& part) {
+  return text.find(part) != std::string::npos;
+}
+
+// healthy(0) -> mild(1) -> dead(2), with the days each stage lasts. Only here
+// so the metrics can resolve.
+inline Disease makeMildDeadDisease(const std::string& name, double mild_days,
+                                   double dead_days) {
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto curve = std::make_shared<ConstantCurve>(1.0);
+  trans.symptom_id_curves = {nullptr, curve, curve};
+  std::vector<SymptomTag> tags = {
+      {"healthy", -1, 0}, {"mild", 1, 1}, {"dead", 2, 2}};
+  DiseaseStageSettings settings;
+  settings.fatality_stages = {"dead"};
+  TrajectoryDefinition td;
+  td.selection_key = "general";
+  td.severity = 1.0;
+  td.stages.push_back({"mild", {"constant", {{"value", mild_days}}}});
+  td.stages.push_back({"dead", {"constant", {{"value", dead_days}}}});
+  return Disease(name, tags, settings, {td}, {}, trans);
+}
+
+// Loads `text` into `pm`; returns the thrown message or "".
+inline std::string loadPolicyText(PolicyManager& pm, const std::string& text) {
+  const auto path =
+      std::filesystem::temp_directory_path() / "june_policy_test.yaml";
+  {
+    std::ofstream out(path);
+    out << text;
+  }
+  const std::string msg = thrown(
+      [&] { PolicyLoader::loadPolicies(pm, path.string(), "2020-02-03"); });
+  std::filesystem::remove(path);
+  return msg;
+}
+
+}  // namespace june::policy_test

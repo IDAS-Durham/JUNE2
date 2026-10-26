@@ -211,8 +211,9 @@ TEST_CASE("Simulator run() multi-day smoke test") {
 }
 
 TEST_CASE("Every infected person has exactly one /lookups/people row") {
-  // After the first days nearly every flush holds only people who already
-  // have a row.
+  // Nobody keeps immunity, so people are infected again and again, and a
+  // one record buffer flushes after every slot. A flush then often holds only
+  // repeat infections of people who already have a row.
   const std::string out = "test_sim_lookup_rows.h5";
   runFlushEverySlot(out, "infected_only");
 

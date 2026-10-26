@@ -13,6 +13,8 @@
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
+#include "epidemiology/observed_metrics.h"
+#include "epidemiology/policy_trigger.h"
 #include "epidemiology/transmission_modifiers.h"
 
 namespace june {
@@ -63,6 +65,10 @@ enum class VenueGateDirection : uint8_t {
 // consulted — getOverride runs once per Person per slot, so an ungated run
 // must pay nothing.
 //
+// It also carries the VenueId whenever the caller has one (known() and
+// fromVenue() take it, venueId() returns it), because a policy triggered per
+// venue is decided on the venue itself and not only on its type.
+//
 // A Venue that exists but cannot be typed on this rank is a defect, not a
 // state: resolveAgainst throws rather than admitting kUnknownVenueTypeId,
 // which is exactly the silent fail-open this type exists to remove.
@@ -78,14 +84,17 @@ class SlotVenueType {
 
   // The caller already resolved the type. Handing over kUnknownVenueTypeId
   // while claiming to know it is the defect this mission exists to catch, so
-  // it throws here, at the producer.
-  static SlotVenueType known(uint8_t type_id) {
+  // it throws here, at the producer. A caller that also knows the venue passes
+  // it, because a policy triggered per venue asks about that venue and not
+  // only about its type.
+  static SlotVenueType known(uint8_t type_id,
+                             VenueId venue_id = kInvalidVenueId) {
     if (type_id == kUnknownVenueTypeId) {
       throw std::runtime_error(
           "SlotVenueType::known: caller claims a known venue type but passed "
           "kUnknownVenueTypeId (255); the slot venue type is unresolvable.");
     }
-    return SlotVenueType(SlotVenueTypeState::Known, type_id, kInvalidVenueId);
+    return SlotVenueType(SlotVenueTypeState::Known, type_id, venue_id);
   }
 
   // Look the type up later, if anything asks. A negative id is absent.
@@ -110,6 +119,11 @@ class SlotVenueType {
   }
 
   bool isAbsent() const { return state_ == SlotVenueTypeState::Absent; }
+
+  // The venue the person occupies this slot, or kInvalidVenueId when there is
+  // none or the caller did not say. Unlike the Pin Venue this is where the
+  // person is scheduled, so it is what a closed venue is checked against.
+  VenueId venueId() const { return venue_id_; }
 
   // Precondition: Known. A sentinel must never survive to the gate, so an
   // unresolved value is a programming error rather than a return value.
@@ -335,11 +349,20 @@ struct PolicyAction {
 // adjacent windows abut exactly, with no slot where both are active.
 // No end is an empty end_time, not a magic value: any number, -1 included, is
 // a real day (an end_date one day before the simulation starts is day -1).
+//
+// A trigger can also hold a policy off: trigger_state is false while it does.
+// Only a threshold trigger on a world scope metric sets it, from its closed
+// state. A policy with no trigger, one triggered per venue, or a voluntary one
+// leaves it true, so contains() is the one place that answers whether a policy
+// is in force at all. A per venue or voluntary trigger then decides slot by
+// slot where it acts.
 struct ActiveWindow {
   double start_time = 0.0;         // days from simulation start
   std::optional<double> end_time;  // empty = no end
+  bool trigger_state = true;
 
   bool contains(double current_time) const {
+    if (!trigger_state) return false;
     if (current_time < start_time) return false;
     if (end_time && current_time >= *end_time) return false;
     return true;
@@ -355,6 +378,9 @@ struct SymptomPolicy {
 
   // Span of simulation time this policy is in force for
   ActiveWindow window;
+
+  // Optional: ties activation to an observed metric
+  std::optional<PolicyTrigger> trigger;
 
   // Symptoms that trigger this policy
   std::vector<std::string> trigger_symptoms;
@@ -421,6 +447,9 @@ struct TemporalPolicy {
   // Span of simulation time this policy is in force for
   ActiveWindow window;
 
+  // Optional: ties activation to an observed metric
+  std::optional<PolicyTrigger> trigger;
+
   // What to do
   PolicyAction action;
 
@@ -482,6 +511,48 @@ class PolicyManager {
     frozen_states_ = s;
   }
 
+  // Metrics declared in the policy file. A Policy trigger names the ones it
+  // reads.
+  ObservedMetrics& observedMetrics() { return observed_metrics_; }
+  const ObservedMetrics& observedMetrics() const { return observed_metrics_; }
+
+  // Mark the metrics the triggers read as active. Run once, after the metrics
+  // resolve and before anything asks whether a metric is active.
+  void requireTriggerMetrics();
+
+  // Evaluate every trigger once. `day` is the day that just ended, and the
+  // metrics must already be reduced for it. A change holds from the first slot
+  // of the next day.
+  void advanceTriggers(int64_t day);
+
+  // Recompute the avoidance level of every voluntary trigger from the reduced
+  // metrics. advanceTriggers does it each day; a checkpoint restore calls it
+  // once after the metrics are put back.
+  void rebuildResponseLevels();
+
+  // For every voluntary Policy that shares a decision among the members of a
+  // venue, check at startup that each person it can affect has exactly one
+  // such venue. Collective: every rank must call it. Throws the same message
+  // on every rank for the lowest failing person id. Needs the policies
+  // resolved and their applicability computed.
+  void checkDecisionUnits();
+
+  // Trigger state for the checkpoint, symptom policies first, keyed by kind and
+  // policy name. Restoring needs exactly the same keys.
+  struct TriggerState {
+    std::string key;
+    TriggerCell cell;  // the world scope state
+    MetricScope scope = MetricScope::World;
+    // Scopes counted per unit: one cell per unit the trigger has touched, in
+    // unit order. The cell above is unused then.
+    std::vector<std::pair<VenueId, TriggerCell>> units;
+    // A voluntary trigger keeps no state of its own; the flag only lets a
+    // restore refuse a checkpoint that read the same Policy in the other form.
+    bool voluntary = false;
+  };
+  std::vector<TriggerState> triggerStates() const;
+  void restoreTriggerStates(const std::vector<TriggerState>& stored);
+
   // Register policies
   void addSymptomPolicy(const SymptomPolicy& policy);
   void addTemporalPolicy(const TemporalPolicy& policy);
@@ -524,7 +595,8 @@ class PolicyManager {
   //
   // pin_venue_id/pin_subset_index are the Pin Venue: where a freeze_in_place
   // override anchors the person. slot_venue_type is the Slot Venue Type: the
-  // key a venue-gated action is decided on. The two are separate arguments
+  // key a venue-gated action is decided on, and through its venue id the venue
+  // a per venue trigger is checked against. The two are separate arguments
   // because callers legitimately differ on them — a traveller in transit is
   // pinned at their last overnight venue while occupying no venue at all.
   std::optional<PersonLocation> getOverride(
@@ -537,6 +609,10 @@ class PolicyManager {
   // question, not an instruction: no freeze is established or released, no
   // schedule hop swapped, no compliance decision latched. There is deliberately
   // no Pin Venue argument, because nothing is pinned.
+  //
+  // A per venue trigger never reaches a slot whose slot_venue_type carries no
+  // venue, so pass the venue (SlotVenueType::known(type, venue)) when it is
+  // known.
   //
   // Asked by the subsystems that only need the verdict — coordinated-encounter
   // eligibility and follow mirroring — so that reading the answer cannot commit
@@ -593,6 +669,7 @@ class PolicyManager {
 
     for (auto& p : symptom_policies_) p.resolve(world_, disease);
     for (auto& p : temporal_policies_) p.resolve(world_);
+    resolveResponses();
     resolveTransmissionEffects(disease);
 
     // Resolve follow-up policy indices
@@ -606,6 +683,20 @@ class PolicyManager {
         }
       }
     }
+
+    // A follow-up inherits a latched decision, and a voluntary policy keeps
+    // none.
+    for (const auto& p : symptom_policies_) {
+      if (p.follow_up_policy_index < 0) continue;
+      const auto& target = symptom_policies_[p.follow_up_policy_index];
+      if (target.trigger && target.trigger->voluntary()) {
+        throw std::runtime_error(
+            "symptom_policy '" + p.name + "' names the voluntary policy '" +
+            target.name +
+            "' as its follow_up_policy, which is not built yet: a voluntary "
+            "policy keeps no decision for a follow-up to inherit.");
+      }
+    }
   }
 
  private:
@@ -615,6 +706,7 @@ class PolicyManager {
   std::vector<SymptomPolicy> symptom_policies_;
   std::vector<TemporalPolicy> temporal_policies_;
   std::vector<PolicyTransmissionEffect> transmission_effects_;
+  ObservedMetrics observed_metrics_;
   TransmissionModifierTable transmission_modifier_table_;
   bool transmission_modifiers_initialized_ = false;
   size_t transmission_mode_count_ = 0;
@@ -622,6 +714,9 @@ class PolicyManager {
   std::unordered_map<PersonId, uint16_t> last_symptom_ids_;
 
   void resolveTransmissionEffects(const Disease& disease);
+  // Look up the activities a voluntary trigger names and start its level at the
+  // base. Needs the metrics resolved.
+  void resolveResponses();
   uint64_t policyWindowBits(double current_time) const;
   void rebuildTransmissionModifiers(double current_time);
   void rebuildPersonTransmissionModifier(Person& person, double current_time);
@@ -686,15 +781,32 @@ class PolicyManager {
   // Takes a resolver rather than a resolved SlotVenueType so an ungated action
   // never pays for the venue-type lookup — and never throws on a venue this
   // rank cannot type when no policy was asking about venues in the first place.
+  //
+  // A Policy triggered per venue (slot_trigger non-null, threshold form)
+  // reaches only the venues its metric has closed. That is one bit lookup, made
+  // after the activity gate and before the venue type gate and the exemptions,
+  // and it applies to everyone scheduled at a closed venue who is not exempt.
+  // A voluntary trigger (draw_index names the Policy in the draw) asks instead
+  // whether this person's decision unit avoids the venue.
   template <typename SlotVenueTypeResolver>
   bool actionApplies(const PolicyAction& action, const Person& person,
                      int16_t activity_index,
                      SlotVenueTypeResolver&& resolve_slot_venue_type,
-                     const Person* partner) const {
+                     const Person* partner, const PolicyTrigger* slot_trigger,
+                     VenueId slot_venue_id, uint32_t draw_index) const {
     if (!action.has_location_override) return false;
     action.throwIfVenueGateUnresolved();
 
     if (!action.shouldOverride(activity_index)) return false;
+
+    if (slot_trigger) {
+      if (slot_trigger->voluntary()) {
+        if (!avoids(*slot_trigger, person, slot_venue_id, draw_index))
+          return false;
+      } else if (!unitClosedAt(*slot_trigger, slot_venue_id)) {
+        return false;
+      }
+    }
 
     if (action.hasVenueGate() &&
         !action.passesVenueGate(resolve_slot_venue_type())) {
@@ -705,6 +817,19 @@ class PolicyManager {
 
     return true;
   }
+
+  // Is the unit this venue counts toward closed by this trigger?
+  bool unitClosedAt(const PolicyTrigger& trigger, VenueId venue) const;
+
+  // Does this person's decision unit avoid the venue they are scheduled at?
+  // Pure: the level is the one derived at the last day boundary and the draw is
+  // fixed by the base seed, the decision unit and the Policy, so asking changes
+  // nothing and the answer never depends on the process count. A trigger
+  // counted per unit only reaches people the metric counts at that venue's
+  // unit. Throws when a shared decision unit finds the person with other than
+  // exactly one such venue; checkDecisionUnits rules that out at startup.
+  bool avoids(const PolicyTrigger& trigger, const Person& person,
+              VenueId slot_venue_id, uint32_t draw_index) const;
 
   // Helper: Get replacement location for a given activity name
   std::optional<PersonLocation> getReplacementLocation(
