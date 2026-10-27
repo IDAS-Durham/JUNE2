@@ -409,11 +409,13 @@ struct ScheduleConfig {
 // =============================================================================
 
 struct DoseConfig {
-  int number;
-  double days_to_effective;
-  double days_to_waning;
-  double days_to_finished;
+  int number = 0;
+  double days_to_effective = 0.0;
+  double days_to_waning = 0.0;
+  double days_to_finished = 0.0;
   double waning_factor = 1.0;
+  // Days after the dose with no protection, before the rise to the peak
+  double days_to_onset = 0.0;
 
   // Disease Name -> list of age-stratified efficacies
   std::unordered_map<std::string, std::vector<AgeEfficacy>> infection_efficacy;

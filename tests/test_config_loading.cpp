@@ -1,5 +1,7 @@
 #include <iostream>
 #include <sstream>
+#include <string>
+#include <vector>
 
 #include "core/world_state.h"
 #include "doctest.h"
@@ -61,6 +63,103 @@ TEST_CASE("ConfigLoader - Vaccination Config from YAML") {
     // Booster campaign
     CHECK(config.campaigns[2].dose_sequence.size() == 1);
     CHECK(config.campaigns[2].dose_sequence[0] == 2);
+  }
+}
+
+namespace {
+
+// A vaccines file whose first dose is complete and whose second dose has the
+// given lines, so a failure on the second dose proves the index is reported.
+std::string vaccineWithDose(const std::vector<std::string>& second_dose) {
+  std::string yaml =
+      "enabled: true\n"
+      "vaccines:\n"
+      "  TestVax:\n"
+      "    doses:\n"
+      "      - days_to_effective: 14\n"
+      "        days_to_waning: 100\n"
+      "        days_to_finished: 200\n"
+      "      -\n";
+  for (const auto& line : second_dose) yaml += "        " + line + "\n";
+  return yaml;
+}
+
+}  // namespace
+
+TEST_CASE("ConfigLoader - Vaccine dose onset") {
+  ScopedTestFiles files("june_vaccine_onset");
+  const auto load = [&](const std::vector<std::string>& second_dose) {
+    const auto path =
+        files.write("vaccines.yaml", vaccineWithDose(second_dose));
+    return ConfigLoader::loadVaccination(path.string());
+  };
+  const std::vector<std::string> timing = {
+      "days_to_effective: 14", "days_to_waning: 100", "days_to_finished: 200"};
+
+  SUBCASE("days_to_onset is read from the dose") {
+    auto fields = timing;
+    fields.push_back("days_to_onset: 14");
+    const auto config = load(fields);
+    const auto& doses = config.vaccines.at("TestVax").doses;
+    REQUIRE(doses.size() == 2);
+    CHECK(doses[1].days_to_onset == 14.0);
+    CHECK(doses[1].days_to_effective == 14.0);
+  }
+
+  SUBCASE("an absent days_to_onset means no delay") {
+    const auto config = load(timing);
+    const auto& doses = config.vaccines.at("TestVax").doses;
+    REQUIRE(doses.size() == 2);
+    CHECK(doses[0].days_to_onset == 0.0);
+    CHECK(doses[1].days_to_onset == 0.0);
+  }
+
+  SUBCASE("onset between 0 and days_to_effective is accepted") {
+    auto fields = timing;
+    fields.push_back("days_to_onset: 7.5");
+    CHECK(load(fields).vaccines.at("TestVax").doses[1].days_to_onset == 7.5);
+  }
+
+  SUBCASE("onset beyond days_to_effective throws and names the values") {
+    auto fields = timing;
+    fields.push_back("days_to_onset: 15");
+    CHECK_THROWS_WITH(load(fields),
+                      doctest::Contains("vaccine 'TestVax' dose 1"));
+    CHECK_THROWS_WITH(load(fields), doctest::Contains("got 15"));
+    CHECK_THROWS_WITH(load(fields), doctest::Contains("days_to_effective 14"));
+  }
+
+  SUBCASE("a negative onset throws and names the value") {
+    auto fields = timing;
+    fields.push_back("days_to_onset: -1");
+    CHECK_THROWS_WITH(load(fields),
+                      doctest::Contains("vaccine 'TestVax' dose 1"));
+    CHECK_THROWS_WITH(load(fields), doctest::Contains("got -1"));
+  }
+
+  SUBCASE("each missing timing field throws, naming vaccine and dose") {
+    for (size_t missing = 0; missing < timing.size(); ++missing) {
+      auto fields = timing;
+      const std::string key =
+          fields[missing].substr(0, fields[missing].find(':'));
+      fields.erase(fields.begin() + missing);
+      CAPTURE(key);
+      CHECK_THROWS_WITH(load(fields),
+                        doctest::Contains("vaccine 'TestVax' dose 1"));
+      const std::string quoted = "'" + key + "'";
+      CHECK_THROWS_WITH(load(fields), doctest::Contains(quoted.c_str()));
+    }
+  }
+
+  SUBCASE("waning_factor stays optional and defaults to 1") {
+    CHECK(load(timing).vaccines.at("TestVax").doses[1].waning_factor == 1.0);
+  }
+
+  SUBCASE("a malformed file throws with its name instead of disabling") {
+    const auto path =
+        files.write("broken_vaccines.yaml", "enabled: true\nvaccines: [oops\n");
+    CHECK_THROWS_WITH(ConfigLoader::loadVaccination(path.string()),
+                      doctest::Contains("broken_vaccines.yaml"));
   }
 }
 

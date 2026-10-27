@@ -197,6 +197,7 @@ class VaccinationManager {
     Dose dose;
     dose.number = d_cfg.number;
     dose.day_administered = current_time;
+    dose.days_to_onset = d_cfg.days_to_onset;
     dose.days_to_effective = d_cfg.days_to_effective;
     dose.days_to_waning = d_cfg.days_to_waning;
     dose.days_to_finished = d_cfg.days_to_finished;

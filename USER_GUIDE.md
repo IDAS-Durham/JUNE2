@@ -1163,10 +1163,9 @@ start); the resumed run fills `[completed_day + 1, total_days)`. To run
   counted over the same scope) and read the same set of metrics. Anything
   else stops the run with an error that lists both sets. Declared metrics
   that no trigger reads are not stored and may change freely.
-- A checkpoint written by an older build (see `format_version` in its
-  `manifest.yaml`) may be refused by a run that uses metrics or triggers,
-  and the error says why. Resume without the triggers, or start the run
-  again from day 0.
+- A checkpoint whose `format_version` (in its `manifest.yaml`) differs from
+  the one this build writes is always refused, and the error names the
+  version this build reads. Start the run again from day 0.
 
 ### 17.5 Verifying determinism
 

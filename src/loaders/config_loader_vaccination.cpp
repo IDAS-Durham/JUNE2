@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -46,17 +47,40 @@ std::unordered_map<std::string, std::vector<AgeEfficacy>> parseDoseEfficacies(
   return res;
 }
 
+// Read a timing field every dose has to state. A dose with no schedule has no
+// meaning, so a missing one throws instead of taking a value.
+double requireDoseTiming(const YAML::Node& d_node, const std::string& key,
+                         const std::string& vaccine, int number) {
+  if (!d_node[key])
+    throw std::runtime_error("vaccine '" + vaccine + "' dose " +
+                             std::to_string(number) +
+                             ": missing required field '" + key + "'");
+  return d_node[key].as<double>();
+}
+
 // Parse one entry from a vaccine's `doses:` sequence. The position in the
 // sequence becomes DoseConfig::number.
-DoseConfig parseDose(int number, const YAML::Node& d_node) {
+DoseConfig parseDose(const std::string& vaccine, int number,
+                     const YAML::Node& d_node) {
   DoseConfig dc;
   dc.number = number;
-  if (d_node["days_to_effective"])
-    dc.days_to_effective = d_node["days_to_effective"].as<double>();
-  if (d_node["days_to_waning"])
-    dc.days_to_waning = d_node["days_to_waning"].as<double>();
-  if (d_node["days_to_finished"])
-    dc.days_to_finished = d_node["days_to_finished"].as<double>();
+  dc.days_to_effective =
+      requireDoseTiming(d_node, "days_to_effective", vaccine, number);
+  dc.days_to_waning =
+      requireDoseTiming(d_node, "days_to_waning", vaccine, number);
+  dc.days_to_finished =
+      requireDoseTiming(d_node, "days_to_finished", vaccine, number);
+  if (d_node["days_to_onset"])
+    dc.days_to_onset = d_node["days_to_onset"].as<double>();
+  // Written as a negation so a NaN fails the check too
+  if (!(dc.days_to_onset >= 0.0 && dc.days_to_onset <= dc.days_to_effective)) {
+    std::ostringstream msg;
+    msg << "vaccine '" << vaccine << "' dose " << number
+        << ": days_to_onset must be between 0 and days_to_effective, got "
+        << dc.days_to_onset << " with days_to_effective "
+        << dc.days_to_effective;
+    throw std::runtime_error(msg.str());
+  }
   if (d_node["waning_factor"])
     dc.waning_factor = d_node["waning_factor"].as<double>();
   dc.infection_efficacy = parseDoseEfficacies(d_node["infection_efficacy"]);
@@ -73,7 +97,7 @@ VaccineConfig parseVaccine(const std::string& name,
   if (vacc_node["doses"]) {
     const auto& doses_node = vacc_node["doses"];
     for (size_t i = 0; i < doses_node.size(); ++i) {
-      vc.doses.push_back(parseDose(static_cast<int>(i), doses_node[i]));
+      vc.doses.push_back(parseDose(name, static_cast<int>(i), doses_node[i]));
     }
   }
   return vc;
@@ -147,9 +171,8 @@ VaccinationConfig ConfigLoader::loadVaccination(const std::string& filename) {
   } catch (const config_detail::MalformedSelectionError&) {
     throw;
   } catch (const std::exception& e) {
-    std::cerr << "Warning: Could not load " << filename << ": " << e.what()
-              << std::endl;
-    config.enabled = false;
+    throw std::runtime_error("Error loading vaccination file '" + filename +
+                             "': " + e.what());
   }
   return config;
 }
