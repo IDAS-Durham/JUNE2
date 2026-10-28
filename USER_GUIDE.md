@@ -1048,7 +1048,7 @@ campaigns:
 | `start_date` | no | First day of the campaign, `YYYY-MM-DD`. Absent: the first day of the run |
 | `end_date` | no | Last day of the campaign, included. Absent: the end of the run |
 | `days_to_next_dose` | no | Days to wait after each dose |
-| `last_dose_type_filter` | no | Vaccines whose courses a booster campaign accepts |
+| `courses_begun_with` | no | The vaccines a course may have begun with, for a booster campaign |
 | `dose_budget` | no | Doses per period. Absent: no limit |
 | `coverage_target` | no | Stop starting new courses at this share of the population |
 
@@ -1139,18 +1139,18 @@ on the same day.
 A later dose continues the vaccine the course began with. A campaign whose
 `vaccine_type` differs from the vaccine of a person's first dose does not serve
 that person. To serve people who began with another vaccine, a booster campaign
-lists them in `last_dose_type_filter`:
+lists them in `courses_begun_with`:
 
 ```yaml
 campaigns:
   "Booster":
     vaccine_type: "Shot"
-    last_dose_type_filter: ["Shot", "OtherShot"]
+    courses_begun_with: ["Shot", "OtherShot"]
     tiers:
       - {name: booster, dose: 2}
 ```
 
-The filter is checked against the vaccine of the person's first dose, and it is
+The list is checked against the vaccine of the person's first dose, and it is
 not checked for people who hold no doses. Dose 2 is the third entry in the `doses`
 list of `Shot`, so `Shot` needs at least three doses for the loader to accept this.
 A booster tier names the dose people are due next, which after two doses is dose 2.
@@ -1384,7 +1384,7 @@ table leaves out. A startup error stops the run before day 0. In the table
 
 | Mistake | Message | Fix |
 |---|---|---|
-| A typo in a campaign key, such as `dose_budjet` | `vaccination campaign '<campaign>': unknown field 'dose_budjet'. Fields are start_date, end_date, vaccine_type, days_to_next_dose, last_dose_type_filter, dose_budget, coverage_target, tiers.` | Use one of the listed names |
+| A typo in a campaign key, such as `dose_budjet` | `vaccination campaign '<campaign>': unknown field 'dose_budjet'. Fields are start_date, end_date, vaccine_type, days_to_next_dose, courses_begun_with, dose_budget, coverage_target, tiers.` | Use one of the listed names |
 | No `vaccine_type` | `vaccination campaign '<campaign>': needs 'vaccine_type'` | Name a vaccine from `vaccines:` |
 | A typo in a dose key, such as `days_to_onsett` | `vaccine '<vaccine>' dose <n>: unknown field 'days_to_onsett'. Fields are days_to_onset, days_to_effective, days_to_waning, days_to_finished, waning_factor, infection_efficacy, symptom_efficacy.` | Use one of the listed names |
 | An age band not written `min-max`, such as `0_17` | `vaccine '<vaccine>' dose <n> infection_efficacy <disease> band '0_17' must be written min-max in whole years, such as 0-17` | Write the band as `0-17` |

@@ -506,7 +506,7 @@ TEST_CASE("a later dose waits for the gap since the last one") {
 
 TEST_CASE("a later dose follows the brand filter") {
   auto campaign = vaxCampaign("filter", {tierFor("second", 1)});
-  campaign.last_dose_type_filter = {"TestVax"};
+  campaign.courses_begun_with = {"TestVax"};
   Config config = makeConfig({campaign});
   WorldState world = makeWorld(homesOfThree(2));
   for (size_t i = 0; i < world.people.size(); ++i)
@@ -536,7 +536,7 @@ TEST_CASE("with no brand filter a course goes on with the vaccine it began") {
 
 TEST_CASE("a brand filter lets a booster follow another vaccine") {
   auto campaign = vaxCampaign("booster", {tierFor("third", 1)});
-  campaign.last_dose_type_filter = {"Other"};
+  campaign.courses_begun_with = {"Other"};
   Config config = makeConfig({campaign});
   WorldState world = makeWorld(homesOfThree(2));
   for (size_t i = 0; i < world.people.size(); ++i)

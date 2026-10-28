@@ -188,14 +188,14 @@ class VaccinationManager {
   // The brand and gap rules for a person who holds `held` doses. Nobody with no
   // dose is held back by them. A course goes on with the vaccine it began
   // with, because coverage counts people under the first dose's vaccine; a
-  // campaign that lists the brands it accepts as a previous dose (a booster,
-  // say) takes those instead.
+  // campaign that lists the vaccines a course may have begun with (a
+  // booster, say) takes those instead.
   static bool nextDoseDue(const Person& person, int held,
                           const VaccinationCampaignConfig& cfg,
                           double current_time) {
     if (held == 0) return true;
     const VaccineTrajectory& trajectory = *person.vaccine_trajectory;
-    const auto& accepted = cfg.last_dose_type_filter;
+    const auto& accepted = cfg.courses_begun_with;
     if (accepted.empty()) {
       if (trajectory.vaccine_name != cfg.vaccine_type) return false;
     } else if (std::find(accepted.begin(), accepted.end(),

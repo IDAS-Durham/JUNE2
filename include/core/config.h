@@ -503,8 +503,10 @@ struct VaccinationCampaignConfig {
   std::string vaccine_type;
   std::vector<double> days_to_next_dose;  // Time between doses in sequence
 
-  // Optional: filter by previous vaccine type (for boosters)
-  std::vector<std::string> last_dose_type_filter;
+  // Optional: the vaccines a person's course may have begun with, for a
+  // campaign that goes on with other vaccines' courses (a booster). Empty
+  // means only the campaign's own vaccine.
+  std::vector<std::string> courses_begun_with;
 
   // Absent budget means unlimited doses; absent target means no cap on first
   // doses.

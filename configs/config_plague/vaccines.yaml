@@ -126,7 +126,7 @@ campaigns:
     end_date: "2024-02-27"
     days_to_next_dose: [0]
     vaccine_type: "Pfizer"
-    last_dose_type_filter: ["Pfizer", "AstraZeneca"]
+    courses_begun_with: ["Pfizer", "AstraZeneca"]
     tiers:
       - name: care_home_booster
         dose: 2

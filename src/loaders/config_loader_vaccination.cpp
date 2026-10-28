@@ -333,7 +333,7 @@ VaccinationCampaignConfig parseVaccinationCampaign(
   rejectUnknownKeys(
       camp_node,
       {"start_date", "end_date", "vaccine_type", "days_to_next_dose",
-       "last_dose_type_filter", "dose_budget", "coverage_target", "tiers"},
+       "courses_begun_with", "dose_budget", "coverage_target", "tiers"},
       where + ": ");
   if (camp_node["start_date"])
     camp.start_date = camp_node["start_date"].as<std::string>();
@@ -345,9 +345,9 @@ VaccinationCampaignConfig parseVaccinationCampaign(
   if (camp_node["days_to_next_dose"])
     camp.days_to_next_dose =
         camp_node["days_to_next_dose"].as<std::vector<double>>();
-  if (camp_node["last_dose_type_filter"]) {
-    camp.last_dose_type_filter =
-        camp_node["last_dose_type_filter"].as<std::vector<std::string>>();
+  if (camp_node["courses_begun_with"]) {
+    camp.courses_begun_with =
+        camp_node["courses_begun_with"].as<std::vector<std::string>>();
   }
 
   if (camp_node["dose_budget"])

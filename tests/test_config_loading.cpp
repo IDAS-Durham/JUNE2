@@ -74,7 +74,7 @@ TEST_CASE("ConfigLoader - Vaccination Config from YAML") {
     const auto& booster = config.campaigns[2];
     REQUIRE(booster.tiers.size() == 1);
     CHECK(booster.tiers[0].dose == 2);
-    CHECK(booster.last_dose_type_filter.size() == 2);
+    CHECK(booster.courses_begun_with.size() == 2);
   }
 }
 
@@ -811,7 +811,7 @@ TEST_CASE("ConfigLoader - a campaign keeps its window, gaps and brand filter") {
     end_date: "2024-01-20"
     days_to_next_dose: [0, 14]
     vaccine_type: TestVax
-    last_dose_type_filter: [TestVax]
+    courses_begun_with: [TestVax]
     tiers: [{name: t, dose: 0}]
 )");
   REQUIRE(config.campaigns.size() == 1);
@@ -820,7 +820,7 @@ TEST_CASE("ConfigLoader - a campaign keeps its window, gaps and brand filter") {
   CHECK(c.end_date == "2024-01-20");
   CHECK(c.days_to_next_dose == std::vector<double>{0, 14});
   CHECK(c.vaccine_type == "TestVax");
-  CHECK(c.last_dose_type_filter == std::vector<std::string>{"TestVax"});
+  CHECK(c.courses_begun_with == std::vector<std::string>{"TestVax"});
   CHECK_FALSE(c.dose_budget.has_value());
   CHECK_FALSE(c.coverage_target.has_value());
   CHECK(c.tiers.size() == 1);
