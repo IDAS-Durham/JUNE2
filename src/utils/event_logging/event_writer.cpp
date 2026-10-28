@@ -108,6 +108,9 @@ void saveToHDF5WithLookups(
     writeDatasetTemplate(file, "/events/follows", logger.follows_,
                          event_schema::follow(),
                          config.simulation.compression_level);
+    writeDatasetTemplate(file, "/events/campaign_days", logger.campaign_days_,
+                         event_schema::campaignDay(),
+                         config.simulation.compression_level);
 
     // Always write lookups and metadata at the end, even if file exists
     event_writer_detail::openOrCreateGroup(file, "/lookups");
@@ -147,6 +150,15 @@ void saveToHDF5WithLookups(
       follow_rule_names.push_back(f.name);
     event_writer_detail::writeStringDataset(registries_group, "follow_rules",
                                             follow_rule_names, false);
+
+    // campaign_id in /events/campaign_days indexes this, in config order. The
+    // tier labels join it once campaigns have tiers.
+    std::vector<std::string> campaign_names;
+    campaign_names.reserve(config.vaccination.campaigns.size());
+    for (const auto& c : config.vaccination.campaigns)
+      campaign_names.push_back(c.name);
+    event_writer_detail::writeStringDataset(registries_group, "campaigns",
+                                            campaign_names, false);
 
     if (mpi_runtime::state().rank == 0) {
       std::cout << "Events and lookup tables saved successfully!" << std::endl;
