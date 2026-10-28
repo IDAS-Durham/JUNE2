@@ -998,8 +998,9 @@ band, or a disease with no entry, gets no protection from that dose. A person wi
 several doses gets the highest value of any dose, not the sum. This applies to
 infection and symptom efficacy separately.
 
-The loader does not report unknown keys inside a dose, so check the spelling of
-`days_to_onset` and `waning_factor`.
+Any other key in a dose is an error, so a misspelt `days_to_onset` cannot leave
+the onset at 0. So is a band that is not written `min-max`, or an efficacy
+outside 0 to 1.
 
 ### What symptom efficacy does
 
@@ -1384,7 +1385,10 @@ table leaves out. A startup error stops the run before day 0. In the table
 | Mistake | Message | Fix |
 |---|---|---|
 | A typo in a campaign key, such as `dose_budjet` | `vaccination campaign '<campaign>': unknown field 'dose_budjet'. Fields are start_date, end_date, vaccine_type, days_to_next_dose, last_dose_type_filter, dose_budget, coverage_target, tiers.` | Use one of the listed names |
-| No `vaccine_type` | `vaccination campaign '<campaign>' vaccine_type '' is not one of the vaccines in this file` | Name a vaccine from `vaccines:` |
+| No `vaccine_type` | `vaccination campaign '<campaign>': needs 'vaccine_type'` | Name a vaccine from `vaccines:` |
+| A typo in a dose key, such as `days_to_onsett` | `vaccine '<vaccine>' dose <n>: unknown field 'days_to_onsett'. Fields are days_to_onset, days_to_effective, days_to_waning, days_to_finished, waning_factor, infection_efficacy, symptom_efficacy.` | Use one of the listed names |
+| An age band not written `min-max`, such as `0_17` | `vaccine '<vaccine>' dose <n> infection_efficacy <disease> band '0_17' must be written min-max in whole years, such as 0-17` | Write the band as `0-17` |
+| An efficacy outside 0 to 1 | `vaccine '<vaccine>' dose <n> infection_efficacy <disease> efficacy must be a number from 0 to 1, got '1.5'` | Use a number from 0 to 1 |
 | A dose with no timing field | `vaccine '<vaccine>' dose <n>: missing required field 'days_to_waning'` | Add the field to that dose |
 | Onset after the peak | `vaccine '<vaccine>' dose <n>: days_to_onset must be between 0 and days_to_effective, got 20 with days_to_effective 14` | Lower `days_to_onset` or raise `days_to_effective` |
 | A tier asks for a dose the vaccine does not have | `vaccination campaign '<campaign>' tier '<tier>' dose 2 but vaccine 'Shot' has 2 doses (0 to 1)` | Use a dose in that range, or add the dose to the vaccine |

@@ -640,6 +640,7 @@ TEST_CASE("every selection loader rejects a present malformed selection") {
                                     "enabled: true\n"
                                     "campaigns:\n"
                                     "  bad:\n"
+                                    "    vaccine_type: V\n"
                                     "    tiers:\n"
                                     "      - {name: t, dose: 0, selection: "
                                     "{property: age}}\n");

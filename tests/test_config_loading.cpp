@@ -175,6 +175,74 @@ TEST_CASE("ConfigLoader - Vaccine dose onset") {
   }
 }
 
+TEST_CASE("ConfigLoader - Vaccine dose keys, age bands and efficacies") {
+  ScopedTestFiles files("june_vaccine_dose_keys");
+  const std::vector<std::string> timing = {
+      "days_to_effective: 14", "days_to_waning: 100", "days_to_finished: 200"};
+  // The second dose has the timing and then the given lines
+  const auto load = [&](std::vector<std::string> extra) {
+    auto lines = timing;
+    lines.insert(lines.end(), extra.begin(), extra.end());
+    return ConfigLoader::loadVaccination(
+        files.write("vaccines.yaml", vaccineWithDose(lines)).string());
+  };
+  // What the loader says about those lines, or nothing if it accepts them
+  const auto error = [&](std::vector<std::string> extra) -> std::string {
+    try {
+      load(std::move(extra));
+    } catch (const std::runtime_error& e) {
+      return e.what();
+    }
+    return "";
+  };
+  const auto names = [](const std::string& text,
+                        std::initializer_list<const char*> fragments) {
+    CHECK_MESSAGE(!text.empty(), "no error was thrown");
+    for (const char* fragment : fragments)
+      CHECK_MESSAGE(text.find(fragment) != std::string::npos,
+                    "'" << fragment << "' is missing from: " << text);
+  };
+
+  SUBCASE("a misspelt dose key is an error, not a default") {
+    names(error({"days_to_onsett: 14"}),
+          {"vaccine 'TestVax' dose 1", "unknown field 'days_to_onsett'",
+           "days_to_onset"});
+  }
+
+  SUBCASE("an age band must be min-max in whole years") {
+    for (const char* band : {"0_17", "17-0", "a-b", "-5-10", "5-", "10"}) {
+      CAPTURE(band);
+      names(error({"infection_efficacy:",
+                   std::string("  covid19: {\"") + band + "\": 0.5}"}),
+            {"vaccine 'TestVax' dose 1 infection_efficacy covid19",
+             (std::string("band '") + band + "'").c_str(), "min-max"});
+    }
+  }
+
+  SUBCASE("an efficacy is a number from 0 to 1") {
+    names(error({"symptom_efficacy:", "  covid19: 1.5"}),
+          {"dose 1 symptom_efficacy covid19 efficacy",
+           "must be a number from 0 to 1", "got '1.5'"});
+    names(error({"infection_efficacy:", "  covid19: {\"0-17\": -0.1}"}),
+          {"covid19 band '0-17' efficacy", "got '-0.1'"});
+    names(error({"infection_efficacy:", "  covid19: high"}), {"got 'high'"});
+  }
+
+  SUBCASE("0, 1 and a set of bands are accepted") {
+    const auto config =
+        load({"infection_efficacy:", "  covid19: {\"0-17\": 0, \"18-100\": 1}",
+              "symptom_efficacy:", "  covid19: 0.7"});
+    const auto& dose = config.vaccines.at("TestVax").doses[1];
+    const auto& bands = dose.infection_efficacy.at("covid19");
+    REQUIRE(bands.size() == 2);
+    CHECK(bands[0].efficacy == 0.0);
+    CHECK(bands[1].min_age == 18);
+    CHECK(bands[1].max_age == 100);
+    CHECK(bands[1].efficacy == 1.0);
+    CHECK(dose.symptom_efficacy.at("covid19")[0].efficacy == 0.7);
+  }
+}
+
 TEST_CASE("ConfigLoader - Contact Matrix Config from YAML") {
   ContactMatrixConfig cm =
       ConfigLoader::loadContactMatrices("tests/configs/contact_matrices.yaml");
@@ -904,7 +972,7 @@ TEST_CASE("ConfigLoader - tier validation names campaign, tier and value") {
         },
         {"Rollout", "vaccine_type 'Missing'"});
     checkNames([&] { f.load("    tiers: [{name: a, dose: 0}]\n"); },
-               {"Rollout", "vaccine_type ''"});
+               {"Rollout", "needs 'vaccine_type'"});
   }
 
   SUBCASE("a vaccine listed after its campaign still counts") {

@@ -28,30 +28,61 @@ using ::june::config_detail::rejectUnknownKeys;
 // Campaign and tier ids are uint16_t in the campaign_days dataset
 constexpr size_t kMaxEventIds = std::numeric_limits<uint16_t>::max();
 
+// An efficacy is a share of the risk removed, so it has to be from 0 to 1.
+double readEfficacy(const YAML::Node& node, const std::string& where) {
+  double value = std::nan("");
+  try {
+    value = node.as<double>();
+  } catch (const YAML::Exception&) {
+  }
+  // Written as a negation so a NaN fails the check too
+  if (!(value >= 0.0 && value <= 1.0))
+    throw std::runtime_error(where + " must be a number from 0 to 1, got '" +
+                             YAML::Dump(node) + "'");
+  return value;
+}
+
 // Parse a vaccine efficacy node: either a flat `disease -> scalar` map
 // (taken as 0-100 age-uniform efficacy) or a nested `disease -> {age-range
 // -> value}` map (each age-range encoded as "min-max"). Used for both
-// infection_efficacy and symptom_efficacy on a DoseConfig.
+// infection_efficacy and symptom_efficacy on a DoseConfig. `where` names the
+// dose and the node for error messages.
 std::unordered_map<std::string, std::vector<AgeEfficacy>> parseDoseEfficacies(
-    const YAML::Node& node) {
+    const YAML::Node& node, const std::string& where) {
   std::unordered_map<std::string, std::vector<AgeEfficacy>> res;
   if (!node) return res;
   for (const auto& eff_kv : node) {
-    std::string disease = eff_kv.first.as<std::string>();
+    const std::string disease = eff_kv.first.as<std::string>();
+    const std::string here = where + " " + disease;
     if (eff_kv.second.IsMap()) {
       for (const auto& age_kv : eff_kv.second) {
-        std::string age_range = age_kv.first.as<std::string>();
-        size_t dash = age_range.find('-');
-        if (dash != std::string::npos) {
-          AgeEfficacy ae;
-          ae.min_age = std::stoi(age_range.substr(0, dash));
-          ae.max_age = std::stoi(age_range.substr(dash + 1));
-          ae.efficacy = age_kv.second.as<double>();
-          res[disease].push_back(ae);
+        const std::string band = age_kv.first.as<std::string>();
+        const std::string band_where = here + " band '" + band + "'";
+        // A band that is not min-max would otherwise be dropped without a word
+        const size_t dash = band.find('-');
+        AgeEfficacy ae{};
+        size_t min_used = 0, max_used = 0;
+        try {
+          if (dash != std::string::npos) {
+            ae.min_age = std::stoi(band.substr(0, dash), &min_used);
+            ae.max_age = std::stoi(band.substr(dash + 1), &max_used);
+          }
+        } catch (const std::exception&) {
+          min_used = max_used = 0;
         }
+        if (dash == std::string::npos || min_used != dash ||
+            max_used != band.size() - dash - 1 || ae.min_age < 0 ||
+            ae.min_age > ae.max_age)
+          throw std::runtime_error(
+              band_where +
+              " must be written min-max in whole years, such as "
+              "0-17");
+        ae.efficacy = readEfficacy(age_kv.second, band_where + " efficacy");
+        res[disease].push_back(ae);
       }
     } else {
-      res[disease].push_back({0, 100, eff_kv.second.as<double>()});
+      res[disease].push_back(
+          {0, 100, readEfficacy(eff_kv.second, here + " efficacy")});
     }
   }
   return res;
@@ -74,6 +105,15 @@ DoseConfig parseDose(const std::string& vaccine, int number,
                      const YAML::Node& d_node) {
   DoseConfig dc;
   dc.number = number;
+  const std::string where =
+      "vaccine '" + vaccine + "' dose " + std::to_string(number);
+  // A misspelt key would otherwise leave its field at the default, so
+  // days_to_onsett would quietly turn a step into a ramp
+  rejectUnknownKeys(d_node,
+                    {"days_to_onset", "days_to_effective", "days_to_waning",
+                     "days_to_finished", "waning_factor", "infection_efficacy",
+                     "symptom_efficacy"},
+                    where + ": ");
   dc.days_to_effective =
       requireDoseTiming(d_node, "days_to_effective", vaccine, number);
   dc.days_to_waning =
@@ -93,8 +133,10 @@ DoseConfig parseDose(const std::string& vaccine, int number,
   }
   if (d_node["waning_factor"])
     dc.waning_factor = d_node["waning_factor"].as<double>();
-  dc.infection_efficacy = parseDoseEfficacies(d_node["infection_efficacy"]);
-  dc.symptom_efficacy = parseDoseEfficacies(d_node["symptom_efficacy"]);
+  dc.infection_efficacy = parseDoseEfficacies(d_node["infection_efficacy"],
+                                              where + " infection_efficacy");
+  dc.symptom_efficacy = parseDoseEfficacies(d_node["symptom_efficacy"],
+                                            where + " symptom_efficacy");
   return dc;
 }
 
@@ -297,8 +339,9 @@ VaccinationCampaignConfig parseVaccinationCampaign(
     camp.start_date = camp_node["start_date"].as<std::string>();
   if (camp_node["end_date"])
     camp.end_date = camp_node["end_date"].as<std::string>();
-  if (camp_node["vaccine_type"])
-    camp.vaccine_type = camp_node["vaccine_type"].as<std::string>();
+  if (!camp_node["vaccine_type"])
+    throw std::runtime_error(where + " needs 'vaccine_type'");
+  camp.vaccine_type = camp_node["vaccine_type"].as<std::string>();
   if (camp_node["days_to_next_dose"])
     camp.days_to_next_dose =
         camp_node["days_to_next_dose"].as<std::vector<double>>();
