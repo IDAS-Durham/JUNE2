@@ -427,6 +427,74 @@ struct VaccineConfig {
   std::vector<DoseConfig> doses;
 };
 
+// How the deciders' probabilities of a shared unit become one probability
+enum class DeciderCombine { Min, Mean, Max };
+
+// What a shared unit inside the scope does when none of its members decides
+enum class NoDecider { Error, Individual };
+
+// Who shares one decision. A person decides alone, or everyone registered to
+// the same venue for a named activity decides together.
+struct DecisionUnit {
+  std::string shared_activity;  // empty: the person decides alone
+  int16_t activity_index = -1;  // shared_activity in the world, set on resolve
+
+  bool shared() const { return !shared_activity.empty(); }
+};
+
+// How a vaccination tier's shared unit decides: who is inside the unit (people
+// outside decide alone), which members decide for it, how their probabilities
+// combine and what a unit with no decider does. An empty list matches
+// everyone. Read only when the tier's decision unit is shared.
+struct DecisionRules {
+  std::vector<SelectionCriterion> scope;
+  std::vector<SelectionCriterion> deciders;
+  DeciderCombine combine = DeciderCombine::Mean;
+  NoDecider if_no_decider = NoDecider::Error;
+};
+
+// A delivery rate: `doses` every `per_days` days.
+struct DoseBudget {
+  int64_t doses = 0;
+  int64_t per_days = 0;
+};
+
+// One row of an uptake table. An empty criteria list matches everyone.
+struct UptakeRow {
+  std::vector<SelectionCriterion> criteria;
+  double probability = 1.0;
+};
+
+// The probability that a person accepts a dose. Rows are tried in order and the
+// first match wins. A table read from a file keeps only the path until
+// resolve(world), because its criteria need the world.
+struct UptakeTable {
+  std::vector<UptakeRow> rows;
+  std::string csv_path;
+
+  // The first matching row, nullopt when no row matches, and 1.0 when there is
+  // no table at all.
+  std::optional<double> probability(const Person& person,
+                                    const WorldState& world) const;
+
+  // Read the file (if any), then resolve every row's criteria. `label` names
+  // the campaign and tier for error messages.
+  void resolve(const WorldState& world, const std::string& label);
+};
+
+// One step of a campaign's strict priority order: who it covers, which dose it
+// gives them, and how they decide to accept.
+struct VaccinationTier {
+  std::string name;
+  int dose = 0;  // same numbering as DoseConfig::number
+  std::vector<SelectionCriterion> selection_criteria;
+  UptakeTable uptake;
+  DecisionUnit decision_unit;
+  DecisionRules decision_rules;
+
+  void resolve(const WorldState& world, const std::string& campaign);
+};
+
 struct VaccinationCampaignConfig {
   std::string name;
   std::string start_date;
@@ -444,11 +512,19 @@ struct VaccinationCampaignConfig {
   // Optional: filter by previous vaccine type (for boosters)
   std::vector<std::string> last_dose_type_filter;
 
+  // Absent budget means unlimited doses; absent target means no cap on first
+  // doses.
+  std::optional<DoseBudget> dose_budget;
+  std::optional<double> coverage_target;
+  // Served strictly in this order
+  std::vector<VaccinationTier> tiers;
+
   void resolve(const WorldState& world) {
     for (auto& crit : selection_criteria) {
       crit.resolveOrThrow(world,
                           "vaccination campaign '" + name + "' selection");
     }
+    for (auto& tier : tiers) tier.resolve(world, name);
   }
 };
 

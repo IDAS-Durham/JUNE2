@@ -1,5 +1,6 @@
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -569,5 +570,672 @@ TEST_CASE("ConfigLoader - Optional Files Handling") {
 
     CHECK_THROWS_AS(ConfigLoader::loadCoordinatedEncounters(bad_file.string()),
                     std::runtime_error);
+  }
+}
+
+namespace {
+
+// Two doses, so a tier can ask for dose 0 or 1 and nothing above.
+constexpr const char* kTwoDoseVaccine =
+    "enabled: true\n"
+    "vaccines:\n"
+    "  TestVax:\n"
+    "    doses:\n"
+    "      - {days_to_effective: 14, days_to_waning: 100, days_to_finished: "
+    "200}\n"
+    "      - {days_to_effective: 14, days_to_waning: 100, days_to_finished: "
+    "200}\n"
+    "campaigns:\n";
+
+// A campaign called Rollout whose body is the given lines, each already
+// indented by four spaces.
+std::string rolloutFile(const std::string& body) {
+  return std::string(kTwoDoseVaccine) + "  Rollout:\n" + body;
+}
+
+// Runs the call, which must throw a runtime_error naming every fragment.
+template <typename F>
+void checkNames(F&& call, std::initializer_list<const char*> fragments) {
+  std::string message;
+  try {
+    call();
+  } catch (const std::runtime_error& e) {
+    message = e.what();
+  }
+  CHECK_MESSAGE(!message.empty(), "no error was thrown");
+  for (const char* fragment : fragments) {
+    CHECK_MESSAGE(
+        message.find(fragment) != std::string::npos,
+        "'" << std::string(fragment) << "' is missing from: " << message);
+  }
+}
+
+// Ages 5, 10, 17, 18, 30, 70, and a second activity so its index is not 0
+WorldState campaignTestWorld() {
+  WorldState world = TestWorldFactory::createMinimalWorld(6);
+  const float ages[] = {5, 10, 17, 18, 30, 70};
+  for (size_t i = 0; i < 6; ++i) world.people[i].age = ages[i];
+  world.activity_names = {"work", "residence"};
+  return world;
+}
+
+class CampaignFiles {
+ public:
+  VaccinationConfig load(const std::string& body) {
+    return ConfigLoader::loadVaccination(
+        files.write("vaccines.yaml", rolloutFile(body)).string());
+  }
+  // The first tier of a campaign whose tier body is the given lines
+  VaccinationConfig loadTier(const std::string& tier_lines) {
+    return load("    vaccine_type: TestVax\n    tiers:\n" + tier_lines);
+  }
+  // Loads, resolves against the test world and returns the first tier
+  VaccinationTier resolvedTier(const std::string& tier_lines) {
+    auto config = loadTier(tier_lines);
+    const WorldState world = campaignTestWorld();
+    config.resolve(world);
+    return config.campaigns.at(0).tiers.at(0);
+  }
+  ScopedTestFiles files{"june_campaign_config"};
+};
+
+}  // namespace
+
+TEST_CASE("ConfigLoader - a spec shaped campaign parses to its values") {
+  CampaignFiles f;
+  f.files.write("uptake_young.csv", "filter.age,probability\n<18,0.8\n");
+  const auto config = f.load(R"(    vaccine_type: TestVax
+    dose_budget: {doses: 10000000, per_days: 30}
+    coverage_target: 0.7
+    tiers:
+      - name: young_second
+        dose: 1
+        selection:
+          - {property: "age", operator: "<", value: 18}
+        uptake: 0.9
+        decision_unit: person
+      - name: young_first
+        dose: 0
+        selection: [{property: "age", operator: "<", value: 18}]
+        uptake: {file: "uptake_young.csv"}
+        decision_unit:
+          shared_venue: residence
+          scope:    [{property: "activities.residence.venue_type", operator: "==", value: "family_home"}]
+          deciders: [{property: "age", operator: ">=", value: 18}]
+          combine: max
+          if_no_decider: individual
+      - name: everyone_else
+        dose: 0
+)");
+  REQUIRE(config.campaigns.size() == 1);
+  const auto& campaign = config.campaigns[0];
+  CHECK(campaign.name == "Rollout");
+  REQUIRE(campaign.dose_budget.has_value());
+  CHECK(campaign.dose_budget->doses == 10000000);
+  CHECK(campaign.dose_budget->per_days == 30);
+  REQUIRE(campaign.coverage_target.has_value());
+  CHECK(*campaign.coverage_target == doctest::Approx(0.7));
+
+  REQUIRE(campaign.tiers.size() == 3);
+  const auto& second = campaign.tiers[0];
+  CHECK(second.name == "young_second");
+  CHECK(second.dose == 1);
+  REQUIRE(second.selection_criteria.size() == 1);
+  CHECK(second.selection_criteria[0].property_path == "age");
+  CHECK(second.selection_criteria[0].operator_type == "<");
+  CHECK(std::get<int>(second.selection_criteria[0].value) == 18);
+  REQUIRE(second.uptake.rows.size() == 1);
+  CHECK(second.uptake.rows[0].probability == doctest::Approx(0.9));
+  CHECK(second.uptake.rows[0].criteria.empty());
+  CHECK(second.uptake.csv_path.empty());
+  CHECK_FALSE(second.decision_unit.shared());
+
+  const auto& first = campaign.tiers[1];
+  CHECK(first.name == "young_first");
+  CHECK(first.dose == 0);
+  CHECK(first.uptake.rows.empty());
+  CHECK(first.uptake.csv_path == f.files.path("uptake_young.csv").string());
+  CHECK(first.decision_unit.shared_activity == "residence");
+  CHECK(first.decision_rules.scope.size() == 1);
+  CHECK(first.decision_rules.deciders.size() == 1);
+  CHECK(first.decision_rules.combine == DeciderCombine::Max);
+  CHECK(first.decision_rules.if_no_decider == NoDecider::Individual);
+
+  // Absent keys mean everyone: no selection, uptake or shared decision
+  const auto& rest = campaign.tiers[2];
+  CHECK(rest.selection_criteria.empty());
+  CHECK(rest.uptake.rows.empty());
+  CHECK(rest.uptake.csv_path.empty());
+  CHECK_FALSE(rest.decision_unit.shared());
+}
+
+TEST_CASE("ConfigLoader - a shared decision unit defaults to mean and error") {
+  CampaignFiles f;
+  const auto tier = f.loadTier(R"(      - name: t
+        dose: 0
+        decision_unit: {shared_venue: residence, scope: [], deciders: []}
+)")
+                        .campaigns[0]
+                        .tiers[0];
+  CHECK(tier.decision_rules.combine == DeciderCombine::Mean);
+  CHECK(tier.decision_rules.if_no_decider == NoDecider::Error);
+
+  const auto min = f.loadTier(R"(      - name: t
+        dose: 0
+        decision_unit: {shared_venue: residence, scope: [], deciders: [], combine: min}
+)")
+                       .campaigns[0]
+                       .tiers[0];
+  CHECK(min.decision_rules.combine == DeciderCombine::Min);
+}
+
+TEST_CASE("ConfigLoader - a campaign in the old style loads as before") {
+  CampaignFiles f;
+  const auto config = f.load(R"(    start_date: "2024-01-01"
+    end_date: "2024-01-20"
+    days_to_next_dose: [0, 14]
+    daily_coverage: 0.3
+    vaccine_type: TestVax
+    dose_sequence: [0, 1]
+    last_dose_type_filter: [TestVax]
+    selection:
+      - {property: "age", operator: ">=", value: 65}
+)");
+  REQUIRE(config.campaigns.size() == 1);
+  const auto& c = config.campaigns[0];
+  CHECK(c.start_date == "2024-01-01");
+  CHECK(c.end_date == "2024-01-20");
+  CHECK(c.days_to_next_dose == std::vector<double>{0, 14});
+  CHECK(c.daily_coverage == doctest::Approx(0.3));
+  CHECK(c.vaccine_type == "TestVax");
+  CHECK(c.dose_sequence == std::vector<int>{0, 1});
+  CHECK(c.last_dose_type_filter == std::vector<std::string>{"TestVax"});
+  REQUIRE(c.selection_criteria.size() == 1);
+  CHECK(c.selection_criteria[0].property_path == "age");
+  CHECK_FALSE(c.dose_budget.has_value());
+  CHECK_FALSE(c.coverage_target.has_value());
+  CHECK(c.tiers.empty());
+}
+
+TEST_CASE("ConfigLoader - campaign validation names the campaign and value") {
+  CampaignFiles f;
+  const std::string head = "    vaccine_type: TestVax\n";
+  const std::string one_tier = "    tiers: [{name: t, dose: 0}]\n";
+
+  SUBCASE("dose_budget must give whole numbers above zero") {
+    checkNames(
+        [&] { f.load(head + "    dose_budget: {doses: 1.5, per_days: 30}\n"); },
+        {"Rollout", "dose_budget", "doses", "whole number", "1.5"});
+    checkNames(
+        [&] {
+          f.load(head + "    dose_budget: {doses: lots, per_days: 30}\n");
+        },
+        {"Rollout", "doses", "whole number", "lots"});
+    checkNames(
+        [&] { f.load(head + "    dose_budget: {doses: 10, per_days: 2.5}\n"); },
+        {"Rollout", "per_days", "whole number", "2.5"});
+    checkNames(
+        [&] { f.load(head + "    dose_budget: {doses: 0, per_days: 30}\n"); },
+        {"Rollout", "doses", "greater than zero", "got 0"});
+    checkNames(
+        [&] { f.load(head + "    dose_budget: {doses: 10, per_days: -3}\n"); },
+        {"Rollout", "per_days", "greater than zero", "got -3"});
+  }
+
+  SUBCASE("dose_budget needs both numbers and no other key") {
+    checkNames([&] { f.load(head + "    dose_budget: {doses: 10}\n"); },
+               {"Rollout", "dose_budget", "needs 'per_days'"});
+    checkNames([&] { f.load(head + "    dose_budget: {per_days: 10}\n"); },
+               {"Rollout", "needs 'doses'"});
+    checkNames(
+        [&] {
+          f.load(head +
+                 "    dose_budget: {doses: 1, per_days: 1, per_week: 2}\n");
+        },
+        {"Rollout", "dose_budget", "unknown field 'per_week'"});
+    checkNames([&] { f.load(head + "    dose_budget: 5\n"); },
+               {"Rollout", "dose_budget", "mapping", "'5'"});
+  }
+
+  SUBCASE("a valid dose_budget is accepted") {
+    CHECK(f.load(head + one_tier + "    dose_budget: {doses: 1, per_days: 1}\n")
+              .campaigns[0]
+              .dose_budget->doses == 1);
+  }
+
+  SUBCASE("coverage_target is above 0 and at most 1") {
+    for (const char* bad : {"0", "-0.2", "1.5", "most"}) {
+      checkNames([&] { f.load(head + "    coverage_target: " + bad + "\n"); },
+                 {"Rollout", "coverage_target", bad});
+    }
+    CHECK(*f.load(head + one_tier + "    coverage_target: 1\n")
+               .campaigns[0]
+               .coverage_target == 1.0);
+  }
+
+  SUBCASE("a typo in a key cannot silently mean unlimited") {
+    checkNames(
+        [&] { f.load(head + "    dose_budjet: {doses: 1, per_days: 1}\n"); },
+        {"Rollout", "unknown field 'dose_budjet'", "dose_budget"});
+  }
+
+  SUBCASE("a budget or target without tiers would silently do nothing") {
+    checkNames(
+        [&] {
+          f.load(head +
+                 "    daily_coverage: 0.5\n    dose_budget: {doses: 1, "
+                 "per_days: 1}\n");
+        },
+        {"Rollout", "'dose_budget'", "no 'tiers'"});
+    checkNames([&] { f.load(head + "    coverage_target: 0.5\n"); },
+               {"Rollout", "'coverage_target'", "no 'tiers'"});
+  }
+
+  SUBCASE("the old keys stay valid for a campaign without tiers") {
+    CHECK_NOTHROW(
+        f.load(head + "    daily_coverage: 0.5\n    dose_sequence: [0]\n"));
+  }
+
+  SUBCASE("tiers cannot be mixed with either old key") {
+    const std::string tiers = "    tiers:\n      - {name: t, dose: 0}\n";
+    checkNames([&] { f.load(head + tiers + "    daily_coverage: 0.5\n"); },
+               {"Rollout", "'tiers'", "'daily_coverage'"});
+    checkNames([&] { f.load(head + tiers + "    dose_sequence: [0]\n"); },
+               {"Rollout", "'tiers'", "'dose_sequence'"});
+  }
+
+  SUBCASE("more than 65535 campaigns are refused") {
+    const auto file = [&](int count) {
+      std::string yaml = "enabled: true\ncampaigns:\n";
+      for (int i = 0; i < count; ++i)
+        yaml += "  c" + std::to_string(i) + ": {vaccine_type: TestVax}\n";
+      return f.files.write("many.yaml", yaml).string();
+    };
+    CHECK(ConfigLoader::loadVaccination(file(65535)).campaigns.size() == 65535);
+    checkNames([&] { ConfigLoader::loadVaccination(file(65536)); },
+               {"65536 campaigns", "at most 65535"});
+  }
+}
+
+TEST_CASE("ConfigLoader - tier validation names campaign, tier and value") {
+  CampaignFiles f;
+
+  SUBCASE("tiers must be a non-empty list") {
+    checkNames([&] { f.load("    vaccine_type: TestVax\n    tiers: []\n"); },
+               {"Rollout", "tiers", "non-empty"});
+    checkNames(
+        [&] { f.load("    vaccine_type: TestVax\n    tiers: {name: t}\n"); },
+        {"Rollout", "tiers", "non-empty list"});
+  }
+
+  SUBCASE("a tier needs a name, unique in its campaign") {
+    checkNames([&] { f.loadTier("      - {dose: 0}\n"); },
+               {"Rollout", "tier 1", "needs a 'name'"});
+    checkNames(
+        [&] {
+          f.loadTier(
+              "      - {name: a, dose: 0}\n      - {name: a, dose: 1}\n");
+        },
+        {"Rollout", "two tiers named 'a'"});
+  }
+
+  SUBCASE("the same name in two campaigns is fine") {
+    const auto config = f.load(
+        "    vaccine_type: TestVax\n    tiers: [{name: a, dose: 0}]\n"
+        "  Second:\n    vaccine_type: TestVax\n    tiers: [{name: a, dose: "
+        "0}]\n");
+    CHECK(config.campaigns.size() == 2);
+  }
+
+  SUBCASE("a tier needs a dose of 0 or more, as a whole number") {
+    checkNames([&] { f.loadTier("      - {name: a}\n"); },
+               {"Rollout", "tier 'a'", "needs a 'dose'"});
+    checkNames([&] { f.loadTier("      - {name: a, dose: -1}\n"); },
+               {"Rollout", "tier 'a'", "dose", "-1"});
+    checkNames([&] { f.loadTier("      - {name: a, dose: 0.5}\n"); },
+               {"Rollout", "tier 'a'", "dose", "whole number", "0.5"});
+    checkNames([&] { f.loadTier("      - {name: a, dose: first}\n"); },
+               {"Rollout", "tier 'a'", "dose", "whole number", "first"});
+  }
+
+  SUBCASE("the dose must exist in the campaign's vaccine") {
+    CHECK(
+        f.loadTier("      - {name: a, dose: 1}\n").campaigns[0].tiers[0].dose ==
+        1);
+    checkNames([&] { f.loadTier("      - {name: a, dose: 2}\n"); },
+               {"Rollout", "tier 'a'", "dose 2", "'TestVax'", "2 doses"});
+    checkNames(
+        [&] {
+          f.load(
+              "    vaccine_type: Missing\n    tiers: [{name: a, dose: 0}]\n");
+        },
+        {"Rollout", "vaccine_type 'Missing'"});
+    checkNames([&] { f.load("    tiers: [{name: a, dose: 0}]\n"); },
+               {"Rollout", "vaccine_type ''"});
+  }
+
+  SUBCASE("a vaccine listed after its campaign still counts") {
+    const auto path =
+        f.files.write("late.yaml",
+                      "campaigns:\n  Rollout: {vaccine_type: TestVax, tiers: "
+                      "[{name: a, dose: 0}]}\n"
+                      "vaccines:\n  TestVax:\n    doses:\n"
+                      "      - {days_to_effective: 1, days_to_waning: 2, "
+                      "days_to_finished: 3}\n");
+    CHECK_NOTHROW(ConfigLoader::loadVaccination(path.string()));
+  }
+
+  SUBCASE("more than 65535 tiers in one campaign are refused") {
+    const auto file = [&](int count) {
+      std::string tiers = "    vaccine_type: TestVax\n    tiers:\n";
+      for (int i = 0; i < count; ++i)
+        tiers += "      - {name: t" + std::to_string(i) + ", dose: 0}\n";
+      return tiers;
+    };
+    CHECK(f.load(file(65535)).campaigns[0].tiers.size() == 65535);
+    checkNames([&] { f.load(file(65536)); },
+               {"Rollout", "65536 tiers", "at most 65535"});
+  }
+
+  SUBCASE("unknown keys in a tier are errors") {
+    checkNames(
+        [&] { f.loadTier("      - {name: a, dose: 0, uptake_rate: 0.5}\n"); },
+        {"Rollout", "tier 'a'", "unknown field 'uptake_rate'"});
+    checkNames([&] { f.loadTier("      - {name: a, dose: 0, group: []}\n"); },
+               {"unknown field 'group'", "selection"});
+  }
+
+  SUBCASE("a selection that is not a list is refused") {
+    CHECK_THROWS_WITH(
+        f.loadTier("      - {name: a, dose: 0, selection: {property: age}}\n"),
+        doctest::Contains("selection must be a sequence"));
+  }
+
+  SUBCASE("unknown keys in the campaign are errors") {
+    checkNames([&] { f.load("    vaccine_type: TestVax\n    tier: []\n"); },
+               {"Rollout", "unknown field 'tier'"});
+  }
+}
+
+TEST_CASE("ConfigLoader - uptake and decision unit validation") {
+  CampaignFiles f;
+  const auto tier = [&](const std::string& extra) {
+    return f.loadTier("      - name: a\n        dose: 0\n        " + extra +
+                      "\n");
+  };
+
+  SUBCASE("a scalar uptake is a probability") {
+    CHECK(tier("uptake: 0").campaigns[0].tiers[0].uptake.rows[0].probability ==
+          0.0);
+    CHECK(tier("uptake: 1").campaigns[0].tiers[0].uptake.rows[0].probability ==
+          1.0);
+    for (const char* bad : {"1.2", "-0.1", "most"}) {
+      checkNames([&] { tier(std::string("uptake: ") + bad); },
+                 {"Rollout", "tier 'a'", "uptake", bad});
+    }
+  }
+
+  SUBCASE("a list of rows needs a probability in each and no other key") {
+    checkNames([&] { tier("uptake: [{selection: []}]"); },
+               {"Rollout", "tier 'a'", "uptake row 1", "needs 'probability'"});
+    checkNames([&] { tier("uptake: [{probability: 0.5}, {probability: 2}]"); },
+               {"Rollout", "tier 'a'", "uptake row 2", "probability", "2"});
+    checkNames([&] { tier("uptake: [{probability: 0.5, odds: 3}]"); },
+               {"Rollout", "tier 'a'", "uptake row 1", "unknown field 'odds'"});
+    checkNames([&] { tier("uptake: []"); },
+               {"Rollout", "tier 'a'", "empty list"});
+    checkNames([&] { tier("uptake: [0.5]"); },
+               {"Rollout", "tier 'a'", "uptake row 1", "mapping"});
+  }
+
+  SUBCASE("a file uptake takes only a path") {
+    checkNames([&] { tier("uptake: {path: x.csv}"); },
+               {"Rollout", "tier 'a'", "unknown field 'path'"});
+    checkNames([&] { tier("uptake: {file: ''}"); },
+               {"Rollout", "tier 'a'", "needs 'file'"});
+    checkNames([&] { tier("uptake: null"); },
+               {"Rollout", "tier 'a'", "uptake"});
+  }
+
+  SUBCASE(
+      "a relative file is read as given when it exists, else beside the yaml") {
+    const std::string here = "tests/configs/vaccines.yaml";
+    CHECK(tier("uptake: {file: " + here + "}")
+              .campaigns[0]
+              .tiers[0]
+              .uptake.csv_path == here);
+    CHECK(tier("uptake: {file: nearby.csv}")
+              .campaigns[0]
+              .tiers[0]
+              .uptake.csv_path == f.files.path("nearby.csv").string());
+  }
+
+  SUBCASE("decision_unit is person or a map with its three required keys") {
+    CHECK_FALSE(tier("decision_unit: person")
+                    .campaigns[0]
+                    .tiers[0]
+                    .decision_unit.shared());
+    checkNames(
+        [&] { tier("decision_unit: household"); },
+        {"Rollout", "tier 'a'", "decision_unit", "'person'", "household"});
+    checkNames([&] { tier("decision_unit: {scope: [], deciders: []}"); },
+               {"Rollout", "tier 'a'", "needs 'shared_venue'"});
+    checkNames([&] { tier("decision_unit: {shared_venue: r, deciders: []}"); },
+               {"Rollout", "tier 'a'", "needs 'scope'"});
+    checkNames([&] { tier("decision_unit: {shared_venue: r, scope: []}"); },
+               {"Rollout", "tier 'a'", "needs 'deciders'"});
+    checkNames(
+        [&] {
+          tier("decision_unit: {shared_venue: '', scope: [], deciders: []}");
+        },
+        {"Rollout", "tier 'a'", "shared_venue", "activity name"});
+  }
+
+  SUBCASE("combine and if_no_decider take only their words") {
+    const std::string unit =
+        "decision_unit: {shared_venue: r, scope: [], deciders: [], ";
+    checkNames([&] { tier(unit + "combine: median}"); },
+               {"Rollout", "tier 'a'", "combine", "min, mean, max", "median"});
+    checkNames([&] { tier(unit + "if_no_decider: ignore}"); },
+               {"Rollout", "tier 'a'", "if_no_decider", "error, individual",
+                "ignore"});
+    checkNames([&] { tier(unit + "extra: 1}"); },
+               {"Rollout", "tier 'a'", "unknown field 'extra'"});
+  }
+}
+
+TEST_CASE("VaccinationTier - uptake lookups") {
+  CampaignFiles f;
+  const WorldState world = campaignTestWorld();  // ages 5 10 17 18 30 70
+  const auto probabilities = [&](const VaccinationTier& tier) {
+    std::vector<std::optional<double>> out;
+    for (const Person& p : world.people)
+      out.push_back(tier.uptake.probability(p, world));
+    return out;
+  };
+  using Probabilities = std::vector<std::optional<double>>;
+  const std::string head = "      - name: a\n        dose: 0\n        uptake: ";
+
+  SUBCASE("no uptake means everyone accepts") {
+    const auto tier = f.resolvedTier("      - {name: a, dose: 0}\n");
+    CHECK(probabilities(tier) == Probabilities(6, 1.0));
+  }
+
+  SUBCASE("a number applies to everyone") {
+    const auto tier =
+        f.resolvedTier("      - {name: a, dose: 0, uptake: 0.25}\n");
+    CHECK(probabilities(tier) == Probabilities(6, 0.25));
+  }
+
+  SUBCASE("the first matching row wins") {
+    const auto tier = f.resolvedTier(head + R"(
+          - {selection: [{property: age, operator: "<", value: 18}], probability: 0.9}
+          - {selection: [{property: age, operator: "<", value: 10}], probability: 0.1}
+          - {selection: [{property: age, operator: ">=", value: 18}], probability: 0.5}
+)");
+    CHECK(probabilities(tier) == Probabilities{0.9, 0.9, 0.9, 0.5, 0.5, 0.5});
+  }
+
+  SUBCASE("a row without a selection is the catch-all") {
+    const auto tier = f.resolvedTier(head + R"(
+          - {selection: [{property: age, operator: "<", value: 18}], probability: 0.9}
+          - {probability: 0.3}
+)");
+    CHECK(probabilities(tier) == Probabilities{0.9, 0.9, 0.9, 0.3, 0.3, 0.3});
+  }
+
+  SUBCASE("a person matching no row gets no answer, not a default") {
+    const auto tier = f.resolvedTier(head + R"(
+          - {selection: [{property: age, operator: "<", value: 18}], probability: 0.9}
+)");
+    CHECK(probabilities(tier) == Probabilities{0.9, 0.9, 0.9, std::nullopt,
+                                               std::nullopt, std::nullopt});
+  }
+
+  SUBCASE(
+      "rows from a file behave the same: first match, catch-all, no match") {
+    f.files.write("uptake.csv",
+                  "# a comment line\n"
+                  "filter.age,probability\n"
+                  "<18,0.9\n"
+                  "<10,0.1\n"
+                  "18-64,0.5\n");
+    const auto tier = f.resolvedTier(head + "{file: uptake.csv}\n");
+    CHECK(probabilities(tier) ==
+          Probabilities{0.9, 0.9, 0.9, 0.5, 0.5, std::nullopt});
+
+    f.files.write("uptake.csv", "filter.age,probability\n<18,0.9\n,0.3\n");
+    const auto with_catch_all = f.resolvedTier(head + "{file: uptake.csv}\n");
+    CHECK(probabilities(with_catch_all) ==
+          Probabilities{0.9, 0.9, 0.9, 0.3, 0.3, 0.3});
+  }
+
+  SUBCASE("inline rows and file rows give the same lookup") {
+    f.files.write("uptake.csv",
+                  "filter.age,probability\n<10,0.2\n10-17,0.9\n>=65,0.6\n");
+    const auto from_file = f.resolvedTier(head + "{file: uptake.csv}\n");
+    const auto inline_rows = f.resolvedTier(head + R"(
+          - {selection: [{property: age, operator: "<", value: 10}], probability: 0.2}
+          - {selection: [{property: age, operator: ">=", value: 10}, {property: age, operator: "<=", value: 17}], probability: 0.9}
+          - {selection: [{property: age, operator: ">=", value: 65}], probability: 0.6}
+)");
+    CHECK(probabilities(from_file) ==
+          Probabilities{0.2, 0.9, 0.9, std::nullopt, std::nullopt, 0.6});
+    CHECK(probabilities(inline_rows) == probabilities(from_file));
+  }
+
+  SUBCASE(
+      "asking an unresolved file table for a probability is a bug, not 1.0") {
+    f.files.write("uptake.csv", "filter.age,probability\n,0.5\n");
+    const auto config = f.loadTier(head + "{file: uptake.csv}\n");
+    const auto& tier = config.campaigns[0].tiers[0];
+    CHECK_THROWS_AS(tier.uptake.probability(world.people[0], world),
+                    std::logic_error);
+  }
+}
+
+TEST_CASE("VaccinationTier - uptake file errors name the file and row") {
+  CampaignFiles f;
+  const auto resolve = [&](const std::string& csv) {
+    f.files.write("uptake.csv", csv);
+    f.resolvedTier("      - {name: a, dose: 0, uptake: {file: uptake.csv}}\n");
+  };
+  const std::string path = f.files.path("uptake.csv").string();
+
+  SUBCASE("a file without a probability column") {
+    checkNames(
+        [&] { resolve("filter.age\n<18\n"); },
+        {"Rollout", "tier 'a'", path.c_str(), "no 'probability' column"});
+  }
+  SUBCASE("a column that is neither a filter nor the probability") {
+    checkNames(
+        [&] { resolve("filter.age,probabilty\n<18,0.5\n"); },
+        {"Rollout", "tier 'a'", path.c_str(), "unknown column 'probabilty'"});
+    checkNames([&] { resolve("filer.age,probability\n<18,0.5\n"); },
+               {path.c_str(), "unknown column 'filer.age'"});
+  }
+  SUBCASE("a file with no rows") {
+    checkNames([&] { resolve("filter.age,probability\n"); },
+               {"Rollout", "tier 'a'", path.c_str(), "no data rows"});
+  }
+  SUBCASE("a cell that is not a number") {
+    checkNames([&] { resolve("filter.age,probability\n<18,0.5\n>=18,abc\n"); },
+               {"Rollout", "tier 'a'", path.c_str(), "data row 2", "'abc'",
+                "not a number"});
+    checkNames([&] { resolve("filter.age,probability\n<18,0.5x\n"); },
+               {path.c_str(), "data row 1", "'0.5x'"});
+    checkNames([&] { resolve("filter.age,probability\n<18,\n"); },
+               {path.c_str(), "data row 1", "not a number"});
+  }
+  SUBCASE("a probability outside 0 to 1") {
+    checkNames([&] { resolve("filter.age,probability\n<18,0.5\n>=18,1.5\n"); },
+               {"Rollout", "tier 'a'", path.c_str(), "data row 2", "1.5",
+                "outside 0 to 1"});
+    checkNames([&] { resolve("filter.age,probability\n<18,-0.1\n"); },
+               {path.c_str(), "data row 1", "-0.1"});
+    checkNames([&] { resolve("filter.age,probability\n<18,nan\n"); },
+               {path.c_str(), "data row 1", "nan"});
+  }
+  SUBCASE("a file that does not exist") {
+    auto config =
+        f.loadTier("      - {name: a, dose: 0, uptake: {file: gone.csv}}\n");
+    const WorldState world = campaignTestWorld();
+    checkNames([&] { config.resolve(world); },
+               {"Rollout", "tier 'a'", "gone.csv"});
+  }
+  SUBCASE("a filter on an infection fact describes no person") {
+    checkNames(
+        [&] {
+          resolve("filter.transmission_mode,probability\nrespiratory,0.5\n");
+        },
+        {"Rollout", "tier 'a'", "row 1", "transmission_mode"});
+  }
+}
+
+TEST_CASE("VaccinationConfig - resolve names campaign and tier") {
+  CampaignFiles f;
+  WorldState world = campaignTestWorld();
+
+  SUBCASE("a shared venue is resolved to its activity index") {
+    auto config = f.loadTier(R"(      - name: a
+        dose: 0
+        decision_unit: {shared_venue: residence, scope: [], deciders: []}
+)");
+    config.resolve(world);
+    const auto& unit = config.campaigns[0].tiers[0].decision_unit;
+    CHECK(unit.activity_index == world.getActivityIndex("residence"));
+    CHECK(unit.activity_index == 1);
+  }
+
+  SUBCASE("an unknown activity throws") {
+    auto config = f.loadTier(R"(      - name: a
+        dose: 0
+        decision_unit: {shared_venue: nowhere, scope: [], deciders: []}
+)");
+    checkNames([&] { config.resolve(world); },
+               {"Rollout", "tier 'a'", "unknown activity 'nowhere'"});
+  }
+
+  SUBCASE("an unknown property in each criterion list throws") {
+    const std::string bad =
+        "{property: properties.no_such, operator: '==', value: 1}";
+    const std::string unit = "decision_unit: {shared_venue: residence, ";
+    for (const std::string& line :
+         {"selection: [" + bad + "]",
+          "uptake: [{selection: [" + bad + "], probability: 0.5}]",
+          unit + "scope: [" + bad + "], deciders: []}",
+          unit + "scope: [], deciders: [" + bad + "]}"}) {
+      auto config = f.loadTier("      - {name: a, dose: 0, " + line + "}\n");
+      checkNames([&] { config.resolve(world); },
+                 {"Rollout", "tier 'a'", "no_such"});
+    }
+  }
+
+  SUBCASE("a disabled vaccination config is not resolved") {
+    auto config = f.loadTier(
+        "      - {name: a, dose: 0, selection: [{property: properties.no_such, "
+        "operator: '==', value: 1}]}\n");
+    config.enabled = false;
+    CHECK_NOTHROW(config.resolve(world));
   }
 }
