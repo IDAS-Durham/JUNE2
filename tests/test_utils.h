@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <filesystem>
@@ -79,9 +81,12 @@ class ScopedTestFiles {
  public:
   explicit ScopedTestFiles(std::string prefix = "june2_test") {
     static std::atomic<unsigned> counter{0};
-    directory_ =
-        std::filesystem::temp_directory_path() /
-        (std::move(prefix) + "_" + std::to_string(counter.fetch_add(1)));
+    // The process id keeps two runs of a test binary apart, and a directory
+    // left under this exact name by a crashed run is cleared, not tripped over.
+    directory_ = std::filesystem::temp_directory_path() /
+                 (std::move(prefix) + "_" + std::to_string(::getpid()) + "_" +
+                  std::to_string(counter.fetch_add(1)));
+    std::filesystem::remove_all(directory_);
     if (!std::filesystem::create_directories(directory_))
       throw std::runtime_error("could not create test temp directory: " +
                                directory_.string());
