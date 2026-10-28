@@ -95,6 +95,10 @@ class ScopedTestFiles {
     std::filesystem::remove_all(directory_, ec);
   }
 
+  std::filesystem::path path(std::string_view filename) const {
+    return directory_ / std::string(filename);
+  }
+
   std::filesystem::path write(std::string_view filename,
                               std::string_view contents) const {
     const auto path = directory_ / std::string(filename);

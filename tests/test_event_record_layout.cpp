@@ -1,9 +1,7 @@
 #include <H5Cpp.h>
-#include <unistd.h>
 
 #include <cstddef>
 #include <cstring>
-#include <filesystem>
 #include <new>
 #include <string>
 #include <utility>
@@ -12,6 +10,7 @@
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
+#include "test_utils.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/event_logging/event_merger.h"
 #include "utils/event_logging/event_schemas.h"
@@ -133,23 +132,6 @@ bool sameRows(const std::vector<CampaignDayEvent>& a,
           std::memcmp(a.data(), b.data(), a.size() * sizeof(a[0])) == 0);
 }
 
-// A scratch directory that is removed when the test ends.
-struct ScratchDir {
-  std::filesystem::path path;
-  ScratchDir() {
-    static int counter = 0;
-    path = std::filesystem::temp_directory_path() /
-           ("june_campaign_days_" + std::to_string(::getpid()) + "_" +
-            std::to_string(counter++));
-    std::filesystem::remove_all(path);
-    std::filesystem::create_directories(path);
-  }
-  ~ScratchDir() { std::filesystem::remove_all(path); }
-  std::string file(const std::string& name) const {
-    return (path / name).string();
-  }
-};
-
 Config configWithCampaigns(const std::vector<std::string>& names) {
   Config config;
   // Nothing but the events and registries is under test; skip the lookups that
@@ -207,8 +189,8 @@ TEST_CASE("campaign day rows carry no padding") {
 }
 
 TEST_CASE("campaign days written through the real writer read back intact") {
-  ScratchDir dir;
-  const std::string file = dir.file("events.h5");
+  ScopedTestFiles dir("june_campaign_days");
+  const std::string file = dir.path("events.h5").string();
   const Config config = configWithCampaigns({"Zeta", "Alpha", "Mid"});
   const WorldState world;
 
@@ -247,8 +229,8 @@ TEST_CASE("campaign days written through the real writer read back intact") {
 }
 
 TEST_CASE("campaign registry lists the campaigns in config order") {
-  ScratchDir dir;
-  const std::string file = dir.file("events.h5");
+  ScopedTestFiles dir("june_campaign_days");
+  const std::string file = dir.path("events.h5").string();
   const Config config = configWithCampaigns({"Zeta", "Alpha", "Mid"});
 
   EventLogger logger;
@@ -260,9 +242,9 @@ TEST_CASE("campaign registry lists the campaigns in config order") {
 }
 
 TEST_CASE("merging event files keeps campaign day rows from every file") {
-  ScratchDir dir;
-  const std::string a = dir.file("a.h5");
-  const std::string b = dir.file("b.h5");
+  ScopedTestFiles dir("june_campaign_days");
+  const std::string a = dir.path("a.h5").string();
+  const std::string b = dir.path("b.h5").string();
   const Config config = configWithCampaigns({"First", "Second"});
   const WorldState world;
 
@@ -278,7 +260,7 @@ TEST_CASE("merging event files keeps campaign day rows from every file") {
     logger.flush(file, config, world, {});
   }
 
-  const std::string merged = dir.file("merged.h5");
+  const std::string merged = dir.path("merged.h5").string();
   mergeEventFiles({a, b}, merged);
 
   // Every row of every input, in input order.

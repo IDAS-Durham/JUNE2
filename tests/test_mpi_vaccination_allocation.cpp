@@ -72,7 +72,12 @@ TEST_CASE("lotteryCutoff - real reduces give the serial selection") {
     for (int64_t take : {int64_t{0}, int64_t{1}, int64_t{37}, total / 3,
                          total / 2, total - 1, total}) {
       CAPTURE(take);
-      const auto cutoff = lotteryCutoff(mine, take, mpi_runtime::globalSum);
+      const auto cutoff = lotteryCutoff(
+          mpi_runtime::globalSum(static_cast<int64_t>(mine.size())), take,
+          [&](uint64_t t) {
+            return mpi_runtime::globalSum(static_cast<int64_t>(
+                std::upper_bound(mine.begin(), mine.end(), t) - mine.begin()));
+          });
 
       // The serial answer, from the union.
       if (take == 0) {

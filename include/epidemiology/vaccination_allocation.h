@@ -100,27 +100,23 @@ inline uint64_t lotteryKey(uint64_t seed, uint64_t person_id,
 
 // The cutoff for serving exactly `take` candidates, over all ranks together:
 // the candidates with a key at or below it are the ones served. Empty when
-// `take` is 0 (nobody is served). `sorted_local_keys` are the keys of this
-// rank's candidates in ascending order. `take` must be the same on every
-// rank, and so must the number of calls, since `global_sum` is collective: it
-// adds one integer over all ranks (the value itself when running serially).
+// `take` is 0 (nobody is served). `total` is the number of candidates in the
+// whole world and `count_at_or_below(t)` is how many of them have a key at or
+// below `t`. In an MPI run the caller builds that as a global sum of a local
+// upper_bound, so it is collective.
 //
-// The cutoff is found by bisection over the 64 bit key space. Each round asks
-// how many candidates in the whole world have a key at or below the middle of
-// the range, which is one global_sum of a local upper_bound. That is one
-// reduce for the total and at most 64 for the search, with no gather of keys.
-// Only integers are exchanged, so every rank ends on the same cutoff.
+// The cutoff is found by bisection over the 64 bit key space, at most 64
+// calls to `count_at_or_below`, with no gather of keys. The bisection depends
+// only on `total`, `take` and those global counts, so every rank makes the same
+// calls in the same order and ends on the same cutoff. `take` must be the same
+// on every rank.
 //
 // The result is exact only if keys are unique. When several keys share the
 // value the cutoff lands on, serving "at or below" would take more than `take`
 // people, so that is an error and not a rounding.
 inline std::optional<uint64_t> lotteryCutoff(
-    const std::vector<uint64_t>& sorted_local_keys, int64_t take,
-    const std::function<int64_t(int64_t)>& global_sum) {
-  if (!std::is_sorted(sorted_local_keys.begin(), sorted_local_keys.end()))
-    throw std::runtime_error("lotteryCutoff: local keys are not sorted");
-  const int64_t total =
-      global_sum(static_cast<int64_t>(sorted_local_keys.size()));
+    int64_t total, int64_t take,
+    const std::function<int64_t(uint64_t)>& count_at_or_below) {
   if (take < 0 || take > total)
     throw std::runtime_error("lotteryCutoff: cannot take " +
                              std::to_string(take) + " of " +
@@ -133,10 +129,7 @@ inline std::optional<uint64_t> lotteryCutoff(
   int64_t count_at_hi = total;  // every key is at or below the largest value
   while (lo < hi) {
     const uint64_t mid = lo + (hi - lo) / 2;
-    const int64_t count = global_sum(
-        static_cast<int64_t>(std::upper_bound(sorted_local_keys.begin(),
-                                              sorted_local_keys.end(), mid) -
-                             sorted_local_keys.begin()));
+    const int64_t count = count_at_or_below(mid);
     if (count >= take) {
       hi = mid;
       count_at_hi = count;

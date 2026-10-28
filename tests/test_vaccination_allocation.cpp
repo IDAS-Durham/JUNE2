@@ -1,13 +1,9 @@
 #include <algorithm>
-#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <mutex>
 #include <numeric>
 #include <optional>
-#include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -35,70 +31,23 @@ std::vector<int64_t> fill(std::optional<int64_t> allotment,
   return fillTiers(allotment, counts, starts_course, cap);
 }
 
-// Stands in for the MPI ranks of a run. Every rank is a thread that calls the
-// function under test, and sum() adds what the ranks pass in, like an
-// Allreduce does: nobody returns until all of them have called.
-class SimulatedRanks {
- public:
-  explicit SimulatedRanks(size_t n) : n_(n) {}
-
-  int64_t sum(int64_t local) {
-    std::unique_lock<std::mutex> lock(mutex_);
-    const size_t round = round_;
-    pending_ += local;
-    if (++arrived_ == n_) {
-      result_ = pending_;
-      pending_ = 0;
-      arrived_ = 0;
-      ++round_;
-      ++calls_;
-      arrived_cv_.notify_all();
-    } else {
-      arrived_cv_.wait(lock, [&] { return round_ != round; });
-    }
-    return result_;
-  }
-
-  size_t calls() const { return calls_; }
-
- private:
-  std::mutex mutex_;
-  std::condition_variable arrived_cv_;
-  const size_t n_;
-  size_t arrived_ = 0;
-  size_t round_ = 0;
-  size_t calls_ = 0;
-  int64_t pending_ = 0;
-  int64_t result_ = 0;
-};
-
-struct CutoffRun {
-  std::vector<std::optional<uint64_t>> cutoff;  // one per rank
-  std::vector<std::string> error;               // one per rank, empty if none
-  size_t reduces = 0;                           // rounds of global_sum
-};
-
-// Runs lotteryCutoff on every rank at once. Rank r holds `parts[r]`.
-CutoffRun runCutoff(const std::vector<std::vector<uint64_t>>& parts,
-                    int64_t take) {
-  const size_t n = parts.size();
-  SimulatedRanks ranks(n);
-  CutoffRun run;
-  run.cutoff.resize(n);
-  run.error.resize(n);
-  std::vector<std::thread> threads;
-  for (size_t r = 0; r < n; ++r)
-    threads.emplace_back([&, r] {
-      try {
-        run.cutoff[r] = lotteryCutoff(
-            parts[r], take, [&](int64_t local) { return ranks.sum(local); });
-      } catch (const std::exception& e) {
-        run.error[r] = e.what();
-      }
-    });
-  for (auto& t : threads) t.join();
-  run.reduces = ranks.calls();
-  return run;
+// Runs lotteryCutoff over a world held in `parts` (one sorted vector per
+// rank). The count it is given adds up every part, which is what the global
+// sum of a local upper_bound gives in an MPI run. Returns the cutoff and how
+// many times the count was asked for.
+std::pair<std::optional<uint64_t>, size_t> runCutoff(
+    const std::vector<std::vector<uint64_t>>& parts, int64_t take) {
+  int64_t total = 0;
+  for (const auto& part : parts) total += static_cast<int64_t>(part.size());
+  size_t calls = 0;
+  const auto cutoff = lotteryCutoff(total, take, [&](uint64_t t) {
+    ++calls;
+    int64_t count = 0;
+    for (const auto& part : parts)
+      count += std::upper_bound(part.begin(), part.end(), t) - part.begin();
+    return count;
+  });
+  return {cutoff, calls};
 }
 
 // Spreads the keys over `ranks` ranks by a rule that has nothing to do with
@@ -357,25 +306,21 @@ void checkCutoff(const std::vector<uint64_t>& keys, size_t ranks, int64_t take,
   CAPTURE(ranks);
   CAPTURE(take);
   const auto parts = splitKeys(keys, ranks, split_seed);
-  const auto run = runCutoff(parts, take);
-  for (size_t r = 0; r < ranks; ++r) REQUIRE(run.error[r] == "");
-
-  // Every rank lands on the same cutoff.
-  for (size_t r = 1; r < ranks; ++r) CHECK(run.cutoff[r] == run.cutoff[0]);
-  // One reduce for the total and at most 64 for the bisection.
-  CHECK(run.reduces <= 65);
+  const auto [cutoff, calls] = runCutoff(parts, take);
+  // At most 64 rounds of the bisection.
+  CHECK(calls <= 64);
 
   std::vector<uint64_t> sorted = keys;
   std::sort(sorted.begin(), sorted.end());
   if (take == 0) {
-    CHECK_FALSE(run.cutoff[0].has_value());
+    CHECK_FALSE(cutoff.has_value());
     return;
   }
-  REQUIRE(run.cutoff[0].has_value());
+  REQUIRE(cutoff.has_value());
   std::vector<uint64_t> selected;
   for (const auto& part : parts)
     for (uint64_t k : part)
-      if (k <= *run.cutoff[0]) selected.push_back(k);
+      if (k <= *cutoff) selected.push_back(k);
   std::sort(selected.begin(), selected.end());
   CHECK(static_cast<int64_t>(selected.size()) == take);
   CHECK(selected ==
@@ -415,51 +360,42 @@ TEST_CASE("lotteryCutoff - keys at both ends of the 64 bit range") {
   const std::vector<uint64_t> keys = {0, kMaxKey, kMaxKey / 2, 1, kMaxKey - 1};
   for (size_t ranks : {1, 2, 4})
     for (int64_t take = 0; take <= 5; ++take) checkCutoff(keys, ranks, take, 3);
-  const auto lowest = runCutoff({{0}}, 1);
-  CHECK(lowest.cutoff[0] == 0);
-  const auto highest = runCutoff({{kMaxKey}}, 1);
-  CHECK(highest.cutoff[0] == kMaxKey);
+  CHECK(runCutoff({{0}}, 1).first == 0);
+  CHECK(runCutoff({{kMaxKey}}, 1).first == kMaxKey);
 }
 
 TEST_CASE("lotteryCutoff - the cutoff is the key of the last person served") {
-  const auto run = runCutoff({{10, 30}, {20, 40}}, 3);
-  CHECK(run.cutoff[0] == 30);
+  CHECK(runCutoff({{10, 30}, {20, 40}}, 3).first == 30);
 }
 
-TEST_CASE("lotteryCutoff - serial identity reduce") {
-  const std::vector<uint64_t> keys = {5, 9, 12, 20};
-  const auto identity = [](int64_t v) { return v; };
-  CHECK(lotteryCutoff(keys, 3, identity) == 12);
-  CHECK_FALSE(lotteryCutoff(keys, 0, identity).has_value());
+TEST_CASE("lotteryCutoff - a plain worked example") {
+  const std::vector<std::vector<uint64_t>> world = {{5, 12}, {9, 20}};
+  CHECK(runCutoff(world, 3).first == 12);
+  CHECK_FALSE(runCutoff(world, 0).first.has_value());
 }
 
 TEST_CASE("lotteryCutoff - duplicate keys at the cut throw") {
-  const auto identity = [](int64_t v) { return v; };
   // The cut falls between the two 5s, so no cutoff serves exactly one person.
-  CHECK_THROWS_WITH_AS(lotteryCutoff({5, 5, 7}, 1, identity),
+  CHECK_THROWS_WITH_AS(runCutoff({{5, 5, 7}}, 1),
                        doctest::Contains("not unique"), std::runtime_error);
-  // The same on several ranks: the duplicate is split across two of them.
-  const auto run = runCutoff({{5}, {5, 7}}, 1);
-  CHECK(run.error[0] != "");
-  CHECK(run.error[1] != "");
+  // The same when the duplicate is split across two parts.
+  CHECK_THROWS_WITH_AS(runCutoff({{5}, {5, 7}}, 1),
+                       doctest::Contains("not unique"), std::runtime_error);
   // The cut at the very top of the key range.
-  CHECK_THROWS_WITH_AS(lotteryCutoff({kMaxKey, kMaxKey}, 1, identity),
+  CHECK_THROWS_WITH_AS(runCutoff({{kMaxKey, kMaxKey}}, 1),
                        doctest::Contains("not unique"), std::runtime_error);
   // Duplicates wholly inside or wholly outside the cut do not matter.
-  CHECK(lotteryCutoff({5, 5, 7}, 2, identity) == 5);
-  CHECK(lotteryCutoff({5, 5, 7}, 3, identity) == 7);
-  CHECK(lotteryCutoff({3, 5, 5}, 1, identity) == 3);
+  CHECK(runCutoff({{5, 5, 7}}, 2).first == 5);
+  CHECK(runCutoff({{5, 5, 7}}, 3).first == 7);
+  CHECK(runCutoff({{3, 5, 5}}, 1).first == 3);
 }
 
 TEST_CASE("lotteryCutoff - bad arguments throw") {
-  const auto identity = [](int64_t v) { return v; };
-  CHECK_THROWS_WITH_AS(lotteryCutoff({1, 2, 3}, -1, identity),
+  CHECK_THROWS_WITH_AS(runCutoff({{1, 2, 3}}, -1),
                        doctest::Contains("cannot take"), std::runtime_error);
-  CHECK_THROWS_WITH_AS(lotteryCutoff({1, 2, 3}, 4, identity),
+  CHECK_THROWS_WITH_AS(runCutoff({{1, 2, 3}}, 4),
                        doctest::Contains("cannot take"), std::runtime_error);
-  CHECK_THROWS_WITH_AS(lotteryCutoff({}, 1, identity),
-                       doctest::Contains("cannot take"), std::runtime_error);
-  CHECK_THROWS_WITH_AS(lotteryCutoff({3, 1, 2}, 1, identity),
-                       doctest::Contains("not sorted"), std::runtime_error);
-  CHECK_FALSE(lotteryCutoff({}, 0, identity).has_value());
+  CHECK_THROWS_WITH_AS(runCutoff({}, 1), doctest::Contains("cannot take"),
+                       std::runtime_error);
+  CHECK_FALSE(runCutoff({}, 0).first.has_value());
 }
