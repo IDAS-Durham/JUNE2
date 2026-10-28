@@ -47,4 +47,15 @@ inline int64_t globalSum(int64_t local) {
   return local;
 }
 
+// Smallest of one integer over all ranks, with the same rules as globalSum.
+inline int64_t globalMin(int64_t local) {
+#ifdef USE_MPI
+  const State s = state();
+  if (s.active && s.size > 1)
+    MPI_Allreduce(MPI_IN_PLACE, &local, 1, MPI_INT64_T, MPI_MIN,
+                  MPI_COMM_WORLD);
+#endif
+  return local;
+}
+
 }  // namespace june::mpi_runtime
