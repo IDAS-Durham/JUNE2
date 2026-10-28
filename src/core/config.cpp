@@ -372,8 +372,9 @@ bool SelectionCriterion::evaluate(
           if (v_type_code != target_code) return true;
         }
       }
-      // True if none matched and looking for !=
-      return cached_operator == Operator::NOT_EQUAL;
+      // No venue matched (==) or none differed (!=). A person with no venue
+      // for the activity has nothing to compare, so neither operator holds.
+      return false;
     }
 
     if (p_val_code != -1) {
