@@ -501,13 +501,7 @@ struct VaccinationCampaignConfig {
   std::string end_date;
 
   std::string vaccine_type;
-  std::vector<int> dose_sequence;
   std::vector<double> days_to_next_dose;  // Time between doses in sequence
-
-  double daily_coverage = 0.0;
-
-  // Selection criteria for eligibility
-  std::vector<SelectionCriterion> selection_criteria;
 
   // Optional: filter by previous vaccine type (for boosters)
   std::vector<std::string> last_dose_type_filter;
@@ -520,10 +514,6 @@ struct VaccinationCampaignConfig {
   std::vector<VaccinationTier> tiers;
 
   void resolve(const WorldState& world) {
-    for (auto& crit : selection_criteria) {
-      crit.resolveOrThrow(world,
-                          "vaccination campaign '" + name + "' selection");
-    }
     for (auto& tier : tiers) tier.resolve(world, name);
   }
 };

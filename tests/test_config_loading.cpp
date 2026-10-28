@@ -53,17 +53,28 @@ TEST_CASE("ConfigLoader - Vaccination Config from YAML") {
   SUBCASE("Campaigns are loaded correctly") {
     REQUIRE(config.campaigns.size() == 3);
 
-    CHECK(config.campaigns[0].vaccine_type == "Pfizer");
-    CHECK(config.campaigns[0].daily_coverage == doctest::Approx(0.3));
-    REQUIRE(config.campaigns[0].selection_criteria.size() == 1);
-    CHECK(config.campaigns[0].selection_criteria[0].property_path ==
+    const auto& pfizer = config.campaigns[0];
+    CHECK(pfizer.vaccine_type == "Pfizer");
+    REQUIRE(pfizer.dose_budget.has_value());
+    CHECK(pfizer.dose_budget->doses == 300);
+    CHECK(pfizer.dose_budget->per_days == 7);
+    CHECK(*pfizer.coverage_target == doctest::Approx(0.5));
+    REQUIRE(pfizer.tiers.size() == 2);
+    CHECK(pfizer.tiers[0].dose == 1);
+    CHECK(pfizer.tiers[1].dose == 0);
+    REQUIRE(pfizer.tiers[1].selection_criteria.size() == 1);
+    CHECK(pfizer.tiers[1].selection_criteria[0].property_path ==
           "activities.residence.venue_type");
+    CHECK(pfizer.tiers[1].uptake.rows.size() == 2);
 
     CHECK(config.campaigns[1].vaccine_type == "AstraZeneca");
+    CHECK_FALSE(config.campaigns[1].dose_budget.has_value());
 
     // Booster campaign
-    CHECK(config.campaigns[2].dose_sequence.size() == 1);
-    CHECK(config.campaigns[2].dose_sequence[0] == 2);
+    const auto& booster = config.campaigns[2];
+    REQUIRE(booster.tiers.size() == 1);
+    CHECK(booster.tiers[0].dose == 2);
+    CHECK(booster.last_dose_type_filter.size() == 2);
   }
 }
 
@@ -418,15 +429,15 @@ TEST_CASE("ContactMatrixConfig::finalizeDiseaseModeAlignment") {
 TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
   SUBCASE("both paths present") {
     ScopedTestFiles files("june_config_calendar_test");
-    const auto yaml_path = files.write(
-        "simulation.yaml",
-        "time:\n"
-        "  start_date: \"2020-01-01\"\n"
-        "  end_date: \"2020-01-10\"\n"
-        "config_paths:\n"
-        "  calendar_events_file: \"data/calendar_events.csv\"\n"
-        "  calendar_event_catchment_rules_file: \""
-        "data/catchment_rules.csv\"\n");
+    const auto yaml_path =
+        files.write("simulation.yaml",
+                    "time:\n"
+                    "  start_date: \"2020-01-01\"\n"
+                    "  end_date: \"2020-01-10\"\n"
+                    "config_paths:\n"
+                    "  calendar_events_file: \"data/calendar_events.csv\"\n"
+                    "  calendar_event_catchment_rules_file: \""
+                    "data/catchment_rules.csv\"\n");
     SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path.string());
     CHECK(cfg.calendar_events_file == "data/calendar_events.csv");
     CHECK(cfg.calendar_event_catchment_rules_file ==
@@ -435,13 +446,12 @@ TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
 
   SUBCASE("absent keys leave fields empty, no error") {
     ScopedTestFiles files("june_config_no_calendar_test");
-    const auto yaml_path = files.write(
-        "simulation.yaml",
-        "time:\n"
-        "  start_date: \"2020-01-01\"\n"
-        "  end_date: \"2020-01-10\"\n"
-        "config_paths:\n"
-        "  disease_file: \"disease.yaml\"\n");
+    const auto yaml_path = files.write("simulation.yaml",
+                                       "time:\n"
+                                       "  start_date: \"2020-01-01\"\n"
+                                       "  end_date: \"2020-01-10\"\n"
+                                       "config_paths:\n"
+                                       "  disease_file: \"disease.yaml\"\n");
     SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path.string());
     CHECK(cfg.calendar_events_file == "");
     CHECK(cfg.calendar_event_catchment_rules_file == "");
@@ -451,44 +461,42 @@ TEST_CASE("SimulationConfig - calendar event paths parsed from config_paths") {
 TEST_CASE("SimulationConfig - save_coordinated_encounters parsed from output") {
   SUBCASE("absent defaults to false") {
     ScopedTestFiles files("june_config_output_test");
-    const auto yaml_path = files.write(
-        "simulation.yaml",
-        "time:\n"
-        "  start_date: \"2020-01-01\"\n"
-        "  end_date: \"2020-01-10\"\n"
-        "config_paths: {}\n"
-        "output:\n"
-        "  stats_interval_days: 1\n");
+    const auto yaml_path = files.write("simulation.yaml",
+                                       "time:\n"
+                                       "  start_date: \"2020-01-01\"\n"
+                                       "  end_date: \"2020-01-10\"\n"
+                                       "config_paths: {}\n"
+                                       "output:\n"
+                                       "  stats_interval_days: 1\n");
     SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path.string());
     CHECK(cfg.save_coordinated_encounters == false);
   }
 
   SUBCASE("explicit true is honoured") {
     ScopedTestFiles files("june_config_output_true_test");
-    const auto yaml_path = files.write(
-        "simulation.yaml",
-        "time:\n"
-        "  start_date: \"2020-01-01\"\n"
-        "  end_date: \"2020-01-10\"\n"
-        "config_paths: {}\n"
-        "output:\n"
-        "  stats_interval_days: 1\n"
-        "  save_coordinated_encounters: true\n");
+    const auto yaml_path = files.write("simulation.yaml",
+                                       "time:\n"
+                                       "  start_date: \"2020-01-01\"\n"
+                                       "  end_date: \"2020-01-10\"\n"
+                                       "config_paths: {}\n"
+                                       "output:\n"
+                                       "  stats_interval_days: 1\n"
+                                       "  save_coordinated_encounters: true\n");
     SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path.string());
     CHECK(cfg.save_coordinated_encounters == true);
   }
 
   SUBCASE("explicit false is honoured") {
     ScopedTestFiles files("june_config_output_false_test");
-    const auto yaml_path = files.write(
-        "simulation.yaml",
-        "time:\n"
-        "  start_date: \"2020-01-01\"\n"
-        "  end_date: \"2020-01-10\"\n"
-        "config_paths: {}\n"
-        "output:\n"
-        "  stats_interval_days: 1\n"
-        "  save_coordinated_encounters: false\n");
+    const auto yaml_path =
+        files.write("simulation.yaml",
+                    "time:\n"
+                    "  start_date: \"2020-01-01\"\n"
+                    "  end_date: \"2020-01-10\"\n"
+                    "config_paths: {}\n"
+                    "output:\n"
+                    "  stats_interval_days: 1\n"
+                    "  save_coordinated_encounters: false\n");
     SimulationConfig cfg = ConfigLoader::loadSimulation(yaml_path.string());
     CHECK(cfg.save_coordinated_encounters == false);
   }
@@ -729,32 +737,25 @@ TEST_CASE("ConfigLoader - a shared decision unit defaults to mean and error") {
   CHECK(min.decision_rules.combine == DeciderCombine::Min);
 }
 
-TEST_CASE("ConfigLoader - a campaign in the old style loads as before") {
+TEST_CASE("ConfigLoader - a campaign keeps its window, gaps and brand filter") {
   CampaignFiles f;
   const auto config = f.load(R"(    start_date: "2024-01-01"
     end_date: "2024-01-20"
     days_to_next_dose: [0, 14]
-    daily_coverage: 0.3
     vaccine_type: TestVax
-    dose_sequence: [0, 1]
     last_dose_type_filter: [TestVax]
-    selection:
-      - {property: "age", operator: ">=", value: 65}
+    tiers: [{name: t, dose: 0}]
 )");
   REQUIRE(config.campaigns.size() == 1);
   const auto& c = config.campaigns[0];
   CHECK(c.start_date == "2024-01-01");
   CHECK(c.end_date == "2024-01-20");
   CHECK(c.days_to_next_dose == std::vector<double>{0, 14});
-  CHECK(c.daily_coverage == doctest::Approx(0.3));
   CHECK(c.vaccine_type == "TestVax");
-  CHECK(c.dose_sequence == std::vector<int>{0, 1});
   CHECK(c.last_dose_type_filter == std::vector<std::string>{"TestVax"});
-  REQUIRE(c.selection_criteria.size() == 1);
-  CHECK(c.selection_criteria[0].property_path == "age");
   CHECK_FALSE(c.dose_budget.has_value());
   CHECK_FALSE(c.coverage_target.has_value());
-  CHECK(c.tiers.empty());
+  CHECK(c.tiers.size() == 1);
 }
 
 TEST_CASE("ConfigLoader - campaign validation names the campaign and value") {
@@ -819,36 +820,28 @@ TEST_CASE("ConfigLoader - campaign validation names the campaign and value") {
         {"Rollout", "unknown field 'dose_budjet'", "dose_budget"});
   }
 
-  SUBCASE("a budget or target without tiers would silently do nothing") {
+  SUBCASE("a campaign without tiers is refused by name") {
+    checkNames([&] { f.load(head); }, {"Rollout", "needs 'tiers'"});
     checkNames(
-        [&] {
-          f.load(head +
-                 "    daily_coverage: 0.5\n    dose_budget: {doses: 1, "
-                 "per_days: 1}\n");
-        },
-        {"Rollout", "'dose_budget'", "no 'tiers'"});
-    checkNames([&] { f.load(head + "    coverage_target: 0.5\n"); },
-               {"Rollout", "'coverage_target'", "no 'tiers'"});
+        [&] { f.load(head + "    dose_budget: {doses: 1, per_days: 1}\n"); },
+        {"Rollout", "needs 'tiers'"});
   }
 
-  SUBCASE("the old keys stay valid for a campaign without tiers") {
-    CHECK_NOTHROW(
-        f.load(head + "    daily_coverage: 0.5\n    dose_sequence: [0]\n"));
-  }
-
-  SUBCASE("tiers cannot be mixed with either old key") {
-    const std::string tiers = "    tiers:\n      - {name: t, dose: 0}\n";
-    checkNames([&] { f.load(head + tiers + "    daily_coverage: 0.5\n"); },
-               {"Rollout", "'tiers'", "'daily_coverage'"});
-    checkNames([&] { f.load(head + tiers + "    dose_sequence: [0]\n"); },
-               {"Rollout", "'tiers'", "'dose_sequence'"});
+  SUBCASE("the keys of the old daily roll are unknown fields") {
+    for (const char* old : {"daily_coverage: 0.5", "dose_sequence: [0]",
+                            "selection: [{property: age, operator: '>', "
+                            "value: 1}]"}) {
+      checkNames([&] { f.load(head + one_tier + "    " + old + "\n"); },
+                 {"Rollout", "unknown field", "tiers"});
+    }
   }
 
   SUBCASE("more than 65535 campaigns are refused") {
     const auto file = [&](int count) {
-      std::string yaml = "enabled: true\ncampaigns:\n";
+      std::string yaml = kTwoDoseVaccine;
       for (int i = 0; i < count; ++i)
-        yaml += "  c" + std::to_string(i) + ": {vaccine_type: TestVax}\n";
+        yaml += "  c" + std::to_string(i) +
+                ": {vaccine_type: TestVax, tiers: [{name: t, dose: 0}]}\n";
       return f.files.write("many.yaml", yaml).string();
     };
     CHECK(ConfigLoader::loadVaccination(file(65535)).campaigns.size() == 65535);

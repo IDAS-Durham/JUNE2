@@ -290,8 +290,7 @@ VaccinationCampaignConfig parseVaccinationCampaign(
   const std::string where = "vaccination campaign '" + name + "'";
   rejectUnknownKeys(
       camp_node,
-      {"start_date", "end_date", "vaccine_type", "dose_sequence",
-       "days_to_next_dose", "daily_coverage", "selection",
+      {"start_date", "end_date", "vaccine_type", "days_to_next_dose",
        "last_dose_type_filter", "dose_budget", "coverage_target", "tiers"},
       where + ": ");
   if (camp_node["start_date"])
@@ -300,17 +299,9 @@ VaccinationCampaignConfig parseVaccinationCampaign(
     camp.end_date = camp_node["end_date"].as<std::string>();
   if (camp_node["vaccine_type"])
     camp.vaccine_type = camp_node["vaccine_type"].as<std::string>();
-  if (camp_node["dose_sequence"])
-    camp.dose_sequence = camp_node["dose_sequence"].as<std::vector<int>>();
   if (camp_node["days_to_next_dose"])
     camp.days_to_next_dose =
         camp_node["days_to_next_dose"].as<std::vector<double>>();
-  if (camp_node["daily_coverage"])
-    camp.daily_coverage = camp_node["daily_coverage"].as<double>();
-
-  if (camp_node["selection"].IsDefined()) {
-    parseSelectionCriteria(camp_node["selection"], camp.selection_criteria);
-  }
   if (camp_node["last_dose_type_filter"]) {
     camp.last_dose_type_filter =
         camp_node["last_dose_type_filter"].as<std::vector<std::string>>();
@@ -334,35 +325,20 @@ VaccinationCampaignConfig parseVaccinationCampaign(
           YAML::Dump(camp_node["coverage_target"]) + "'");
     camp.coverage_target = target;
   }
-  if (camp_node["tiers"]) {
-    // The old keys describe the same rollout in another way, so letting one win
-    // silently would hide which rule the run followed.
-    for (const char* old_key : {"daily_coverage", "dose_sequence"}) {
-      if (camp_node[old_key])
-        throw std::runtime_error(where + " has both 'tiers' and '" + old_key +
-                                 "'; use one or the other");
-    }
-    const YAML::Node& tiers = camp_node["tiers"];
-    if (!tiers.IsSequence() || tiers.size() == 0)
-      throw std::runtime_error(where + " tiers must be a non-empty list");
-    if (tiers.size() > kMaxEventIds)
-      throw std::runtime_error(where + " has " + std::to_string(tiers.size()) +
-                               " tiers; at most " +
-                               std::to_string(kMaxEventIds) + " are allowed");
-    std::unordered_set<std::string> names;
-    for (size_t i = 0; i < tiers.size(); ++i) {
-      camp.tiers.push_back(parseTier(tiers[i], where, i + 1, yaml_dir));
-      if (!names.insert(camp.tiers.back().name).second)
-        throw std::runtime_error(where + " has two tiers named '" +
-                                 camp.tiers.back().name + "'");
-    }
-  } else {
-    // Nothing reads them without tiers, so they would silently do nothing
-    for (const char* key : {"dose_budget", "coverage_target"}) {
-      if (camp_node[key])
-        throw std::runtime_error(where + " has '" + key +
-                                 "' but no 'tiers'; both apply to tiers");
-    }
+  if (!camp_node["tiers"]) throw std::runtime_error(where + " needs 'tiers'");
+  const YAML::Node& tiers = camp_node["tiers"];
+  if (!tiers.IsSequence() || tiers.size() == 0)
+    throw std::runtime_error(where + " tiers must be a non-empty list");
+  if (tiers.size() > kMaxEventIds)
+    throw std::runtime_error(where + " has " + std::to_string(tiers.size()) +
+                             " tiers; at most " + std::to_string(kMaxEventIds) +
+                             " are allowed");
+  std::unordered_set<std::string> names;
+  for (size_t i = 0; i < tiers.size(); ++i) {
+    camp.tiers.push_back(parseTier(tiers[i], where, i + 1, yaml_dir));
+    if (!names.insert(camp.tiers.back().name).second)
+      throw std::runtime_error(where + " has two tiers named '" +
+                               camp.tiers.back().name + "'");
   }
   return camp;
 }
@@ -372,7 +348,6 @@ VaccinationCampaignConfig parseVaccinationCampaign(
 // campaigns.
 void checkTierDoses(const VaccinationConfig& config) {
   for (const auto& camp : config.campaigns) {
-    if (camp.tiers.empty()) continue;
     const std::string where = "vaccination campaign '" + camp.name + "'";
     const auto vaccine = config.vaccines.find(camp.vaccine_type);
     if (vaccine == config.vaccines.end())

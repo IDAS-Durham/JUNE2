@@ -156,9 +156,10 @@ std::vector<CampaignDayEvent> readCampaignDays(const std::string& filename) {
   return rows;
 }
 
-std::vector<std::string> readCampaignRegistry(const std::string& filename) {
+std::vector<std::string> readRegistry(const std::string& filename,
+                                      const std::string& path) {
   H5::H5File file(filename, H5F_ACC_RDONLY);
-  H5::DataSet dataset = file.openDataSet("/metadata/registries/campaigns");
+  H5::DataSet dataset = file.openDataSet(path);
   hsize_t count = 0;
   dataset.getSpace().getSimpleExtentDims(&count);
   H5::StrType type(H5::PredType::C_S1, H5T_VARIABLE);
@@ -237,8 +238,31 @@ TEST_CASE("campaign registry lists the campaigns in config order") {
   logRow(logger, campaignDayRow(0, 0, 0, 5));
   logger.flush(file, config, WorldState{}, {});
   // Not alphabetical and not sorted by anything: the order of the config.
-  CHECK(readCampaignRegistry(file) ==
+  CHECK(readRegistry(file, "/metadata/registries/campaigns") ==
         std::vector<std::string>{"Zeta", "Alpha", "Mid"});
+}
+
+TEST_CASE("campaign tier registry names each campaign's tiers by campaign_id") {
+  ScopedTestFiles dir("june_campaign_days");
+  const std::string file = dir.path("events.h5").string();
+  Config config = configWithCampaigns({"Zeta", "Alpha"});
+  for (const char* name : {"second", "first"}) {
+    VaccinationTier tier;
+    tier.name = name;
+    config.vaccination.campaigns[0].tiers.push_back(tier);
+  }
+  VaccinationTier only;
+  only.name = "only";
+  config.vaccination.campaigns[1].tiers.push_back(only);
+
+  EventLogger logger;
+  logRow(logger, campaignDayRow(0, 0, 0, 5));
+  logger.flush(file, config, WorldState{}, {});
+  // tier_id indexes the list of the campaign named by campaign_id
+  CHECK(readRegistry(file, "/metadata/registries/campaign_tiers/0") ==
+        std::vector<std::string>{"second", "first"});
+  CHECK(readRegistry(file, "/metadata/registries/campaign_tiers/1") ==
+        std::vector<std::string>{"only"});
 }
 
 TEST_CASE("merging event files keeps campaign day rows from every file") {
@@ -268,7 +292,7 @@ TEST_CASE("merging event files keeps campaign day rows from every file") {
   expected.insert(expected.end(), rows_b.begin(), rows_b.end());
   CHECK(sameRows(readCampaignDays(merged), expected));
   // The registry comes through the merge.
-  CHECK(readCampaignRegistry(merged) ==
+  CHECK(readRegistry(merged, "/metadata/registries/campaigns") ==
         std::vector<std::string>{"First", "Second"});
 }
 

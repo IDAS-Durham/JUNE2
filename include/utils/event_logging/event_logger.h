@@ -115,6 +115,9 @@ class EventLogger {
     return hospital_discharges_.size();
   }
   size_t getVaccinationCount() const { return vaccinations_.size(); }
+  const std::vector<CampaignDayEvent>& getCampaignDayEvents() const {
+    return campaign_days_;
+  }
   size_t getRelationshipCount() const { return relationships_.size(); }
   size_t getCoordinatedEncounterCount() const {
     return coordinated_encounters_.size();
