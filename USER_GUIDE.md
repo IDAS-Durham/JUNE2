@@ -631,8 +631,8 @@ activities with one home venue, such as school or work. For an activity like
 weaker signal.
 
 Counts are read once a day, after the last slot, and a change applies from the
-first slot of the next day. A death is counted when the engine detects it, so a
-total can trail the logged death time by up to a day. Counts are sums of whole
+first slot of the next day. A death is counted at the end of the slot it happens
+in, so each day's total holds every death up to midnight. Counts are sums of whole
 numbers across ranks, so results do not depend on the number of MPI processes.
 
 A metric is only counted when a trigger reads it. Declared metrics that nothing
