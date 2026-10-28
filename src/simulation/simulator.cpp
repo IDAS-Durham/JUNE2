@@ -624,6 +624,8 @@ void Simulator::run() {
   writeFinalEventsAndLookups(rank);
   warnInfectorLookupGaps(rank);
   warnUnmatchedTrajectorySelections(rank);
+  // Collective, like the two checks above: every rank counts, rank 0 writes
+  if (vaccination_manager_) vaccination_manager_->printCoverage(std::cout);
 
   if (rank == 0) printRunSummary();
 }

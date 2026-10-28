@@ -5,9 +5,11 @@
 #include <cmath>
 #include <cstdint>
 #include <ctime>
+#include <iomanip>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -127,6 +129,36 @@ class VaccinationManager {
     }
   }
 
+  // How far each campaign got, for the end of a run. Collective: every rank
+  // calls it, and only rank 0 writes. A campaign with a coverage target says
+  // whether it was reached, since a target that uptake, eligibility or the
+  // budget made unreachable shows nowhere else but in the daily rows.
+  void printCoverage(std::ostream& out) const {
+    for (const Campaign& campaign : campaigns_) {
+      const VaccinationCampaignConfig& cfg = *campaign.config;
+      int64_t started = 0;
+      for (const Person& person : world_.people)
+        started += hasStarted(person, cfg.vaccine_type);
+      started = mpi_runtime::globalSum(started);
+      if (mpi_runtime::state().rank != 0) continue;
+
+      out << "vaccination campaign '" << cfg.name << "': ";
+      if (!campaign.cap) {
+        out << started << " people started a course (no coverage target)\n";
+        continue;
+      }
+      out << started << " of " << *campaign.cap
+          << " first doses the coverage target allows";
+      if (*campaign.cap > 0)
+        out << " (" << std::fixed << std::setprecision(1)
+            << 100.0 * static_cast<double>(started) /
+                   static_cast<double>(*campaign.cap)
+            << "%)";
+      out << ", target "
+          << (started >= *campaign.cap ? "reached" : "not reached") << "\n";
+    }
+  }
+
  private:
   // A candidate is kept as its place in the tier's lottery and its position in
   // world.people.
@@ -145,18 +177,31 @@ class VaccinationManager {
     std::vector<std::vector<Candidate>> candidates;
   };
 
-  // The brand and gap rules a campaign has always had, for a person who holds
-  // `held` doses. Nobody with no dose is held back by them.
+  // A course counts from its first dose, under the vaccine that gave it, and
+  // the dead included.
+  static bool hasStarted(const Person& person, const std::string& vaccine) {
+    const VaccineTrajectory* trajectory = person.vaccine_trajectory.get();
+    return trajectory && trajectory->getNumDoses() > 0 &&
+           trajectory->vaccine_name == vaccine;
+  }
+
+  // The brand and gap rules for a person who holds `held` doses. Nobody with no
+  // dose is held back by them. A course goes on with the vaccine it began
+  // with, because coverage counts people under the first dose's vaccine; a
+  // campaign that lists the brands it accepts as a previous dose (a booster,
+  // say) takes those instead.
   static bool nextDoseDue(const Person& person, int held,
                           const VaccinationCampaignConfig& cfg,
                           double current_time) {
     if (held == 0) return true;
     const VaccineTrajectory& trajectory = *person.vaccine_trajectory;
-    if (!cfg.last_dose_type_filter.empty() &&
-        std::find(cfg.last_dose_type_filter.begin(),
-                  cfg.last_dose_type_filter.end(),
-                  trajectory.vaccine_name) == cfg.last_dose_type_filter.end())
+    const auto& accepted = cfg.last_dose_type_filter;
+    if (accepted.empty()) {
+      if (trajectory.vaccine_name != cfg.vaccine_type) return false;
+    } else if (std::find(accepted.begin(), accepted.end(),
+                         trajectory.vaccine_name) == accepted.end()) {
       return false;
+    }
     const auto gap = static_cast<size_t>(held - 1);
     const double wait =
         gap < cfg.days_to_next_dose.size() ? cfg.days_to_next_dose[gap] : 0.0;
@@ -188,7 +233,7 @@ class VaccinationManager {
       const Person& person = world_.people[i];
       const VaccineTrajectory* trajectory = person.vaccine_trajectory.get();
       const int held = trajectory ? trajectory->getNumDoses() : 0;
-      if (held > 0 && trajectory->vaccine_name == cfg.vaccine_type) ++started;
+      started += hasStarted(person, cfg.vaccine_type);
       if (person.is_dead) continue;
       const uint64_t selected = campaign.uptake.selected[i];
       if (selected == 0) continue;

@@ -3,7 +3,9 @@
 #include <limits>
 #include <numeric>
 #include <set>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "doctest.h"
@@ -418,6 +420,75 @@ TEST_CASE("a campaign with no budget logs no allotment") {
 }
 
 // =============================================================================
+// The report at the end of a run
+// =============================================================================
+
+namespace {
+
+// What the manager says about `campaign` after it has run for `days` days on a
+// world of 15 people.
+std::string coverageReport(VaccinationCampaignConfig campaign, int days) {
+  Config config = makeConfig({std::move(campaign)});
+  WorldState world = makeWorld(homesOfThree(5));
+  VaccinationManager manager(world, config);
+  for (int day = 0; day < days; ++day) manager.update(day);
+  std::ostringstream report;
+  manager.printCoverage(report);
+  return report.str();
+}
+
+}  // namespace
+
+TEST_CASE(
+    "the end of run report says whether the coverage target was reached") {
+  SUBCASE("a target that was reached") {
+    // 0.4 of 15 people allows 6 first doses, and the first day gives them
+    auto campaign = vaxCampaign("reached", {tierFor("all", 0)});
+    campaign.coverage_target = 0.4;
+    CHECK(coverageReport(campaign, 2) ==
+          "vaccination campaign 'reached': 6 of 6 first doses the coverage "
+          "target allows (100.0%), target reached\n");
+  }
+
+  SUBCASE("a target the budget could not reach in time") {
+    // 3 doses a day for 2 days is 6 of the 15 the target allows
+    auto campaign = vaxCampaign("short", {tierFor("all", 0)});
+    campaign.dose_budget = DoseBudget{3, 1};
+    campaign.coverage_target = 1.0;
+    campaign.end_date = "2024-01-02";
+    CHECK(coverageReport(campaign, 5) ==
+          "vaccination campaign 'short': 6 of 15 first doses the coverage "
+          "target allows (40.0%), target not reached\n");
+  }
+
+  SUBCASE("a target that nobody can reach because everyone declines") {
+    VaccinationTier all = tierFor("all", 0);
+    all.uptake.rows = {row({}, 0.0)};
+    auto campaign = vaxCampaign("declined", {all});
+    campaign.coverage_target = 0.5;
+    CHECK(coverageReport(campaign, 3) ==
+          "vaccination campaign 'declined': 0 of 7 first doses the coverage "
+          "target allows (0.0%), target not reached\n");
+  }
+
+  SUBCASE("a campaign with no target reports who started") {
+    CHECK(coverageReport(vaxCampaign("open", {tierFor("all", 0)}), 2) ==
+          "vaccination campaign 'open': 15 people started a course (no "
+          "coverage target)\n");
+  }
+
+  SUBCASE("a disabled vaccination config says nothing") {
+    Config config = makeConfig({vaxCampaign("off", {tierFor("all", 0)})});
+    config.vaccination.enabled = false;
+    WorldState world = makeWorld(homesOfThree(5));
+    VaccinationManager manager(world, config);
+    std::ostringstream report;
+    manager.printCoverage(report);
+    CHECK(report.str().empty());
+  }
+}
+
+// =============================================================================
 // Eligibility rules a campaign keeps
 // =============================================================================
 
@@ -446,6 +517,36 @@ TEST_CASE("a later dose follows the brand filter") {
   CHECK(idsOf(dosesGivenOn(world, 0)) == std::set<PersonId>{0, 1, 2});
   manager.update(1);
   CHECK(dosesGivenOn(world, 1).empty());
+}
+
+TEST_CASE("with no brand filter a course goes on with the vaccine it began") {
+  Config config =
+      makeConfig({vaxCampaign("same brand", {tierFor("second", 1)})});
+  WorldState world = makeWorld(homesOfThree(2));
+  // Three people began with the campaign's vaccine and three with another
+  for (size_t i = 0; i < world.people.size(); ++i)
+    giveDose(world.people[i], i < 3 ? "TestVax" : "Other", -10.0);
+  VaccinationManager manager(world, config);
+
+  manager.update(0);
+  CHECK(idsOf(dosesGivenOn(world, 0)) == std::set<PersonId>{0, 1, 2});
+  manager.update(1);
+  CHECK(dosesGivenOn(world, 1).empty());
+}
+
+TEST_CASE("a brand filter lets a booster follow another vaccine") {
+  auto campaign = vaxCampaign("booster", {tierFor("third", 1)});
+  campaign.last_dose_type_filter = {"Other"};
+  Config config = makeConfig({campaign});
+  WorldState world = makeWorld(homesOfThree(2));
+  for (size_t i = 0; i < world.people.size(); ++i)
+    giveDose(world.people[i], i < 3 ? "TestVax" : "Other", -10.0);
+  VaccinationManager manager(world, config);
+
+  // Only the filter decides: the campaign's own vaccine is not accepted unless
+  // it is listed
+  manager.update(0);
+  CHECK(idsOf(dosesGivenOn(world, 0)) == std::set<PersonId>{3, 4, 5});
 }
 
 TEST_CASE(

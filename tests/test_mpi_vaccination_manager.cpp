@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <set>
+#include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -183,6 +185,19 @@ TEST_CASE("the manager on ranks holding their own homes matches a serial run") {
     CHECK(mpi_runtime::globalSum(static_cast<int64_t>(local.size())) ==
           static_cast<int64_t>(ref.days[static_cast<size_t>(day)].size()));
     my_doses += static_cast<int64_t>(local.size());
+  }
+
+  // The end of run report counts over every rank and only rank 0 writes it
+  std::ostringstream report;
+  manager.printCoverage(report);
+  if (rankOf() == 0) {
+    CHECK(report.str() ==
+          "vaccination campaign 'rollout': " + std::to_string(ref.first_doses) +
+              " of " + std::to_string(ref.cap) +
+              " first doses the coverage target allows (100.0%), target "
+              "reached\n");
+  } else {
+    CHECK(report.str().empty());
   }
 
   // Each rank logs its own people's doses, and only rank 0 logs the summary
