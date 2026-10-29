@@ -227,7 +227,7 @@ void writeShardVaccine(H5::H5File& f, const std::vector<uint32_t>& ord,
   std::vector<std::string> vx_name;
   std::vector<int64_t> dose_off;
   std::vector<int32_t> dose_cnt, dose_num;
-  std::vector<double> d_admin, d_eff, d_wane, d_fin, d_wfac;
+  std::vector<double> d_admin, d_onset, d_eff, d_wane, d_fin, d_wfac;
   for (uint32_t idx : ord) {
     const Person& p = people[idx];
     if (!p.vaccine_trajectory) continue;
@@ -239,6 +239,7 @@ void writeShardVaccine(H5::H5File& f, const std::vector<uint32_t>& ord,
     for (const auto& d : vt.doses) {
       dose_num.push_back(d.number);
       d_admin.push_back(d.day_administered);
+      d_onset.push_back(d.days_to_onset);
       d_eff.push_back(d.days_to_effective);
       d_wane.push_back(d.days_to_waning);
       d_fin.push_back(d.days_to_finished);
@@ -254,6 +255,7 @@ void writeShardVaccine(H5::H5File& f, const std::vector<uint32_t>& ord,
   writeVec(f, "/vaccine/dose_counts", dose_cnt, I32, comp);
   writeVec(f, "/vaccine/dose_number", dose_num, I32, comp);
   writeVec(f, "/vaccine/dose_day_administered", d_admin, F64, comp);
+  writeVec(f, "/vaccine/dose_days_to_onset", d_onset, F64, comp);
   writeVec(f, "/vaccine/dose_days_to_effective", d_eff, F64, comp);
   writeVec(f, "/vaccine/dose_days_to_waning", d_wane, F64, comp);
   writeVec(f, "/vaccine/dose_days_to_finished", d_fin, F64, comp);
@@ -464,12 +466,15 @@ void writeShardIndex(const fs::path& tmp, int nranks) {
 // atomic commit marker for a complete checkpoint (see restoreFromCheckpoint).
 // world_path / world_sha256 are populated in P4 (restore validation);
 // intentionally empty here rather than a misleading placeholder.
+// format_version names the layout. The reader accepts only this one, so change
+// it together with readAndValidateManifest whenever a checkpoint gains or
+// loses data.
 void writeManifest(const fs::path& tmp, int completed_day,
                    const std::string& date_iso, int nranks,
                    double current_simulation_time, unsigned int random_seed) {
   YAML::Emitter m;
   m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 2;
+  m << YAML::Key << "format_version" << YAML::Value << 3;
   m << YAML::Key << "completed_day" << YAML::Value << completed_day;
   m << YAML::Key << "date" << YAML::Value << date_iso;
   m << YAML::Key << "current_simulation_time" << YAML::Value

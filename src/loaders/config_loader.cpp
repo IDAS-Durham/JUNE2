@@ -427,6 +427,24 @@ void parseSelectionCriteria(const YAML::Node& selection_node,
   }
 }
 
+void rejectUnknownKeys(const YAML::Node& node,
+                       std::initializer_list<const char*> fields,
+                       const std::string& where, const std::string& within) {
+  for (const auto& kv : node) {
+    const std::string key = kv.first.as<std::string>();
+    if (std::find_if(fields.begin(), fields.end(), [&](const char* field) {
+          return key == field;
+        }) != fields.end()) {
+      continue;
+    }
+    std::string known;
+    for (const char* field : fields)
+      known += (known.empty() ? "" : ", ") + std::string(field);
+    throw std::runtime_error(where + "unknown field '" + key + "'" + within +
+                             ". Fields are " + known + ".");
+  }
+}
+
 }  // namespace config_detail
 
 Config ConfigLoader::loadAll(const std::string& simulation_file) {

@@ -372,8 +372,9 @@ bool SelectionCriterion::evaluate(
           if (v_type_code != target_code) return true;
         }
       }
-      // True if none matched and looking for !=
-      return cached_operator == Operator::NOT_EQUAL;
+      // No venue matched (==) or none differed (!=). A person with no venue
+      // for the activity has nothing to compare, so neither operator holds.
+      return false;
     }
 
     if (p_val_code != -1) {
@@ -1569,6 +1570,110 @@ void ScheduleConfig::resolveCSV(const WorldState& world) {
 
   std::cout << "Loaded " << csv_rows.size()
             << " schedule assignment rows from: " << csv_path << std::endl;
+}
+
+std::optional<double> UptakeTable::probability(const Person& person,
+                                               const WorldState& world) const {
+  if (rows.empty() && !csv_path.empty()) {
+    throw std::logic_error("uptake file '" + csv_path +
+                           "' was asked for a probability before resolve");
+  }
+  if (rows.empty()) return 1.0;
+  for (const auto& row : rows) {
+    if (filtering::matchesCriteria(person, &world, row.criteria)) {
+      return row.probability;
+    }
+  }
+  return std::nullopt;
+}
+
+void UptakeTable::resolve(const WorldState& world, const std::string& label) {
+  const std::string where = label + " uptake";
+  if (!csv_path.empty()) {
+    csv::FilteredTable table;
+    try {
+      table = csv::loadFilteredCSV(csv_path);
+    } catch (const std::exception& e) {
+      throw std::runtime_error(where + ": " + e.what());
+    }
+    const std::string file = where + " file '" + csv_path + "'";
+    // A misspelt filter header would read as a value column, and its row would
+    // then match everyone, so only the probability column is allowed.
+    for (const auto& col : table.value_columns) {
+      if (col != "probability") {
+        throw std::runtime_error(file + " has the unknown column '" + col +
+                                 "'; the columns are filter.* and probability");
+      }
+    }
+    if (table.value_columns.empty()) {
+      throw std::runtime_error(file + " has no 'probability' column");
+    }
+    if (table.rows.empty()) {
+      throw std::runtime_error(file + " has no data rows");
+    }
+    rows.clear();
+    int row_num = 0;
+    for (const auto& r : table.rows) {
+      ++row_num;
+      const std::string row_where =
+          file + " data row " + std::to_string(row_num);
+      const auto cell = r.values.find("probability");
+      const std::string text = cell == r.values.end() ? "" : cell->second;
+      size_t used = 0;
+      double value = std::nan("");
+      try {
+        value = std::stod(text, &used);
+      } catch (const std::exception&) {
+        used = 0;
+      }
+      if (used == 0 || used != text.size()) {
+        throw std::runtime_error(row_where + ": probability '" + text +
+                                 "' is not a number");
+      }
+      // Written as a negation so a NaN fails the check too
+      if (!(value >= 0.0 && value <= 1.0)) {
+        throw std::runtime_error(row_where + ": probability " + text +
+                                 " is outside 0 to 1");
+      }
+      rows.push_back({r.criteria, value});
+    }
+  }
+  int row_num = 0;
+  for (auto& row : rows) {
+    ++row_num;
+    for (auto& crit : row.criteria) {
+      if (filtering::isInfectionContextCriterion(crit)) {
+        throw std::runtime_error(where + " row " + std::to_string(row_num) +
+                                 ": '" + crit.property_path +
+                                 "' describes an infection, not a person");
+      }
+      crit.resolveOrThrow(world, where + " row " + std::to_string(row_num));
+    }
+  }
+}
+
+void VaccinationTier::resolve(const WorldState& world,
+                              const std::string& campaign) {
+  const std::string label =
+      "vaccination campaign '" + campaign + "' tier '" + name + "'";
+  for (auto& crit : selection_criteria) {
+    crit.resolveOrThrow(world, label + " selection");
+  }
+  uptake.resolve(world, label);
+  if (!decision_unit.shared()) return;
+  const int activity = world.getActivityIndex(decision_unit.shared_activity);
+  if (activity < 0) {
+    throw std::runtime_error(label + ": decision_unit shared_venue names the " +
+                             "unknown activity '" +
+                             decision_unit.shared_activity + "'");
+  }
+  decision_unit.activity_index = static_cast<int16_t>(activity);
+  for (auto& crit : decision_rules.scope) {
+    crit.resolveOrThrow(world, label + " decision_unit scope");
+  }
+  for (auto& crit : decision_rules.deciders) {
+    crit.resolveOrThrow(world, label + " decision_unit deciders");
+  }
 }
 
 void Config::resolve(WorldState& world) {

@@ -9,10 +9,6 @@
 #include "utils/filtering.h"
 #include "utils/mpi_utils.h"
 
-#ifdef USE_MPI
-#include <mpi.h>
-#endif
-
 namespace june {
 
 namespace {
@@ -264,23 +260,14 @@ void PolicyManager::checkDecisionUnits() {
             worst_venues = static_cast<int64_t>(n);
           }
         }
-#ifdef USE_MPI
-        const auto mpi = mpi_runtime::state();
-        if (mpi.active && mpi.size > 1) {
-          MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_INT64_T, MPI_SUM,
-                        MPI_COMM_WORLD);
-          int64_t lowest = worst;
-          MPI_Allreduce(MPI_IN_PLACE, &lowest, 1, MPI_INT64_T, MPI_MIN,
-                        MPI_COMM_WORLD);
-          // Only the rank that owns the lowest failing person knows their
-          // venue count; the others add 0.
-          int64_t venues = lowest == worst ? worst_venues : 0;
-          MPI_Allreduce(MPI_IN_PLACE, &venues, 1, MPI_INT64_T, MPI_SUM,
-                        MPI_COMM_WORLD);
-          worst = lowest;
-          worst_venues = venues;
-        }
-#endif
+        counts[0] = mpi_runtime::globalSum(counts[0]);
+        counts[1] = mpi_runtime::globalSum(counts[1]);
+        const int64_t lowest = mpi_runtime::globalMin(worst);
+        // Only the rank that owns the lowest failing person knows their venue
+        // count; the others add 0.
+        worst_venues =
+            mpi_runtime::globalSum(lowest == worst ? worst_venues : 0);
+        worst = lowest;
         const std::string unit_text = "decision unit shared_venue '" +
                                       trigger.decision_unit.shared_activity +
                                       "'";

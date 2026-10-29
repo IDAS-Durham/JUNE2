@@ -20,27 +20,7 @@ namespace PolicyLoader {
 
 namespace {
 
-// Throws on the first key of `node` that is not one of `fields`, naming it and
-// listing the ones that are. `within` says where the key was found when `where`
-// does not already.
-void rejectUnknownKeys(const YAML::Node& node,
-                       std::initializer_list<const char*> fields,
-                       const std::string& where,
-                       const std::string& within = "") {
-  for (const auto& kv : node) {
-    const std::string key = kv.first.as<std::string>();
-    if (std::find_if(fields.begin(), fields.end(), [&](const char* field) {
-          return key == field;
-        }) != fields.end()) {
-      continue;
-    }
-    std::string known;
-    for (const char* field : fields)
-      known += (known.empty() ? "" : ", ") + std::string(field);
-    throw std::runtime_error(where + "unknown field '" + key + "'" + within +
-                             ". Fields are " + known + ".");
-  }
-}
+using ::june::config_detail::rejectUnknownKeys;
 
 }  // namespace
 

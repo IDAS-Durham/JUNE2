@@ -624,6 +624,8 @@ void Simulator::run() {
   writeFinalEventsAndLookups(rank);
   warnInfectorLookupGaps(rank);
   warnUnmatchedTrajectorySelections(rank);
+  // Collective, like the two checks above: every rank counts, rank 0 writes
+  if (vaccination_manager_) vaccination_manager_->printCoverage(std::cout);
 
   if (rank == 0) printRunSummary();
 }
@@ -673,7 +675,7 @@ void Simulator::runOneDay(int day, int rank) {
   // 1. Run vaccination manager updates at START of day
   // This ensures efficacy applies to today's interactions
   if (vaccination_manager_) {
-    vaccination_manager_->update(current_simulation_time_);
+    vaccination_manager_->update(day);
   }
 
   // 2. Trigger calendar events (schedule hops for fairs, etc.)

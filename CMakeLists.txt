@@ -296,6 +296,8 @@ if(BUILD_TESTING)
       test_fomite_transmission
       test_vaccines
       test_vaccination_manager
+      test_vaccination_allocation
+      test_vaccination_uptake
       test_config_loading
       test_config_checks
       test_activity_manager
@@ -390,6 +392,9 @@ if(BUILD_TESTING)
     add_june_test(test_mpi_advanced "tests/test_mpi_advanced.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_registry_sync "tests/test_mpi_registry_sync.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_observed_metrics "tests/test_mpi_observed_metrics.cpp" "${MPIEXEC_EXECUTABLE}")
+    add_june_test(test_mpi_vaccination_allocation "tests/test_mpi_vaccination_allocation.cpp" "${MPIEXEC_EXECUTABLE}")
+    add_june_test(test_mpi_vaccination_uptake "tests/test_mpi_vaccination_uptake.cpp" "${MPIEXEC_EXECUTABLE}")
+    add_june_test(test_mpi_vaccination_manager "tests/test_mpi_vaccination_manager.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_policy_trigger "tests/test_mpi_policy_trigger.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_transmission_modes "tests/test_mpi_transmission_modes.cpp" "${MPIEXEC_EXECUTABLE}")
     add_june_test(test_mpi_visitor_exchange_paths "tests/test_mpi_visitor_exchange_paths.cpp" "${MPIEXEC_EXECUTABLE}" 4)

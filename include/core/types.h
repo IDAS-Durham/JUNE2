@@ -54,6 +54,8 @@ constexpr uint8_t kNoSymptomId =
     255;  // absent infector symptom — registries stay well under 255 entries
 constexpr uint8_t kNoModeIndex =
     255;  // absent Transmission Mode — the disease loader caps modes below 255
+constexpr int64_t kNoAllotment =
+    -1;  // a vaccination campaign with no dose budget (unlimited)
 
 // =============================================================================
 // PendingInfection - Tracks infections that should be created later
