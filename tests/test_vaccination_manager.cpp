@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <numeric>
 #include <set>
 #include <sstream>
@@ -69,39 +68,6 @@ std::set<PersonId> plus(std::set<PersonId> a, const std::set<PersonId>& b) {
 }
 
 }  // namespace
-
-TEST_CASE("vaccination day index accepts whole days and names a bad time") {
-  CHECK(vaccinationDayIndex(0.0) == 0);
-  CHECK(vaccinationDayIndex(59.0) == 59);
-  CHECK_THROWS_WITH_AS(vaccinationDayIndex(-1.0), doctest::Contains("-1.0"),
-                       std::runtime_error);
-  CHECK_THROWS_WITH_AS(vaccinationDayIndex(2.5), doctest::Contains("2.5"),
-                       std::runtime_error);
-  CHECK_THROWS_WITH_AS(
-      vaccinationDayIndex(std::numeric_limits<double>::quiet_NaN()),
-      doctest::Contains("not a whole"), std::runtime_error);
-  CHECK_THROWS_AS(vaccinationDayIndex(std::numeric_limits<double>::infinity()),
-                  std::runtime_error);
-}
-
-TEST_CASE("VaccinationManager update rejects a time that is not a whole day") {
-  SUBCASE("vaccination disabled") {
-    Config config;
-    WorldState world;
-    VaccinationManager manager(world, config);
-    CHECK_NOTHROW(manager.update(3.0));
-    CHECK_THROWS_AS(manager.update(3.5), std::runtime_error);
-    CHECK_THROWS_AS(manager.update(-1.0), std::runtime_error);
-  }
-  SUBCASE("vaccination enabled") {
-    Config config = makeConfig({vaxCampaign("c", {tierFor("t", 0)})});
-    WorldState world = makeWorld(homesOfThree(2));
-    VaccinationManager manager(world, config);
-    CHECK_NOTHROW(manager.update(3.0));
-    CHECK_THROWS_AS(manager.update(3.5), std::runtime_error);
-    CHECK_THROWS_AS(manager.update(-1.0), std::runtime_error);
-  }
-}
 
 // =============================================================================
 // The cap on first doses

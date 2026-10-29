@@ -28,8 +28,8 @@ using ::june::config_detail::rejectUnknownKeys;
 // Campaign and tier ids are uint16_t in the campaign_days dataset
 constexpr size_t kMaxEventIds = std::numeric_limits<uint16_t>::max();
 
-// An efficacy is a share of the risk removed, so it has to be from 0 to 1.
-double readEfficacy(const YAML::Node& node, const std::string& where) {
+// An efficacy or a probability, so it has to be from 0 to 1.
+double readUnitInterval(const YAML::Node& node, const std::string& where) {
   double value = std::nan("");
   try {
     value = node.as<double>();
@@ -77,12 +77,12 @@ std::unordered_map<std::string, std::vector<AgeEfficacy>> parseDoseEfficacies(
               band_where +
               " must be written min-max in whole years, such as "
               "0-17");
-        ae.efficacy = readEfficacy(age_kv.second, band_where + " efficacy");
+        ae.efficacy = readUnitInterval(age_kv.second, band_where + " efficacy");
         res[disease].push_back(ae);
       }
     } else {
       res[disease].push_back(
-          {0, 100, readEfficacy(eff_kv.second, here + " efficacy")});
+          {0, 100, readUnitInterval(eff_kv.second, here + " efficacy")});
     }
   }
   return res;
@@ -168,21 +168,6 @@ T readWholeNumber(const YAML::Node& node, const std::string& where) {
   }
 }
 
-// A probability, or an error naming where it was read
-double readProbability(const YAML::Node& node, const std::string& where) {
-  double value = std::nan("");
-  try {
-    value = node.as<double>();
-  } catch (const YAML::Exception&) {
-  }
-  // Written as a negation so a NaN fails the check too
-  if (!(value >= 0.0 && value <= 1.0)) {
-    throw std::runtime_error(where + " must be a number from 0 to 1, got '" +
-                             YAML::Dump(node) + "'");
-  }
-  return value;
-}
-
 // The text of a key that must be one of a few words
 template <typename T>
 T readChoice(const YAML::Node& node, const std::string& where,
@@ -202,7 +187,7 @@ UptakeTable parseUptake(const YAML::Node& node, const std::string& where,
                         const std::filesystem::path& yaml_dir) {
   UptakeTable table;
   if (node.IsScalar()) {
-    table.rows.push_back({{}, readProbability(node, where)});
+    table.rows.push_back({{}, readUnitInterval(node, where)});
   } else if (node.IsSequence()) {
     if (node.size() == 0)
       throw std::runtime_error(where +
@@ -221,7 +206,7 @@ UptakeTable parseUptake(const YAML::Node& node, const std::string& where,
         throw std::runtime_error(row_where + " needs 'probability'");
       UptakeRow row;
       row.probability =
-          readProbability(row_node["probability"], row_where + " probability");
+          readUnitInterval(row_node["probability"], row_where + " probability");
       parseSelectionCriteria(row_node["selection"], row.criteria);
       table.rows.push_back(std::move(row));
     }

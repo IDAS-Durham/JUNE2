@@ -27,19 +27,6 @@
 
 namespace june {
 
-// update() is called once per simulated day with the day index. A time that is
-// negative, not finite or not a whole number is a caller bug: the budget is
-// keyed on the day, so a fractional time would silently share a day with
-// another.
-inline uint64_t vaccinationDayIndex(double current_time) {
-  if (!std::isfinite(current_time) || current_time < 0.0 ||
-      current_time != std::floor(current_time))
-    throw std::runtime_error("vaccination: simulation time " +
-                             std::to_string(current_time) +
-                             " is not a whole, non negative day index");
-  return static_cast<uint64_t>(current_time);
-}
-
 // The most first doses a campaign may give: floor(target * population).
 //
 // The product is a floating point number, and 0.29 is not exactly 29/100, so
@@ -120,9 +107,10 @@ class VaccinationManager {
     }
   }
 
-  // This is called every simulation day to hand out vaccines
-  void update(double current_time) {
-    const auto day = static_cast<int64_t>(vaccinationDayIndex(current_time));
+  // This is called every simulation day, with the day index, to hand out
+  // vaccines
+  void update(int day) {
+    const auto current_time = static_cast<double>(day);
     for (Campaign& campaign : campaigns_) {
       if (day < campaign.start_day || day > campaign.end_day) continue;
       runCampaign(campaign, day, current_time);
@@ -211,12 +199,6 @@ class VaccinationManager {
   void runCampaign(Campaign& campaign, int64_t day, double current_time) {
     const VaccinationCampaignConfig& cfg = *campaign.config;
     const size_t tiers = cfg.tiers.size();
-    if (campaign.uptake.selected.size() != world_.people.size())
-      throw std::runtime_error(
-          "vaccination campaign '" + cfg.name + "': the world holds " +
-          std::to_string(world_.people.size()) + " people but uptake was " +
-          "settled for " + std::to_string(campaign.uptake.selected.size()));
-
     const std::optional<int64_t> allotment =
         cfg.dose_budget ? std::optional(doseAllotment(cfg.dose_budget->doses,
                                                       cfg.dose_budget->per_days,
