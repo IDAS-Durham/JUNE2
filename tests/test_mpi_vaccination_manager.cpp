@@ -105,9 +105,14 @@ Reference serialReference(const std::vector<Home>& homes,
       const auto* trajectory = person.vaccine_trajectory.get();
       const int held = trajectory ? trajectory->getNumDoses() : 0;
       if (held > 0) ++started;
-      if (held > 0 && (trajectory->getLastDoseTime() == day ||
-                       day < trajectory->getLastDoseTime() +
-                                 campaign.days_to_next_dose[held - 1]))
+      // A gap the campaign does not list means no wait, as in the manager
+      const size_t gap = static_cast<size_t>(std::max(held - 1, 0));
+      const double wait = gap < campaign.days_to_next_dose.size()
+                              ? campaign.days_to_next_dose[gap]
+                              : 0.0;
+      if (held > 0 &&
+          (trajectory->getLastDoseTime() == day ||
+           day < trajectory->getLastDoseTime() + wait))
         continue;
       for (size_t t = 0; t < tiers; ++t) {
         if (!((uptake.selected[i] >> t) & 1) || campaign.tiers[t].dose != held)
