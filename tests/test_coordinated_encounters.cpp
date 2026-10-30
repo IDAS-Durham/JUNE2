@@ -1155,6 +1155,60 @@ TEST_CASE("4a. Full Pipeline — Physical pair encounter end-to-end") {
   }
 }
 
+TEST_CASE(
+    "4a2. Full Pipeline: one host and slot is one meeting, however many "
+    "friends are invited") {
+  /**
+   * A host who invites three friends in one slot is hosting one meeting.
+   * All proposals of that host and slot must carry one encounter id, and
+   * hosts must not share ids. Every finalized meeting then holds the host
+   * plus exactly the invitees who accepted.
+   */
+  auto tw = buildEncounterWorld(
+      6, 1, "pub", "friendships", "social_encounters", false, "", {"leisure"},
+      InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 3}, 1.0, 1.0);
+  addScheduleToAll(tw, "open",
+                   {{"morning", {"leisure", "residence"}},
+                    {"evening", {"leisure", "residence"}}});
+
+  CoordinatedEncounterManager cem(tw.world, tw.config, 0);
+  std::vector<EncounterProposal> proposals;
+  cem.generateProposals(0, proposals, 0);
+  REQUIRE(!proposals.empty());
+
+  std::map<std::pair<PersonId, int>, std::set<int>> ids_by_host_slot;
+  std::map<int, std::set<PersonId>> hosts_by_id;
+  for (const auto& p : proposals) {
+    ids_by_host_slot[{p.host_id, p.slot}].insert(p.encounter_id);
+    hosts_by_id[p.encounter_id].insert(p.host_id);
+  }
+  for (const auto& [key, ids] : ids_by_host_slot) {
+    INFO("host " << key.first << " slot " << key.second);
+    CHECK(ids.size() == 1);
+  }
+  for (const auto& [id, hosts] : hosts_by_id) {
+    INFO("encounter id " << id);
+    CHECK(hosts.size() == 1);
+  }
+
+  std::vector<EncounterReply> replies;
+  cem.processProposals(proposals, proposals, replies, 0);
+  std::map<std::pair<PersonId, int>, size_t> accepted;
+  for (const auto& r : replies) {
+    if (r.status == ReplyStatus::ACCEPTED) accepted[{r.host_id, r.slot}]++;
+  }
+
+  std::vector<CoordinatedEncounter> finalized;
+  cem.finalizeEncounters(replies, finalized);
+  REQUIRE(!finalized.empty());
+  size_t largest = 0;
+  for (const auto& enc : finalized) {
+    CHECK(enc.participants.size() == accepted[{enc.host_id, enc.slot}] + 1);
+    largest = std::max(largest, enc.participants.size());
+  }
+  CHECK(largest >= 3);
+}
+
 TEST_CASE("4b. Full Pipeline — Virtual pair encounter end-to-end") {
   /**
    * FLOW:
@@ -1691,6 +1745,56 @@ static std::vector<PersonLocation> initLocations(WorldState& world) {
     locations[i].encounter_type_id = 255;  // None
   }
   return locations;
+}
+
+TEST_CASE(
+    "4a3. Full Pipeline: min_attendees counts the whole meeting, so a "
+    "host with enough accepting friends transmits and a pair is cancelled") {
+  auto run = [](int min_attendees, int invites) {
+    auto tw = buildEncounterWorld(
+        6, 1, "pub", "friendships", "social_encounters", false, "",
+        {"leisure"},
+        InviteDistribution{DistributionType::FIXED, 1.0, 0.5, invites}, 1.0,
+        1.0);
+    addScheduleToAll(tw, "open",
+                     {{"morning", {"leisure", "residence"}},
+                      {"evening", {"leisure", "residence"}}});
+    tw.config.coordinated_encounters.encounters[0].min_attendees =
+        min_attendees;
+
+    CoordinatedEncounterManager cem(tw.world, tw.config, 0);
+    std::vector<EncounterProposal> proposals;
+    cem.generateProposals(0, proposals, 0);
+    std::vector<EncounterReply> replies;
+    cem.processProposals(proposals, proposals, replies, 0);
+    std::vector<CoordinatedEncounter> finalized;
+    cem.finalizeEncounters(replies, finalized);
+
+    size_t injected = 0;
+    size_t largest = 0;
+    for (int slot = 0; slot < 2; ++slot) {
+      std::vector<CoordinatedEncounter> in_slot;
+      for (const auto& e : finalized) {
+        if (e.slot == slot) in_slot.push_back(e);
+      }
+      auto locations = initLocations(tw.world);
+      injected += simulateEncounterInjection(in_slot, slot, locations,
+                                             tw.world, tw.config, nullptr, 5.0)
+                      .size();
+      for (const auto& e : in_slot) {
+        largest = std::max(largest, e.participants.size());
+      }
+    }
+    return std::make_pair(injected, largest);
+  };
+
+  auto [group_injected, group_largest] = run(3, 2);
+  CHECK(group_largest >= 3);
+  CHECK(group_injected >= 3);
+
+  auto [pair_injected, pair_largest] = run(3, 1);
+  CHECK(pair_largest == 2);
+  CHECK(pair_injected == 0);
 }
 
 TEST_CASE(
