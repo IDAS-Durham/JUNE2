@@ -168,17 +168,27 @@ filter.age,filter.sex,asymptomatic,mild,severe,hospital,icu,home_ifr,hospital_if
 ```
 
 - `filter.*` columns identify the bin (age band, sex, population type).
-- The remaining columns are probabilities of each outcome for that bin
-  (must sum to ≤ 1.0; the residual goes to `severe` if you declared it
-  in `calculated_outcomes`).
-- The `outcome_rates_csv:` block in `disease.yaml` tells the loader how
-  to interpret these columns:
-  - `populations:` lets you define population-typed sub-tables (e.g.
-    `gp` general, `ch` care-home) using a `selection:` rule on person
-    attributes. The CSV columns must then be prefixed `gp_*`, `ch_*`.
-  - `outcomes:` maps each CSV column to the symptom tag it triggers.
-  - `calculated_outcomes:` defines outcomes whose probability is
-    `1 - sum(others)` rather than a CSV column.
+- The remaining columns are probabilities of each outcome for that bin.
+  Each row must sum to 1.0 (within 0.01), or the loader stops with an
+  error naming the row. Nothing is filled in for you, so there is no
+  residual outcome.
+- `outcome_rates_csv:` in `disease.yaml` is either a bare file path or
+  a mapping with a `file:` key:
+
+  ```yaml
+  outcome_rates_csv: data/infection_outcome_rates_<disease>.csv
+  # or
+  outcome_rates_csv:
+    file: data/infection_outcome_rates_<disease>.csv
+  ```
+
+  The path is relative to the directory of `disease.yaml`. A table with
+  `filter.*` columns needs nothing else.
+- `populations:`, `sexes:` and `outcomes:` inside the mapping form are
+  only used to check a wide-layout table, one whose columns are named
+  `<population>_<outcome>_<sex>`. When at least one such column is
+  present, each population and sex group must sum to 1.0 on its own.
+  Tables with `filter.*` columns do not need them.
 
 ### 4.3 Trajectories
 
@@ -281,8 +291,24 @@ The simulator multiplies these: `effective[i][j] = beta * contacts[i][j]`.
 > `disease.yaml` is folded into per-venue `beta` here. Leave it at 1.0
 > in `disease.yaml` unless you know what you're doing.
 
-A `default_contacts_matrix:` block is used as the fallback for any
-venue not explicitly listed.
+**How a person is put in a bin.** The first rule that applies wins:
+
+1. If the person's subset in the venue has the same name as a bin, that
+   bin (for example `resident` or `worker`).
+2. If the bins include `male` and `female`, the bin for the person's sex.
+3. If the bins are age bands, the band holding the person's age in whole
+   years. Bands are written `min-max`, `min+` or `[min,max]`, and ages
+   above 99 count as 99.
+
+Anyone who matches nothing goes to the first bin. For example, a care
+home visitor in a `[resident, worker]` matrix is binned as a resident. A
+matrix with a single bin puts everyone in it.
+
+A `default_contacts_matrix:` block is the fallback for any venue type
+(or mode) with no matrix of its own. Using it is refused at load, with
+the affected pairs listed, unless you set `allow_default_matrix: true`
+at the top level of `contact_matrices.yaml`. The setting only says you
+accept the default for those venue types.
 
 ---
 
@@ -384,6 +410,10 @@ schedule_types:
 - `participation` is the per-day probability the person engages in
   that activity at all. `0.3` weekday leisure ⇒ 30% chance to leave
   the house for leisure on a weekday.
+- A schedule type with no `selection` matches everyone at its priority.
+  A type that should be reachable only from `schedules.csv` needs a
+  selection that can never match, for example
+  `{property: age, operator: "<", value: 0}`.
 
 For complex worlds (e.g. medieval) you can drive schedule assignment
 from a `schedules.csv` with `filter.*` columns and `schedule.<name>`
@@ -443,7 +473,6 @@ mass-action contacts that contact matrices model.
 ```yaml
 coordinated_encounters:
   enabled: true
-  log_commitments: true
 
   encounters:
     - name: "social_encounters"
@@ -470,6 +499,11 @@ Key fields:
 | `proposal_probability` / `acceptance_probability` | Multipliers on the offer/accept stages. |
 | `allowed_venues` | Real venue names. Empty + `is_virtual: true` ⇒ encounter happens at a synthetic venue. |
 | `virtual_contact_matrix` | When `is_virtual: true`, which key in `contact_matrices.yaml` supplies the contact rates and β. |
+
+Enabling or disabling an encounter changes the random draws of every
+encounter listed after it, because the draw key counts the enabled
+encounters in order. Expect different (but still reproducible) results
+for those encounters after such an edit.
 
 ---
 
@@ -506,9 +540,13 @@ policies:
 - Symptom policies fire when a person has any of the listed symptom
   tags. They override the activities the schedule asked for.
 - Temporal policies are active in half-open date windows (`start_date`
-  included, `end_date` excluded). If both
-  apply, the **first matching** policy wins — order them by
-  specificity.
+  included, `end_date` excluded).
+- Policies are tried in order, and each makes its own compliance roll for
+  each person. A person who refuses a policy is treated as if it did not
+  apply to them, and the next policy that covers them rolls separately.
+  So overlapping policies at 0.85 and 0.8 hold a person with probability
+  1 - 0.15 x 0.2 = 0.97, not 0.85. To give a subgroup its own rate, make
+  `applies_to` disjoint. The same holds for symptom policies.
 - `override_activities: "*"` overrides everything.
 - `compliance_rate` is a sticky per-person decision for each policy.
 - `applies_to` uses the same selection grammar as everywhere else
@@ -1414,12 +1452,9 @@ parallel:
   chunked_loading:
     person_metadata_chunk_size: 100000
     geo_unit_chunk_size:        1000
-  communication:
-    buffer_size_mb: 256
-  output:
-    save_partition: true
-    partition_file: "output/partition.json"
 ```
+
+The loader reads only `enabled`, `partitioning` and `chunked_loading`.
 
 - `level:` must match the granularity of your centroid/adjacency files
   (`SGU` ⊂ `MGU` ⊂ `LGU` ⊂ `XLGU`). For full-England runs use `MGU`;
@@ -1437,13 +1472,10 @@ parallel:
 performance:
   precompute_schedules: true
   deterministic_activities: ["residence", "primary_activity"]
-  track_active_infections_only: true
 ```
 
 - `deterministic_activities` are pre-computed once at world load and
   cached. `leisure` etc. stay stochastic at runtime.
-- `track_active_infections_only` skips state updates for healthy
-  people. Default on; turn off only if you need full event traces.
 
 ---
 

@@ -77,11 +77,15 @@ struct PendingInfection {
 // =============================================================================
 // VisitorInfo - Lightweight visitor data for transmission calculations
 // =============================================================================
+enum class Sex : uint8_t { MALE = 0, FEMALE = 1, UNKNOWN = 2 };
+
 struct VisitorInfo {
   PersonId person_id;
   bool is_infected;
   float immunity_level;
   int32_t home_array_index = -1;  // For lookup on home rank
+  float age = 0.0f;               // Contact-matrix binning, as for a Person
+  Sex sex = Sex::UNKNOWN;
   uint16_t symptom_id = 0;
   double time_in_stage = 0.0;  // Compartmental deposition writeback only
 
@@ -270,8 +274,6 @@ struct ScheduleHop {
 // =============================================================================
 // Person - Represents an individual in the simulation
 // =============================================================================
-enum class Sex : uint8_t { MALE = 0, FEMALE = 1, UNKNOWN = 2 };
-
 struct Person {
   PersonId id;
   float age;

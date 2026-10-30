@@ -781,8 +781,12 @@ struct SimulationConfig {
   int max_event_buffer_size = 100000;
   bool save_population_summary = true;
   bool save_coordinated_encounters = false;  // largest H5 dataset; opt-in
+  // When the config names no summary_properties, the three defaults below are
+  // used and any a world does not carry are left out. Names the config writes
+  // itself must all exist (see checkSummaryProperties).
   std::vector<std::string> summary_properties = {
       "ethnicity", "has_comorbidities", "work_mode"};
+  bool summary_properties_explicit = false;
 
   // Checkpoint / restart. Cadence is MUTUALLY EXCLUSIVE: if on_dates is
   // present (non-null, non-empty) it takes precedence and every_n_days is
@@ -849,6 +853,15 @@ struct SimulationConfig {
   } partial_presence;
 
   void resolve(const WorldState& world);
+
+  // The properties the population summary stores: the configured names after
+  // checkSummaryProperties, or the defaults the world carries.
+  std::vector<std::string> summaryPropertiesFor(const WorldState& world) const;
+
+  // Throws unless every name is a person property of the world and there are
+  // at most 4 of them.
+  static void checkSummaryProperties(const WorldState& world,
+                                     const std::vector<std::string>& names);
 };
 
 // =============================================================================

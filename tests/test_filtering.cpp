@@ -1,10 +1,13 @@
 #include <string>
 #include <vector>
 
+#include <yaml-cpp/yaml.h>
+
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
 #include "epidemiology/disease.h"
+#include "loaders/config_loader_detail.h"
 #include "utils/filtering.h"
 
 using namespace june;
@@ -332,4 +335,50 @@ TEST_CASE("not-equal on an activity's venue type excludes the type itself") {
     CHECK(matches("!=", "hospice", 1));
     CHECK_FALSE(matches("!=", "hospice", 2));
   }
+}
+
+TEST_CASE("is_alive written in YAML selects the living or the dead") {
+  WorldState world = buildSinglePersonWorld();
+  Person& dead = world.people.emplace_back();
+  dead.id = 1;
+  dead.age = 70.0f;
+  dead.sex = Sex::MALE;
+  dead.geo_unit_id = 10;
+  dead.is_dead = true;
+  world.buildIndices();
+  const Person& living = world.people[0];
+
+  auto fromYaml = [&](const std::string& op, const std::string& value) {
+    std::vector<SelectionCriterion> criteria;
+    config_detail::parseSelectionCriteria(
+        YAML::Load("[{property: is_alive, operator: \"" + op +
+                   "\", value: " + value + "}]"),
+        criteria);
+    REQUIRE(criteria.size() == 1);
+    return criteria.front();
+  };
+  auto selects = [&](const std::string& op, const std::string& value,
+                     const Person& person) {
+    SelectionCriterion criterion = fromYaml(op, value);
+    criterion.resolveOrThrow(world, "test");
+    return criterion.evaluate(person, &world);
+  };
+
+  CHECK(selects("==", "true", living));
+  CHECK_FALSE(selects("==", "true", dead));
+  CHECK(selects("!=", "false", living));
+  CHECK_FALSE(selects("!=", "false", dead));
+  CHECK(selects("==", "false", dead));
+  CHECK_FALSE(selects("==", "false", living));
+  CHECK(selects("!=", "true", dead));
+  CHECK_FALSE(selects("!=", "true", living));
+
+  SelectionCriterion greater = fromYaml(">", "true");
+  CHECK_THROWS_WITH(
+      greater.resolveOrThrow(world, "test"),
+      doctest::Contains("'is_alive' compares with == or != against true or false"));
+  SelectionCriterion maybe = fromYaml("==", "maybe");
+  CHECK_THROWS_WITH(
+      maybe.resolveOrThrow(world, "test"),
+      doctest::Contains("'is_alive' compares with == or != against true or false"));
 }

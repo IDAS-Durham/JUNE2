@@ -272,6 +272,15 @@ struct PolicyAction {
     return mask;
   }
 
+  static std::string joinNames(const std::vector<std::string>& names) {
+    std::string joined;
+    for (const auto& name : names) {
+      if (!joined.empty()) joined += ", ";
+      joined += name;
+    }
+    return joined;
+  }
+
   void resolve(const WorldState& world, const std::string& policy_name = "") {
     venue_gate_mask = 0;
     venue_gate_direction = VenueGateDirection::None;
@@ -310,13 +319,20 @@ struct PolicyAction {
       override_activity_mask = 0;
       for (const auto& act : override_activities) {
         int index = world.getActivityIndex(act);
-        if (index >= 0 && index < 64) {
-          override_activity_mask |= (1ULL << index);
-        } else {
-          std::cerr << "  [Policy Warning] Activity '" << act
-                    << "' not found or index out of range for bitmask."
-                    << std::endl;
+        if (index < 0) {
+          throw std::runtime_error(
+              "PolicyAction::resolve: policy '" + policy_name +
+              "': override_activities names '" + act +
+              "', which is not an activity in this world. Activities: " +
+              joinNames(world.activity_names));
         }
+        if (index >= 64) {
+          throw std::runtime_error(
+              "PolicyAction::resolve: policy '" + policy_name +
+              "': override_activities names '" + act +
+              "', whose index is past the 64 an activity mask can hold");
+        }
+        override_activity_mask |= (1ULL << index);
       }
     }
 
@@ -327,6 +343,13 @@ struct PolicyAction {
 
     replacement_activity_index =
         static_cast<int16_t>(world.getActivityIndex(replacement_activity));
+    if (has_location_override && replacement_activity_index < 0) {
+      throw std::runtime_error(
+          "PolicyAction::resolve: policy '" + policy_name +
+          "': replacement activity '" + replacement_activity +
+          "' is not an activity in this world. Activities: " +
+          joinNames(world.activity_names));
+    }
 
     if (!replacement_schedule.empty()) {
       replacement_schedule_idx = static_cast<int16_t>(

@@ -618,13 +618,18 @@ TEST_CASE("SimulationConfig - lookup table modes are validated") {
 }
 
 TEST_CASE("ConfigLoader - Optional Files Handling") {
-  SUBCASE("Missing vaccines file is optional and disables the module") {
-    // Vaccines is the only truly-optional sub-config: a missing file means
-    // "don't run this module", which is fine — the rest of the simulator
-    // can proceed.
-    VaccinationConfig vc =
-        ConfigLoader::loadVaccination("non_existent_vaccines.yaml");
+  SUBCASE("No vaccines file configured disables the module") {
+    // Vaccines is the only truly-optional sub-config: leaving the path out of
+    // config_paths means "don't run this module", which is fine, the rest of
+    // the simulator can proceed.
+    VaccinationConfig vc = ConfigLoader::loadVaccination("");
     CHECK(vc.enabled == false);
+  }
+
+  SUBCASE("A vaccines file that is named but missing is a misconfiguration") {
+    CHECK_THROWS_WITH_AS(
+        ConfigLoader::loadVaccination("non_existent_vaccines.yaml"),
+        doctest::Contains("non_existent_vaccines.yaml"), std::runtime_error);
   }
 
   SUBCASE("Missing coordinated_encounters file is a misconfiguration") {
