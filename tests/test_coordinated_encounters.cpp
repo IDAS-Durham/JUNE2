@@ -181,9 +181,11 @@ static EncounterTestWorld buildEncounterWorld(
   }
 
   // ---- Network (connect all pairs for small N, or chain for large N) ----
-  if (!network_name.empty() && num_people >= 2) {
+  if (!network_name.empty()) {
     std::vector<std::pair<PersonId, PersonId>> pairs;
-    if (num_people <= 10) {
+    if (num_people < 2) {
+      // A registered network nobody belongs to.
+    } else if (num_people <= 10) {
       // Full mesh for small populations
       for (int i = 0; i < num_people; ++i) {
         for (int j = i + 1; j < num_people; ++j) {
@@ -478,13 +480,10 @@ TEST_CASE("1e. generateProposals — No network partners means no proposals") {
    * Even with proposal_probability = 1.0, they can't invite anyone,
    * so no proposals should be created.
    */
+  // One person and a network registered without any pairs: nobody has a friend.
   auto tw = buildEncounterWorld(
-      2, 1, "pub", "" /* no network */, "social_encounters", false, "",
-      {"leisure"}, InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 1},
-      1.0, 1.0);
-  // Manually set network name in the encounter def without adding actual
-  // network data
-  tw.config.coordinated_encounters.encounters[0].network = "friendships";
+      1, 1, "pub", "friendships", "social_encounters", false, "", {"leisure"},
+      InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 1}, 1.0, 1.0);
   addScheduleToAll(tw, "open", {{"all_day", {"leisure", "residence"}}});
 
   CoordinatedEncounterManager cem(tw.world, tw.config, 0);
@@ -535,8 +534,11 @@ TEST_CASE(
   auto tw = buildEncounterWorld(
       4, 1, "pub", "friendships", "social_encounters", false, "", {"leisure"},
       InviteDistribution{DistributionType::FIXED, 1.0, 0.5, 1}, 1.0, 1.0);
-  // Override allowed venues to a type that doesn't exist
+  // The encounter allows only "cinema"; the world's venue types are
+  // registered, but no venue of that type exists.
+  tw.world.venue_type_names.push_back("cinema");
   tw.config.coordinated_encounters.encounters[0].allowed_venues = {"cinema"};
+  tw.config.resolve(tw.world);
   addScheduleToAll(tw, "open", {{"all_day", {"leisure", "residence"}}});
 
   CoordinatedEncounterManager cem(tw.world, tw.config, 0);
@@ -1621,8 +1623,6 @@ static std::unique_ptr<Disease> createMinimalDisease(
   }
 
   DiseaseStageSettings settings;
-  settings.default_lowest_stage = symptom_names[0];
-  settings.stay_at_home_stages = {};
   settings.fatality_stages = {};
   settings.recovered_stages = {};
 

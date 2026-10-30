@@ -260,6 +260,8 @@ void Simulator::exchangeVisitorsAndBuildAugmented(
       info.person_id = visitor.person_id;
       info.is_infected = visitor.is_infected;
       info.immunity_level = visitor.immunity_level;
+      info.age = visitor.age;
+      info.sex = static_cast<Sex>(visitor.sex_code);
       info.symptom_id = visitor.symptom_id;
       info.time_in_stage = visitor.time_in_stage;
       info.emission = std::move(visitor.emission);

@@ -38,5 +38,12 @@ void rejectUnknownKeys(const YAML::Node& node,
                        const std::string& where,
                        const std::string& within = "");
 
+// The same check for a list of fields only known at run time, such as the day
+// type names a schedule file declares.
+void rejectUnknownKeysAmong(const YAML::Node& node,
+                            const std::vector<std::string>& fields,
+                            const std::string& where,
+                            const std::string& within = "");
+
 }  // namespace config_detail
 }  // namespace june

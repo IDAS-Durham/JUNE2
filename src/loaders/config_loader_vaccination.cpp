@@ -146,6 +146,7 @@ VaccineConfig parseVaccine(const std::string& name,
                            const YAML::Node& vacc_node) {
   VaccineConfig vc;
   vc.name = name;
+  rejectUnknownKeys(vacc_node, {"doses"}, "vaccine '" + name + "': ");
   if (vacc_node["doses"]) {
     const auto& doses_node = vacc_node["doses"];
     for (size_t i = 0; i < doses_node.size(); ++i) {
@@ -397,17 +398,22 @@ void checkTierDoses(const VaccinationConfig& config) {
 
 VaccinationConfig ConfigLoader::loadVaccination(const std::string& filename) {
   VaccinationConfig config;
-  if (!std::filesystem::exists(filename)) {
-    if (mpi_runtime::state().rank == 0) {
-      std::cout << "Warning: " << filename
-                << " not found. Vaccination will be disabled." << std::endl;
-    }
+  // No vaccines_file in config_paths means no vaccination. A path that was
+  // written down but leads nowhere is a mistake, not a choice.
+  if (filename.empty()) {
     config.enabled = false;
     return config;
+  }
+  if (!std::filesystem::exists(filename)) {
+    throw std::runtime_error("Vaccination file not found: " + filename +
+                             ". simulation.yaml's `vaccines_file` must point "
+                             "at an existing YAML, or be left out to run "
+                             "without vaccination.");
   }
   try {
     YAML::Node root = YAML::LoadFile(filename);
     if (!root) return config;
+    rejectUnknownKeys(root, {"enabled", "vaccines", "campaigns"}, "");
 
     if (root["enabled"]) {
       config.enabled = root["enabled"].as<bool>();
