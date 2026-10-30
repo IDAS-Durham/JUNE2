@@ -301,6 +301,7 @@ if(BUILD_TESTING)
       test_config_loading
       test_config_checks
       test_activity_manager
+      test_activity_preferences
 
       test_transmission_modifiers
       test_on_the_fly_venue_allocator

@@ -951,14 +951,24 @@ void PreferenceProfile::resolve(const WorldState& world) {
                         "activity preference profile for '" + activity + "'");
   }
 
+  // An empty activity means any activity (-1). A name the world does not
+  // have would otherwise read the same way and apply to every activity.
   activity_id = world.getActivityIndex(activity);
+  if (!activity.empty() && activity_id < 0) {
+    throw std::runtime_error("Activity preference profile '" + name +
+                             "' names activity '" + activity +
+                             "', which the world does not have");
+  }
 
   weights_by_id.assign(world.venue_type_names.size(), 1.0);
   for (const auto& [name, weight] : preference_weights) {
     int idx = world.getVenueTypeIndex(name);
-    if (idx >= 0 && idx < (int)weights_by_id.size()) {
-      weights_by_id[idx] = weight;
+    if (idx < 0 || idx >= (int)weights_by_id.size()) {
+      throw std::runtime_error("Activity preference profile '" + this->name +
+                               "' gives a weight to venue type '" + name +
+                               "', which the world does not have");
     }
+    weights_by_id[idx] = weight;
   }
 }
 

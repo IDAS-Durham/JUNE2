@@ -1036,11 +1036,10 @@ struct PreferenceProfile {
   // Map of venue_type -> weight
   std::unordered_map<std::string, double> preference_weights;
 
-  bool appliesTo(const Person& person, const std::string& activity_name,
+  // Selection only. The activity is compared by id in getWeight, once
+  // resolve has turned the name into activity_id.
+  bool appliesTo(const Person& person,
                  const WorldState* world = nullptr) const {
-    // Must match activity name
-    if (!activity.empty() && activity != activity_name) return false;
-
     return matchesAllCriteria(person, selection_criteria, world);
   }
 
@@ -1060,9 +1059,7 @@ struct ActivityPreferenceConfig {
       if (profile.activity_id != -1 && profile.activity_id != activity_id)
         continue;
 
-      if (profile.appliesTo(
-              person, "",
-              world)) {  // Empty string skip activity check in profile
+      if (profile.appliesTo(person, world)) {
         if (venue_type_id < profile.weights_by_id.size()) {
           return profile.weights_by_id[venue_type_id];
         }
