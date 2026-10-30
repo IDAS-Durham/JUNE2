@@ -2,6 +2,7 @@
 // wrong and expects a load time error that lists the valid names, then spells
 // it correctly and expects a clean load. Worlds are synthetic.
 
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>
