@@ -179,11 +179,19 @@ struct PolicyAction {
   std::string replacement_activity;  // e.g., "residence", "medical_facility"
   int16_t replacement_activity_index = -1;
 
-  // Optional: hop to a schedule instead of replacing the activity.
-  // When set, getOverride triggers a schedule hop rather than calling
-  // getReplacementLocation. Only effective for persons already on a hop.
+  // Optional: move a person who is already on a hop onto this schedule
+  // instead of replacing the activity. A person who is not on a hop has no
+  // schedule to swap and is left alone, whatever replacement_activity says.
+  // A symptom policy pins the person and puts the hop back when the symptoms
+  // end; a temporal policy swaps once and never restores.
   std::string replacement_schedule;
   int16_t replacement_schedule_idx = -1;
+
+  // Does this action act on this person at all? An action with a replacement
+  // schedule only reaches people on a hop.
+  bool reaches(const Person& person) const {
+    return replacement_schedule_idx < 0 || person.schedule_hop.isActive();
+  }
 
   // Compliance rate (0.0 = no one complies, 1.0 = everyone complies)
   double compliance_rate = 1.0;
@@ -355,8 +363,10 @@ struct PolicyAction {
       replacement_schedule_idx = static_cast<int16_t>(
           world.getScheduleTypeIndex(replacement_schedule));
       if (replacement_schedule_idx < 0) {
-        std::cerr << "  [Policy Warning] replacement_schedule '"
-                  << replacement_schedule << "' not found." << std::endl;
+        throw std::runtime_error("PolicyAction::resolve: policy '" +
+                                 policy_name + "': replacement_schedule '" +
+                                 replacement_schedule +
+                                 "' is not a schedule type in this world");
       }
     }
   }

@@ -675,6 +675,8 @@ std::optional<PersonLocation> PolicyManager::getOverride(
         if (!is_participating) continue;
       }
 
+      if (!policy.action.reaches(person)) continue;
+
       if (!actionApplies(policy.action, person, scheduled_activity_index,
                          slotVenueType, partner, slotTrigger(policy),
                          slot_venue_type.venueId(), static_cast<uint32_t>(i))) {
@@ -682,9 +684,8 @@ std::optional<PersonLocation> PolicyManager::getOverride(
       }
 
       // Freeze-hop path: pin person at current/last overnight venue. Only
-      // applies to hopped persons.
-      if (policy.action.replacement_schedule_idx >= 0 &&
-          person.schedule_hop.isActive()) {
+      // hopped persons get here: reaches() turned the others away.
+      if (policy.action.replacement_schedule_idx >= 0) {
         ensureResidenceIndexCached();
 
         auto frozen_it = frozen_states_.find(person.id);
@@ -768,6 +769,8 @@ std::optional<PersonLocation> PolicyManager::getOverride(
       if (!is_participating) continue;
     }
 
+    if (!policy.action.reaches(person)) continue;
+
     // Where the person is scheduled, not where a freeze would pin them: a
     // traveller in transit is pinned at their last overnight venue while
     // occupying none.
@@ -776,6 +779,13 @@ std::optional<PersonLocation> PolicyManager::getOverride(
                        slot_venue_type.venueId(),
                        static_cast<uint32_t>(i + 100))) {
       continue;
+    }
+
+    // A hop cut short: the rest of it runs on the replacement schedule, from
+    // the position the person has reached. No FrozenPersonState is kept, so
+    // nothing restores the original target when the window ends.
+    if (policy.action.replacement_schedule_idx >= 0) {
+      person.schedule_hop.swapTarget(policy.action.replacement_schedule_idx);
     }
 
     return getReplacementLocation(person, policy.action.replacement_activity,
@@ -823,6 +833,8 @@ bool PolicyManager::suppressesParticipation(
         continue;
       }
 
+      if (!policy.action.reaches(person)) continue;
+
       if (actionApplies(policy.action, person, activity_index, slotVenueType,
                         partner, slotTrigger(policy), slot_venue_type.venueId(),
                         static_cast<uint32_t>(i))) {
@@ -846,6 +858,8 @@ bool PolicyManager::suppressesParticipation(
                          static_cast<uint32_t>(i + 100))) {
       continue;
     }
+
+    if (!policy.action.reaches(person)) continue;
 
     if (actionApplies(policy.action, person, activity_index, slotVenueType,
                       partner, slotTrigger(policy), slot_venue_type.venueId(),

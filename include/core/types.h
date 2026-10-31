@@ -257,8 +257,9 @@ struct ScheduleHop {
   }
 
   // Overwrite only the hop target; leave return_schedule_id and all progress
-  // fields intact. Use for freeze-in-place: caller has already saved
-  // return_schedule_id into FrozenPersonState for thaw to restore.
+  // fields intact. Freeze-in-place callers first save both targets into
+  // FrozenPersonState so thaw can restore them; a temporal policy cutting a
+  // hop short saves nothing, so the swap is final.
   void swapTarget(int16_t hop_idx) { hopped_schedule_id = hop_idx; }
 
   // Restore both target fields from a saved snapshot (thaw path).
