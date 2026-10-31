@@ -722,7 +722,9 @@ TEST_CASE("Policy suppression does not latch a compliance decision") {
 
   int suppressed_count = 0;
   for (int i = 0; i < kNumPeople; ++i) {
-    Person& person = makeSickPerson(world, disease, static_cast<size_t>(i));
+    // On a hop: a policy with a replacement schedule reaches nobody else.
+    Person& person =
+        makeSickHoppedPerson(world, disease, static_cast<size_t>(i));
 
     const bool suppressed = policy_manager.suppressesParticipation(
         person, kLeisure, SlotVenueType::known(kPubVenueType), 1.0);
@@ -912,7 +914,7 @@ TEST_CASE("Symptom policy - a window bounds it as well as the symptom") {
   policy_manager.addSymptomPolicy(stay_home);
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickPerson(world, disease);
+  Person& person = makeSickHoppedPerson(world, disease);
 
   auto fires_at = [&](double time) {
     return policy_manager
@@ -988,7 +990,7 @@ TEST_CASE("Symptom policy - a closing window is not symptom progression") {
     policy_manager.addSymptomPolicy(stay_home);
 
     policy_manager.resolveAll(disease);
-    Person& person = makeSickPerson(world, disease);
+    Person& person = makeSickHoppedPerson(world, disease);
     person.applicable_symptom_policy_mask = 0b11;
     return &person;
   };
@@ -1280,7 +1282,8 @@ TEST_CASE("Successive symptom windows tighten to the new rate, not past it") {
   };
 
   for (int i = 0; i < kNumPeople; ++i) {
-    Person& person = makeSickPerson(world, disease, static_cast<size_t>(i));
+    Person& person =
+        makeSickHoppedPerson(world, disease, static_cast<size_t>(i));
     person.applicable_symptom_policy_mask = 0b11;
   }
 
@@ -1431,4 +1434,124 @@ TEST_CASE("32 policies of each kind resolve and all can fire") {
   policy_manager.precomputePolicyApplicability(world.people);
   CHECK(world.people[0].applicable_symptom_policy_mask == 0xFFFFFFFFu);
   CHECK(world.people[0].applicable_temporal_policy_mask == 0xFFFFFFFFu);
+}
+
+// =============================================================================
+// Schedule swap: a policy with a replacement schedule acts on people who are
+// already on a hop, and on nobody else.
+// =============================================================================
+
+namespace {
+
+TemporalPolicy makeScheduleSwapPolicy() {
+  TemporalPolicy policy = makeClosurePolicy({"leisure"}, {});
+  policy.name = "swap_trips";
+  policy.action.replacement_schedule_idx = kFreezeScheduleIdx;
+  return policy;
+}
+
+}  // namespace
+
+TEST_CASE("Schedule swap - a hopped person is moved onto the replacement") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
+  policy_manager.resolveAll(disease);
+
+  Person& person = world.people[0];
+  person.schedule_hop = ScheduleHop::begin(kHoppedSchedule, kReturnSchedule);
+  person.schedule_hop.consumeSlot0();
+
+  auto location = runOverride(policy_manager, person, kLeisure, kPubVenue);
+
+  // Placed at home for this slot, on the replacement from the next one, and
+  // still heading for the same return schedule at the same position.
+  REQUIRE(location.has_value());
+  CHECK(location->venue_id == kHouseholdVenue);
+  CHECK(location->activity_index == kResidence);
+  CHECK(person.schedule_hop.hopped_schedule_id == kFreezeScheduleIdx);
+  CHECK(person.schedule_hop.return_schedule_id == kReturnSchedule);
+  CHECK(person.schedule_hop.temp_slot_progress == 1);
+  // A swap is final: nothing is held to be restored later.
+  CHECK(policy_manager.getFrozenStates().empty());
+}
+
+TEST_CASE("Schedule swap - a person who is not on a hop is left alone") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
+  policy_manager.resolveAll(disease);
+
+  Person& person = world.people[0];
+
+  CHECK_FALSE(
+      runOverride(policy_manager, person, kLeisure, kPubVenue).has_value());
+  CHECK_FALSE(person.schedule_hop.isActive());
+}
+
+TEST_CASE("Schedule swap - only acts inside its window") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
+  policy_manager.resolveAll(disease);
+
+  Person& person = world.people[0];
+  person.schedule_hop = ScheduleHop::begin(kHoppedSchedule, kReturnSchedule);
+
+  // The window is days 0 to 10.
+  CHECK_FALSE(policy_manager
+                  .getOverride(person, kLeisure, kPubVenue, 0,
+                               SlotVenueType::fromVenue(kPubVenue), 10.0, 0)
+                  .has_value());
+  CHECK(person.schedule_hop.hopped_schedule_id == kHoppedSchedule);
+}
+
+TEST_CASE("Schedule swap - a symptom policy leaves a person off a hop alone") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  policy_manager.addSymptomPolicy(makeFreezePolicy());
+  policy_manager.resolveAll(disease);
+
+  Person& person = makeSickPerson(world, disease);
+
+  CHECK_FALSE(policy_manager
+                  .getOverride(person, kLeisure, kPubVenue, 0,
+                               SlotVenueType::known(kPubVenueType), 1.0, 0)
+                  .has_value());
+  CHECK(policy_manager.getFrozenStates().empty());
+}
+
+TEST_CASE("Schedule swap - the query agrees with the override") {
+  WorldState world = buildVenueGateWorld(2);
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
+  policy_manager.resolveAll(disease);
+
+  Person& walker = world.people[0];
+  Person& traveller = world.people[1];
+  traveller.schedule_hop =
+      ScheduleHop::begin(kHoppedSchedule, kReturnSchedule);
+
+  CHECK_FALSE(querySuppressed(policy_manager, walker, kLeisure, kPubVenue));
+  CHECK(querySuppressed(policy_manager, traveller, kLeisure, kPubVenue));
+  // Asking changed nothing.
+  CHECK(traveller.schedule_hop.hopped_schedule_id == kHoppedSchedule);
+}
+
+TEST_CASE("Schedule swap - an unknown replacement schedule is an error") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  TemporalPolicy policy = makeClosurePolicy({"leisure"}, {});
+  policy.action.replacement_schedule = "no_such_schedule";
+  policy_manager.addTemporalPolicy(policy);
+
+  CHECK_THROWS_WITH_AS(policy_manager.resolveAll(disease),
+                       doctest::Contains("no_such_schedule"),
+                       std::runtime_error);
 }

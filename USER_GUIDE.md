@@ -556,6 +556,41 @@ policies:
   deaths or cases in a classroom, instead of (or as well as) a date. See
   [Observed metrics](#observed-metrics) below.
 
+### Policies with a `replacement_schedule`
+
+A policy normally swaps the activity a person was going to do for its
+`replacement`. Setting `replacement_schedule` instead moves a person who is
+already on a temporary schedule hop (a trip) onto the named schedule. It works
+the same in symptom and temporal policies:
+
+```yaml
+temporal_policies:
+  - name: "curtail_trips"
+    start_date: "2020-03-23"
+    end_date: "2020-05-11"
+    override_activities: ["leisure"]
+    replacement_schedule: "stay_put"     # a temporary schedule
+    compliance_rate: 0.7
+```
+
+This is not intuitive, so note the rules:
+
+- The policy acts only on people who are on a hop. Everyone else is left
+  alone, even though `override_activities` names an activity they are doing and
+  `replacement` would normally send them home. In the example, a person who
+  stays in town for leisure is unaffected, and 70 percent of the people who set
+  off on a trip are cut short.
+- The person is moved at the first slot where the policy covers them. For that
+  slot they are placed at the `replacement` activity (residence unless you say
+  otherwise). From the next slot they run the replacement schedule from the
+  position they had reached on the trip.
+- For a temporal policy the swap is final. Nothing is restored when the window
+  ends, and the trip finishes on the replacement schedule's timetable. A
+  symptom policy instead pins the person where they are and puts the trip back
+  when the symptoms end.
+- The named schedule must exist in `schedules.yaml`. An unknown name stops the
+  run at load time.
+
 ### Transmission effects
 
 A policy can reference a CSV of transmission effects with
