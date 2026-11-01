@@ -64,14 +64,14 @@ static CoordinatedEncounterConfig parseCE(const std::string& body) {
   return ConfigLoader::loadCoordinatedEncounters(path.string());
 }
 
-TEST_CASE("follow: singular block is sugar for a one-element list") {
+TEST_CASE("a one-rule follows list parses its fields") {
   auto cfg = parseCE(
-      "  follow:\n"
-      "    enabled: true\n"
-      "    pool:\n"
-      "      venue_types: [household]\n"
-      "    establishment: stochastic\n"
-      "    probability: 0.5\n");
+      "  follows:\n"
+      "    - enabled: true\n"
+      "      pool:\n"
+      "        venue_types: [household]\n"
+      "      establishment: stochastic\n"
+      "      probability: 0.5\n");
   REQUIRE(cfg.follows.size() == 1);
   CHECK(cfg.follows[0].enabled);
   CHECK(cfg.follows[0].pool.venue_types ==
@@ -143,16 +143,12 @@ TEST_CASE("an un-named rule defaults its name to its list index") {
   CHECK(cfg.follows[1].name == "1");
 }
 
-TEST_CASE("setting both follow and follows is rejected") {
-  CHECK_THROWS(
-      parseCE("  follow:\n"
-              "    enabled: true\n"
-              "    pool:\n"
-              "      venue_types: [household]\n"
-              "  follows:\n"
-              "    - enabled: true\n"
-              "      pool:\n"
-              "        network: friendships\n"));
+TEST_CASE("the singular follow key is rejected, follows is the only spelling") {
+  CHECK_THROWS_WITH(parseCE("  follow:\n"
+                            "    enabled: true\n"
+                            "    pool:\n"
+                            "      venue_types: [household]\n"),
+                    doctest::Contains("unknown field 'follow'"));
 }
 
 TEST_CASE("duplicate rule names are rejected") {

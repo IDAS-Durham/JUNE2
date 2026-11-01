@@ -71,15 +71,6 @@ coordinated_encounters:
   #     encounter_type: ""            # optional log tag (falls back to 255)
   #     log: false                    # log every follow when it forms (can be MANY rows)
   #
-  # A single rule can use the singular `follow:` block as sugar for a one-element
-  # list (setting both `follow:` and `follows:` is an error):
-  #
-  # follow:
-  #   enabled: true
-  #   pool: {venue_types: [household]}
-  #   establishment: stochastic
-  #   probability: 1.0
-  #   span: hop
 
   follows:
     # Under-10s go where a parent goes, with three carve-outs. The parent is the

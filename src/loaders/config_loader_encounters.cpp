@@ -318,10 +318,9 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
   rejectUnknownKeys(root, {"coordinated_encounters"}, filename + ": ");
   if (!root["coordinated_encounters"]) return config;
   const auto& ce_node = root["coordinated_encounters"];
-  rejectUnknownKeys(
-      ce_node,
-      {"enabled", "frequency_groups", "encounters", "follow", "follows"},
-      filename + ": ", " in 'coordinated_encounters'");
+  rejectUnknownKeys(ce_node,
+                    {"enabled", "frequency_groups", "encounters", "follows"},
+                    filename + ": ", " in 'coordinated_encounters'");
 
   if (ce_node["enabled"]) {
     config.enabled = ce_node["enabled"].as<bool>();
@@ -464,14 +463,7 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
     return f;
   };
 
-  if (ce_node["follow"] && ce_node["follows"]) {
-    throw std::runtime_error(
-        "coordinated_encounters: set either 'follow' (one rule) or 'follows' "
-        "(a list), not both");
-  }
-  if (ce_node["follow"]) {
-    config.follows.push_back(parseFollowRule(ce_node["follow"]));
-  } else if (ce_node["follows"]) {
+  if (ce_node["follows"]) {
     for (const auto& fn : ce_node["follows"])
       config.follows.push_back(parseFollowRule(fn));
   }
