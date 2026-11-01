@@ -37,6 +37,11 @@
 
 namespace june {
 
+namespace follow_detail {
+struct HostSlot;
+struct RuleSlot;
+}  // namespace follow_detail
+
 #ifndef USE_MPI
 // Forward declaration for when MPI is not available
 class DomainManager;
@@ -188,20 +193,25 @@ class Simulator {
   };
   std::vector<FollowRuntime> follow_state_;
 
-  // Apply one follow rule for this slot. committed_hosts / committed_followers
-  // accumulate across rules in config order: everyone already bound by an
-  // earlier rule, so this rule yields to them (a follower is exclusive to the
-  // first rule that binds it; a host may recur, but no one is both). The rule
-  // adds its own hosts and followers to those sets on the way out.
+  // Form one follow rule's bindings for this slot and find where its hosts are.
+  // committed_followers accumulates across rules in config order: everyone an
+  // earlier rule has bound, so this rule yields to them (a follower belongs to
+  // the first rule that binds it; a host may follow too, see mirrorFollowRule).
   // rule_id is the rule's index in the follows list, and is what
   // /events/follows records against the follow_rules registry.
-  // cotravel collects (follower, host) pairs whose host is on a line, for the
-  // allocator to seat once every rule has run.
   void processFollowRule(int time_slot_index, int day, uint8_t rule_id,
                          const FollowConfig& fc, FollowRuntime& st,
-                         std::unordered_set<PersonId>& committed_hosts,
-                         std::unordered_set<PersonId>& committed_followers,
-                         std::vector<std::pair<PersonId, PersonId>>& cotravel);
+                         follow_detail::RuleSlot& slot,
+                         std::unordered_set<PersonId>& committed_followers);
+
+  // Move one rule's followers onto the end of their chain. parent maps each
+  // follower in a chain to its host. cotravel collects (follower, host) pairs
+  // whose host is on a line, for the allocator to seat once every rule has run.
+  void mirrorFollowRule(
+      const FollowConfig& fc, const FollowRuntime& st,
+      const std::unordered_map<PersonId, follow_detail::HostSlot>& host_loc,
+      const std::unordered_map<PersonId, PersonId>& parent,
+      std::vector<std::pair<PersonId, PersonId>>& cotravel);
 
   // Steps 5 + 6 of simulateTimeSlot: run the epidemiology state update
   // (symptom transitions / recoveries / deaths) and then decay the venue

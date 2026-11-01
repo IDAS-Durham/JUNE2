@@ -22,8 +22,32 @@
 #include "transmission_fixtures.h"
 
 using namespace june;
-using follow_detail::enrolFollowHosts;
-using follow_detail::rebuildCriteriaBindings;
+using follow_detail::buildFollowPeople;
+using follow_detail::FollowPeople;
+
+// The follow helpers take a table of who may follow and host. On one rank the
+// table comes straight from the world, with nothing to exchange.
+static void rebuildCriteriaBindings(
+    WorldState& world, const FollowConfig& fc, uint64_t seed,
+    std::unordered_map<PersonId, PersonId>& fh,
+    std::unordered_set<PersonId>& hosts,
+    const std::unordered_set<PersonId>& follower_excl = {}) {
+  FollowPeople people =
+      buildFollowPeople(world, fc, false, follower_excl, false);
+  follow_detail::rebuildCriteriaBindings(world, fc, seed, people, fh, hosts,
+                                         nullptr, nullptr, false);
+}
+
+static void enrolFollowHosts(
+    WorldState& world, const FollowConfig& fc, const ScheduleConfig& sched,
+    uint64_t seed, bool standing, std::unordered_set<PersonId>& hosts,
+    std::unordered_map<PersonId, PersonId>& fh, int day,
+    const std::unordered_set<PersonId>& follower_excl = {}) {
+  FollowPeople people =
+      buildFollowPeople(world, fc, true, follower_excl, false);
+  follow_detail::enrolFollowHosts(world, fc, sched, seed, standing, people,
+                                  hosts, fh, day, nullptr, nullptr, false);
+}
 
 // ===========================================================================
 // Config contract
@@ -44,12 +68,14 @@ TEST_CASE("follow: singular block is sugar for a one-element list") {
   auto cfg = parseCE(
       "  follow:\n"
       "    enabled: true\n"
-      "    pool_venue_type: household\n"
+      "    pool:\n"
+      "      venue_types: [household]\n"
       "    establishment: stochastic\n"
       "    probability: 0.5\n");
   REQUIRE(cfg.follows.size() == 1);
   CHECK(cfg.follows[0].enabled);
-  CHECK(cfg.follows[0].pool_venue_type == "household");
+  CHECK(cfg.follows[0].pool.venue_types ==
+        std::vector<std::string>{"household"});
   CHECK(cfg.follows[0].establishment ==
         FollowConfig::Establishment::Stochastic);
   CHECK(cfg.follows[0].probability == doctest::Approx(0.5));
@@ -62,7 +88,8 @@ TEST_CASE("follows: parses a list of rules in order with their fields") {
       "  follows:\n"
       "    - name: infants\n"
       "      enabled: true\n"
-      "      pool_venue_type: household\n"
+      "      pool:\n"
+      "        venue_types: [household]\n"
       "      establishment: criteria\n"
       "      span: standing\n"
       "      eligibility:\n"
@@ -71,7 +98,8 @@ TEST_CASE("follows: parses a list of rules in order with their fields") {
       "          value: 5\n"
       "    - name: friends\n"
       "      enabled: true\n"
-      "      network: friendships\n"
+      "      pool:\n"
+      "        network: friendships\n"
       "      establishment: stochastic\n"
       "      span: hop\n");
   REQUIRE(cfg.follows.size() == 2);
@@ -94,7 +122,8 @@ TEST_CASE("eligibility written as a mapping is rejected, not read as empty") {
       parseCE("  follows:\n"
               "    - name: infants\n"
               "      enabled: true\n"
-              "      pool_venue_type: household\n"
+              "      pool:\n"
+              "        venue_types: [household]\n"
               "      establishment: criteria\n"
               "      eligibility:\n"
               "        max_age: 5\n"));
@@ -104,9 +133,11 @@ TEST_CASE("an un-named rule defaults its name to its list index") {
   auto cfg = parseCE(
       "  follows:\n"
       "    - enabled: true\n"
-      "      pool_venue_type: household\n"
+      "      pool:\n"
+      "        venue_types: [household]\n"
       "    - enabled: true\n"
-      "      network: friendships\n");
+      "      pool:\n"
+      "        network: friendships\n");
   REQUIRE(cfg.follows.size() == 2);
   CHECK(cfg.follows[0].name == "0");
   CHECK(cfg.follows[1].name == "1");
@@ -116,10 +147,12 @@ TEST_CASE("setting both follow and follows is rejected") {
   CHECK_THROWS(
       parseCE("  follow:\n"
               "    enabled: true\n"
-              "    pool_venue_type: household\n"
+              "    pool:\n"
+              "      venue_types: [household]\n"
               "  follows:\n"
               "    - enabled: true\n"
-              "      network: friendships\n"));
+              "      pool:\n"
+              "        network: friendships\n"));
 }
 
 TEST_CASE("duplicate rule names are rejected") {
@@ -127,10 +160,12 @@ TEST_CASE("duplicate rule names are rejected") {
       parseCE("  follows:\n"
               "    - name: dup\n"
               "      enabled: true\n"
-              "      pool_venue_type: household\n"
+              "      pool:\n"
+              "        venue_types: [household]\n"
               "    - name: dup\n"
               "      enabled: true\n"
-              "      network: friendships\n"));
+              "      pool:\n"
+              "        network: friendships\n"));
 }
 
 TEST_CASE("a rule name with a slash is rejected (would break its shard path)") {
@@ -138,21 +173,23 @@ TEST_CASE("a rule name with a slash is rejected (would break its shard path)") {
       parseCE("  follows:\n"
               "    - name: a/b\n"
               "      enabled: true\n"
-              "      pool_venue_type: household\n"));
+              "      pool:\n"
+              "        venue_types: [household]\n"));
 }
 
 // ===========================================================================
 // Binding behaviour — synthetic households
 // ===========================================================================
 
-// Build a world of households. Each inner vector is one household's member
-// ages; ids are assigned 0,1,2,... across households in order. Every person
-// gets a residence activity at their household venue, and the venue carries one
-// subset holding all its members (the pool the follow logic reads).
-static WorldState buildHouseholds(
-    const std::vector<std::vector<float>>& households) {
+// A world of venues that people can share. venue_members[v] lists the members
+// of venue v (all of type "household", pool venue type id 0); a person is
+// assigned to every venue that lists them, as one activity with several venues.
+// ages[i] is person i's age.
+static WorldState buildSharedVenues(
+    const std::vector<float>& ages,
+    const std::vector<std::vector<PersonId>>& venue_members) {
   WorldState world;
-  world.venue_type_names = {"household"};  // pool_venue_type_id 0
+  world.venue_type_names = {"household"};
   world.activity_names = {"residence"};
   world.geo_level_names = {"city"};
   world.person_property_names = {"age"};
@@ -163,47 +200,66 @@ static WorldState buildHouseholds(
   gu.parent_id = -1;
   world.geo_units.push_back(gu);
 
-  PersonId next_id = 0;
-  for (const auto& ages : households) {
-    VenueId vid = static_cast<VenueId>(world.venues.size());
-    std::vector<PersonId> members;
-    for (float age : ages) {
-      Person& p = world.people.emplace_back();
-      p.id = next_id++;
-      p.age = age;
-      p.geo_unit_id = 0;
-      // one residence activity pointing at this household venue
-      p.activity_meta_start = static_cast<uint32_t>(world.activity_meta.size());
-      p.activity_meta_count = 1;
-      Person::ActivityMeta meta;
-      meta.activity_index = 0;
-      meta.venue_start = static_cast<uint32_t>(world.activity_venues.size());
-      meta.venue_count = 1;
-      world.activity_venues.push_back({vid, /*subset=*/0});
-      world.activity_meta.push_back(meta);
-      members.push_back(p.id);
+  for (size_t i = 0; i < ages.size(); ++i) {
+    Person& p = world.people.emplace_back();
+    p.id = static_cast<PersonId>(i);
+    p.age = ages[i];
+    p.geo_unit_id = 0;
+    p.activity_meta_start = static_cast<uint32_t>(world.activity_meta.size());
+    p.activity_meta_count = 1;
+    Person::ActivityMeta meta;
+    meta.activity_index = 0;
+    meta.venue_start = static_cast<uint32_t>(world.activity_venues.size());
+    meta.venue_count = 0;
+    for (size_t v = 0; v < venue_members.size(); ++v) {
+      for (PersonId m : venue_members[v]) {
+        if (m != p.id) continue;
+        world.activity_venues.push_back({static_cast<VenueId>(v), 0});
+        ++meta.venue_count;
+      }
     }
-    Venue v;
-    v.id = vid;
-    v.type_id = 0;
-    v.geo_unit_id = 0;
-    v.parent_id = -1;
-    v.is_residence = true;
-    v.subset_start = static_cast<uint32_t>(world.subsets.size());
-    v.subset_count = 1;
-    world.venues.push_back(v);
+    world.activity_meta.push_back(meta);
+  }
+  for (size_t v = 0; v < venue_members.size(); ++v) {
+    Venue venue;
+    venue.id = static_cast<VenueId>(v);
+    venue.type_id = 0;
+    venue.geo_unit_id = 0;
+    venue.parent_id = -1;
+    venue.is_residence = true;
+    venue.subset_start = static_cast<uint32_t>(world.subsets.size());
+    venue.subset_count = 1;
+    world.venues.push_back(venue);
     Subset s;
-    s.venue_id = vid;
+    s.venue_id = venue.id;
     s.subset_index = 0;
     s.subset_type_id = 0;
     s.member_start = static_cast<uint32_t>(world.subset_members.size());
-    s.member_count = static_cast<uint32_t>(members.size());
+    s.member_count = static_cast<uint32_t>(venue_members[v].size());
     world.subsets.push_back(s);
-    world.subset_members.insert(world.subset_members.end(), members.begin(),
-                                members.end());
+    world.subset_members.insert(world.subset_members.end(),
+                                venue_members[v].begin(),
+                                venue_members[v].end());
   }
   world.buildIndices();
   return world;
+}
+
+// Households: each inner vector is one household's member ages; ids run
+// 0,1,2,... across households in order, and everyone lives in their own
+// household venue only.
+static WorldState buildHouseholds(
+    const std::vector<std::vector<float>>& households) {
+  std::vector<float> ages;
+  std::vector<std::vector<PersonId>> venues;
+  for (const auto& household : households) {
+    venues.emplace_back();
+    for (float age : household) {
+      venues.back().push_back(static_cast<PersonId>(ages.size()));
+      ages.push_back(age);
+    }
+  }
+  return buildSharedVenues(ages, venues);
 }
 
 // One person criterion, built the way a config would spell it.
@@ -215,14 +271,21 @@ static SelectionCriterion ageCrit(const std::string& op, double value) {
   return c;
 }
 
+// Resolve a rule's follower and host criteria against the world, as the config
+// resolve step does.
+static void resolveCriteria(WorldState& world, FollowConfig& fc) {
+  for (auto* side : {&fc.follower, &fc.host})
+    for (SelectionCriterion& c : *side) c.resolveOrThrow(world, "test");
+}
+
 // A venue/criteria rule: followers are younger than max_age, hosts are at least
 // min_host_age. Age is the axis these cases happen to use; the engine reads
 // whatever criteria the rule carries.
 static FollowConfig criteriaRule(double max_age, double min_host_age) {
   FollowConfig fc;
   fc.enabled = true;
-  fc.pool_venue_type = "household";
-  fc.pool_venue_type_id = 0;
+  fc.pool.venue_types = {"household"};
+  fc.pool_venue_type_ids = {0};
   fc.establishment = FollowConfig::Establishment::Criteria;
   fc.span = FollowConfig::Span::Standing;
   fc.follower = {ageCrit("<", max_age)};
@@ -241,8 +304,8 @@ TEST_CASE("eligibility reads any person attribute, not just age") {
 
   FollowConfig fc;
   fc.enabled = true;
-  fc.pool_venue_type = "household";
-  fc.pool_venue_type_id = 0;
+  fc.pool.venue_types = {"household"};
+  fc.pool_venue_type_ids = {0};
   fc.establishment = FollowConfig::Establishment::Criteria;
   fc.span = FollowConfig::Span::Standing;
   SelectionCriterion is_female;
@@ -255,12 +318,11 @@ TEST_CASE("eligibility reads any person attribute, not just age") {
   is_male.value = std::string("male");
   fc.follower = {is_female};
   fc.host = {is_male};
-  for (auto* side : {&fc.follower, &fc.host})
-    for (SelectionCriterion& c : *side) c.resolveOrThrow(world, "test");
+  resolveCriteria(world, fc);
 
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
 
   REQUIRE(fh.size() == 2);
   CHECK(fh[0] == 1);  // female 0 -> lowest-id male
@@ -287,7 +349,7 @@ TEST_CASE("several criteria on one side are ANDed") {
 
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
 
   REQUIRE(fh.size() == 1);
   CHECK(fh.count(2) == 1);  // the under-5 female follows
@@ -347,7 +409,7 @@ TEST_CASE(
   FollowConfig fc = criteriaRule(5, 18);
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
 
   REQUIRE(fh.size() == 2);
   CHECK(fh[1] == 0);  // child 1 -> adult 0
@@ -364,7 +426,7 @@ TEST_CASE("min-id tiebreak: a child follows the lowest-id eligible adult") {
   FollowConfig fc = criteriaRule(5, 18);
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
 
   REQUIRE(fh.count(2));
   CHECK(fh[2] == 0);  // lowest-id adult, order-independent
@@ -376,7 +438,7 @@ TEST_CASE("host_eligibility keeps a second child from being a host") {
   FollowConfig fc = criteriaRule(5, 18);
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {}, {});
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
   CHECK(fh.empty());  // neither child can host the other
   CHECK(hosts.empty());
 }
@@ -388,35 +450,31 @@ TEST_CASE("follower_excl: a follower claimed by an earlier rule is skipped") {
   std::unordered_set<PersonId> hosts;
   // child 1 already follows under an earlier rule.
   std::unordered_set<PersonId> follower_excl = {1};
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, follower_excl,
-                          {});
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts, follower_excl);
   CHECK(fh.count(1) == 0);  // yielded to the earlier rule
   CHECK(fh.count(3) == 1);  // the other child still binds here
 }
 
-TEST_CASE("host_excl: a person following elsewhere cannot host (no chain)") {
+TEST_CASE("a person following under another rule can still host here") {
+  // The only adult (id 0) already follows under an earlier rule. Child 1 still
+  // binds to them here; the chain is settled once every rule has run.
   WorldState world = buildHouseholds({{40.f, 3.f}});
   FollowConfig fc = criteriaRule(5, 18);
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  // the only adult (id 0) already follows under an earlier rule, so it may not
-  // host here — otherwise child 1 -> adult 0 -> (adult's host) would chain.
-  std::unordered_set<PersonId> host_excl = {0};
-  rebuildCriteriaBindings(world, fc, fh, hosts, nullptr, nullptr, {},
-                          host_excl);
-  CHECK(fh.empty());
-  CHECK(hosts.empty());
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts, /*follower_excl=*/{0});
+  CHECK(fh[1] == 0);
 }
 
 TEST_CASE(
-    "stochastic enrol: hosts and followers stay disjoint, host_excl held") {
-  // probability 1 => every eligible person rolls as a host, so with the
-  // committed-exclusivity rule none of them can also be a follower.
+    "stochastic enrol: every eligible person can host, followers or not") {
+  // probability 1 => every person rolls as a host. Nobody is shut out of
+  // hosting because they also follow someone.
   WorldState world = buildHouseholds({{30.f, 31.f, 32.f}});
   FollowConfig fc;
   fc.enabled = true;
-  fc.pool_venue_type = "household";
-  fc.pool_venue_type_id = 0;
+  fc.pool.venue_types = {"household"};
+  fc.pool_venue_type_ids = {0};
   fc.establishment = FollowConfig::Establishment::Stochastic;
   fc.span = FollowConfig::Span::Standing;
   fc.probability = 1.0;
@@ -424,14 +482,46 @@ TEST_CASE(
   ScheduleConfig sched;  // unused for a standing span
   std::unordered_map<PersonId, PersonId> fh;
   std::unordered_set<PersonId> hosts;
-  // person 0 already follows elsewhere, so it must not be enrolled as a host.
-  std::unordered_set<PersonId> host_excl = {0};
   enrolFollowHosts(world, fc, sched, /*seed=*/123, /*standing=*/true, hosts, fh,
-                   /*current_day=*/0, nullptr, nullptr, {}, host_excl);
+                   /*current_day=*/0);
+  CHECK(hosts.size() == 3);
+  CHECK(!fh.empty());
+}
 
-  CHECK(hosts.count(0) == 0);    // barred by host_excl
-  for (const auto& [f, h] : fh)  // no host is also a follower
-    CHECK(hosts.count(f) == 0);
+TEST_CASE("a follower of a follower ends up at the end of the chain") {
+  std::unordered_map<PersonId, PersonId> parent = {{1, 2}, {2, 3}};
+  CHECK(follow_detail::followRoot(parent, 1) == 3);
+  CHECK(follow_detail::followRoot(parent, 3) == 3);  // follows nobody
+}
+
+TEST_CASE(
+    "a bond that would close a loop is refused, the same way every time") {
+  // A follows B and B follows A. The edge by the lower host id is taken first;
+  // the one that would close the loop is refused, whatever order they arrive
+  // in.
+  std::vector<follow_detail::FollowEdge> edges = {{0, 5, 9}, {0, 9, 5}};
+  for (int flip = 0; flip < 2; ++flip) {
+    std::vector<follow_detail::FollowEdge> refused;
+    auto parent = follow_detail::flattenFollowEdges(edges, refused);
+    REQUIRE(refused.size() == 1);
+    CHECK(refused[0].follower == 5);  // 5 would follow 9, who follows 5
+    CHECK(parent.count(9) == 1);
+    CHECK(parent.count(5) == 0);
+    std::reverse(edges.begin(), edges.end());
+  }
+}
+
+TEST_CASE("a long loop is cut once and the rest of the chain is kept") {
+  // 1->2->3->4->1: the last edge to be added closes the loop.
+  std::vector<follow_detail::FollowEdge> refused;
+  auto parent = follow_detail::flattenFollowEdges(
+      {{0, 1, 2}, {0, 2, 3}, {0, 3, 4}, {0, 4, 1}}, refused);
+  CHECK(refused.size() == 1);
+  CHECK(parent.size() == 3);
+  for (int p = 1; p <= 4; ++p) {  // every chain ends
+    PersonId r = follow_detail::followRoot(parent, p);
+    CHECK(parent.count(r) == 0);
+  }
 }
 
 // ===========================================================================
@@ -719,18 +809,17 @@ TEST_CASE("the mirror gate pins nobody at the host's venue") {
 
 static void loadWithInviteDistribution(const std::string& distribution) {
   ScopedTestFiles files{"invite_distribution_ce"};
-  const auto path = files.write(
-      "config.yaml",
-      "coordinated_encounters:\n"
-      "  enabled: true\n"
-      "  encounters:\n"
-      "    - name: meet\n"
-      "      network: friends\n"
-      "      trigger_slots: [leisure]\n"
-      "      allowed_venues: [pub]\n"
-      "      proposal_probability: 0.5\n"
-      "      invite_distribution: " +
-          distribution + "\n");
+  const auto path = files.write("config.yaml",
+                                "coordinated_encounters:\n"
+                                "  enabled: true\n"
+                                "  encounters:\n"
+                                "    - name: meet\n"
+                                "      network: friends\n"
+                                "      trigger_slots: [leisure]\n"
+                                "      allowed_venues: [pub]\n"
+                                "      proposal_probability: 0.5\n"
+                                "      invite_distribution: " +
+                                    distribution + "\n");
   ConfigLoader::loadCoordinatedEncounters(path.string());
 }
 
@@ -746,4 +835,298 @@ TEST_CASE("invite distribution parameters are checked when the file loads") {
                     doctest::Contains("p must be in [0, 1]"));
   CHECK_THROWS_WITH(loadWithInviteDistribution("{type: fixed, count: -2}"),
                     doctest::Contains("count must be 0 or more"));
+}
+
+// ===========================================================================
+// Pools: venue choice, eligibility on every establishment, caps
+// ===========================================================================
+
+static FollowConfig venueRule(FollowPool::VenueChoice choice) {
+  FollowConfig fc;
+  fc.enabled = true;
+  fc.name = "rule";
+  fc.pool.venue_types = {"household"};
+  fc.pool.venue_choice = choice;
+  fc.pool_venue_type_ids = {0};
+  return fc;
+}
+
+TEST_CASE("venue choice all feeds the pool from every shared venue") {
+  // Person 0 is in venues 0 and 1; person 2 is in both.
+  WorldState world = buildSharedVenues({30.f, 30.f, 30.f, 30.f, 30.f},
+                                       {{0, 1, 2}, {0, 2, 3}, {4}});
+  FollowConfig fc = venueRule(FollowPool::VenueChoice::All);
+  auto venues = follow_detail::poolVenues(world, fc, 1, world.people[0], 0);
+  CHECK(venues == std::vector<VenueId>{0, 1});
+}
+
+TEST_CASE("venue choice lowest_id feeds the pool from the lowest-id venue") {
+  WorldState world =
+      buildSharedVenues({30.f, 30.f, 30.f, 30.f}, {{0, 1}, {0, 2}, {0, 3}});
+  FollowConfig fc = venueRule(FollowPool::VenueChoice::LowestId);
+  auto venues = follow_detail::poolVenues(world, fc, 1, world.people[0], 0);
+  CHECK(venues == std::vector<VenueId>{0});
+}
+
+TEST_CASE("venue choice random holds its draw and uses every venue overall") {
+  // 200 people, each in venues 0 and 1.
+  std::vector<PersonId> everyone;
+  for (PersonId i = 0; i < 200; ++i) everyone.push_back(i);
+  WorldState world =
+      buildSharedVenues(std::vector<float>(200, 30.f), {everyone, everyone});
+  FollowConfig fc = venueRule(FollowPool::VenueChoice::Random);
+
+  int in_zero = 0, changed_by_day = 0;
+  for (const Person& p : world.people) {
+    auto a = follow_detail::poolVenues(world, fc, 7, p, 0);
+    auto again = follow_detail::poolVenues(world, fc, 7, p, 0);
+    auto other_day = follow_detail::poolVenues(world, fc, 7, p, 3);
+    REQUIRE(a.size() == 1);
+    CHECK(a == again);  // the same key gives the same venue
+    if (a[0] == 0) ++in_zero;
+    if (a != other_day) ++changed_by_day;
+  }
+  CHECK(in_zero > 60);  // both venues get drawn, roughly half each
+  CHECK(in_zero < 140);
+  CHECK(changed_by_day > 0);  // a different key day re-draws
+}
+
+TEST_CASE("a criteria follower takes the lowest eligible host across venues") {
+  // Follower 0 (child) shares venue 0 with adult 5 and venue 1 with adult 2.
+  WorldState world =
+      buildSharedVenues({5.f, 5.f, 40.f, 5.f, 5.f, 40.f}, {{0, 5}, {0, 2}});
+  FollowConfig fc = venueRule(FollowPool::VenueChoice::All);
+  fc.establishment = FollowConfig::Establishment::Criteria;
+  fc.span = FollowConfig::Span::Standing;
+  fc.follower = {ageCrit("<", 18)};
+  fc.host = {ageCrit(">=", 18)};
+  resolveCriteria(world, fc);
+
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
+  REQUIRE(fh.count(0) == 1);
+  CHECK(fh[0] == 2);
+}
+
+TEST_CASE(
+    "a person who is follower and host eligible never follows themselves") {
+  // Everyone may follow and everyone may host: each follows the lowest other.
+  WorldState world = buildSharedVenues({30.f, 30.f, 30.f}, {{0, 1, 2}});
+  FollowConfig fc = venueRule(FollowPool::VenueChoice::All);
+  fc.establishment = FollowConfig::Establishment::Criteria;
+  fc.span = FollowConfig::Span::Standing;
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
+  CHECK(fh[0] == 1);
+  CHECK(fh[1] == 0);
+  CHECK(fh[2] == 0);
+}
+
+TEST_CASE("a stochastic rule binds only people who meet eligibility") {
+  // 2,000 households of two adults and two children. Followers and hosts must
+  // both be adults; a child is never either.
+  std::vector<float> ages;
+  std::vector<std::vector<PersonId>> venues;
+  for (int h = 0; h < 2000; ++h) {
+    PersonId b = static_cast<PersonId>(ages.size());
+    for (float a : {40.f, 38.f, 9.f, 5.f}) ages.push_back(a);
+    venues.push_back({b, b + 1, b + 2, b + 3});
+  }
+  WorldState world = buildSharedVenues(ages, venues);
+  FollowConfig fc = venueRule(FollowPool::VenueChoice::All);
+  fc.establishment = FollowConfig::Establishment::Stochastic;
+  fc.span = FollowConfig::Span::Standing;
+  fc.probability = 0.3;
+  fc.follower = {ageCrit(">=", 18)};
+  fc.host = {ageCrit(">=", 18)};
+  resolveCriteria(world, fc);
+
+  ScheduleConfig sched;
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  enrolFollowHosts(world, fc, sched, 123, true, hosts, fh, 0);
+
+  CHECK(!fh.empty());
+  for (const auto& [f, h] : fh) {
+    CHECK(world.people[world.person_index.at(f)].age >= 18.f);
+    CHECK(world.people[world.person_index.at(h)].age >= 18.f);
+  }
+  for (PersonId h : hosts)
+    CHECK(world.people[world.person_index.at(h)].age >= 18.f);
+}
+
+TEST_CASE("a cap keeps the same followers whatever order people are stored") {
+  // One adult and six children; the rule caps the adult at two followers.
+  auto bind = [](bool reversed) {
+    WorldState world = buildSharedVenues({40.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f},
+                                         {{0, 1, 2, 3, 4, 5, 6}});
+    if (reversed) {
+      std::reverse(world.people.begin(), world.people.end());
+      world.buildIndices();
+    }
+    FollowConfig fc = venueRule(FollowPool::VenueChoice::All);
+    fc.establishment = FollowConfig::Establishment::Criteria;
+    fc.span = FollowConfig::Span::Standing;
+    fc.follower = {ageCrit("<", 18)};
+    fc.host = {ageCrit(">=", 18)};
+    fc.max_followers = 2;
+    resolveCriteria(world, fc);
+    std::unordered_map<PersonId, PersonId> fh;
+    std::unordered_set<PersonId> hosts;
+    rebuildCriteriaBindings(world, fc, 9, fh, hosts);
+    return fh;
+  };
+  auto forward = bind(false);
+  CHECK(forward.size() == 2);  // no more than the cap
+  CHECK(forward == bind(true));
+}
+
+TEST_CASE("a stochastic cap holds per host and survives a reordered world") {
+  auto bind = [](bool reversed) {
+    WorldState world = buildSharedVenues(
+        {40.f, 41.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f}, {{0, 1, 2, 3, 4, 5, 6, 7}});
+    if (reversed) {
+      std::reverse(world.people.begin(), world.people.end());
+      world.buildIndices();
+    }
+    FollowConfig fc = venueRule(FollowPool::VenueChoice::All);
+    fc.establishment = FollowConfig::Establishment::Stochastic;
+    fc.span = FollowConfig::Span::Standing;
+    fc.probability = 0.5;
+    fc.follower = {ageCrit("<", 18)};
+    fc.host = {ageCrit(">=", 18)};
+    fc.max_followers = 2;
+    resolveCriteria(world, fc);
+    ScheduleConfig sched;
+    std::unordered_map<PersonId, PersonId> fh;
+    std::unordered_set<PersonId> hosts;
+    enrolFollowHosts(world, fc, sched, 11, true, hosts, fh, 0);
+    std::unordered_map<PersonId, int> per_host;
+    for (const auto& [f, h] : fh) ++per_host[h];
+    for (const auto& [h, n] : per_host) CHECK(n <= 2);
+    return fh;
+  };
+  CHECK(bind(false) == bind(true));
+}
+
+TEST_CASE("a pool venue that no rank owns is refused, not skipped") {
+  // Person 1 is also assigned to venue 7, which exists in the venue registry
+  // but is listed by no rank.
+  WorldState world = buildHouseholds({{40.f, 3.f}});
+  world.activity_venues.push_back({7, 0});
+  world.activity_meta[world.people[1].activity_meta_start].venue_count = 2;
+  world.setGlobalVenueType(7, 0);
+  FollowConfig fc = criteriaRule(5, 18);
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  CHECK_THROWS_WITH(rebuildCriteriaBindings(world, fc, 1, fh, hosts),
+                    doctest::Contains("no owning rank"));
+}
+
+TEST_CASE("pool settings that cannot mean anything are rejected at resolve") {
+  WorldState world = buildHouseholds({{40.f, 3.f}});
+
+  FollowConfig neither = criteriaRule(5, 18);
+  neither.pool.venue_types.clear();
+  CHECK(resolveError(world, neither).find("exactly one source") !=
+        std::string::npos);
+
+  FollowConfig both = criteriaRule(5, 18);
+  both.pool.network = "friendships";
+  CHECK(resolveError(world, both).find("exactly one source") !=
+        std::string::npos);
+
+  FollowConfig unknown_type = criteriaRule(5, 18);
+  unknown_type.pool.venue_types = {"nowhere"};
+  CHECK(resolveError(world, unknown_type).find("'nowhere'") !=
+        std::string::npos);
+
+  FollowConfig network_choice;
+  network_choice.enabled = true;
+  network_choice.name = "net";
+  network_choice.pool.network = "friendships";
+  network_choice.pool.venue_choice = FollowPool::VenueChoice::All;
+  CHECK(resolveError(world, network_choice).find("venue_choice") !=
+        std::string::npos);
+
+  FollowConfig zero_cap = criteriaRule(5, 18);
+  zero_cap.max_followers = 0;
+  CHECK(resolveError(world, zero_cap).find("at least 1") != std::string::npos);
+}
+
+TEST_CASE("the pool block rejects keys it does not know and bad venue_choice") {
+  CHECK_THROWS(
+      parseCE("  follows:\n"
+              "    - name: a\n"
+              "      pool:\n"
+              "        venue_type: household\n"));  // singular: a typo
+  CHECK_THROWS(
+      parseCE("  follows:\n"
+              "    - name: a\n"
+              "      pool:\n"
+              "        venue_types: [household]\n"
+              "        venue_choice: first\n"));
+  CHECK_THROWS(
+      parseCE("  follows:\n"
+              "    - name: a\n"
+              "      pool_venue_type: household\n"));  // the old key is gone
+  auto cfg = parseCE(
+      "  follows:\n"
+      "    - name: a\n"
+      "      pool:\n"
+      "        venue_types: [household]\n"
+      "        venue_choice: lowest_id\n"
+      "      max_followers: 3\n");
+  CHECK(cfg.follows[0].pool.venue_choice == FollowPool::VenueChoice::LowestId);
+  CHECK(cfg.follows[0].max_followers.value() == 3);
+}
+
+// ===========================================================================
+// Network pools take host_eligibility and a cap
+// ===========================================================================
+
+static FollowConfig networkRule(WorldState& world, double max_follower_age) {
+  FollowConfig fc;
+  fc.enabled = true;
+  fc.name = "net";
+  fc.pool.network = "friends";
+  fc.network_idx = world.getNetworkTypeIndex("friends");
+  fc.establishment = FollowConfig::Establishment::Criteria;
+  fc.span = FollowConfig::Span::Standing;
+  fc.follower = {ageCrit("<", max_follower_age)};
+  fc.host = {ageCrit(">=", 18)};
+  resolveCriteria(world, fc);
+  return fc;
+}
+
+TEST_CASE("a network partner who is not host eligible is never the host") {
+  // Child 0 has a child partner (1) and an adult partner (2).
+  WorldState world = buildHouseholds({{5.f, 8.f, 40.f}});
+  TestWorldFactory::addNetwork(world, "friends", {{0, 1}, {0, 2}});
+  FollowConfig fc = networkRule(world, 10);
+  CHECK(resolveError(world, fc) ==
+        "");  // host_eligibility on a network resolves
+
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  rebuildCriteriaBindings(world, fc, 1, fh, hosts);
+  CHECK(fh[0] == 2);        // the adult, though the child has the lower id
+  CHECK(fh.count(1) == 0);  // child 1's only partner is a child
+}
+
+TEST_CASE("a cap limits a network host to its lowest-hash followers") {
+  WorldState world = buildHouseholds({{40.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f}});
+  TestWorldFactory::addNetwork(
+      world, "friends", {{0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}, {0, 6}});
+  FollowConfig fc = networkRule(world, 10);
+  fc.max_followers = 2;
+  CHECK(resolveError(world, fc) == "");
+
+  std::unordered_map<PersonId, PersonId> fh;
+  std::unordered_set<PersonId> hosts;
+  rebuildCriteriaBindings(world, fc, 5, fh, hosts);
+  CHECK(fh.size() == 2);
+  for (const auto& [f, h] : fh) CHECK(h == 0);
 }

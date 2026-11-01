@@ -76,7 +76,7 @@ coordinated_encounters:
 
     # Follow rules. A follower is placed wherever its host is, slot by slot,
     # while they are bound. They work with or without the encounters above.
-    # Each rule picks a pool (set exactly one of pool_venue_type or network),
+    # Each rule picks a pool (a pool: block holding exactly one of venue_types or network),
     # how a binding forms (establishment) and how long it lasts (span).
     #
     # A person can be a host under any number of rules but a follower under at
@@ -87,7 +87,8 @@ coordinated_encounters:
         # costs nothing in a checkpoint.
         - name: kids_with_a_parent
           enabled: true
-          pool_venue_type: household
+          pool:
+              venue_types: [household]
           establishment: criteria
           span: standing
           eligibility:
@@ -110,7 +111,8 @@ coordinated_encounters:
         # host gets back, so it needs the hop_on_activity in schedules.yaml.
         - name: partner_joins_trip
           enabled: true
-          pool_venue_type: household
+          pool:
+              venue_types: [household]
           establishment: stochastic
           probability: 0.2
           span: hop
@@ -127,7 +129,8 @@ coordinated_encounters:
         # an encounter name from this file, for the logs.
         - name: friends_on_trips
           enabled: true
-          network: friendships
+          pool:
+              network: friendships
           establishment: stochastic
           probability: 0.1
           span: hop

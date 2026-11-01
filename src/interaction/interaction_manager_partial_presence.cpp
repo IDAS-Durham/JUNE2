@@ -406,7 +406,12 @@ int InteractionManager::processPartialPresenceLines(
                                std::to_string(vid) +
                                " but the venue is not in its world");
 
-    const auto& riders = runtime_group_allocator_->ridersByVenue().at(vid);
+    // A line can end a slot with nobody aboard: its riders may all have been
+    // placed elsewhere (followers who left their own journey, say).
+    const auto& by_venue = runtime_group_allocator_->ridersByVenue();
+    auto riders_it = by_venue.find(vid);
+    if (riders_it == by_venue.end()) continue;
+    const auto& riders = riders_it->second;
     members.clear();
     members.reserve(riders.size());
     for (const auto& r : riders) {

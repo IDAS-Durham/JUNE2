@@ -18,31 +18,98 @@
 namespace june {
 namespace follow_detail {
 
-// The host's venue of the given pool type, or -1 if it has none.
-VenueId findPoolVenue(const WorldState& world, const Person& host,
-                      int pool_venue_type_id);
+// The venues that feed a person's pool, after venue_choice. Sorted by id.
+// key_day holds a random choice: 0 for a standing rule, the trip's start day
+// for a hop rule.
+std::vector<VenueId> poolVenues(const WorldState& world, const FollowConfig& fc,
+                                uint64_t seed, const Person& person,
+                                int key_day);
 
-// The host's candidate pool: co-members of its venue of the configured type, or
-// its partners in the configured network. Returns global PersonIds.
-std::vector<PersonId> gatherPool(const WorldState& world,
-                                 const FollowConfig& fc, const Person& host);
+// Where a host is this slot: its resolved venue and subset, and the activity
+// that put it there. The venue type travels with the venue because a follower's
+// rank may not hold the host's venue in its own halo and so cannot type it.
+struct HostSlot {
+  VenueId venue = -1;
+  SubsetIndex subset = -1;
+  int16_t activity = -1;
+  uint8_t venue_type = kUnknownVenueTypeId;
+};
+
+// One rule's view of this slot: which hosts are placed somewhere, and where,
+// read before any follower moves.
+struct RuleSlot {
+  std::unordered_map<PersonId, HostSlot> host_loc;
+  std::unordered_set<PersonId> active_now;
+};
+
+// One live bond this slot: follower goes where host goes, under rule `rule`.
+struct FollowEdge {
+  int rule;
+  PersonId follower, host;
+};
+
+// Settle chains. Edges are taken in a fixed order (rule, then host id, then
+// follower id); one that would make a person their own root is refused and
+// appended to `refused`. Returns follower -> host for the accepted edges, which
+// form no loop, so followRoot always ends.
+std::unordered_map<PersonId, PersonId> flattenFollowEdges(
+    std::vector<FollowEdge> edges, std::vector<FollowEdge>& refused);
+
+// The person at the end of a chain of follows: p itself when p follows nobody.
+inline PersonId followRoot(const std::unordered_map<PersonId, PersonId>& parent,
+                           PersonId p) {
+  for (auto it = parent.find(p); it != parent.end(); it = parent.find(p))
+    p = it->second;
+  return p;
+}
+
+// The highest person id in the world, and a bitwise-or of a per-person byte
+// table across ranks (both are no-ops when exchange is false).
+PersonId maxPersonIdAcrossRanks(const WorldState& world, bool exchange);
+void orAcrossRanks(std::vector<uint8_t>& bits, bool exchange);
+
+// Who may follow and who may host under one rule, for every person in the
+// world, identical on every rank. See buildFollowPeople.
+struct FollowPeople {
+  static constexpr uint8_t kCanFollow = 1;
+  static constexpr uint8_t kCanHost = 2;
+  std::vector<uint8_t> bits;  // indexed by PersonId
+  bool canFollow(PersonId p) const { return has(p, kCanFollow); }
+  bool canHost(PersonId p) const { return has(p, kCanHost); }
+
+ private:
+  bool has(PersonId p, uint8_t bit) const {
+    return p >= 0 && static_cast<size_t>(p) < bits.size() &&
+           (bits[static_cast<size_t>(p)] & bit);
+  }
+};
+
+// Fill the table from the people this rank owns, then merge it across ranks
+// when exchange is set. A person may follow if alive, eligible, barred by no
+// earlier rule (follower_excl) and, when free_followers_only, not away on a
+// trip of their own. A person may host if alive, host-eligible; a host may
+// itself follow.
+FollowPeople buildFollowPeople(
+    WorldState& world, const FollowConfig& fc, bool free_followers_only,
+    const std::unordered_set<PersonId>& follower_excl, bool exchange);
+
+// Every rank's packed int records, or the local ones when exchange is false.
+std::vector<int32_t> gatherAllRanks(const std::vector<int32_t>& local,
+                                    bool exchange);
 
 // A host's deterministic per-(seed, host, day) probability roll.
 bool hostRollsFollow(const FollowConfig& fc, uint64_t seed, PersonId host,
                      int hop_start_day);
 
 // Rebuild the criteria bindings from scratch: every eligible person follows the
-// lowest-id host in its pool. follower_excl / host_excl are the people already
-// bound by an earlier rule (a follower is barred if in either; a host only if
-// in host_excl).
+// lowest-id eligible host in its pool, as the table says.
 void rebuildCriteriaBindings(
-    WorldState& world, const FollowConfig& fc,
+    WorldState& world, const FollowConfig& fc, uint64_t seed,
+    const FollowPeople& people,
     std::unordered_map<PersonId, PersonId>& follower_host,
     std::unordered_set<PersonId>& active_hosts,
     std::vector<std::pair<PersonId, PersonId>>* remote_hosts,
-    std::unordered_map<PersonId, PersonId>* new_follows,
-    const std::unordered_set<PersonId>& follower_excl,
-    const std::unordered_set<PersonId>& host_excl);
+    std::unordered_map<PersonId, PersonId>* new_follows, bool exchange);
 
 // Does an exception stop this follower from being mirrored onto its host for
 // the slot? Any of the three firing means the follower keeps its own schedule:
@@ -72,15 +139,14 @@ bool policySuppressesMirror(PolicyManager* policy_manager,
                             double current_time);
 
 // Stochastic enrolment: each host rolls once and gathers followers from its
-// pool. Returns {hosts that gained followers, total local followers enrolled}.
-std::pair<int, int> enrolFollowHosts(
+// pool and binds the followers this rank owns.
+void enrolFollowHosts(
     WorldState& world, const FollowConfig& fc, const ScheduleConfig& sched,
-    uint64_t seed, bool standing, std::unordered_set<PersonId>& active_hosts,
+    uint64_t seed, bool standing, const FollowPeople& people,
+    std::unordered_set<PersonId>& active_hosts,
     std::unordered_map<PersonId, PersonId>& follower_host, int current_day,
     std::vector<std::pair<PersonId, PersonId>>* remote_invites,
-    std::unordered_map<PersonId, PersonId>* new_follows,
-    const std::unordered_set<PersonId>& follower_excl,
-    const std::unordered_set<PersonId>& host_excl);
+    std::unordered_map<PersonId, PersonId>* new_follows, bool exchange);
 
 }  // namespace follow_detail
 }  // namespace june

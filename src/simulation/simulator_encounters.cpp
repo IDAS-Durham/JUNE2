@@ -6,6 +6,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -291,12 +292,7 @@ namespace {
 // resolved activity, used to decide the follower-side activity exception.
 // venue_type travels with the venue because a follower's rank may not hold the
 // host's venue in its own halo and so cannot type it locally.
-struct HostSlot {
-  VenueId venue = -1;
-  SubsetIndex subset = -1;
-  int16_t activity = -1;
-  uint8_t venue_type = kUnknownVenueTypeId;
-};
+using follow_detail::HostSlot;
 
 }  // namespace
 
@@ -305,16 +301,67 @@ struct HostSlot {
 // are otherwise internal to this translation unit.
 namespace follow_detail {
 
-// Find the host's venue of the configured pool type, or -1 if it has none.
-VenueId findPoolVenue(const WorldState& world, const Person& host,
-                      int pool_venue_type_id) {
-  for (const auto& meta : world.getActivityMetas(host)) {
+template <typename T>
+void sortUnique(std::vector<T>& v) {
+  std::sort(v.begin(), v.end());
+  v.erase(std::unique(v.begin(), v.end()), v.end());
+}
+
+// The venues that feed this person's pool: the ones of the rule's types the
+// person is assigned to, narrowed by venue_choice. Sorted by id with no
+// duplicates, so the result does not depend on how the world file orders a
+// person's activities. A random choice is one draw per (seed, rule, person,
+// key_day): the caller passes day 0 for a standing rule so the venue is held
+// for the run, and the trip's start day for a hop rule so it is held for the
+// trip.
+std::vector<VenueId> poolVenues(const WorldState& world, const FollowConfig& fc,
+                                uint64_t seed, const Person& person,
+                                int key_day) {
+  std::vector<VenueId> venues;
+  for (const auto& meta : world.getActivityMetas(person)) {
     for (const auto& vs : world.getActivityVenues(meta)) {
-      const Venue* v = world.getVenue(vs.first);
-      if (v && v->type_id == pool_venue_type_id) return vs.first;
+      const uint8_t type = world.getVenueTypeId(vs.first);
+      if (std::find(fc.pool_venue_type_ids.begin(),
+                    fc.pool_venue_type_ids.end(),
+                    type) != fc.pool_venue_type_ids.end())
+        venues.push_back(vs.first);
     }
   }
-  return -1;
+  sortUnique(venues);
+  switch (fc.pool.venue_choice.value_or(FollowPool::VenueChoice::All)) {
+    case FollowPool::VenueChoice::All:
+      break;
+    case FollowPool::VenueChoice::LowestId:
+      if (venues.size() > 1) venues.resize(1);
+      break;
+    case FollowPool::VenueChoice::Random:
+      if (venues.size() > 1) {
+        SplitMix64 rng(mix_seed(seed, hash_name(fc.name),
+                                static_cast<uint64_t>(person.id),
+                                static_cast<uint64_t>(key_day)));
+        venues = {venues[bounded(rng, venues.size())]};
+      }
+      break;
+  }
+  return venues;
+}
+
+// Lowest hash first, ties by id, so the people a cap keeps are fixed by the
+// seed and the host alone, however the world is partitioned.
+void keepLowestHashes(const FollowConfig& fc, uint64_t seed, PersonId host,
+                      std::vector<PersonId>& followers) {
+  if (!fc.max_followers ||
+      followers.size() <= static_cast<size_t>(*fc.max_followers))
+    return;
+  const uint64_t tag = hash_name("follow_cap:" + fc.name);
+  auto key = [&](PersonId m) {
+    return std::make_pair(mix_seed(seed, tag, static_cast<uint64_t>(host),
+                                   static_cast<uint64_t>(m)),
+                          m);
+  };
+  std::sort(followers.begin(), followers.end(),
+            [&](PersonId x, PersonId y) { return key(x) < key(y); });
+  followers.resize(static_cast<size_t>(*fc.max_followers));
 }
 
 // Does an exception keep this follower on its own schedule for the slot?
@@ -377,82 +424,202 @@ bool policySuppressesMirror(PolicyManager* policy_manager,
       SlotVenueType::known(host_venue_type, host_venue), current_time);
 }
 
-// The host's candidate pool: co-members of its venue of the configured type, or
-// its partners in the configured network. Both return global PersonIds; callers
-// enrol only those local to this rank (remote network partners are routed
-// separately).
-std::vector<PersonId> gatherPool(const WorldState& world,
-                                 const FollowConfig& fc, const Person& host) {
-  std::vector<PersonId> pool;
-  if (fc.usesNetwork()) {
-    for (PersonId m : world.getNetworkPartners(host, fc.network_idx))
-      pool.push_back(m);
-    return pool;
+// Gather a packed int record list from every rank, or return the local list
+// when the world is not split across ranks. The order of the result depends on
+// the rank count, so every caller groups and sorts what it gets back.
+std::vector<int32_t> gatherAllRanks(const std::vector<int32_t>& local,
+                                    bool exchange) {
+#ifdef USE_MPI
+  if (exchange) return mpi_utils::allgathervInt32(local);
+#endif
+  (void)exchange;
+  return local;
+}
+
+// Gather (key, value) pairs from every rank and group them by key, each group
+// sorted with no repeats, so the result does not depend on the rank count.
+std::map<int32_t, std::vector<int32_t>> gatherGrouped(
+    const std::vector<int32_t>& local_pairs, bool exchange) {
+  std::map<int32_t, std::vector<int32_t>> grouped;
+  const std::vector<int32_t> all = gatherAllRanks(local_pairs, exchange);
+  for (size_t i = 0; i + 2 <= all.size(); i += 2)
+    grouped[all[i]].push_back(all[i + 1]);
+  for (auto& [key, values] : grouped) sortUnique(values);
+  return grouped;
+}
+
+PersonId maxPersonIdAcrossRanks(const WorldState& world, bool exchange) {
+  PersonId max_id = -1;
+  for (const Person& p : world.people) max_id = std::max(max_id, p.id);
+#ifdef USE_MPI
+  if (exchange)
+    MPI_Allreduce(MPI_IN_PLACE, &max_id, 1, MPI_INT32_T, MPI_MAX,
+                  MPI_COMM_WORLD);
+#endif
+  (void)exchange;
+  return max_id;
+}
+
+void orAcrossRanks(std::vector<uint8_t>& bits, bool exchange) {
+#ifdef USE_MPI
+  if (exchange)
+    MPI_Allreduce(MPI_IN_PLACE, bits.data(), static_cast<int>(bits.size()),
+                  MPI_UINT8_T, MPI_BOR, MPI_COMM_WORLD);
+#endif
+  (void)bits;
+  (void)exchange;
+}
+
+std::unordered_map<PersonId, PersonId> flattenFollowEdges(
+    std::vector<FollowEdge> edges, std::vector<FollowEdge>& refused) {
+  std::sort(edges.begin(), edges.end(),
+            [](const FollowEdge& a, const FollowEdge& b) {
+              return std::tie(a.rule, a.host, a.follower) <
+                     std::tie(b.rule, b.host, b.follower);
+            });
+  std::unordered_map<PersonId, PersonId> parent;
+  for (const FollowEdge& e : edges) {
+    if (followRoot(parent, e.host) == e.follower) {
+      refused.push_back(e);
+      continue;
+    }
+    parent[e.follower] = e.host;
   }
-  VenueId pool_venue = findPoolVenue(world, host, fc.pool_venue_type_id);
-  if (pool_venue < 0) return pool;
-  for (const auto& sub : world.getSubsets(*world.getVenue(pool_venue)))
-    for (PersonId m : world.getSubsetMembers(sub)) pool.push_back(m);
-  return pool;
+  return parent;
+}
+
+// Who may follow and who may host under one rule, for every person in the world
+// on every rank. A rank sees the full record only of the people it owns, so
+// each rank fills in its own people and one bitwise-or reduction gives everyone
+// the whole table. Eligibility, being alive, being free to follow (not away on
+// a trip of one's own, for a hop rule) and being barred by an earlier rule are
+// all folded in, so what the table says is the same at any rank count.
+FollowPeople buildFollowPeople(
+    WorldState& world, const FollowConfig& fc, bool free_followers_only,
+    const std::unordered_set<PersonId>& follower_excl, bool exchange) {
+  const PersonId max_id = maxPersonIdAcrossRanks(world, exchange);
+  FollowPeople out;
+  out.bits.assign(static_cast<size_t>(max_id + 1), 0);
+  for (const Person& p : world.people) {
+    if (p.is_dead) continue;
+    uint8_t b = 0;
+    if (!follower_excl.count(p.id) &&
+        (!free_followers_only || !p.schedule_hop.isActive()) &&
+        filtering::matchesCriteria(p, &world, fc.follower))
+      b |= FollowPeople::kCanFollow;
+    if (filtering::matchesCriteria(p, &world, fc.host))
+      b |= FollowPeople::kCanHost;
+    out.bits[static_cast<size_t>(p.id)] = b;
+  }
+  orAcrossRanks(out.bits, exchange);
+  return out;
 }
 
 // Rebuild the criteria bindings from scratch. Every eligible local person
-// becomes a follower of the lowest-id host among its pool. There is no
-// randomness, so the result is the same at any rank count and can be thrown
-// away and recomputed each day rather than saved.
+// becomes a follower of the lowest-id eligible host in its pool. There is no
+// randomness in the choice of host, so the result is the same at any rank count
+// and can be thrown away and recomputed each day rather than saved.
 //
-// For a venue pool the members are co-resident, so the host is the lowest-id
-// co-member that is alive and host-eligible, all decided locally with no
-// messaging. For a network pool a partner can live on another rank, whose age
-// and liveness are not knowable here, so the host is simply the lowest partner
-// id (host eligibility is rejected for network pools at config time). If that
-// host is remote it is collected into remote_hosts for the caller to route to
-// its owning rank; if it is dead its rank just leaves it out of the per-slot
-// location broadcast, and the follower keeps its own schedule.
-// follower_excl / host_excl carry the people already claimed by earlier rules:
-// a candidate follower in either set is skipped (it cannot follow twice nor
-// host), a candidate host in host_excl is skipped (a follower cannot host). For
-// a network pool host_excl is the global follower set, so a remote partner that
-// follows under an earlier rule is excluded at any rank count.
+// For a venue pool, the rank that owns a venue has its full member list, so it
+// finds the venue's lowest two eligible hosts, once per venue, from the shared
+// table. The second is there because a person who is both a follower and
+// host-eligible must not pick themselves. Those answers are shared, and a
+// follower in several pool venues takes the lowest across them. The cost grows
+// with the number of people and not with the square of a venue's size. For a
+// network pool the follower's rank lists its partners itself, and the table
+// says which of them may host, wherever they live. A host on another rank is
+// collected into remote_hosts for the caller to route to its owning rank.
+// A host with more followers than max_followers keeps the lowest hashes; the
+// rest stay unbound under this rule. The cap looks at every follower of a host,
+// so the picks are shared before it is applied.
 void rebuildCriteriaBindings(
-    WorldState& world, const FollowConfig& fc,
+    WorldState& world, const FollowConfig& fc, uint64_t seed,
+    const FollowPeople& people,
     std::unordered_map<PersonId, PersonId>& follower_host,
     std::unordered_set<PersonId>& active_hosts,
     std::vector<std::pair<PersonId, PersonId>>* remote_hosts,
-    std::unordered_map<PersonId, PersonId>* new_follows,
-    const std::unordered_set<PersonId>& follower_excl,
-    const std::unordered_set<PersonId>& host_excl) {
+    std::unordered_map<PersonId, PersonId>* new_follows, bool exchange) {
   follower_host.clear();
   active_hosts.clear();
   const bool net = fc.usesNetwork();
+
+  struct VenueHosts {
+    PersonId lowest = -1, second = -1;
+  };
+  std::unordered_map<VenueId, VenueHosts> venue_hosts;
+  if (!net) {
+    std::vector<int32_t> owned;
+    for (const Venue& v : world.venues) {
+      if (std::find(fc.pool_venue_type_ids.begin(),
+                    fc.pool_venue_type_ids.end(),
+                    v.type_id) == fc.pool_venue_type_ids.end())
+        continue;
+      VenueHosts vh;
+      for (const auto& sub : world.getSubsets(v)) {
+        for (PersonId m : world.getSubsetMembers(sub)) {
+          if (!people.canHost(m)) continue;
+          if (vh.lowest < 0 || m < vh.lowest) {
+            vh.second = vh.lowest;
+            vh.lowest = m;
+          } else if (vh.second < 0 || m < vh.second) {
+            vh.second = m;
+          }
+        }
+      }
+      owned.insert(owned.end(), {v.id, vh.lowest, vh.second});
+    }
+    const std::vector<int32_t> all = gatherAllRanks(owned, exchange);
+    for (size_t i = 0; i + 3 <= all.size(); i += 3)
+      venue_hosts[all[i]] = {all[i + 1], all[i + 2]};
+  }
+
+  std::vector<std::pair<PersonId, PersonId>> picks;  // (follower, host)
   for (const Person& f : world.people) {
-    if (f.is_dead || !filtering::matchesCriteria(f, &world, fc.follower))
-      continue;
-    if (follower_excl.count(f.id)) continue;  // claimed by an earlier rule
+    if (!people.canFollow(f.id)) continue;
     PersonId host = -1;
-    for (PersonId m : gatherPool(world, fc, f)) {
-      if (m == f.id || (host >= 0 && m >= host)) continue;
-      if (host_excl.count(m)) continue;  // a follower elsewhere cannot host
-      if (net) {
-        host = m;  // lowest partner id; eligibility/liveness handled elsewhere
-      } else {
-        auto mi = world.person_index.find(m);
-        if (mi == world.person_index.end()) continue;
-        const Person& mp = world.people[mi->second];
-        if (mp.is_dead || !filtering::matchesCriteria(mp, &world, fc.host))
-          continue;
-        host = m;
+    if (net) {
+      for (PersonId m : world.getNetworkPartners(f, fc.network_idx)) {
+        if (m == f.id || (host >= 0 && m >= host)) continue;
+        if (people.canHost(m)) host = m;
+      }
+    } else {
+      for (VenueId v : poolVenues(world, fc, seed, f, 0)) {
+        auto it = venue_hosts.find(v);
+        if (it == venue_hosts.end())
+          throw std::runtime_error("follow rule '" + fc.name +
+                                   "': pool venue " + std::to_string(v) +
+                                   " has no owning rank to list its members");
+        const VenueHosts& vh = it->second;
+        PersonId cand = vh.lowest != f.id ? vh.lowest : vh.second;
+        if (cand >= 0 && (host < 0 || cand < host)) host = cand;
       }
     }
-    if (host < 0) continue;
-    follower_host[f.id] = host;
-    if (new_follows) (*new_follows)[f.id] = host;
+    if (host >= 0) picks.push_back({f.id, host});
+  }
+
+  if (fc.max_followers) {
+    std::vector<int32_t> flat;
+    for (const auto& [f, h] : picks) flat.insert(flat.end(), {h, f});
+    std::unordered_set<PersonId> kept;
+    for (auto& [h, followers] : gatherGrouped(flat, exchange)) {
+      keepLowestHashes(fc, seed, h, followers);
+      kept.insert(followers.begin(), followers.end());
+    }
+    picks.erase(
+        std::remove_if(picks.begin(), picks.end(),
+                       [&](const auto& p) { return !kept.count(p.first); }),
+        picks.end());
+  }
+
+  for (const auto& [f, host] : picks) {
+    follower_host[f] = host;
+    if (new_follows) (*new_follows)[f] = host;
     // Activate the host so its location is available for mirroring. A local
     // host is added here; a remote one is routed to its owning rank.
     if (world.person_index.count(host))
       active_hosts.insert(host);
     else if (remote_hosts)
-      remote_hosts->push_back({f.id, host});
+      remote_hosts->push_back({f, host});
   }
 }
 
@@ -472,29 +639,46 @@ bool hostRollsFollow(const FollowConfig& fc, uint64_t seed, PersonId host,
 // resumed from a checkpoint mid-way re-rolls the same way. For a standing span
 // there is no trip: any alive host rolls once, keyed on (seed, host) with a
 // fixed day of 0, so re-considering it each slot is idempotent and the bond
-// simply persists once formed. A host already tried, someone already following
-// (or away on their own trip, or dead) is never enrolled. Only pool members
-// local to this rank are enrolled here; remote network partners are collected
-// into remote_invites for the caller to route.
-// Returns {hosts that gained followers, total local followers enrolled}.
-// follower_excl / host_excl carry the people already claimed by earlier rules
-// (see rebuildCriteriaBindings). A host in host_excl is skipped (a follower
-// elsewhere cannot host); a candidate follower in follower_excl is skipped. A
-// remote follower is checked again on its own rank in applyFollowInvites.
-std::pair<int, int> enrolFollowHosts(
+// simply persists once formed. A host already tried, someone already following,
+// or a host who does not meet host_eligibility, never rolls. A candidate is
+// enrolled only if the table says it may follow: eligible, alive, not away on a
+// trip of its own, and not barred by an earlier rule.
+//
+// A network pool is listed by the host's rank, which also decides the capped
+// set, since the table covers partners on any rank; each chosen partner on
+// another rank is collected into remote_invites for the caller to route. A
+// venue pool is listed by the rank that owns the venue: each host that passes
+// its roll sends its pool venues out, the owners list the eligible members, and
+// every rank then groups the candidates by host, applies the cap and binds the
+// followers it owns. Nothing in that depends on the rank count.
+// A person picked by several hosts follows the smallest host id, so the outcome
+// does not depend on the order hosts are visited.
+void enrolFollowHosts(
     WorldState& world, const FollowConfig& fc, const ScheduleConfig& sched,
-    uint64_t seed, bool standing, std::unordered_set<PersonId>& active_hosts,
+    uint64_t seed, bool standing, const FollowPeople& people,
+    std::unordered_set<PersonId>& active_hosts,
     std::unordered_map<PersonId, PersonId>& follower_host, int current_day,
     std::vector<std::pair<PersonId, PersonId>>* remote_invites,
-    std::unordered_map<PersonId, PersonId>* new_follows,
-    const std::unordered_set<PersonId>& follower_excl,
-    const std::unordered_set<PersonId>& host_excl) {
-  int hosts = 0, followers = 0;
+    std::unordered_map<PersonId, PersonId>* new_follows, bool exchange) {
+  const bool net = fc.usesNetwork();
+
+  // Bind a local follower to a host, keeping the smaller host id when it is
+  // already bound. Returns false when the follower is not on this rank.
+  auto bindLocal = [&](PersonId host_id, PersonId m) {
+    if (!world.person_index.count(m)) return false;
+    auto existing = follower_host.find(m);
+    if (existing != follower_host.end() && existing->second <= host_id)
+      return true;
+    follower_host[m] = host_id;
+    if (new_follows) (*new_follows)[m] = host_id;
+    return true;
+  };
+  std::vector<int32_t> requests;  // venue pools: host, venue count, venues
   for (Person& host : world.people) {
     if (host.is_dead) continue;
     if (!standing && !host.schedule_hop.isActive()) continue;
-    if (active_hosts.count(host.id) || follower_host.count(host.id)) continue;
-    if (host_excl.count(host.id)) continue;  // a follower elsewhere cannot host
+    if (active_hosts.count(host.id)) continue;
+    if (!people.canHost(host.id)) continue;
     active_hosts.insert(host.id);
 
     int roll_day = 0;
@@ -511,42 +695,57 @@ std::pair<int, int> enrolFollowHosts(
     }
     if (!hostRollsFollow(fc, seed, host.id, roll_day)) continue;
 
-    int enrolled = 0;
-    for (PersonId m : gatherPool(world, fc, host)) {
-      if (m == host.id) continue;
-      if (follower_excl.count(m)) continue;  // claimed by an earlier rule
-      // A committed host never also follows someone. On a hop span that falls
-      // out of the on-hop check below (a host is on its trip). A standing host
-      // has no such signal, so test its roll directly: it is a pure function of
-      // the person, so every rank agrees on who is a host and the host/follower
-      // split does not depend on the order people are visited.
-      if (standing && hostRollsFollow(fc, seed, m, 0)) continue;
-      // A follower eligible for several hosts follows the smallest host_id.
-      // This tiebreak is order-independent, so the choice is the same however
-      // the world is partitioned across ranks.
-      auto existing = follower_host.find(m);
-      if (existing != follower_host.end() && existing->second <= host.id)
-        continue;
-      auto mi = world.person_index.find(m);
-      if (mi == world.person_index.end()) {
-        // Not local. For a network pool this partner lives in another domain;
-        // route an invite to their rank. Venue pools are co-resident, so a
-        // non-local member cannot occur there.
-        if (remote_invites) remote_invites->push_back({m, host.id});
-        continue;
-      }
-      const Person& mp = world.people[mi->second];
-      if (mp.is_dead || mp.schedule_hop.isActive()) continue;
-      follower_host[m] = host.id;
-      if (new_follows) (*new_follows)[m] = host.id;
-      ++enrolled;
+    if (!net) {
+      std::vector<VenueId> venues = poolVenues(world, fc, seed, host, roll_day);
+      if (venues.empty()) continue;
+      requests.push_back(host.id);
+      requests.push_back(static_cast<int32_t>(venues.size()));
+      requests.insert(requests.end(), venues.begin(), venues.end());
+      continue;
     }
-    if (enrolled > 0) {
-      ++hosts;
-      followers += enrolled;
+
+    std::vector<PersonId> picked;
+    for (PersonId m : world.getNetworkPartners(host, fc.network_idx)) {
+      if (m == host.id || !people.canFollow(m)) continue;
+      picked.push_back(m);
+    }
+    sortUnique(picked);
+    keepLowestHashes(fc, seed, host.id, picked);
+    for (PersonId m : picked) {
+      if (bindLocal(host.id, m)) continue;
+      if (!remote_invites)
+        throw std::runtime_error("follow rule '" + fc.name + "': partner " +
+                                 std::to_string(m) +
+                                 " lives on another rank and no route to it "
+                                 "was given");
+      remote_invites->push_back({m, host.id});
     }
   }
-  return {hosts, followers};
+
+  if (!net) {
+    const std::vector<int32_t> all_requests =
+        gatherAllRanks(requests, exchange);
+    std::vector<int32_t> candidates;  // host, member
+    for (size_t i = 0; i + 2 <= all_requests.size();) {
+      const PersonId host_id = all_requests[i];
+      const size_t n = static_cast<size_t>(all_requests[i + 1]);
+      for (size_t k = 0; k < n; ++k) {
+        const Venue* venue = world.getVenue(all_requests[i + 2 + k]);
+        if (!venue) continue;  // another rank owns it and lists it
+        for (const auto& sub : world.getSubsets(*venue)) {
+          for (PersonId m : world.getSubsetMembers(sub)) {
+            if (m == host_id || !people.canFollow(m)) continue;
+            candidates.insert(candidates.end(), {host_id, m});
+          }
+        }
+      }
+      i += 2 + n;
+    }
+    for (auto& [host_id, pool] : gatherGrouped(candidates, exchange)) {
+      keepLowestHashes(fc, seed, host_id, pool);
+      for (PersonId m : pool) bindLocal(host_id, m);
+    }
+  }
 }
 
 }  // namespace follow_detail
@@ -554,21 +753,14 @@ std::pair<int, int> enrolFollowHosts(
 namespace {
 
 #ifdef USE_MPI
-// Gather the union of a per-rank id set so every rank sees the same global set.
-std::unordered_set<PersonId> allgathervPersonSet(
-    const std::unordered_set<PersonId>& local_set) {
-  std::vector<int32_t> local(local_set.begin(), local_set.end());
-  std::vector<int32_t> all = mpi_utils::allgathervInt32(local);
-  return std::unordered_set<PersonId>(all.begin(), all.end());
-}
-
 // Route network follow invites across ranks: apply each (follower, host) pair
 // whose follower is local, keeping the smallest host_id (order-independent, so
 // identical at any rank count). A follower already claimed by an earlier rule
 // on its own rank is dropped here, so exclusivity holds at any rank count.
 void applyFollowInvites(
     const std::vector<std::pair<PersonId, PersonId>>& invites,
-    WorldState& world, std::unordered_map<PersonId, PersonId>& follower_host,
+    const FollowConfig& fc, WorldState& world,
+    std::unordered_map<PersonId, PersonId>& follower_host,
     std::unordered_map<PersonId, PersonId>* new_follows,
     const std::unordered_set<PersonId>& follower_excl) {
   std::vector<int32_t> local;
@@ -587,6 +779,7 @@ void applyFollowInvites(
     if (mi == world.person_index.end()) continue;  // not local to this rank
     const Person& fp = world.people[mi->second];
     if (fp.is_dead || fp.schedule_hop.isActive()) continue;
+    if (!filtering::matchesCriteria(fp, &world, fc.follower)) continue;
     follower_host[f] = h;
     if (new_follows) (*new_follows)[f] = h;
   }
@@ -671,83 +864,112 @@ void Simulator::injectFollowsIntoSlot(int time_slot_index) {
   if (follow_state_.size() != rules.size()) follow_state_.resize(rules.size());
 
   const int day = static_cast<int>(current_simulation_time_);
+  bool exchange = false;
+#ifdef USE_MPI
+  exchange = domain_mgr_ != nullptr && domain_mgr_->getNumRanks() > 1;
+#endif
 
-  // The rules run in config order, carrying two sets forward: everyone an
-  // earlier rule has bound as a host, and everyone it has bound as a follower.
-  // A later rule yields to them, so a follower belongs to the first rule that
-  // binds it, a host may recur across rules, and no one is ever both. Config
-  // order is fixed on every rank, so the whole resolution is the same at any
-  // rank count.
-  std::unordered_set<PersonId> committed_hosts, committed_followers;
-  std::vector<std::pair<PersonId, PersonId>> cotravel;
+  // The rules run in config order, carrying forward everyone an earlier rule
+  // has bound as a follower. A later rule yields to them, so a follower belongs
+  // to the first rule that binds it, and a host may recur across rules. Config
+  // order is fixed on every rank, so the resolution is the same at any rank
+  // count.
+  std::unordered_set<PersonId> committed_followers;
+  std::vector<follow_detail::RuleSlot> slots(rules.size());
   for (size_t ri = 0; ri < rules.size(); ++ri) {
-    const FollowConfig& fc = rules[ri];
-    if (!fc.enabled) continue;
-    processFollowRule(time_slot_index, day, static_cast<uint8_t>(ri), fc,
-                      follow_state_[ri], committed_hosts, committed_followers,
-                      cotravel);
+    if (!rules[ri].enabled) continue;
+    processFollowRule(time_slot_index, day, static_cast<uint8_t>(ri), rules[ri],
+                      follow_state_[ri], slots[ri], committed_followers);
+  }
+
+  // A host may itself follow, so some followers' hosts are followers too. Find
+  // the live bonds whose follower is also someone's host (everyone else cannot
+  // be part of a loop), share them, and settle them: a loop is cut by refusing
+  // its last bond in a fixed order, so the cut is the same at any rank count.
+  std::vector<follow_detail::FollowEdge> edges;
+  for (size_t ri = 0; ri < rules.size(); ++ri)
+    for (const auto& [f, h] : follow_state_[ri].follower_host)
+      if (slots[ri].active_now.count(h))
+        edges.push_back({static_cast<int>(ri), f, h});
+  std::vector<uint8_t> is_host(
+      static_cast<size_t>(
+          follow_detail::maxPersonIdAcrossRanks(world_, exchange) + 1),
+      0);
+  for (const auto& e : edges) is_host[static_cast<size_t>(e.host)] = 1;
+  follow_detail::orAcrossRanks(is_host, exchange);
+  std::vector<int32_t> flat;
+  for (const auto& e : edges)
+    if (is_host[static_cast<size_t>(e.follower)])
+      flat.insert(flat.end(), {e.rule, e.follower, e.host});
+  std::vector<follow_detail::FollowEdge> chain;
+  const std::vector<int32_t> all =
+      follow_detail::gatherAllRanks(flat, exchange);
+  for (size_t i = 0; i + 3 <= all.size(); i += 3)
+    chain.push_back({all[i], all[i + 1], all[i + 2]});
+
+  std::unordered_map<PersonId, PersonId> parent;
+  std::unordered_map<PersonId, follow_detail::HostSlot> all_loc;
+  if (!chain.empty()) {
+    std::vector<follow_detail::FollowEdge> refused;
+    parent = follow_detail::flattenFollowEdges(chain, refused);
+    for (const auto& r : refused)
+      follow_state_[static_cast<size_t>(r.rule)].follower_host.erase(
+          r.follower);
+    if (!refused.empty() && getRank() == 0)
+      std::cout << "[follow] day " << day << ": refused " << refused.size()
+                << " bond(s) that would close a loop\n";
+    // A chain's root can be on another rank and in no rule's broadcast, so
+    // share every rule's hosts once, before anyone moves.
+    std::unordered_set<PersonId> active;
+    for (const auto& s : slots) {
+      all_loc.insert(s.host_loc.begin(), s.host_loc.end());
+      active.insert(s.active_now.begin(), s.active_now.end());
+    }
+#ifdef USE_MPI
+    if (exchange) broadcastHostLocations(world_, locations_, all_loc, active);
+#endif
   }
 
   // Followers bound for a line take over their host's rider entries, so they
   // board the same runtime groups at the same time. Done once for all rules,
   // since it costs one exchange between ranks.
+  std::vector<std::pair<PersonId, PersonId>> cotravel;
+  for (size_t ri = 0; ri < rules.size(); ++ri) {
+    if (!rules[ri].enabled) continue;
+    mirrorFollowRule(rules[ri], follow_state_[ri],
+                     chain.empty() ? slots[ri].host_loc : all_loc, parent,
+                     cotravel);
+  }
   if (runtime_group_allocator_)
     runtime_group_allocator_->attachFollowers(cotravel);
 }
 
 void Simulator::processFollowRule(
     int time_slot_index, int day, uint8_t rule_id, const FollowConfig& fc,
-    FollowRuntime& st, std::unordered_set<PersonId>& committed_hosts,
-    std::unordered_set<PersonId>& committed_followers,
-    std::vector<std::pair<PersonId, PersonId>>& cotravel) {
-  // Network pools may enrol partners in other domains; venue pools are always
-  // co-resident, so they need no cross-rank routing or per-slot broadcast.
-  bool cross_rank = false;
+    FollowRuntime& st, follow_detail::RuleSlot& slot,
+    std::unordered_set<PersonId>& committed_followers) {
+  // With the world split across ranks, who may follow, the hosts of a venue
+  // pool and the capped sets all come from exchanges every rank joins, so the
+  // outcome does not depend on the rank count.
+  bool exchange = false;
 #ifdef USE_MPI
-  cross_rank = domain_mgr_ != nullptr && fc.usesNetwork();
+  exchange = domain_mgr_ != nullptr && domain_mgr_->getNumRanks() > 1;
 #endif
 
-  // A candidate follower is barred if it already hosts or follows elsewhere; a
-  // candidate host is barred only if it already follows elsewhere (a follower
-  // cannot host — that is the chain we forbid — but a host may gain a second
-  // party). For a network pool the host may be a partner on another rank, so
-  // the host bar uses the global follower set, so the same partners are
-  // excluded at any rank count.
-  std::unordered_set<PersonId> follower_excl = committed_followers;
-  follower_excl.insert(committed_hosts.begin(), committed_hosts.end());
-  const std::unordered_set<PersonId>* host_excl = &committed_followers;
-  std::unordered_set<PersonId> global_followers;
-#ifdef USE_MPI
-  if (cross_rank) {
-    global_followers = allgathervPersonSet(committed_followers);
-    host_excl = &global_followers;
-  }
-#endif
+  // A person follows under at most one rule, the first that binds them; a
+  // host may follow too, and a chain is settled once every rule has run. These
+  // are this rank's people; the table merges them across ranks.
+  const std::unordered_set<PersonId>& follower_excl = committed_followers;
 
   // A binding this rule already holds may have just been claimed by an earlier
-  // rule; drop it so exclusivity holds. Anyone now following elsewhere goes,
-  // and any host that has become a follower elsewhere goes too, releasing its
-  // own followers with it. A criteria rebuild would redo this, but it only runs
-  // on a new day, so this also covers a criteria rule between rebuilds.
+  // rule; drop it so exclusivity holds. A criteria rebuild would redo this, but
+  // it only runs on a new day, so this also covers a criteria rule between
+  // rebuilds.
   for (auto it = st.follower_host.begin(); it != st.follower_host.end();) {
     if (follower_excl.count(it->first))
       it = st.follower_host.erase(it);
     else
       ++it;
-  }
-  for (auto it = st.active_hosts.begin(); it != st.active_hosts.end();) {
-    if (host_excl->count(*it)) {
-      PersonId h = *it;
-      for (auto f = st.follower_host.begin(); f != st.follower_host.end();) {
-        if (f->second == h)
-          f = st.follower_host.erase(f);
-        else
-          ++f;
-      }
-      it = st.active_hosts.erase(it);
-    } else {
-      ++it;
-    }
   }
 
   // 1. Form the bindings. Criteria has no randomness, so its whole set of
@@ -760,32 +982,54 @@ void Simulator::processFollowRule(
   //    location is broadcast, stochastic routes each remote follower to its
   //    owner.
   bool span_standing = fc.span == FollowConfig::Span::Standing;
+  const uint64_t seed = config_.simulation.random_seed;
   std::vector<std::pair<PersonId, PersonId>> remote_pairs;
   std::unordered_map<PersonId, PersonId> new_follows;
   if (fc.usesCriteria()) {
     if (day != st.follow_day) {
       st.follow_day = day;
+      const follow_detail::FollowPeople people =
+          follow_detail::buildFollowPeople(world_, fc, false, follower_excl,
+                                           exchange);
       follow_detail::rebuildCriteriaBindings(
-          world_, fc, st.follower_host, st.active_hosts,
-          cross_rank ? &remote_pairs : nullptr, fc.log ? &new_follows : nullptr,
-          follower_excl, *host_excl);
+          world_, fc, seed, people, st.follower_host, st.active_hosts,
+          exchange ? &remote_pairs : nullptr, fc.log ? &new_follows : nullptr,
+          exchange);
 #ifdef USE_MPI
-      if (cross_rank)
+      if (exchange)
         activateRemoteCriteriaHosts(remote_pairs, world_, st.active_hosts);
 #endif
     }
   } else {
-    follow_detail::enrolFollowHosts(
-        world_, fc, config_.schedule, config_.simulation.random_seed,
-        span_standing, st.active_hosts, st.follower_host, day,
-        cross_rank ? &remote_pairs : nullptr, fc.log ? &new_follows : nullptr,
-        follower_excl, *host_excl);
+    const follow_detail::FollowPeople people = follow_detail::buildFollowPeople(
+        world_, fc, true, follower_excl, exchange);
+    follow_detail::enrolFollowHosts(world_, fc, config_.schedule, seed,
+                                    span_standing, people, st.active_hosts,
+                                    st.follower_host, day,
+                                    exchange ? &remote_pairs : nullptr,
+                                    fc.log ? &new_follows : nullptr, exchange);
 #ifdef USE_MPI
-    if (cross_rank)
-      applyFollowInvites(remote_pairs, world_, st.follower_host,
+    if (exchange && fc.usesNetwork())
+      applyFollowInvites(remote_pairs, fc, world_, st.follower_host,
                          fc.log ? &new_follows : nullptr, follower_excl);
 #endif
   }
+
+  // Does any follower on any rank have a host on another rank? Only then does
+  // a per-slot broadcast of host locations have anything to carry.
+  bool cross_rank = false;
+#ifdef USE_MPI
+  if (exchange) {
+    int remote = 0;
+    for (const auto& [follower, host] : st.follower_host)
+      if (!world_.person_index.count(host)) {
+        remote = 1;
+        break;
+      }
+    MPI_Allreduce(MPI_IN_PLACE, &remote, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    cross_rank = remote != 0;
+  }
+#endif
 
   // Log each newly-established follow on the follower's rank (single log; event
   // shards merge at run end). These go to /events/follows, not the encounter
@@ -806,8 +1050,10 @@ void Simulator::processFollowRule(
   //    untouched: an off-hop or just-dead host is simply skipped this slot (its
   //    followers keep their own schedule) and the next rebuild revises the set.
   bool criteria = fc.usesCriteria();
-  std::unordered_map<PersonId, HostSlot> host_loc;
-  std::unordered_set<PersonId> active_now;
+  std::unordered_map<PersonId, HostSlot>& host_loc = slot.host_loc;
+  std::unordered_set<PersonId>& active_now = slot.active_now;
+  host_loc.clear();
+  active_now.clear();
   for (auto it = st.active_hosts.begin(); it != st.active_hosts.end();) {
     auto hi = world_.person_index.find(*it);
     bool live =
@@ -845,8 +1091,22 @@ void Simulator::processFollowRule(
     }
   }
 
-  // 4. Mirror each follower onto its host's location for this slot.
-  for (const auto& [follower, host] : st.follower_host) {
+  // This rule's followers are now committed, so later rules skip them.
+  for (const auto& [follower, host] : st.follower_host)
+    committed_followers.insert(follower);
+}
+
+// Mirror each of a rule's followers onto the location of the end of its chain
+// (its root host) for this slot. Every location was read before any follower
+// moved, so the result does not depend on the order rules run in. The rule's
+// own exceptions still decide whether this follower moves.
+void Simulator::mirrorFollowRule(
+    const FollowConfig& fc, const FollowRuntime& st,
+    const std::unordered_map<PersonId, follow_detail::HostSlot>& host_loc,
+    const std::unordered_map<PersonId, PersonId>& parent,
+    std::vector<std::pair<PersonId, PersonId>>& cotravel) {
+  for (const auto& [follower, direct_host] : st.follower_host) {
+    const PersonId host = follow_detail::followRoot(parent, direct_host);
     auto fi = world_.person_index.find(follower);
     if (fi == world_.person_index.end() || world_.people[fi->second].is_dead)
       continue;
@@ -872,6 +1132,15 @@ void Simulator::processFollowRule(
             policy_manager_.get(), world_.people[fi->second],
             floc.activity_index, host_venue_type, hl->second.venue,
             current_simulation_time_))
+      continue;
+
+    // A rider cannot be dropped off mid-journey: someone on a line stays on it
+    // unless the host is on a line too, when they take over the host's journey
+    // below. Moving them anywhere else would leave them aboard a line they are
+    // no longer on.
+    if (runtime_group_allocator_ &&
+        runtime_group_allocator_->isPartialPresenceVenue(floc.venue_id) &&
+        !runtime_group_allocator_->isPartialPresenceVenue(hl->second.venue))
       continue;
 
     // Travelling with the host means riding the host's whole journey, not the
@@ -902,12 +1171,6 @@ void Simulator::processFollowRule(
     floc.encounter_type_id = fc.encounter_type_id;
     floc.subset_index = hl->second.subset;
   }
-
-  // This rule's hosts and followers are now committed, so later rules skip
-  // them.
-  committed_hosts.insert(st.active_hosts.begin(), st.active_hosts.end());
-  for (const auto& [follower, host] : st.follower_host)
-    committed_followers.insert(follower);
 }
 
 }  // namespace june

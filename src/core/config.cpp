@@ -1388,25 +1388,34 @@ void CoordinatedEncounterConfig::resolve(
   // Each rule in the list resolves independently against the world.
   for (FollowConfig& follow : follows) {
     if (!follow.enabled) continue;
-    bool has_venue = !follow.pool_venue_type.empty();
+    const std::string where = "follow rule '" + follow.name + "'";
+    bool has_venue = !follow.pool.venue_types.empty();
     bool has_network = follow.usesNetwork();
     if (has_venue == has_network) {
       throw std::runtime_error(
-          "follow requires exactly one pool source: set either "
-          "'pool_venue_type' or 'network', not both/neither");
+          where +
+          ": pool requires exactly one source: set either 'venue_types' "
+          "(a non-empty list) or 'network', not both and not neither");
+    }
+    if (has_network && follow.pool.venue_choice) {
+      throw std::runtime_error(where +
+                               ": pool.venue_choice only applies to a pool of "
+                               "'venue_types', not a 'network'");
     }
     if (has_venue) {
-      follow.pool_venue_type_id =
-          world.getVenueTypeIndex(follow.pool_venue_type);
-      if (follow.pool_venue_type_id < 0) {
-        throw std::runtime_error("follow.pool_venue_type '" +
-                                 follow.pool_venue_type +
-                                 "' is not a venue type in this world");
+      for (const std::string& vt : follow.pool.venue_types) {
+        int id = world.getVenueTypeIndex(vt);
+        if (id < 0) {
+          throw std::runtime_error(where + ": pool.venue_types '" + vt +
+                                   "' is not a venue type in this world");
+        }
+        follow.pool_venue_type_ids.push_back(id);
       }
     } else {
-      follow.network_idx = world.getNetworkTypeIndex(follow.network);
+      follow.network_idx = world.getNetworkTypeIndex(follow.pool.network);
       if (follow.network_idx < 0) {
-        throw std::runtime_error("follow.network '" + follow.network +
+        throw std::runtime_error(where + ": pool.network '" +
+                                 follow.pool.network +
                                  "' is not a network in this world");
       }
     }
@@ -1426,16 +1435,9 @@ void CoordinatedEncounterConfig::resolve(
     resolveCriteria(follow.follower, "eligibility");
     resolveCriteria(follow.host, "host_eligibility");
 
-    // A network partner can live on another rank, where its age and properties
-    // are not visible, so host_eligibility cannot be applied to a network pool.
-    // The host there is simply the lowest-id partner. Reject the combination
-    // rather than silently ignore the criteria.
-    if (follow.usesNetwork() && !follow.host.empty()) {
-      throw std::runtime_error(
-          "follow.host_eligibility is not supported with a network pool; "
-          "the host is the lowest-id partner. Use a venue pool to constrain "
-          "the host by age or property.");
-    }
+    if (follow.max_followers && *follow.max_followers < 1)
+      throw std::runtime_error("follow rule '" + follow.name +
+                               "': max_followers must be at least 1");
 
     // The three suppression lists name activities and venue types. Reject any
     // name the world does not know rather than silently ignoring it.
