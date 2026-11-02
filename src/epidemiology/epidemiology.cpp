@@ -58,8 +58,12 @@ EpiSlotStats Epidemiology::updateInfectionStates(
       // so count it here, once.
       if (metrics && first_check)
         metrics->onInfection(*person, previous_symptom_id);
-      bool was_in_hospital = false;
-      bool was_in_icu = false;
+      // A stay can begin in an earlier slot than the one being replayed.
+      const std::string& start_symptom =
+          disease_->getSymptomName(previous_symptom_id);
+      bool was_in_icu = disease_->isICUStage(start_symptom);
+      bool was_in_hospital =
+          was_in_icu || disease_->isHospitalisedStage(start_symptom);
 
       for (const auto& [transition_time, symptom_id] : trajectory.transitions) {
         // Only process transitions in the window (last_processed_time,
