@@ -7,8 +7,8 @@ namespace june {
 
 // Layout version of a checkpoint directory. Bump it whenever a dataset in
 // state.h5 or a shard changes shape or meaning; restore reads only this one.
-// 3: policy masks are N x 2 U64 (128 policies per kind).
-// 4: /policy_roster names in state.h5; applicable policy masks not written.
+// Policy decisions are stored as 128-bit masks per person, and state.h5 holds
+// the policy names they were written against.
 constexpr int kCheckpointFormatVersion = 4;
 
 // Write manifest.yaml into dir. It is written LAST; its presence is the
