@@ -341,6 +341,51 @@ TEST_CASE("InteractionManager basic transmission") {
   }
 }
 
+TEST_CASE("exponweib stage lengths follow the exponentiated Weibull CDF") {
+  const double a = 3.0, c = 1.5, loc = 2.0, scale = 5.0;
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto cur = std::make_shared<ConstantCurve>(1.0);
+  trans.symptom_id_curves = {nullptr, cur};
+
+  TrajectoryDefinition td;
+  td.description = "drawn stage";
+  td.selection_key = "general_population";
+  td.severity = 1.0;
+  td.stages.push_back(
+      {"mild",
+       {"exponweib",
+        {{"a", a}, {"c", c}, {"loc", loc}, {"scale", scale}}}});
+  td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
+
+  SymptomTag healthy{.name = "healthy", .value = -1, .id = 0};
+  SymptomTag mild{.name = "mild", .value = 1, .id = 1};
+  DiseaseStageSettings stage_settings;
+  stage_settings.recovered_stages = {"healthy"};
+  Disease disease("DrawnStage", {healthy, mild}, stage_settings, {td}, {},
+                  trans);
+
+  WorldState world = TestWorldFactory::createMinimalWorld(1, 0);
+  Person& p = world.people[0];
+  const int n = 20000;
+  std::vector<double> lengths;
+  for (int seed = 1; seed <= n; ++seed) {
+    Infection inf(&disease, 0.0, &p, seed, kNoTransmissionContext, nullptr,
+                  "office", 0);
+    lengths.push_back(inf.getTrajectory().transitions.at(1).first);
+  }
+
+  // Fraction of draws below the p-quantile x_p = loc + scale * z_p must be p.
+  for (double q : {0.1, 0.5, 0.9}) {
+    double x = loc + scale * std::pow(-std::log(1.0 - std::pow(q, 1.0 / a)),
+                                      1.0 / c);
+    double below = std::count_if(lengths.begin(), lengths.end(),
+                                 [&](double v) { return v < x; });
+    CHECK(below / n == doctest::Approx(q).epsilon(0.02));
+  }
+  CHECK(*std::min_element(lengths.begin(), lengths.end()) >= loc);
+}
+
 TEST_CASE("infection stream depends on the upper 32 bits of the seed") {
   TransmissionParams trans;
   trans.mode = InfectiousnessMode::STAGE_DRIVEN;
