@@ -88,7 +88,7 @@ PolicyTransmissionEffect personEffect(uint16_t policy_index,
 
 TEST_CASE(
     "transmission modifier CSV filters arbitrary person and venue properties") {
-  Fixture f;
+  Fixture fixture;
   ScopedTestFiles files("june_transmission_modifier_test");
   const auto csv = files.write(
       "effects.csv",
@@ -105,29 +105,29 @@ TEST_CASE(
       "      transmission_effects_file: " +
           csv.string() + "\n");
 
-  PolicyManager manager(f.world);
+  PolicyManager manager(fixture.world);
   PolicyLoader::loadPolicies(manager, yaml.string(), "2020-01-01");
-  manager.precomputePolicyApplicability(f.world.people);
-  manager.initializeTransmissionModifiers(f.disease, 0.0);
+  manager.precomputePolicyApplicability(fixture.world.people);
+  manager.initializeTransmissionModifiers(fixture.disease, 0.0);
 
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(0.60));
   CHECK(
-      manager.personModifier(f.world.people[1], 0,
+      manager.personModifier(fixture.world.people[1], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(1.0));
-  CHECK(manager.venueModifier(&f.world.venues[0], 1,
+  CHECK(manager.venueModifier(&fixture.world.venues[0], 1,
                               TransmissionEffectChannel::EnvironmentalRisk) ==
         doctest::Approx(0.50));
-  CHECK(manager.venueModifier(&f.world.venues[0], 0,
+  CHECK(manager.venueModifier(&fixture.world.venues[0], 0,
                               TransmissionEffectChannel::EnvironmentalRisk) ==
         doctest::Approx(1.0));
 }
 
 TEST_CASE("transmission modifier CSV rejects duplicate matching definitions") {
-  Fixture f;
+  Fixture fixture;
   ScopedTestFiles files("june_transmission_modifier_test");
   const auto csv = files.write(
       "effects.csv",
@@ -143,14 +143,14 @@ TEST_CASE("transmission modifier CSV rejects duplicate matching definitions") {
       "      transmission_effects_file: " +
           csv.string() + "\n");
 
-  PolicyManager manager(f.world);
+  PolicyManager manager(fixture.world);
   CHECK_THROWS_WITH(
       PolicyLoader::loadPolicies(manager, yaml.string(), "2020-01-01"),
       doctest::Contains("duplicate matching transmission effect"));
 }
 
 TEST_CASE("venue effects require fully compliant temporal policies") {
-  Fixture f;
+  Fixture fixture;
   ScopedTestFiles files("june_transmission_modifier_test");
   const auto csv = files.write(
       "effects.csv",
@@ -164,7 +164,7 @@ TEST_CASE("venue effects require fully compliant temporal policies") {
       "      compliance_rate: 0.5\n"
       "      transmission_effects_file: " +
           csv.string() + "\n");
-  PolicyManager manager(f.world);
+  PolicyManager manager(fixture.world);
   CHECK_THROWS_WITH(
       PolicyLoader::loadPolicies(manager, yaml.string(), "2020-01-01"),
       doctest::Contains("venue effects require a temporal policy"));
@@ -177,7 +177,7 @@ TEST_CASE("venue effects require fully compliant temporal policies") {
       "      symptoms: [cough]\n"
       "      transmission_effects_file: " +
           csv.string() + "\n");
-  PolicyManager symptom_manager(f.world);
+  PolicyManager symptom_manager(fixture.world);
   CHECK_THROWS_WITH(
       PolicyLoader::loadPolicies(symptom_manager, symptom_yaml.string(),
                                  "2020-01-01"),
@@ -185,8 +185,8 @@ TEST_CASE("venue effects require fully compliant temporal policies") {
 }
 
 TEST_CASE("transmission modifier effects stack by mode and channel") {
-  Fixture f;
-  PolicyManager manager(f.world);
+  Fixture fixture;
+  PolicyManager manager(fixture.world);
 
   TemporalPolicy mask;
   mask.name = "mask";
@@ -202,21 +202,21 @@ TEST_CASE("transmission modifier effects stack by mode and channel") {
   manager.addTransmissionEffect(
       personEffect(1, "properties.role", "worker", 0.80));
 
-  manager.precomputePolicyApplicability(f.world.people);
-  manager.initializeTransmissionModifiers(f.disease, 0.0);
+  manager.precomputePolicyApplicability(fixture.world.people);
+  manager.initializeTransmissionModifiers(fixture.disease, 0.0);
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(0.48));
   CHECK(
-      manager.personModifier(f.world.people[0], 1,
+      manager.personModifier(fixture.world.people[0], 1,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(1.0));
 }
 
 TEST_CASE("distinct matching rows within one policy multiply") {
-  Fixture f;
-  PolicyManager manager(f.world);
+  Fixture fixture;
+  PolicyManager manager(fixture.world);
   TemporalPolicy policy;
   policy.name = "two-filters";
   manager.addTemporalPolicy(policy);
@@ -235,17 +235,17 @@ TEST_CASE("distinct matching rows within one policy multiply") {
   second.criteria.push_back(age);
   manager.addTransmissionEffect(second);
 
-  manager.precomputePolicyApplicability(f.world.people);
-  manager.initializeTransmissionModifiers(f.disease, 0.0);
+  manager.precomputePolicyApplicability(fixture.world.people);
+  manager.initializeTransmissionModifiers(fixture.disease, 0.0);
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(0.48));
 }
 
 TEST_CASE("transmission modifier windows and compliance rebuild identity") {
-  Fixture f;
-  PolicyManager manager(f.world);
+  Fixture fixture;
+  PolicyManager manager(fixture.world);
   manager.setBaseSeed(19);
 
   TemporalPolicy timed;
@@ -261,29 +261,29 @@ TEST_CASE("transmission modifier windows and compliance rebuild identity") {
   manager.addTemporalPolicy(refuses);
   manager.addTransmissionEffect(
       personEffect(1, "properties.role", "worker", 0.10));
-  manager.precomputePolicyApplicability(f.world.people);
-  manager.initializeTransmissionModifiers(f.disease, 1.0);
+  manager.precomputePolicyApplicability(fixture.world.people);
+  manager.initializeTransmissionModifiers(fixture.disease, 1.0);
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(1.0));
 
   std::unordered_set<PersonId> no_active_infections;
   manager.refreshTransmissionModifiers(2.0, no_active_infections);
-  const auto active_id = f.world.people[0].transmission_modifier_set_id;
+  const auto active_id = fixture.world.people[0].transmission_modifier_set_id;
   const auto active_table_size = manager.transmissionModifierTable().size();
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(0.50));
   // Repeated slots inside one policy window do not reevaluate selectors or
   // rebuild the shared table.
   manager.refreshTransmissionModifiers(2.0, no_active_infections);
-  CHECK(f.world.people[0].transmission_modifier_set_id == active_id);
+  CHECK(fixture.world.people[0].transmission_modifier_set_id == active_id);
   CHECK(manager.transmissionModifierTable().size() == active_table_size);
   manager.refreshTransmissionModifiers(5.0, no_active_infections);
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(1.0));
 
@@ -291,7 +291,88 @@ TEST_CASE("transmission modifier windows and compliance rebuild identity") {
   // compiled set.
   manager.refreshTransmissionModifiers(2.0, no_active_infections);
   CHECK(
-      manager.personModifier(f.world.people[0], 0,
+      manager.personModifier(fixture.world.people[0], 0,
+                             TransmissionEffectChannel::TargetSusceptibility) ==
+      doctest::Approx(0.50));
+}
+
+TEST_CASE("window edge on a high temporal index rebuilds modifiers") {
+  Fixture fixture;
+  PolicyManager manager(fixture.world);
+  manager.setBaseSeed(19);
+
+  // Fillers apply to nobody, so the worker holds only the timed policy.
+  SelectionCriterion nobody;
+  nobody.property_path = "age";
+  nobody.operator_type = ">=";
+  nobody.value = 200;
+  constexpr uint16_t kTimedIndex = 69;
+  for (uint16_t index = 0; index < kTimedIndex; ++index) {
+    TemporalPolicy filler;
+    filler.name = "filler_" + std::to_string(index);
+    filler.applies_to.push_back(nobody);
+    manager.addTemporalPolicy(filler);
+  }
+  TemporalPolicy timed;
+  timed.name = "timed_high";
+  timed.window = ActiveWindow{2.0, 5.0};
+  timed.action.compliance_rate = 1.0;
+  manager.addTemporalPolicy(timed);
+  manager.addTransmissionEffect(
+      personEffect(kTimedIndex, "properties.role", "worker", 0.50));
+  manager.precomputePolicyApplicability(fixture.world.people);
+  manager.initializeTransmissionModifiers(fixture.disease, 1.0);
+
+  std::unordered_set<PersonId> no_active_infections;
+  manager.refreshTransmissionModifiers(2.0, no_active_infections);
+  CHECK(
+      manager.personModifier(fixture.world.people[0], 0,
+                             TransmissionEffectChannel::TargetSusceptibility) ==
+      doctest::Approx(0.50));
+  manager.refreshTransmissionModifiers(5.0, no_active_infections);
+  CHECK(
+      manager.personModifier(fixture.world.people[0], 0,
+                             TransmissionEffectChannel::TargetSusceptibility) ==
+      doctest::Approx(1.0));
+}
+
+TEST_CASE("temporal window edge at index 32 does not alias symptom windows") {
+  Fixture fixture;
+  PolicyManager manager(fixture.world);
+  manager.setBaseSeed(19);
+
+  SelectionCriterion nobody;
+  nobody.property_path = "age";
+  nobody.operator_type = ">=";
+  nobody.value = 200;
+  constexpr uint16_t kTimedIndex = 32;
+  for (uint16_t index = 0; index < kTimedIndex; ++index) {
+    TemporalPolicy filler;
+    filler.name = "filler_" + std::to_string(index);
+    filler.applies_to.push_back(nobody);
+    manager.addTemporalPolicy(filler);
+  }
+  // Temporal 32 opens at 2 as symptom 0 closes, so a packed fingerprint
+  // (temporal i, symptom i + 32) sees no change.
+  TemporalPolicy timed;
+  timed.name = "timed_32";
+  timed.window = ActiveWindow{2.0, 5.0};
+  timed.action.compliance_rate = 1.0;
+  manager.addTemporalPolicy(timed);
+  SymptomPolicy closing;
+  closing.name = "closing_symptom";
+  closing.window = ActiveWindow{0.0, 2.0};
+  closing.applies_to.push_back(nobody);
+  manager.addSymptomPolicy(closing);
+  manager.addTransmissionEffect(
+      personEffect(kTimedIndex, "properties.role", "worker", 0.50));
+  manager.precomputePolicyApplicability(fixture.world.people);
+  manager.initializeTransmissionModifiers(fixture.disease, 1.0);
+
+  std::unordered_set<PersonId> no_active_infections;
+  manager.refreshTransmissionModifiers(2.0, no_active_infections);
+  CHECK(
+      manager.personModifier(fixture.world.people[0], 0,
                              TransmissionEffectChannel::TargetSusceptibility) ==
       doctest::Approx(0.50));
 }

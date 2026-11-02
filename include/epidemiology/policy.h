@@ -13,7 +13,9 @@
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
+#include "epidemiology/applicable_policies/applicable_policies.h"
 #include "epidemiology/observed_metrics.h"
+#include "epidemiology/policy_roster/policy_roster.h"
 #include "epidemiology/policy_trigger.h"
 #include "epidemiology/transmission_modifiers.h"
 
@@ -408,6 +410,9 @@ struct ActiveWindow {
 
 struct SymptomPolicy {
   std::string name;
+  // Keys this policy's compliance and avoidance draws; policyDrawKey of its
+  // kind and name, set by PolicyManager when the policy is added.
+  uint64_t draw_key = 0;
 
   // Span of simulation time this policy is in force for
   ActiveWindow window;
@@ -476,6 +481,9 @@ struct SymptomPolicy {
 
 struct TemporalPolicy {
   std::string name;
+  // Keys this policy's compliance and avoidance draws; policyDrawKey of its
+  // kind and name, set by PolicyManager when the policy is added.
+  uint64_t draw_key = 0;
 
   // Span of simulation time this policy is in force for
   ActiveWindow window;
@@ -524,13 +532,16 @@ struct FrozenPersonState {
 
 class PolicyManager {
  public:
-  // Width of Person::applicable_symptom_policy_mask / _temporal_policy_mask.
-  static constexpr size_t kMaxPoliciesPerKind = 32;
-
   PolicyManager(WorldState& world);
 
   // Set base seed for deterministic RNG (MPI reproducibility)
-  void setBaseSeed(uint64_t seed) { base_seed_ = seed; }
+  void setBaseSeed(uint64_t seed) { applicable_policies_.setBaseSeed(seed); }
+
+  // Every read or write of a Person's Applicable Policy State.
+  ApplicablePolicies& applicablePolicies() { return applicable_policies_; }
+  const ApplicablePolicies& applicablePolicies() const {
+    return applicable_policies_;
+  }
 
   // --- Checkpoint serialization ---
   // frozen_states_ pins the small set of persons mid policy-hop. It must be
@@ -679,26 +690,22 @@ class PolicyManager {
     frozen_states_.erase(frozen_it);
   }
 
-  // Clear all policies
-  void clear() {
-    symptom_policies_.clear();
-    temporal_policies_.clear();
-    transmission_effects_.clear();
-    transmission_modifiers_initialized_ = false;
-  }
-
   // Statistics
   size_t getSymptomPolicyCount() const { return symptom_policies_.size(); }
   size_t getTemporalPolicyCount() const { return temporal_policies_.size(); }
 
   // Precompute which policies can apply to each person (based on selection
-  // criteria) This caches the results in person.applicable_*_policy_mask
+  // criteria) This caches the results in person.applicable_policy_state
   void precomputePolicyApplicability(std::vector<Person>& people);
 
   // Resolve all policy criteria and intern activities/symptoms
   void resolveAll(const Disease& disease) {
     rejectPoliciesBeyondMaskWidth(symptom_policies_, "symptom");
     rejectPoliciesBeyondMaskWidth(temporal_policies_, "temporal");
+    // A policy is its name within its kind (checkpoints match policies by it).
+    rejectDuplicateNames(
+        makePolicyRoster(symptom_policies_, temporal_policies_));
+    rejectDrawKeyCollisions();
 
     for (auto& p : symptom_policies_) p.resolve(world_, disease);
     for (auto& p : temporal_policies_) p.resolve(world_);
@@ -734,23 +741,30 @@ class PolicyManager {
 
  private:
   WorldState& world_;
-  uint64_t base_seed_ = 0;
 
   std::vector<SymptomPolicy> symptom_policies_;
   std::vector<TemporalPolicy> temporal_policies_;
   std::vector<PolicyTransmissionEffect> transmission_effects_;
+  ApplicablePolicies applicable_policies_;
   ObservedMetrics observed_metrics_;
   TransmissionModifierTable transmission_modifier_table_;
   bool transmission_modifiers_initialized_ = false;
   size_t transmission_mode_count_ = 0;
-  uint64_t last_policy_window_bits_ = 0;
+  // Policies of each kind whose window holds the current time; a change marks
+  // a window edge.
+  struct PolicyWindowBits {
+    PolicyMask temporal;
+    PolicyMask symptom;
+    bool operator==(const PolicyWindowBits&) const = default;
+  };
+  PolicyWindowBits last_policy_window_bits_;
   std::unordered_map<PersonId, uint16_t> last_symptom_ids_;
 
   void resolveTransmissionEffects(const Disease& disease);
   // Look up the activities a voluntary trigger names and start its level at the
   // base. Needs the metrics resolved.
   void resolveResponses();
-  uint64_t policyWindowBits(double current_time) const;
+  PolicyWindowBits policyWindowBits(double current_time) const;
   void rebuildTransmissionModifiers(double current_time);
   void rebuildPersonTransmissionModifier(Person& person, double current_time);
   void rebuildVenueTransmissionModifier(Venue& venue, double current_time);
@@ -769,8 +783,10 @@ class PolicyManager {
     }
   }
 
-  // Applicability is carried in a 32-bit mask per person, so a policy past the
-  // 32nd can never fire. Name the first such policy rather than drop it.
+  // Global policy indices are bit positions in a kMaxPoliciesPerKind-bit
+  // PolicyMask, so a policy past the cap could never be marked applicable. Name
+  // the first such policy rather than drop it. One Person's set is capped
+  // lower, at kMaxApplicablePoliciesPerKind (see ApplicablePolicySets::intern).
   template <typename PolicyVector>
   static void rejectPoliciesBeyondMaskWidth(const PolicyVector& policies,
                                             const std::string& kind) {
@@ -782,29 +798,10 @@ class PolicyManager {
         policies[kMaxPoliciesPerKind].name + "' would never take effect");
   }
 
-  // Helper: Apply compliance rate (returns true if person complies).
-  // Const because it is a pure draw: SplitMix64 over (base_seed_, person_id,
-  // policy_index), no stored RNG state, so the same triple always answers the
-  // same way. That is what lets suppressesParticipation reach a verdict for an
-  // undecided Person without latching the decision.
-  bool checkCompliance(double compliance_rate, PersonId person_id,
-                       uint32_t policy_index) const;
-
-  // Is this Person taking part in policy `policy_bit`, without latching the
-  // answer? getOverride commits the sticky-compliance decision the first time
-  // it asks; this reads a decision already made, and falls back to redrawing
-  // it when none has been. The redraw is safe because checkCompliance is pure:
-  // it returns exactly what getOverride would latch. Reachable only if a query
-  // beats ActivityManager to a Person in a slot, which the timeslot ordering
-  // (activity assignment, then encounters, then follows) does not do.
-  bool isParticipating(uint32_t decisions_mask, uint32_t participation_mask,
-                       size_t policy_bit, double compliance_rate,
-                       PersonId person_id, uint32_t compliance_index) const {
-    if (decisions_mask & (1u << policy_bit)) {
-      return participation_mask & (1u << policy_bit);
-    }
-    return checkCompliance(compliance_rate, person_id, compliance_index);
-  }
+  // Two policies sharing a draw key would draw alike for every Person. Names
+  // are unique per kind and the kind is hashed in, so only a hash collision
+  // does this; refuse it, naming both, rather than run with correlated draws.
+  void rejectDrawKeyCollisions() const;
 
   // The part of a policy decision that is a pure question: does this action
   // reach this Person's activity, at this slot's venue type, unexempted?
@@ -819,14 +816,14 @@ class PolicyManager {
   // reaches only the venues its metric has closed. That is one bit lookup, made
   // after the activity gate and before the venue type gate and the exemptions,
   // and it applies to everyone scheduled at a closed venue who is not exempt.
-  // A voluntary trigger (draw_index names the Policy in the draw) asks instead
+  // A voluntary trigger (draw_key names the Policy in the draw) asks instead
   // whether this person's decision unit avoids the venue.
   template <typename SlotVenueTypeResolver>
   bool actionApplies(const PolicyAction& action, const Person& person,
                      int16_t activity_index,
                      SlotVenueTypeResolver&& resolve_slot_venue_type,
                      const Person* partner, const PolicyTrigger* slot_trigger,
-                     VenueId slot_venue_id, uint32_t draw_index) const {
+                     VenueId slot_venue_id, uint64_t draw_key) const {
     if (!action.has_location_override) return false;
     action.throwIfVenueGateUnresolved();
 
@@ -834,7 +831,7 @@ class PolicyManager {
 
     if (slot_trigger) {
       if (slot_trigger->voluntary()) {
-        if (!avoids(*slot_trigger, person, slot_venue_id, draw_index))
+        if (!avoids(*slot_trigger, person, slot_venue_id, draw_key))
           return false;
       } else if (!unitClosedAt(*slot_trigger, slot_venue_id)) {
         return false;
@@ -862,7 +859,7 @@ class PolicyManager {
   // unit. Throws when a shared decision unit finds the person with other than
   // exactly one such venue; checkDecisionUnits rules that out at startup.
   bool avoids(const PolicyTrigger& trigger, const Person& person,
-              VenueId slot_venue_id, uint32_t draw_index) const;
+              VenueId slot_venue_id, uint64_t draw_key) const;
 
   // Helper: Get replacement location for a given activity name
   std::optional<PersonLocation> getReplacementLocation(

@@ -2,6 +2,7 @@
 #include "core/config.h"
 #include "doctest.h"
 #include "epidemiology/policy.h"
+#include "policy_test_helpers.h"
 #include "test_utils.h"
 
 using namespace june;
@@ -267,7 +268,7 @@ TEST_CASE("ActivityManager - PolicyManager Override") {
   pm.addTemporalPolicy(lockdown);
 
   // Give person applicable mask
-  world.people[0].applicable_temporal_policy_mask = 1;
+  policy_test::importApplicable(pm, world.people[0], PolicyMask{}, 1);
 
   manager.setPolicyManager(&pm);
   manager.setCurrentTime(5.0);  // Lockdown is active

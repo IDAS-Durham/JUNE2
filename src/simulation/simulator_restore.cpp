@@ -15,6 +15,9 @@
 #include <utility>
 #include <vector>
 
+#include "epidemiology/policy_roster/policy_roster.h"
+#include "simulation/checkpoint_manifest/checkpoint_manifest.h"
+#include "simulation/checkpoint_masks/policy_mask_io.h"
 #include "simulation/simulator.h"
 
 namespace june {
@@ -104,7 +107,8 @@ void overlayShardManagerState(
   // tried-host if it owns the host. Each stochastic rule has its own named
   // subgroup; a criteria rule wrote none and rebuilds itself, and a rule added
   // since the checkpoint has nothing to restore. So a rule with no subgroup is
-  // skipped, and a subgroup that is present must be complete.
+  // skipped, and a subgroup that is present must be complete. A run with no
+  // follow rule writes no group at all.
   if (H5Lexists(f.getId(), "/follow", H5P_DEFAULT) > 0) {
     for (size_t ri = 0; ri < follow_names.size(); ++ri) {
       const std::string g = "/follow/" + follow_names[ri];
@@ -124,10 +128,14 @@ void overlayShardManagerState(
 // rank. Each owned person gets every field assigned and any default-
 // constructed infection / vaccine_trajectory cleared (those get reinstated by
 // the per-shard infection / vaccine overlays). Returns the number of records
-// this rank applied.
-size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
+// this rank applied. Applicable policies are not stored: each person keeps
+// those precomputed from the current config. Stored decisions and
+// participation move to each policy's current index; those of a gone policy,
+// or one the person is no longer applicable to, are dropped.
+size_t overlayShardPopulation(H5::H5File& f, WorldState& world,
+                              PolicyManager& policy_manager,
+                              const PolicyRosterMatch& roster_match) {
   const auto I32 = H5::PredType::NATIVE_INT32;
-  const auto U32 = H5::PredType::NATIVE_UINT32;
   const auto U8 = H5::PredType::NATIVE_UINT8;
   const auto F64 = H5::PredType::NATIVE_DOUBLE;
   auto ids = readVec<int32_t>(f, "/population/ids", I32);
@@ -138,17 +146,12 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
       readVec<double>(f, "/population/immunity_natural_waning_rate", F64);
   auto dead = readVec<uint8_t>(f, "/population/is_dead", U8);
   auto dt = readVec<double>(f, "/population/death_time", F64);
-  auto m_as =
-      readVec<uint32_t>(f, "/population/applicable_symptom_policy_mask", U32);
-  auto m_at =
-      readVec<uint32_t>(f, "/population/applicable_temporal_policy_mask", U32);
-  auto m_ps = readVec<uint32_t>(
-      f, "/population/active_symptom_policy_participation", U32);
-  auto m_pt = readVec<uint32_t>(
-      f, "/population/active_temporal_policy_participation", U32);
-  auto m_ds = readVec<uint32_t>(f, "/population/symptom_policy_decisions", U32);
-  auto m_dt =
-      readVec<uint32_t>(f, "/population/temporal_policy_decisions", U32);
+  auto m_ps = readMasks(f, "/population/active_symptom_policy_participation",
+                        ids.size());
+  auto m_pt = readMasks(f, "/population/active_temporal_policy_participation",
+                        ids.size());
+  auto m_ds = readMasks(f, "/population/symptom_policy_decisions", ids.size());
+  auto m_dt = readMasks(f, "/population/temporal_policy_decisions", ids.size());
   auto hop = readVec<int32_t>(f, "/population/hopped_schedule_id", I32);
   auto ret = readVec<int32_t>(f, "/population/return_schedule_id", I32);
   auto tsl = readVec<int32_t>(f, "/population/temp_slot_progress", I32);
@@ -163,12 +166,21 @@ size_t overlayShardPopulation(H5::H5File& f, WorldState& world) {
     p->immunity.natural_waning_rate = imm_w[i];
     p->is_dead = dead[i] != 0;
     p->death_time = dt[i];
-    p->applicable_symptom_policy_mask = m_as[i];
-    p->applicable_temporal_policy_mask = m_at[i];
-    p->active_symptom_policy_participation = m_ps[i];
-    p->active_temporal_policy_participation = m_pt[i];
-    p->symptom_policy_decisions = m_ds[i];
-    p->temporal_policy_decisions = m_dt[i];
+    ApplicablePolicyMasks masks =
+        policy_manager.applicablePolicies().exportState(*p);
+    masks.symptom.decided = m_ds[i];
+    masks.symptom.participating = m_ps[i];
+    masks.temporal.decided = m_dt[i];
+    masks.temporal.participating = m_pt[i];
+    for (PolicyKind kind : {PolicyKind::Symptom, PolicyKind::Temporal}) {
+      KindPolicyMasks& kind_masks = masks.of(kind);
+      kind_masks.decided =
+          roster_match.remap(kind_masks.decided, kind) & kind_masks.applicable;
+      kind_masks.participating =
+          roster_match.remap(kind_masks.participating, kind) &
+          kind_masks.decided;
+    }
+    policy_manager.applicablePolicies().importState(*p, masks);
     p->schedule_hop.hopped_schedule_id = static_cast<int16_t>(hop[i]);
     p->schedule_hop.return_schedule_id = static_cast<int16_t>(ret[i]);
     p->schedule_hop.temp_slot_progress = static_cast<int16_t>(tsl[i]);
@@ -319,37 +331,6 @@ void overlayShardCalendarEvents(H5::H5File& f, WorldState& world,
       snap.active_event[static_cast<PersonId>(pids[i])] = eids[i];
 }
 
-// Open the checkpoint's manifest.yaml, enforce that the checkpoint's seed
-// matches the configured seed (no silent override), and return the
-// completed_day to resume from. The caller has already canonicalised cp.
-// Only the layout this build writes is read: a checkpoint from any other
-// format_version throws, so no reader below needs a case for data an older
-// build did not write. Change this together with writeManifest.
-int readAndValidateManifest(const fs::path& cp, unsigned int config_seed) {
-  if (!fs::exists(cp / "manifest.yaml"))
-    throw std::runtime_error(
-        "restoreFromCheckpoint: no manifest.yaml (incomplete/invalid "
-        "checkpoint): " +
-        cp.string());
-  YAML::Node man = YAML::LoadFile((cp / "manifest.yaml").string());
-  const int format_version = man["format_version"].as<int>();
-  if (format_version != 3) {
-    throw std::runtime_error(
-        "restoreFromCheckpoint: unsupported checkpoint format_version " +
-        std::to_string(format_version) +
-        " (this build reads only 3): " + cp.string());
-  }
-  int completed_day = man["completed_day"].as<int>();
-  unsigned int cp_seed = man["effective_random_seed"].as<unsigned int>();
-  if (cp_seed != config_seed) {
-    throw std::runtime_error(
-        "restoreFromCheckpoint: effective_random_seed mismatch (checkpoint=" +
-        std::to_string(cp_seed) + ", config=" + std::to_string(config_seed) +
-        "). Resume with the checkpoint's seed (no silent override).");
-  }
-  return completed_day;
-}
-
 // Observed metric totals stored in state.h5, name order. Absent group means
 // the checkpoint was written with no active metric. The rows of the unit table
 // are (metric index, unit, value).
@@ -431,6 +412,51 @@ std::vector<PolicyManager::TriggerState> readStoredTriggers(
   return out;
 }
 
+// Policy names per kind the checkpoint was written with. Every v4 checkpoint
+// holds both lists, so a missing one is refused rather than read as empty.
+PolicyRoster readStoredRoster(const fs::path& cp) {
+  H5::H5File f((cp / "state.h5").string(), H5F_ACC_RDONLY);
+  const auto names = [&](const std::string& dataset) {
+    if (H5Lexists(f.getId(), dataset.c_str(), H5P_DEFAULT) <= 0) {
+      throw std::runtime_error("checkpoint dataset '" + dataset +
+                               "' is missing (corrupt or partially written "
+                               "checkpoint) in " +
+                               (cp / "state.h5").string());
+    }
+    return readStrs(f, dataset);
+  };
+  return {names("/policy_roster/symptom_names"),
+          names("/policy_roster/temporal_names")};
+}
+
+// Moves each frozen person's triggering symptom policy to its current index.
+// A freeze whose policy is gone, or no longer holds the person, is released
+// at once (as on recovery): nothing would ever lift it otherwise.
+std::vector<PersonId> remapFrozenStates(
+    std::unordered_map<PersonId, FrozenPersonState>& frozen_states,
+    const PolicyRosterMatch& roster_match, const WorldState& world,
+    const ApplicablePolicies& applicable_policies) {
+  std::vector<PersonId> released;
+  for (auto& [person_id, state] : frozen_states) {
+    const std::optional<size_t> current_index = roster_match.currentIndex(
+        PolicyKind::Symptom, state.triggering_policy_index);
+    // overlayShardManagerState keeps only freezes of Persons this rank owns.
+    const Person* person = world.getPerson(person_id);
+    if (!person)
+      throw std::runtime_error("checkpoint: frozen person " +
+                               std::to_string(person_id) +
+                               " is not on this rank");
+    if (current_index &&
+        applicable_policies.exportState(*person).symptom.participating.test(
+            *current_index)) {
+      state.triggering_policy_index = static_cast<uint8_t>(*current_index);
+      continue;
+    }
+    released.push_back(person_id);
+  }
+  return released;
+}
+
 }  // namespace
 
 void Simulator::validateResumeBounds(int completed_day) const {
@@ -467,15 +493,19 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
 
   restoreCheckpointStateFile(cp);
 
+  // Stored masks and policy indices are in the checkpoint's policy order;
+  // match it with the current list by name.
+  const PolicyRosterMatch roster_match =
+      match(readStoredRoster(cp),
+            makePolicyRoster(policy_manager_->getSymptomPolicies(),
+                             policy_manager_->getTemporalPolicies()));
+
   // A cumulative counter cannot be rebuilt, so a checkpoint that does not
   // hold exactly the active metrics is refused rather than restarted at zero.
-  if (policy_manager_) {
-    auto& metrics = policy_manager_->observedMetrics();
-    metrics.restoreSnapshot(readStoredMetrics(cp));
-    policy_manager_->restoreTriggerStates(readStoredTriggers(cp));
-    // The levels are derived from the metric counts just put back.
-    policy_manager_->rebuildResponseLevels();
-  }
+  policy_manager_->observedMetrics().restoreSnapshot(readStoredMetrics(cp));
+  policy_manager_->restoreTriggerStates(readStoredTriggers(cp));
+  // The levels are derived from the metric counts just put back.
+  policy_manager_->rebuildResponseLevels();
 
   // frozen_states_ + lpt + follows are per-rank: accumulated from the shards.
   // Follows accumulate one entry per rule, matched to its shard by name.
@@ -504,7 +534,8 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
           std::to_string(s) +
           " (incomplete or damaged checkpoint): " + sf.string());
     H5::H5File f(sf.string(), H5F_ACC_RDONLY);
-    n_people += overlayShardPopulation(f, world_);
+    n_people +=
+        overlayShardPopulation(f, world_, *policy_manager_, roster_match);
     n_inf += overlayShardInfection(f, world_, disease_.get());
     n_vax += overlayShardVaccine(f, world_, config_.vaccination);
     n_fom += overlayShardFomite(f, world_);
@@ -514,7 +545,12 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
   }
   calendar_event_manager_.restore(std::move(ce_snap));
 
-  if (policy_manager_) policy_manager_->setFrozenStates(frozen_accum);
+  const std::vector<PersonId> released_freezes =
+      remapFrozenStates(frozen_accum, roster_match, world_,
+                        policy_manager_->applicablePolicies());
+  policy_manager_->setFrozenStates(frozen_accum);
+  for (PersonId person_id : released_freezes)
+    policy_manager_->releaseAnyFreeze(*world_.getPerson(person_id));
   // Rebuild per-rule runtime state from the accumulated shards. A criteria rule
   // has empty accumulators and derives itself on the first slot after resume;
   // its follow_day stays -1 so that rebuild fires.
@@ -526,7 +562,7 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
 
   // ---- rebuild derived caches; set resume point ----
   if (epidemiology_) epidemiology_->restoreAfterCheckpoint(lpt_map);
-  if (policy_manager_ && disease_)
+  if (disease_)
     policy_manager_->initializeTransmissionModifiers(*disease_,
                                                      current_simulation_time_);
   resume_from_day_ = completed_day + 1;
@@ -540,6 +576,9 @@ void Simulator::restoreFromCheckpoint(const std::string& checkpoint_dir) {
               << " people=" << n_people << " infections=" << n_inf
               << " vaccinated=" << n_vax << " fomite_venues=" << n_fom
               << " — resuming at day " << resume_from_day_ << std::endl;
+    if (!roster_match.identical())
+      std::cout << "[checkpoint] policy list changed since checkpoint:\n"
+                << roster_match.describeChanges() << std::endl;
   }
 }
 

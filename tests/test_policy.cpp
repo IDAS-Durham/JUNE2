@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <fstream>
 
 #include "doctest.h"
@@ -5,10 +6,13 @@
 #include "epidemiology/epidemiology.h"
 #include "epidemiology/policy.h"
 #include "loaders/policy_loader.h"
+#include "policy_test_helpers.h"
 #include "test_utils.h"
 #include "transmission_fixtures.h"
 
 using namespace june;
+using june::policy_test::applyTemporalPolicyZero;
+using june::policy_test::exportedState;
 
 // =============================================================================
 // Scheduled-venue filter — both directions (override_venue_types,
@@ -60,8 +64,6 @@ WorldState buildVenueGateWorld(int num_people = 1) {
     world.activity_meta.push_back(
         {kResidence, static_cast<uint32_t>(world.activity_venues.size()), 1});
     world.activity_venues.push_back({kHouseholdVenue, 0});
-    // Normally set by precomputePolicyApplicability.
-    person.applicable_temporal_policy_mask = 1;
   }
   return world;
 }
@@ -114,6 +116,7 @@ TEST_CASE("Venue gate - restrict-to fires only at listed venue types") {
   TemporalPolicy close_pubs = makeClosurePolicy({"leisure"}, {"pub"});
   close_pubs.resolve(world);
   policy_manager.addTemporalPolicy(close_pubs);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& person = world.people[0];
 
@@ -150,6 +153,7 @@ TEST_CASE("Venue gate - ANDs with the activity mask") {
     TemporalPolicy close_pubs = makeClosurePolicy({"leisure"}, {"pub"});
     close_pubs.resolve(world);
     policy_manager.addTemporalPolicy(close_pubs);
+    applyTemporalPolicyZero(policy_manager, world);
 
     CHECK_FALSE(runOverride(policy_manager, world.people[0], kPrimaryActivity,
                             kPubVenue)
@@ -160,6 +164,7 @@ TEST_CASE("Venue gate - ANDs with the activity mask") {
     TemporalPolicy close_pubs = makeClosurePolicy({"*"}, {"pub"});
     close_pubs.resolve(world);
     policy_manager.addTemporalPolicy(close_pubs);
+    applyTemporalPolicyZero(policy_manager, world);
 
     Person& person = world.people[0];
     CHECK(runOverride(policy_manager, person, kPrimaryActivity, kPubVenue)
@@ -179,6 +184,7 @@ TEST_CASE("Venue gate - multi-role venue type separates the three roles") {
   TemporalPolicy ban_visits = makeClosurePolicy({"leisure"}, {"care_home"});
   ban_visits.resolve(world);
   policy_manager.addTemporalPolicy(ban_visits);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& visitor = world.people[0];
   Person& worker = world.people[1];
@@ -200,6 +206,7 @@ TEST_CASE("Venue gate - absent means unchanged behaviour") {
   TemporalPolicy close_leisure = makeClosurePolicy({"leisure"}, {});
   close_leisure.resolve(world);
   policy_manager.addTemporalPolicy(close_leisure);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& person = world.people[0];
   CHECK(runOverride(policy_manager, person, kLeisure, kPubVenue).has_value());
@@ -241,6 +248,7 @@ TEST_CASE("Venue gate - exempt-from is the inverse of restrict-to") {
       makeClosurePolicy({"leisure"}, {"pub"}, VenueGateDirection::ExemptFrom);
   close_all_but_pubs.resolve(world);
   policy_manager.addTemporalPolicy(close_all_but_pubs);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& person = world.people[0];
 
@@ -308,6 +316,7 @@ TEST_CASE("Venue gate - a swallowed resolve failure poisons the gate") {
 
     PolicyManager policy_manager(world);
     policy_manager.addTemporalPolicy(policy);
+    applyTemporalPolicyZero(policy_manager, world);
     CHECK_THROWS_AS(
         runOverride(policy_manager, world.people[0], kLeisure, kPubVenue),
         std::runtime_error);
@@ -394,6 +403,7 @@ TEST_CASE("Venue gate - the pin does not stand in for the slot venue type") {
         makeClosurePolicy({"leisure"}, {"household"});
     close_households.resolve(world);
     policy_manager.addTemporalPolicy(close_households);
+    applyTemporalPolicyZero(policy_manager, world);
 
     // Pinned at the household, occupying nothing.
     CHECK_FALSE(runOverride(policy_manager, world.people[0], kLeisure,
@@ -411,6 +421,7 @@ TEST_CASE("Venue gate - the pin does not stand in for the slot venue type") {
         {"leisure"}, {"household"}, VenueGateDirection::ExemptFrom);
     close_all_but_households.resolve(world);
     policy_manager.addTemporalPolicy(close_all_but_households);
+    applyTemporalPolicyZero(policy_manager, world);
 
     CHECK_FALSE(runOverride(policy_manager, world.people[0], kLeisure,
                             kHouseholdVenue, SlotVenueType::absent())
@@ -428,6 +439,7 @@ TEST_CASE("Venue gate - an ungated policy never pays for the lookup") {
   TemporalPolicy close_leisure = makeClosurePolicy({"leisure"}, {});
   close_leisure.resolve(world);
   policy_manager.addTemporalPolicy(close_leisure);
+  applyTemporalPolicyZero(policy_manager, world);
 
   CHECK(
       runOverride(policy_manager, world.people[0], kLeisure, 9999).has_value());
@@ -449,6 +461,7 @@ TEST_CASE("Venue gate - Sticky Compliance is unaffected by the gate") {
   close_pubs.action.compliance_rate = 0.5;
   close_pubs.resolve(gated_world);
   gated_manager.addTemporalPolicy(close_pubs);
+  applyTemporalPolicyZero(gated_manager, gated_world);
 
   WorldState ungated_world = buildVenueGateWorld(kNumPeople);
   PolicyManager ungated_manager(ungated_world);
@@ -456,6 +469,7 @@ TEST_CASE("Venue gate - Sticky Compliance is unaffected by the gate") {
   close_leisure.action.compliance_rate = 0.5;
   close_leisure.resolve(ungated_world);
   ungated_manager.addTemporalPolicy(close_leisure);
+  applyTemporalPolicyZero(ungated_manager, ungated_world);
 
   int compliers = 0;
   for (int i = 0; i < kNumPeople; ++i) {
@@ -504,6 +518,7 @@ TEST_CASE("Venue gate - gate and exemption are independent conjuncts") {
   close_schools.action.exemptions.push_back(key_worker_exemption);
   close_schools.resolve(world);
   policy_manager.addTemporalPolicy(close_schools);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& non_key_worker = world.people[0];  // age 20
   Person& key_worker = world.people[1];      // age 21
@@ -555,7 +570,7 @@ TEST_CASE("Venue gate - symptom path is gated too") {
   person.infection = std::make_unique<Infection>(&disease, 0.0, &person, 42,
                                                  kNoTransmissionContext,
                                                  nullptr, "household", 0);
-  person.applicable_symptom_policy_mask = 1;
+  policy_test::importApplicable(policy_manager, person, 1, PolicyMask{});
 
   CHECK(runOverride(policy_manager, person, kLeisure, kPubVenue).has_value());
   CHECK_FALSE(
@@ -637,19 +652,20 @@ SymptomPolicy makeFreezePolicy(const std::vector<std::string>& venue_types = {},
   return policy;
 }
 
-Person& makeSickPerson(WorldState& world, Disease& disease,
-                       size_t person_idx = 0) {
+// Symptom policy 0 applies to the person.
+Person& makeSickPerson(PolicyManager& policy_manager, WorldState& world,
+                       Disease& disease, size_t person_idx = 0) {
   Person& person = world.people[person_idx];
   person.infection = std::make_unique<Infection>(&disease, 0.0, &person, 42,
                                                  kNoTransmissionContext,
                                                  nullptr, "household", 0);
-  person.applicable_symptom_policy_mask = 1;
+  policy_test::importApplicable(policy_manager, person, 1, PolicyMask{});
   return person;
 }
 
-Person& makeSickHoppedPerson(WorldState& world, Disease& disease,
-                             size_t person_idx = 0) {
-  Person& person = makeSickPerson(world, disease, person_idx);
+Person& makeSickHoppedPerson(PolicyManager& policy_manager, WorldState& world,
+                             Disease& disease, size_t person_idx = 0) {
+  Person& person = makeSickPerson(policy_manager, world, disease, person_idx);
   person.schedule_hop = ScheduleHop::begin(kHoppedSchedule, kReturnSchedule);
   return person;
 }
@@ -670,7 +686,7 @@ TEST_CASE("Policy suppression does not establish a freeze") {
   policy_manager.addSymptomPolicy(makeFreezePolicy({"pub"}));
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   CHECK(policy_manager.suppressesParticipation(
       person, kLeisure, SlotVenueType::known(kPubVenueType), 1.0));
@@ -691,7 +707,7 @@ TEST_CASE("Policy suppression does not release a freeze") {
   policy_manager.addSymptomPolicy(makeFreezePolicy());
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   // Day 1: still sick, so the override freezes and swaps the hop.
   REQUIRE(policy_manager
@@ -724,15 +740,15 @@ TEST_CASE("Policy suppression does not latch a compliance decision") {
   for (int i = 0; i < kNumPeople; ++i) {
     // On a hop: a policy with a replacement schedule reaches nobody else.
     Person& person =
-        makeSickHoppedPerson(world, disease, static_cast<size_t>(i));
+        makeSickHoppedPerson(policy_manager, world, disease, static_cast<size_t>(i));
 
     const bool suppressed = policy_manager.suppressesParticipation(
         person, kLeisure, SlotVenueType::known(kPubVenueType), 1.0);
     suppressed_count += suppressed ? 1 : 0;
 
     // Nothing decided, so ActivityManager still gets to make the decision.
-    CHECK(person.symptom_policy_decisions == 0);
-    CHECK(person.active_symptom_policy_participation == 0);
+    CHECK(exportedState(policy_manager, person).symptom.decided.none());
+    CHECK(exportedState(policy_manager, person).symptom.participating.none());
 
     // ...and when it does, it lands where the query said it would.
     const bool overridden =
@@ -741,7 +757,8 @@ TEST_CASE("Policy suppression does not latch a compliance decision") {
                          SlotVenueType::known(kPubVenueType), 1.0, 0)
             .has_value();
     CHECK(overridden == suppressed);
-    CHECK(person.symptom_policy_decisions == 1);
+    CHECK(exportedState(policy_manager, person).symptom.decided ==
+          PolicyMask{0b1});
   }
 
   // Test has power only if both outcomes occur.
@@ -763,7 +780,7 @@ TEST_CASE("A frozen person is suppressed whatever venue type is asked about") {
   policy_manager.addSymptomPolicy(makeFreezePolicy({"pub"}));
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
   REQUIRE(policy_manager
               .getOverride(person, kLeisure, kPubVenue, 0,
                            SlotVenueType::known(kPubVenueType), 1.0, 0)
@@ -790,6 +807,7 @@ TEST_CASE("Query and override agree on the venue gate") {
     TemporalPolicy close_pubs = makeClosurePolicy({"leisure"}, {"pub"});
     close_pubs.resolve(world);
     policy_manager.addTemporalPolicy(close_pubs);
+    applyTemporalPolicyZero(policy_manager, world);
     Person& person = world.people[0];
 
     CHECK(querySuppressed(policy_manager, person, kLeisure, kPubVenue));
@@ -813,6 +831,7 @@ TEST_CASE("Query and override agree on the venue gate") {
         makeClosurePolicy({"leisure"}, {"pub"}, VenueGateDirection::ExemptFrom);
     close_all_but_pubs.resolve(world);
     policy_manager.addTemporalPolicy(close_all_but_pubs);
+    applyTemporalPolicyZero(policy_manager, world);
     Person& person = world.people[0];
 
     CHECK_FALSE(querySuppressed(policy_manager, person, kLeisure, kPubVenue));
@@ -833,6 +852,7 @@ TEST_CASE("Query and override agree on the venue gate") {
     TemporalPolicy close_leisure = makeClosurePolicy({"leisure"}, {});
     close_leisure.resolve(world);
     policy_manager.addTemporalPolicy(close_leisure);
+    applyTemporalPolicyZero(policy_manager, world);
     Person& person = world.people[0];
 
     CHECK(querySuppressed(policy_manager, person, kLeisure, 9999));
@@ -880,6 +900,7 @@ TEST_CASE("Temporal policy - the end bound is the first slot NOT in force") {
   close_leisure.window = ActiveWindow{5.0, 10.0};
   close_leisure.resolve(world);
   policy_manager.addTemporalPolicy(close_leisure);
+  applyTemporalPolicyZero(policy_manager, world);
   Person& person = world.people[0];
 
   auto fires_at = [&](double time) {
@@ -914,7 +935,7 @@ TEST_CASE("Symptom policy - a window bounds it as well as the symptom") {
   policy_manager.addSymptomPolicy(stay_home);
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   auto fires_at = [&](double time) {
     return policy_manager
@@ -939,7 +960,7 @@ TEST_CASE("Symptom policy - the window closing thaws a still-sick person") {
   policy_manager.addSymptomPolicy(stay_home);
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   // In window: pinned, and the compliance decision latched.
   REQUIRE(policy_manager
@@ -948,7 +969,8 @@ TEST_CASE("Symptom policy - the window closing thaws a still-sick person") {
               .has_value());
   REQUIRE(policy_manager.getFrozenStates().count(person.id) == 1);
   REQUIRE(person.schedule_hop.hopped_schedule_id == kFreezeScheduleIdx);
-  REQUIRE(person.symptom_policy_decisions == 1);
+  REQUIRE(exportedState(policy_manager, person).symptom.decided ==
+          PolicyMask{0b1});
 
   // Out of window, and still just as sick.
   CHECK_FALSE(policy_manager
@@ -961,8 +983,8 @@ TEST_CASE("Symptom policy - the window closing thaws a still-sick person") {
   CHECK(policy_manager.getFrozenStates().empty());
   CHECK(person.schedule_hop.hopped_schedule_id == kHoppedSchedule);
   CHECK(person.schedule_hop.return_schedule_id == kReturnSchedule);
-  CHECK(person.symptom_policy_decisions == 0);
-  CHECK(person.active_symptom_policy_participation == 0);
+  CHECK(exportedState(policy_manager, person).symptom.decided.none());
+  CHECK(exportedState(policy_manager, person).symptom.participating.none());
 }
 
 TEST_CASE("Symptom policy - a closing window is not symptom progression") {
@@ -973,7 +995,7 @@ TEST_CASE("Symptom policy - a closing window is not symptom progression") {
   // The follow-up is registered first so that it is evaluated before the
   // policy that hands to it, and its own compliance rate is zero: the only
   // thing that can leave it participating is the inheritance.
-  constexpr uint32_t kAftercareBit = 1u << 0;
+  constexpr size_t kAftercareBit = 0;
 
   auto addPolicies = [](WorldState& world, Disease& disease,
                         PolicyManager& policy_manager) -> Person* {
@@ -990,8 +1012,8 @@ TEST_CASE("Symptom policy - a closing window is not symptom progression") {
     policy_manager.addSymptomPolicy(stay_home);
 
     policy_manager.resolveAll(disease);
-    Person& person = makeSickHoppedPerson(world, disease);
-    person.applicable_symptom_policy_mask = 0b11;
+    Person& person = makeSickHoppedPerson(policy_manager, world, disease);
+    policy_test::importApplicable(policy_manager, person, 0b11, PolicyMask{});
     return &person;
   };
 
@@ -1010,7 +1032,8 @@ TEST_CASE("Symptom policy - a closing window is not symptom progression") {
     policy_manager.getOverride(person, kLeisure, kPubVenue, 0,
                                SlotVenueType::known(kPubVenueType), 3.0, 0);
 
-    CHECK((person.active_symptom_policy_participation & kAftercareBit) != 0);
+    CHECK(exportedState(policy_manager, person)
+              .symptom.participating.test(kAftercareBit));
   }
 
   SUBCASE("the window closing does not") {
@@ -1028,8 +1051,48 @@ TEST_CASE("Symptom policy - a closing window is not symptom progression") {
     policy_manager.getOverride(person, kLeisure, kPubVenue, 0,
                                SlotVenueType::known(kPubVenueType), 10.0, 0);
 
-    CHECK((person.active_symptom_policy_participation & kAftercareBit) == 0);
+    CHECK(!exportedState(policy_manager, person)
+               .symptom.participating.test(kAftercareBit));
   }
+}
+
+TEST_CASE("Symptom policy - a follow-up the person cannot hold is skipped") {
+  // The follow-up's criteria exclude the person, so it is outside their
+  // applicable set: the hand-on is dropped rather than thrown on, and the
+  // follow-up never fires for them.
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease(2.0);
+  PolicyManager policy_manager(world);
+  SymptomPolicy aftercare = makeFreezePolicy();
+  aftercare.name = "aftercare";
+  aftercare.trigger_symptoms = {"healthy"};
+  policy_manager.addSymptomPolicy(aftercare);
+
+  SymptomPolicy stay_home = makeFreezePolicy();
+  stay_home.name = "stay_home_when_sick";
+  stay_home.follow_up_policy_name = "aftercare";
+  stay_home.inherit_compliance = true;
+  policy_manager.addSymptomPolicy(stay_home);
+
+  policy_manager.resolveAll(disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
+  policy_test::importApplicable(policy_manager, person, 0b10, PolicyMask{});
+
+  REQUIRE(policy_manager
+              .getOverride(person, kLeisure, kPubVenue, 0,
+                           SlotVenueType::known(kPubVenueType), 1.0, 0)
+              .has_value());
+  REQUIRE(exportedState(policy_manager, person).symptom.participating ==
+          PolicyMask{0b10});
+
+  // Day 3: recovered, so stay_home hands on to aftercare, which is not theirs.
+  std::optional<PersonLocation> recovered_override;
+  CHECK_NOTHROW(recovered_override = policy_manager.getOverride(
+                    person, kLeisure, kPubVenue, 0,
+                    SlotVenueType::known(kPubVenueType), 3.0, 0));
+  CHECK_FALSE(recovered_override.has_value());
+  CHECK(exportedState(policy_manager, person).symptom.decided.none());
+  CHECK(exportedState(policy_manager, person).symptom.participating.none());
 }
 
 TEST_CASE("Query and override agree on the symptom policy window") {
@@ -1043,7 +1106,7 @@ TEST_CASE("Query and override agree on the symptom policy window") {
   policy_manager.addSymptomPolicy(stay_home);
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   for (double time : {4.99, 5.0, 9.99, 10.0}) {
     const bool suppressed = policy_manager.suppressesParticipation(
@@ -1053,8 +1116,8 @@ TEST_CASE("Query and override agree on the symptom policy window") {
   }
 
   // Nothing was decided or frozen by the questions alone.
-  CHECK(person.symptom_policy_decisions == 0);
-  CHECK(person.active_symptom_policy_participation == 0);
+  CHECK(exportedState(policy_manager, person).symptom.decided.none());
+  CHECK(exportedState(policy_manager, person).symptom.participating.none());
   CHECK(policy_manager.getFrozenStates().empty());
   CHECK(person.schedule_hop.hopped_schedule_id == kHoppedSchedule);
 }
@@ -1224,8 +1287,8 @@ TEST_CASE("Adjacent symptom windows never both hold the same slot") {
   PolicyLoader::loadPolicies(policy_manager, path.string(), "2020-02-01");
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickPerson(world, disease);
-  person.applicable_symptom_policy_mask = 0b11;
+  Person& person = makeSickPerson(policy_manager, world, disease);
+  policy_test::importApplicable(policy_manager, person, 0b11, PolicyMask{});
 
   auto fires_at = [&](int16_t activity_index, double time) {
     return policy_manager
@@ -1283,8 +1346,8 @@ TEST_CASE("Successive symptom windows tighten to the new rate, not past it") {
 
   for (int i = 0; i < kNumPeople; ++i) {
     Person& person =
-        makeSickHoppedPerson(world, disease, static_cast<size_t>(i));
-    person.applicable_symptom_policy_mask = 0b11;
+        makeSickHoppedPerson(policy_manager, world, disease, static_cast<size_t>(i));
+    policy_test::importApplicable(policy_manager, person, 0b11, PolicyMask{});
   }
 
   // Day 5: the first instruction alone, and its decisions are now latched.
@@ -1313,7 +1376,7 @@ TEST_CASE("Recovery releases the freeze") {
   policy_manager.addSymptomPolicy(makeFreezePolicy());
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   // Day 1: sick and travelling, so the policy pins them in place.
   REQUIRE(policy_manager
@@ -1348,7 +1411,7 @@ TEST_CASE("Death releases the freeze") {
   policy_manager.addSymptomPolicy(makeFreezePolicy());
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickHoppedPerson(world, disease);
+  Person& person = makeSickHoppedPerson(policy_manager, world, disease);
 
   REQUIRE(policy_manager
               .getOverride(person, kLeisure, kPubVenue, 0,
@@ -1367,16 +1430,17 @@ TEST_CASE("Death releases the freeze") {
 }
 
 // =============================================================================
-// Policy count cap. The applicability masks are uint32_t, so a 33rd policy can
-// never fire — it must fail loud at resolve time rather than load silently.
+// Policy count cap. A PolicyMask holds kMaxPoliciesPerKind bits, so a policy
+// past the cap can never fire — it must fail loud at resolve time rather than
+// load silently.
 // =============================================================================
 
-TEST_CASE("A 33rd symptom policy is rejected by name") {
+TEST_CASE("A symptom policy past the cap is rejected by name") {
   WorldState world = buildVenueGateWorld();
   Disease disease = buildTwoStageDisease();
   PolicyManager policy_manager(world);
 
-  for (int i = 0; i < 33; ++i) {
+  for (size_t i = 0; i <= kMaxPoliciesPerKind; ++i) {
     SymptomPolicy policy = makeFreezePolicy();
     policy.name = "symptom_policy_" + std::to_string(i);
     policy_manager.addSymptomPolicy(policy);
@@ -1385,19 +1449,20 @@ TEST_CASE("A 33rd symptom policy is rejected by name") {
   std::string message;
   try {
     policy_manager.resolveAll(disease);
-    FAIL("resolveAll accepted 33 symptom policies");
+    FAIL("resolveAll accepted more symptom policies than the cap");
   } catch (const std::runtime_error& error) {
     message = error.what();
   }
-  CHECK(message.find("symptom_policy_32") != std::string::npos);
+  CHECK(message.find("symptom_policy_" + std::to_string(kMaxPoliciesPerKind)) !=
+        std::string::npos);
 }
 
-TEST_CASE("A 33rd temporal policy is rejected by name") {
+TEST_CASE("A temporal policy past the cap is rejected by name") {
   WorldState world = buildVenueGateWorld();
   Disease disease = buildTwoStageDisease();
   PolicyManager policy_manager(world);
 
-  for (int i = 0; i < 33; ++i) {
+  for (size_t i = 0; i <= kMaxPoliciesPerKind; ++i) {
     TemporalPolicy policy = makeClosurePolicy({"leisure"}, {"pub"});
     policy.name = "temporal_policy_" + std::to_string(i);
     policy_manager.addTemporalPolicy(policy);
@@ -1406,34 +1471,199 @@ TEST_CASE("A 33rd temporal policy is rejected by name") {
   std::string message;
   try {
     policy_manager.resolveAll(disease);
-    FAIL("resolveAll accepted 33 temporal policies");
+    FAIL("resolveAll accepted more temporal policies than the cap");
   } catch (const std::runtime_error& error) {
     message = error.what();
   }
-  CHECK(message.find("temporal_policy_32") != std::string::npos);
+  CHECK(message.find("temporal_policy_" +
+                     std::to_string(kMaxPoliciesPerKind)) != std::string::npos);
 }
 
-TEST_CASE("32 policies of each kind resolve and all can fire") {
+namespace {
+
+// Global indices at each edge of a mask word, up to the cap.
+constexpr size_t kWordEdgeIndices[] = {0, 31, 32, 63, 64, 127};
+
+// Person k is aged 10k, so a policy aimed at age 10k reaches only Person k.
+SelectionCriterion agedExactly(int age) {
+  SelectionCriterion criterion;
+  criterion.property_path = "age";
+  criterion.operator_type = "==";
+  criterion.value = static_cast<double>(age);  // age is held as double
+  return criterion;
+}
+
+// Fill every index up to the cap. The word-edge indices each reach one Person;
+// the rest reach nobody, so no Person holds more than one policy.
+template <typename Policy>
+std::vector<Policy> spreadOverPersons(const Policy& prototype) {
+  std::vector<Policy> policies;
+  size_t target_person = 0;
+  for (size_t index = 0; index < kMaxPoliciesPerKind; ++index) {
+    Policy policy = prototype;
+    policy.name = "policy_" + std::to_string(index);
+    const bool is_edge =
+        std::find(std::begin(kWordEdgeIndices), std::end(kWordEdgeIndices),
+                  index) != std::end(kWordEdgeIndices);
+    policy.applies_to.push_back(
+        agedExactly(is_edge ? static_cast<int>(10 * target_person++) : 200));
+    policies.push_back(policy);
+  }
+  return policies;
+}
+
+WorldState buildAgedWorld() {
+  constexpr int kPersonCount = std::size(kWordEdgeIndices);
+  WorldState world = buildVenueGateWorld(kPersonCount);
+  for (int person = 0; person < kPersonCount; ++person)
+    world.people[person].age = static_cast<float>(10 * person);
+  return world;
+}
+
+}  // namespace
+
+TEST_CASE("Temporal policies at every mask word edge fire") {
+  WorldState world = buildAgedWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  for (const auto& policy :
+       spreadOverPersons(makeClosurePolicy({"leisure"}, {"pub"})))
+    policy_manager.addTemporalPolicy(policy);
+  policy_manager.resolveAll(disease);
+  policy_manager.precomputePolicyApplicability(world.people);
+
+  for (size_t person = 0; person < std::size(kWordEdgeIndices); ++person) {
+    CAPTURE(kWordEdgeIndices[person]);
+    CHECK(exportedState(policy_manager, world.people[person])
+              .temporal.applicable.test(kWordEdgeIndices[person]));
+    CHECK(runOverride(policy_manager, world.people[person], kLeisure, kPubVenue)
+              .has_value());
+  }
+}
+
+TEST_CASE("Symptom policies at every mask word edge fire") {
+  WorldState world = buildAgedWorld();
+  // Still sick at runOverride's query time.
+  Disease disease = buildTwoStageDisease(10.0);
+  PolicyManager policy_manager(world);
+  for (const auto& policy : spreadOverPersons(makeFreezePolicy({"pub"})))
+    policy_manager.addSymptomPolicy(policy);
+  policy_manager.resolveAll(disease);
+  for (size_t person = 0; person < std::size(kWordEdgeIndices); ++person)
+    makeSickHoppedPerson(policy_manager, world, disease, person);
+  // Replaces the symptom policy 0 makeSickHoppedPerson applied.
+  policy_manager.precomputePolicyApplicability(world.people);
+
+  for (size_t person = 0; person < std::size(kWordEdgeIndices); ++person) {
+    CAPTURE(kWordEdgeIndices[person]);
+    Person& sick_person = world.people[person];
+    CHECK(exportedState(policy_manager, sick_person)
+              .symptom.applicable.test(kWordEdgeIndices[person]));
+    CHECK(runOverride(policy_manager, sick_person, kLeisure, kPubVenue)
+              .has_value());
+  }
+}
+
+TEST_CASE("Policy decisions at every mask word edge export by global index") {
+  WorldState world = buildAgedWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  for (const auto& policy :
+       spreadOverPersons(makeClosurePolicy({"leisure"}, {"pub"})))
+    policy_manager.addTemporalPolicy(policy);
+  policy_manager.resolveAll(disease);
+  policy_manager.precomputePolicyApplicability(world.people);
+
+  for (size_t person_index = 0; person_index < std::size(kWordEdgeIndices);
+       ++person_index) {
+    const size_t edge_index = kWordEdgeIndices[person_index];
+    CAPTURE(edge_index);
+    Person& person = world.people[person_index];
+    REQUIRE(
+        runOverride(policy_manager, person, kLeisure, kPubVenue).has_value());
+
+    PolicyMask edge_mask;
+    edge_mask.set(edge_index);
+    const KindPolicyMasks exported =
+        exportedState(policy_manager, person).temporal;
+    CHECK(exported.decided == edge_mask);
+    CHECK(exported.participating == edge_mask);
+  }
+}
+
+TEST_CASE("A Person matching too many symptom policies is rejected by name") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+  for (size_t i = 0; i <= kMaxApplicablePoliciesPerKind; ++i) {
+    SymptomPolicy policy = makeFreezePolicy();
+    policy.name = "symptom_policy_" + std::to_string(i);
+    policy_manager.addSymptomPolicy(policy);
+  }
+  policy_manager.resolveAll(disease);
+
+  std::string message;
+  try {
+    policy_manager.precomputePolicyApplicability(world.people);
+    FAIL("precompute accepted a Person past the applicable policy cap");
+  } catch (const std::runtime_error& error) {
+    message = error.what();
+  }
+  CHECK(message.find("person " + std::to_string(world.people[0].id)) !=
+        std::string::npos);
+  CHECK(message.find("symptom") != std::string::npos);
+  CHECK(message.find(std::to_string(kMaxApplicablePoliciesPerKind + 1)) !=
+        std::string::npos);
+}
+
+TEST_CASE("A PolicyMask survives the split into checkpoint words") {
+  PolicyMask original;
+  original.set(0).set(63).set(64).set(100).set(kMaxPoliciesPerKind - 1);
+
+  PolicyMask restored;
+  restored.set();  // Every bit must be overwritten, not merged.
+  for (size_t w = 0; w < kPolicyMaskWords; ++w)
+    setPolicyMaskWord(restored, w, policyMaskWord(original, w));
+
+  CHECK(restored == original);
+  CHECK(policyMaskWord(original, 0) == ((1ULL << 63) | 1ULL));
+}
+
+// =============================================================================
+// Policy names. A policy is its name within its kind, so a name repeated
+// within a kind is refused at resolve time; across kinds it is allowed.
+// =============================================================================
+
+TEST_CASE("A policy name repeated within a kind is rejected at resolve") {
   WorldState world = buildVenueGateWorld();
   Disease disease = buildTwoStageDisease();
   PolicyManager policy_manager(world);
 
-  for (int i = 0; i < 32; ++i) {
-    SymptomPolicy symptom_policy = makeFreezePolicy();
-    symptom_policy.name = "symptom_policy_" + std::to_string(i);
-    policy_manager.addSymptomPolicy(symptom_policy);
-
-    TemporalPolicy temporal_policy = makeClosurePolicy({"leisure"}, {"pub"});
-    temporal_policy.name = "temporal_policy_" + std::to_string(i);
-    policy_manager.addTemporalPolicy(temporal_policy);
+  for (const std::string name : {"close_pubs", "close_shops", "close_pubs"}) {
+    TemporalPolicy policy = makeClosurePolicy({"leisure"}, {"pub"});
+    policy.name = name;
+    policy_manager.addTemporalPolicy(policy);
   }
 
-  CHECK_NOTHROW(policy_manager.resolveAll(disease));
+  const std::string message =
+      policy_test::thrown([&] { policy_manager.resolveAll(disease); });
+  CHECK(message.find("temporal") != std::string::npos);
+  CHECK(message.find("'close_pubs'") != std::string::npos);
+}
 
-  // The last of the 32 still reaches the top bit of the mask.
-  policy_manager.precomputePolicyApplicability(world.people);
-  CHECK(world.people[0].applicable_symptom_policy_mask == 0xFFFFFFFFu);
-  CHECK(world.people[0].applicable_temporal_policy_mask == 0xFFFFFFFFu);
+TEST_CASE("The same policy name in both kinds is accepted") {
+  WorldState world = buildVenueGateWorld();
+  Disease disease = buildTwoStageDisease();
+  PolicyManager policy_manager(world);
+
+  SymptomPolicy symptom_policy = makeFreezePolicy();
+  symptom_policy.name = "shared";
+  policy_manager.addSymptomPolicy(symptom_policy);
+  TemporalPolicy temporal_policy = makeClosurePolicy({"leisure"}, {"pub"});
+  temporal_policy.name = "shared";
+  policy_manager.addTemporalPolicy(temporal_policy);
+
+  CHECK_NOTHROW(policy_manager.resolveAll(disease));
 }
 
 // =============================================================================
@@ -1458,6 +1688,7 @@ TEST_CASE("Schedule swap - a hopped person is moved onto the replacement") {
   PolicyManager policy_manager(world);
   policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
   policy_manager.resolveAll(disease);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& person = world.people[0];
   person.schedule_hop = ScheduleHop::begin(kHoppedSchedule, kReturnSchedule);
@@ -1483,6 +1714,7 @@ TEST_CASE("Schedule swap - a person who is not on a hop is left alone") {
   PolicyManager policy_manager(world);
   policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
   policy_manager.resolveAll(disease);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& person = world.people[0];
 
@@ -1497,6 +1729,7 @@ TEST_CASE("Schedule swap - only acts inside its window") {
   PolicyManager policy_manager(world);
   policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
   policy_manager.resolveAll(disease);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& person = world.people[0];
   person.schedule_hop = ScheduleHop::begin(kHoppedSchedule, kReturnSchedule);
@@ -1516,7 +1749,7 @@ TEST_CASE("Schedule swap - a symptom policy leaves a person off a hop alone") {
   policy_manager.addSymptomPolicy(makeFreezePolicy());
   policy_manager.resolveAll(disease);
 
-  Person& person = makeSickPerson(world, disease);
+  Person& person = makeSickPerson(policy_manager, world, disease);
 
   CHECK_FALSE(policy_manager
                   .getOverride(person, kLeisure, kPubVenue, 0,
@@ -1531,6 +1764,7 @@ TEST_CASE("Schedule swap - the query agrees with the override") {
   PolicyManager policy_manager(world);
   policy_manager.addTemporalPolicy(makeScheduleSwapPolicy());
   policy_manager.resolveAll(disease);
+  applyTemporalPolicyZero(policy_manager, world);
 
   Person& walker = world.people[0];
   Person& traveller = world.people[1];

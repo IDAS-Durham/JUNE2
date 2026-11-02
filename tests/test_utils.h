@@ -100,6 +100,8 @@ class ScopedTestFiles {
     std::filesystem::remove_all(directory_, ec);
   }
 
+  const std::filesystem::path& directory() const { return directory_; }
+
   std::filesystem::path path(std::string_view filename) const {
     return directory_ / std::string(filename);
   }

@@ -9,8 +9,10 @@
 #include <vector>
 
 #include "core/world_state.h"
+#include "epidemiology/applicable_policies/applicable_policy_walk.h"
 #include "epidemiology/policy.h"
 #include "mpi_test_helpers.h"
+#include "policy_test_helpers.h"
 #include "venue_scope_fixtures.h"
 
 using namespace june;
@@ -118,7 +120,8 @@ TEST_CASE("Trigger - venue closures do not depend on rank count") {
   pm.observedMetrics().resolve(world, disease);
   pm.requireTriggerMetrics();
   pm.observedMetrics().buildVenueParents(world);
-  for (Person& p : world.people) p.applicable_temporal_policy_mask = 1;
+  for (Person& p : world.people)
+    policy_test::importApplicable(pm, p, PolicyMask{}, 1);
   pm.resolveAll(disease);
 
   // Who is infected on each day. The staff member registered to the school
@@ -194,7 +197,8 @@ TEST_CASE("Response - levels and verdicts do not depend on rank count") {
   pm.observedMetrics().resolve(world, disease);
   pm.requireTriggerMetrics();
   pm.observedMetrics().buildVenueParents(world);
-  for (Person& p : world.people) p.applicable_temporal_policy_mask = 1;
+  for (Person& p : world.people)
+    policy_test::importApplicable(pm, p, PolicyMask{}, 1);
   pm.resolveAll(disease);
 
   // Class A has two cases (pupil A and the person in both classes), class B
@@ -225,13 +229,14 @@ TEST_CASE("Response - levels and verdicts do not depend on rank count") {
                                    {kTwoClasses, kClassA, 0.5},
                                    {kTwoClasses, kClassB, 0.5},
                                    {kOtherSchool, kClassC, 0.25}};
+  const uint64_t kDrawKey = policyDrawKey(PolicyKind::Temporal, "keep_home");
   std::vector<int64_t> verdicts;
   for (const Seat& seat : seats) {
     const bool avoids =
         pm.getOverride(world.people[seat.person], kPrimary, seat.classroom, 0,
                        SlotVenueType::fromVenue(seat.classroom), 1.0, 0)
             .has_value();
-    SplitMix64 rng(mix_seed(77, seat.person, 100, 0xA701D4ULL));
+    SplitMix64 rng(mix_seed(77, seat.person, kDrawKey, 0xA701D4ULL));
     CHECK(avoids == (seat.level > uniform01(rng)));
     verdicts.push_back(avoids ? 1 : 0);
   }

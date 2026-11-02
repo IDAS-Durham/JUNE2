@@ -10,6 +10,7 @@
 
 #include "core/world_state.h"
 #include "doctest.h"
+#include "epidemiology/applicable_policies/applicable_policy_walk.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/epidemiology.h"
 #include "epidemiology/policy.h"
@@ -133,10 +134,14 @@ const std::string kHousehold = "{shared_venue: residence}";
 const std::string kDeaths = "{metric: deaths, weight: 0.1}";
 
 // The draw a unit is held to, written out from the specification: a pure
-// function of the base seed, the unit key and the policy index. The temporal
-// policy at position i draws with index i + 100.
-bool expectedAvoid(uint64_t key, uint32_t draw_index, double level) {
-  SplitMix64 rng(mix_seed(kSeed, key, draw_index, 0xA701D4ULL));
+// function of the base seed, the unit key and the policy's draw key, a hash of
+// its kind and name.
+uint64_t temporalKey(const std::string& name) {
+  return policyDrawKey(PolicyKind::Temporal, name);
+}
+
+bool expectedAvoid(uint64_t key, uint64_t draw_key, double level) {
+  SplitMix64 rng(mix_seed(kSeed, key, draw_key, 0xA701D4ULL));
   return level > uniform01(rng);
 }
 
@@ -150,15 +155,12 @@ struct Responding {
   Responding(WorldState w, const std::string& file_text)
       : world(std::move(w)), pm(world) {
     pm.setBaseSeed(kSeed);
-    for (Person& p : world.people) {
-      p.applicable_temporal_policy_mask = ~0u;
-      p.applicable_symptom_policy_mask = ~0u;
-    }
     REQUIRE(loadPolicyText(pm, file_text) == "");
     pm.observedMetrics().resolve(world, disease);
     pm.requireTriggerMetrics();
     pm.observedMetrics().buildVenueParents(world);
     pm.resolveAll(disease);
+    applyEveryPolicy(pm, world);
   }
 
   void endDay(int day, int world_deaths = 0, std::vector<PersonId> present = {},
@@ -496,7 +498,7 @@ TEST_CASE(
     int avoiding = 0;
     for (int h = 0; h < shape.households; ++h) {
       const PersonId kid = shape.kid(h, 0);
-      const bool expected = expectedAvoid(kid, 100, level);
+      const bool expected = expectedAvoid(kid, temporalKey("keep_home"), level);
       CHECK(r.avoids(kid, shape.classroomOf(h, 0), time) == expected);
       avoiding += expected;
     }
@@ -515,7 +517,8 @@ TEST_CASE("Response - a shared decision unit draws once per venue") {
   r.endDay(0, 4);
   const double level = 0.0 + 0.1 * 4.0;
   for (int h = 0; h < shape.households; ++h) {
-    const bool expected = expectedAvoid(static_cast<uint64_t>(h), 100, level);
+    const bool expected =
+        expectedAvoid(static_cast<uint64_t>(h), temporalKey("keep_home"), level);
     for (int j = 0; j < shape.kids; ++j) {
       INFO("household " << h << " child " << j);
       CHECK(r.avoids(shape.kid(h, j), shape.classroomOf(h, j), 1.0) ==
@@ -570,6 +573,30 @@ TEST_CASE("Response - two policies draw independently") {
   const std::string trigger = response(kDeaths, kHousehold);
   Responding first(makeSchoolWorld(shape),
                    temporalFile(keepHome("keep_home", trigger)));
+  Responding second(makeSchoolWorld(shape),
+                    temporalFile(keepHome("keep_home_too", trigger)));
+  first.endDay(0, 5);
+  second.endDay(0, 5);
+  const auto a = first.households(shape, 1.0);
+  const auto b = second.households(shape, 1.0);
+  for (int h = 0; h < shape.households; ++h)
+    CHECK(b[static_cast<size_t>(h)] ==
+          expectedAvoid(static_cast<uint64_t>(h), temporalKey("keep_home_too"),
+                        0.5));
+
+  int both = 0;
+  for (size_t i = 0; i < a.size(); ++i) both += a[i] && b[i];
+  // Independent halves overlap in a quarter: 250 of 1000, standard deviation
+  // about 14. Identical draws would overlap in 500.
+  CHECK(std::abs(both - 250) < 5 * 14);
+  CHECK(a != b);
+}
+
+TEST_CASE("Response - a policy's draws do not depend on its position") {
+  const Shape shape{1000, 1, 8};
+  const std::string trigger = response(kDeaths, kHousehold);
+  Responding first(makeSchoolWorld(shape),
+                   temporalFile(keepHome("keep_home", trigger)));
   // The same policy listed second, behind one that nobody complies with.
   Responding second(
       makeSchoolWorld(shape),
@@ -579,18 +606,7 @@ TEST_CASE("Response - two policies draw independently") {
                    keepHome("keep_home", trigger)));
   first.endDay(0, 5);
   second.endDay(0, 5);
-  const auto a = first.households(shape, 1.0);
-  const auto b = second.households(shape, 1.0);
-  for (int h = 0; h < shape.households; ++h)
-    CHECK(b[static_cast<size_t>(h)] ==
-          expectedAvoid(static_cast<uint64_t>(h), 101, 0.5));
-
-  int both = 0;
-  for (size_t i = 0; i < a.size(); ++i) both += a[i] && b[i];
-  // Independent halves overlap in a quarter: 250 of 1000, standard deviation
-  // about 14. Identical draws would overlap in 500.
-  CHECK(std::abs(both - 250) < 5 * 14);
-  CHECK(a != b);
+  CHECK(first.households(shape, 1.0) == second.households(shape, 1.0));
 }
 
 TEST_CASE("Response - an exempt person and a non exempt one share a unit") {
@@ -609,7 +625,8 @@ TEST_CASE("Response - an exempt person and a non exempt one share a unit") {
 
   int avoiding_units = 0;
   for (int h = 0; h < shape.households; ++h) {
-    const bool unit_avoids = expectedAvoid(static_cast<uint64_t>(h), 100, 0.5);
+    const bool unit_avoids =
+        expectedAvoid(static_cast<uint64_t>(h), temporalKey("keep_home"), 0.5);
     avoiding_units += unit_avoids;
     CHECK(r.avoids(shape.kid(h, 0), shape.classroomOf(h, 0), 1.0) ==
           unit_avoids);
@@ -700,7 +717,8 @@ TEST_CASE("Response - a death count at a venue keeps that venue's level") {
   for (int h = 0; h < shape.households; ++h) {
     const VenueId room = shape.classroomOf(h, 0);
     const bool expected =
-        room == first && expectedAvoid(static_cast<uint64_t>(h), 100, 0.5);
+        room == first &&
+        expectedAvoid(static_cast<uint64_t>(h), temporalKey("keep_home"), 0.5);
     CHECK(r.avoids(shape.kid(h, 0), room, 21.0) == expected);
   }
 }
@@ -799,8 +817,8 @@ TEST_CASE(
   voluntary.endDay(0, 5);
   voluntary.households(shape, 1.0);
   for (const Person& p : voluntary.world.people) {
-    CHECK(p.temporal_policy_decisions == 0);
-    CHECK(p.active_temporal_policy_participation == 0);
+    CHECK(exportedState(voluntary.pm, p).temporal.decided.none());
+    CHECK(exportedState(voluntary.pm, p).temporal.participating.none());
   }
 
   Responding plain(
@@ -812,8 +830,8 @@ TEST_CASE(
   plain.households(shape, 1.0);
   for (int h = 0; h < shape.households; ++h) {
     const Person& p = plain.world.people[static_cast<size_t>(shape.kid(h, 0))];
-    CHECK(p.temporal_policy_decisions == 1);
-    CHECK(p.active_temporal_policy_participation == 1);
+    CHECK(exportedState(plain.pm, p).temporal.decided == PolicyMask{0b1});
+    CHECK(exportedState(plain.pm, p).temporal.participating == PolicyMask{0b1});
   }
 }
 
@@ -829,8 +847,8 @@ TEST_CASE("Response - encounters and follows are told the same verdict") {
     const VenueId room = shape.classroomOf(h, 0);
     // Asked first: the question must not decide anything for the schedule.
     const bool asked = r.suppressed(kid, room, kClassroomType, 1.0);
-    CHECK(r.world.people[static_cast<size_t>(kid)].temporal_policy_decisions ==
-          0);
+    CHECK(exportedState(r.pm, r.world.people[static_cast<size_t>(kid)])
+              .temporal.decided.none());
     CHECK(asked == r.avoids(kid, room, 1.0));
     avoiding += asked;
   }
@@ -877,7 +895,9 @@ TEST_CASE("Response - symptomatic people stay home more as deaths rise") {
     int expected = 0;
     for (int h = 0; h < shape.households; h += 2)
       expected +=
-          expectedAvoid(static_cast<uint64_t>(shape.kid(h, 0)), 0, level);
+          expectedAvoid(static_cast<uint64_t>(shape.kid(h, 0)),
+                        policyDrawKey(PolicyKind::Symptom, "sick_stay_home"),
+                        level);
     return expected;
   };
 
@@ -895,7 +915,8 @@ TEST_CASE("Response - symptomatic people stay home more as deaths rise") {
   }
   CHECK(previous == shape.households / 2);  // level 1: every sick pupil
   // No decision was latched on the way.
-  for (const Person& p : r.world.people) CHECK(p.symptom_policy_decisions == 0);
+  for (const Person& p : r.world.people)
+    CHECK(exportedState(r.pm, p).symptom.decided.none());
 }
 
 // ---------------------------------------------------------------------------

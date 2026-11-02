@@ -1,5 +1,6 @@
 #pragma once
 
+#include <bitset>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -8,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "core/applicable_policy_state.h"
 #include "epidemiology/emission/emission_record.h"
 #include "epidemiology/transmission/transmission_record.h"
 #include "epidemiology/vaccine.h"
@@ -275,6 +277,25 @@ struct ScheduleHop {
 // =============================================================================
 // Person - Represents an individual in the simulation
 // =============================================================================
+// Policies of one kind (symptom or temporal) a run may hold. Bit i of a
+// PolicyMask is policy i of that kind.
+inline constexpr size_t kMaxPoliciesPerKind = 128;
+using PolicyMask = std::bitset<kMaxPoliciesPerKind>;
+
+// A PolicyMask as 64-bit words, least significant first (checkpoint layout).
+inline constexpr size_t kPolicyMaskWords = kMaxPoliciesPerKind / 64;
+static_assert(kMaxPoliciesPerKind % 64 == 0);
+
+inline uint64_t policyMaskWord(const PolicyMask& mask, size_t word_index) {
+  return ((mask >> (64 * word_index)) & PolicyMask(~0ULL)).to_ullong();
+}
+
+inline void setPolicyMaskWord(PolicyMask& mask, size_t word_index,
+                              uint64_t word) {
+  mask &= ~(PolicyMask(~0ULL) << (64 * word_index));
+  mask |= PolicyMask(word) << (64 * word_index);
+}
+
 struct Person {
   PersonId id;
   float age;
@@ -288,25 +309,10 @@ struct Person {
   // +Cache schedule type pointer
   const ScheduleType* cached_schedule_type_ = nullptr;
 
-  // Cache which policies can apply to this person (based on selection criteria)
-  uint32_t applicable_symptom_policy_mask = 0;
-  uint32_t applicable_temporal_policy_mask = 0;
-
-  // Track which policies the person is currently complying/participating in
-  // (sticky compliance)
-  uint32_t active_symptom_policy_participation = 0;
-  uint32_t active_temporal_policy_participation = 0;
-
-  // Track whether a decision (compliance roll) has already been made for a
-  // policy This allows both Participation and Refusal to be "sticky"
-  uint32_t symptom_policy_decisions = 0;
-  uint32_t temporal_policy_decisions = 0;
-
-  // Reset symptom-based policy state (e.g., on recovery)
-  void resetPolicyState() {
-    active_symptom_policy_participation = 0;
-    symptom_policy_decisions = 0;
-  }
+  // Which policies can apply to this person (based on selection criteria) and
+  // their Sticky Compliance on them. Opaque: read and write through
+  // PolicyManager::applicablePolicies().
+  ApplicablePolicyState applicable_policy_state;
 
   // Dynamic properties (ethnicity, comorbidities, work_mode, etc.)
   // Index into WorldState::person_properties flat table
@@ -376,6 +382,9 @@ struct Person {
   uint32_t encounter_meta_start = 0;
   uint16_t encounter_meta_count = 0;
 };
+
+// Person is held per head of population; guard its size against regressions.
+static_assert(sizeof(Person) == 160, "Person size changed");
 
 // =============================================================================
 // Subset - A group of people/roles within a venue (e.g., kids or teachers in a

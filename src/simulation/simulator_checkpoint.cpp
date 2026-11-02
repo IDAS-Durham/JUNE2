@@ -13,6 +13,10 @@
 #include <string>
 #include <vector>
 
+#include "epidemiology/policy_roster/policy_roster.h"
+#include "simulation/checkpoint_datasets/chunked_dataset.h"
+#include "simulation/checkpoint_manifest/checkpoint_manifest.h"
+#include "simulation/checkpoint_masks/policy_mask_io.h"
 #include "simulation/simulator.h"
 
 #ifdef USE_MPI
@@ -37,24 +41,13 @@ std::string ymd(const std::string& iso) {  // "YYYY-MM-DD" -> "YYYYMMDD"
   return o;
 }
 
-// Create + write a 1-D numeric dataset. Handles the empty case (no chunk /
-// no filter, which HDF5 requires for zero-extent datasets).
+// Create + write a 1-D numeric dataset.
 template <typename T>
 void writeVec(H5::H5File& f, const std::string& name,
               const std::vector<T>& data, const H5::PredType& t,
               int compression) {
-  hsize_t dims[1] = {data.size()};
-  H5::DataSpace space(1, dims);
-  if (data.empty()) {
-    f.createDataSet(name, t, space);
-    return;
-  }
-  H5::DSetCreatPropList plist;
-  hsize_t chunk[1] = {std::min<hsize_t>(dims[0], 100000)};
-  plist.setChunk(1, chunk);
-  if (compression > 0) plist.setDeflate(compression);
-  H5::DataSet ds = f.createDataSet(name, t, space, plist);
-  ds.write(data.data(), t);
+  const hsize_t dims[1] = {data.size()};
+  writeChunkedDataSet(f, name, data.data(), t, dims, compression);
 }
 
 void writeStrs(H5::H5File& f, const std::string& name,
@@ -94,12 +87,16 @@ std::vector<uint32_t> buildOwnedPersonOrder(const std::vector<Person>& people) {
 // the embedded partition_index over contiguous geo_unit runs (so restore can
 // selectively read by geo without a full population scan). Rows follow `ord`
 // (sorted by geo_unit_id, person_id) so the run-based index aligns.
+// Applicable-policy set ids are rank-local, so the decided and participating
+// policies are written as global-index masks. Applicable policies are not
+// written: restore recomputes them from the current config.
 void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
-                          const std::vector<Person>& people, int comp) {
+                          const std::vector<Person>& people,
+                          const PolicyManager& policy_manager, int comp) {
   std::vector<int32_t> ids, geo, hop, ret, tslot, hop_rep;
   std::vector<double> imm_l, imm_a, imm_w, death_t;
   std::vector<uint8_t> dead;
-  std::vector<uint32_t> m_as, m_at, m_ps, m_pt, m_ds, m_dt;
+  std::vector<PolicyMask> m_ps, m_pt, m_ds, m_dt;
   ids.reserve(ord.size());
   for (uint32_t idx : ord) {
     const Person& p = people[idx];
@@ -110,12 +107,12 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
     imm_w.push_back(p.immunity.natural_waning_rate);
     dead.push_back(p.is_dead ? 1 : 0);
     death_t.push_back(p.death_time);
-    m_as.push_back(p.applicable_symptom_policy_mask);
-    m_at.push_back(p.applicable_temporal_policy_mask);
-    m_ps.push_back(p.active_symptom_policy_participation);
-    m_pt.push_back(p.active_temporal_policy_participation);
-    m_ds.push_back(p.symptom_policy_decisions);
-    m_dt.push_back(p.temporal_policy_decisions);
+    const ApplicablePolicyMasks policy_masks =
+        policy_manager.applicablePolicies().exportState(p);
+    m_ps.push_back(policy_masks.symptom.participating);
+    m_pt.push_back(policy_masks.temporal.participating);
+    m_ds.push_back(policy_masks.symptom.decided);
+    m_dt.push_back(policy_masks.temporal.decided);
     hop.push_back(p.schedule_hop.hopped_schedule_id);
     ret.push_back(p.schedule_hop.return_schedule_id);
     tslot.push_back(p.schedule_hop.temp_slot_progress);
@@ -131,7 +128,6 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
     i = j;
   }
   const auto I32 = H5::PredType::NATIVE_INT32;
-  const auto U32 = H5::PredType::NATIVE_UINT32;
   const auto U8 = H5::PredType::NATIVE_UINT8;
   const auto F64 = H5::PredType::NATIVE_DOUBLE;
   writeVec(f, "/population/ids", ids, I32, comp);
@@ -145,14 +141,10 @@ void writeShardPopulation(H5::H5File& f, const std::vector<uint32_t>& ord,
   writeVec(f, "/population/immunity_natural_waning_rate", imm_w, F64, comp);
   writeVec(f, "/population/is_dead", dead, U8, comp);
   writeVec(f, "/population/death_time", death_t, F64, comp);
-  writeVec(f, "/population/applicable_symptom_policy_mask", m_as, U32, comp);
-  writeVec(f, "/population/applicable_temporal_policy_mask", m_at, U32, comp);
-  writeVec(f, "/population/active_symptom_policy_participation", m_ps, U32,
-           comp);
-  writeVec(f, "/population/active_temporal_policy_participation", m_pt, U32,
-           comp);
-  writeVec(f, "/population/symptom_policy_decisions", m_ds, U32, comp);
-  writeVec(f, "/population/temporal_policy_decisions", m_dt, U32, comp);
+  writeMasks(f, "/population/active_symptom_policy_participation", m_ps, comp);
+  writeMasks(f, "/population/active_temporal_policy_participation", m_pt, comp);
+  writeMasks(f, "/population/symptom_policy_decisions", m_ds, comp);
+  writeMasks(f, "/population/temporal_policy_decisions", m_dt, comp);
   writeVec(f, "/population/hopped_schedule_id", hop, I32, comp);
   writeVec(f, "/population/return_schedule_id", ret, I32, comp);
   writeVec(f, "/population/temp_slot_progress", tslot, I32, comp);
@@ -285,18 +277,16 @@ void writeShardEpidemiology(H5::H5File& f, Epidemiology* epi, int comp) {
 // Gather + write the policy manager's frozen_states_ under
 // /policy_frozen_states. Per-rank, global-id-keyed manager state: lives in the
 // shard, not state.h5.
-void writeShardFrozenStates(H5::H5File& f, PolicyManager* pm, int comp) {
+void writeShardFrozenStates(H5::H5File& f, const PolicyManager& pm, int comp) {
   std::vector<int32_t> fz_pid, fz_hop, fz_ret, fz_venue, fz_subset;
   std::vector<uint8_t> fz_pol;
-  if (pm) {
-    for (const auto& [pid, st] : pm->getFrozenStates()) {
-      fz_pid.push_back(pid);
-      fz_pol.push_back(st.triggering_policy_index);
-      fz_hop.push_back(st.paused_hopped_schedule_id);
-      fz_ret.push_back(st.paused_return_schedule_id);
-      fz_venue.push_back(st.pin_venue_id);
-      fz_subset.push_back(st.pin_subset_index);
-    }
+  for (const auto& [pid, st] : pm.getFrozenStates()) {
+    fz_pid.push_back(pid);
+    fz_pol.push_back(st.triggering_policy_index);
+    fz_hop.push_back(st.paused_hopped_schedule_id);
+    fz_ret.push_back(st.paused_return_schedule_id);
+    fz_venue.push_back(st.pin_venue_id);
+    fz_subset.push_back(st.pin_subset_index);
   }
   const auto I32 = H5::PredType::NATIVE_INT32;
   const auto U8 = H5::PredType::NATIVE_UINT8;
@@ -462,34 +452,6 @@ void writeShardIndex(const fs::path& tmp, int nranks) {
   std::ofstream(tmp / "shard_index.yaml") << e.c_str() << "\n";
 }
 
-// manifest.yaml is written LAST in the checkpoint dir; its presence is the
-// atomic commit marker for a complete checkpoint (see restoreFromCheckpoint).
-// world_path / world_sha256 are populated in P4 (restore validation);
-// intentionally empty here rather than a misleading placeholder.
-// format_version names the layout. The reader accepts only this one, so change
-// it together with readAndValidateManifest whenever a checkpoint gains or
-// loses data.
-void writeManifest(const fs::path& tmp, int completed_day,
-                   const std::string& date_iso, int nranks,
-                   double current_simulation_time, unsigned int random_seed) {
-  YAML::Emitter m;
-  m << YAML::BeginMap;
-  m << YAML::Key << "format_version" << YAML::Value << 3;
-  m << YAML::Key << "completed_day" << YAML::Value << completed_day;
-  m << YAML::Key << "date" << YAML::Value << date_iso;
-  m << YAML::Key << "current_simulation_time" << YAML::Value
-    << current_simulation_time;
-  m << YAML::Key << "num_ranks" << YAML::Value << nranks;
-  m << YAML::Key << "effective_random_seed" << YAML::Value
-    << static_cast<unsigned long long>(random_seed);
-  m << YAML::Key << "world_path" << YAML::Value << "";
-  m << YAML::Key << "world_sha256" << YAML::Value << "";
-  m << YAML::Key << "shard_index" << YAML::Value << "shard_index.yaml";
-  m << YAML::Key << "state_file" << YAML::Value << "state.h5";
-  m << YAML::EndMap;
-  std::ofstream(tmp / "manifest.yaml") << m.c_str() << "\n";
-}
-
 }  // namespace
 
 void Simulator::writeCheckpoint(int completed_day,
@@ -549,13 +511,13 @@ void Simulator::writeCheckpointRankShard(const fs::path& tmp, int rank,
   f.createGroup("/vaccine");
   f.createGroup("/venue_fomite");
 
-  writeShardPopulation(f, ord, world_.people, comp);
+  writeShardPopulation(f, ord, world_.people, *policy_manager_, comp);
   writeShardInfection(f, ord, world_.people, comp);
   writeShardVaccine(f, ord, world_.people, comp);
   writeShardFomite(f, world_.venues, comp);
 
   writeShardEpidemiology(f, epidemiology_.get(), comp);
-  writeShardFrozenStates(f, policy_manager_.get(), comp);
+  writeShardFrozenStates(f, *policy_manager_, comp);
   // Only stochastic bindings need saving. A criteria binding is derived from a
   // deterministic rule with no randomness, so it rebuilds itself on the first
   // slot after a resume and writing it would be redundant. Each stochastic rule
@@ -594,6 +556,15 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
            H5::PredType::NATIVE_UINT32, 0);
   writeVec(f, "/scalars/day_type_counts", day_type_counts_, I32, 0);
 
+  // Policy names per kind in global-index order, so restore can match the
+  // stored masks and indices with the current policy list by name.
+  const PolicyRoster roster =
+      makePolicyRoster(policy_manager_->getSymptomPolicies(),
+                       policy_manager_->getTemporalPolicies());
+  f.createGroup("/policy_roster");
+  writeStrs(f, "/policy_roster/symptom_names", roster.symptom);
+  writeStrs(f, "/policy_roster/temporal_names", roster.temporal);
+
   // event-log on-disk durability marker (rank-0 logger record counts)
   std::vector<int64_t> ec = {
       (int64_t)event_logger_.getInfectionCount(),
@@ -617,62 +588,58 @@ void Simulator::writeCheckpointStateFile(const fs::path& tmp, int completed_day,
   // count of a current one, which a voluntary response reads on the first day
   // after a resume. A trigger row is (trigger, unit, closed, anchor day, anchor
   // value).
-  if (policy_manager_) {
-    const auto metrics = policy_manager_->observedMetrics().snapshot();
-    if (!metrics.empty()) {
-      f.createGroup("/observed_metrics");
-      std::vector<std::string> names;
-      std::vector<int64_t> values;
-      std::vector<int64_t> scopes;
-      std::vector<int64_t> unit_rows;
-      for (const auto& m : metrics) {
-        for (const auto& [unit, total] : m.units)
-          unit_rows.insert(unit_rows.end(),
-                           {static_cast<int64_t>(names.size()), unit, total});
-        names.push_back(m.name);
-        values.push_back(m.value);
-        scopes.push_back(static_cast<int64_t>(m.scope));
-      }
-      writeStrs(f, "/observed_metrics/names", names);
-      writeVec(f, "/observed_metrics/values", values,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/observed_metrics/scopes", scopes,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/observed_metrics/unit_rows", unit_rows,
-               H5::PredType::NATIVE_INT64, 0);
+  const auto metrics = policy_manager_->observedMetrics().snapshot();
+  if (!metrics.empty()) {
+    f.createGroup("/observed_metrics");
+    std::vector<std::string> names;
+    std::vector<int64_t> values;
+    std::vector<int64_t> scopes;
+    std::vector<int64_t> unit_rows;
+    for (const auto& m : metrics) {
+      for (const auto& [unit, total] : m.units)
+        unit_rows.insert(unit_rows.end(),
+                         {static_cast<int64_t>(names.size()), unit, total});
+      names.push_back(m.name);
+      values.push_back(m.value);
+      scopes.push_back(static_cast<int64_t>(m.scope));
     }
-    // Three numbers per trigger for a world scope state: closed, anchor day,
-    // anchor value.
-    const auto triggers = policy_manager_->triggerStates();
-    if (!triggers.empty()) {
-      f.createGroup("/policy_triggers");
-      std::vector<std::string> keys;
-      std::vector<int64_t> state;
-      std::vector<int64_t> scopes;
-      std::vector<int64_t> voluntary;
-      std::vector<int64_t> unit_rows;
-      for (const auto& t : triggers) {
-        const int64_t index = static_cast<int64_t>(keys.size());
-        for (const auto& [unit, cell] : t.units)
-          unit_rows.insert(unit_rows.end(),
-                           {index, unit, cell.closed ? 1 : 0, cell.anchor_day,
-                            cell.anchor_value});
-        keys.push_back(t.key);
-        state.insert(state.end(), {t.cell.closed ? 1 : 0, t.cell.anchor_day,
-                                   t.cell.anchor_value});
-        scopes.push_back(static_cast<int64_t>(t.scope));
-        voluntary.push_back(t.voluntary ? 1 : 0);
-      }
-      writeStrs(f, "/policy_triggers/keys", keys);
-      writeVec(f, "/policy_triggers/state", state, H5::PredType::NATIVE_INT64,
-               0);
-      writeVec(f, "/policy_triggers/scopes", scopes, H5::PredType::NATIVE_INT64,
-               0);
-      writeVec(f, "/policy_triggers/voluntary", voluntary,
-               H5::PredType::NATIVE_INT64, 0);
-      writeVec(f, "/policy_triggers/unit_rows", unit_rows,
-               H5::PredType::NATIVE_INT64, 0);
+    writeStrs(f, "/observed_metrics/names", names);
+    writeVec(f, "/observed_metrics/values", values, H5::PredType::NATIVE_INT64,
+             0);
+    writeVec(f, "/observed_metrics/scopes", scopes, H5::PredType::NATIVE_INT64,
+             0);
+    writeVec(f, "/observed_metrics/unit_rows", unit_rows,
+             H5::PredType::NATIVE_INT64, 0);
+  }
+  // Three numbers per trigger for a world scope state: closed, anchor day,
+  // anchor value.
+  const auto triggers = policy_manager_->triggerStates();
+  if (!triggers.empty()) {
+    f.createGroup("/policy_triggers");
+    std::vector<std::string> keys;
+    std::vector<int64_t> state;
+    std::vector<int64_t> scopes;
+    std::vector<int64_t> voluntary;
+    std::vector<int64_t> unit_rows;
+    for (const auto& t : triggers) {
+      const int64_t index = static_cast<int64_t>(keys.size());
+      for (const auto& [unit, cell] : t.units)
+        unit_rows.insert(unit_rows.end(), {index, unit, cell.closed ? 1 : 0,
+                                           cell.anchor_day, cell.anchor_value});
+      keys.push_back(t.key);
+      state.insert(state.end(), {t.cell.closed ? 1 : 0, t.cell.anchor_day,
+                                 t.cell.anchor_value});
+      scopes.push_back(static_cast<int64_t>(t.scope));
+      voluntary.push_back(t.voluntary ? 1 : 0);
     }
+    writeStrs(f, "/policy_triggers/keys", keys);
+    writeVec(f, "/policy_triggers/state", state, H5::PredType::NATIVE_INT64, 0);
+    writeVec(f, "/policy_triggers/scopes", scopes, H5::PredType::NATIVE_INT64,
+             0);
+    writeVec(f, "/policy_triggers/voluntary", voluntary,
+             H5::PredType::NATIVE_INT64, 0);
+    writeVec(f, "/policy_triggers/unit_rows", unit_rows,
+             H5::PredType::NATIVE_INT64, 0);
   }
   f.close();
 }
