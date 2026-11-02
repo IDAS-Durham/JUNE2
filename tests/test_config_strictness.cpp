@@ -252,8 +252,9 @@ coordinated_encounters:
       priority: 1
   follows:
     - name: toddlers
-      pool_venue_type: household
-      network: parents
+      pool:
+        venue_types: [household]
+        network: parents
       encounter_type: follow
       probability: 1.0
       log: false
@@ -1041,8 +1042,8 @@ TEST_CASE("disease names must be symptom tags and transmission modes") {
   }
   SUBCASE("a transmission mode that is neither of the two") {
     CHECK_THROWS_WITH_AS(
-        loadDiseaseText(replaceOnce(stage, "mode: Stage-Driven",
-                                    "mode: Stage-driven")),
+        loadDiseaseText(
+            replaceOnce(stage, "mode: Stage-Driven", "mode: Stage-driven")),
         doctest::Contains("transmission.mode 'Stage-driven' is not a mode. "
                           "Modes: Stage-Driven, Trajectory-Driven"),
         std::runtime_error);

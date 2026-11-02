@@ -398,11 +398,16 @@ double Infection::sampleFromDistribution(const DistributionParams& dist,
     double loc = dist.params.at("loc");
     double scale = dist.params.at("scale");
 
-    // Exponentiated Weibull distribution
+    if (!(a > 0.0) || !(c > 0.0) || !(scale > 0.0) || !std::isfinite(loc))
+      throw std::runtime_error(
+          "exponweib distribution needs a, c and scale above 0 and a finite "
+          "loc");
+
+    // Inverse of the CDF (1 - exp(-z^c))^a with z = (x - loc) / scale. The
+    // expm1 form stays finite when u^(1/a) rounds up to 1.
     double u = uniform01(rng);
-    double weibull_sample = scale * std::pow(-std::log(1.0 - u), 1.0 / c);
-    double exp_weibull = std::pow(weibull_sample, a);
-    return loc + exp_weibull;
+    double z = std::pow(-std::log(-std::expm1(std::log(u) / a)), 1.0 / c);
+    return loc + scale * z;
   } else if (dist.type == "gamma") {
     double shape = dist.params.at("shape");
     double scale = dist.params.at("scale");

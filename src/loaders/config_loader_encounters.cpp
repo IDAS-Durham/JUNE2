@@ -318,10 +318,9 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
   rejectUnknownKeys(root, {"coordinated_encounters"}, filename + ": ");
   if (!root["coordinated_encounters"]) return config;
   const auto& ce_node = root["coordinated_encounters"];
-  rejectUnknownKeys(
-      ce_node,
-      {"enabled", "frequency_groups", "encounters", "follow", "follows"},
-      filename + ": ", " in 'coordinated_encounters'");
+  rejectUnknownKeys(ce_node,
+                    {"enabled", "frequency_groups", "encounters", "follows"},
+                    filename + ": ", " in 'coordinated_encounters'");
 
   if (ce_node["enabled"]) {
     config.enabled = ce_node["enabled"].as<bool>();
@@ -376,8 +375,8 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
     FollowConfig f;
     rejectUnknownKeys(
         fn,
-        {"name", "enabled", "pool_venue_type", "network", "encounter_type",
-         "probability", "log", "establishment", "span", "eligibility",
+        {"name", "enabled", "pool", "encounter_type", "probability",
+         "max_followers", "log", "establishment", "span", "eligibility",
          "host_eligibility", "activity_exceptions", "venue_exceptions",
          "follower_activity_exceptions"},
         filename + ": ",
@@ -387,9 +386,39 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
             "'");
     if (fn["name"]) f.name = fn["name"].as<std::string>();
     if (fn["enabled"]) f.enabled = fn["enabled"].as<bool>();
-    if (fn["pool_venue_type"])
-      f.pool_venue_type = fn["pool_venue_type"].as<std::string>();
-    if (fn["network"]) f.network = fn["network"].as<std::string>();
+    if (fn["pool"]) {
+      const YAML::Node& pn = fn["pool"];
+      if (!pn.IsMap())
+        throw std::runtime_error(
+            filename +
+            ": follow.pool must be a mapping with 'venue_types' "
+            "or 'network'");
+      rejectUnknownKeys(pn, {"venue_types", "network", "venue_choice"},
+                        filename + ": ", " in follow.pool");
+      if (pn["venue_types"]) {
+        if (!pn["venue_types"].IsSequence())
+          throw std::runtime_error(filename +
+                                   ": follow.pool.venue_types must be a list");
+        for (const auto& vt : pn["venue_types"])
+          f.pool.venue_types.push_back(vt.as<std::string>());
+      }
+      if (pn["network"]) f.pool.network = pn["network"].as<std::string>();
+      if (pn["venue_choice"]) {
+        std::string c = pn["venue_choice"].as<std::string>();
+        if (c == "all")
+          f.pool.venue_choice = FollowPool::VenueChoice::All;
+        else if (c == "lowest_id")
+          f.pool.venue_choice = FollowPool::VenueChoice::LowestId;
+        else if (c == "random")
+          f.pool.venue_choice = FollowPool::VenueChoice::Random;
+        else
+          throw std::runtime_error(filename +
+                                   ": follow.pool.venue_choice must be 'all', "
+                                   "'lowest_id' or 'random', got '" +
+                                   c + "'");
+      }
+    }
+    if (fn["max_followers"]) f.max_followers = fn["max_followers"].as<int>();
     if (fn["encounter_type"])
       f.encounter_type = fn["encounter_type"].as<std::string>();
     if (fn["probability"]) f.probability = fn["probability"].as<double>();
@@ -434,14 +463,7 @@ CoordinatedEncounterConfig ConfigLoader::loadCoordinatedEncounters(
     return f;
   };
 
-  if (ce_node["follow"] && ce_node["follows"]) {
-    throw std::runtime_error(
-        "coordinated_encounters: set either 'follow' (one rule) or 'follows' "
-        "(a list), not both");
-  }
-  if (ce_node["follow"]) {
-    config.follows.push_back(parseFollowRule(ce_node["follow"]));
-  } else if (ce_node["follows"]) {
+  if (ce_node["follows"]) {
     for (const auto& fn : ce_node["follows"])
       config.follows.push_back(parseFollowRule(fn));
   }
