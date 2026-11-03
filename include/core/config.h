@@ -1110,9 +1110,6 @@ struct ActivityPreferenceConfig {
 // =============================================================================
 
 struct PerformanceConfig {
-  // Schedule pre-computation settings
-  bool precompute_schedules = true;
-
   // Activities to pre-compute (deterministic)
   // These will be computed once and cached (e.g., "residence", "work",
   // "school")

@@ -1520,12 +1520,16 @@ The loader reads only `enabled`, `partitioning` and `chunked_loading`.
 
 ```yaml
 performance:
-  precompute_schedules: true
   deterministic_activities: ["residence", "primary_activity"]
 ```
 
-- `deterministic_activities` are pre-computed once at world load and
-  cached. `leisure` etc. stay stochastic at runtime.
+- Schedules are always computed once at world load. There is no switch to
+  turn that off.
+- `deterministic_activities` are fixed once at world load and cached.
+  `leisure` etc. stay stochastic at runtime.
+- To have an activity redrawn at runtime, list it under `hybrid_activities`
+  (venue cached, participation redrawn each slot) or `stochastic_activities`
+  (everything redrawn each slot).
 
 ---
 

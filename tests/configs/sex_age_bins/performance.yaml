@@ -10,8 +10,6 @@
 # force_hybrid_activities (see schedules.yaml).
 
 performance:
-    precompute_schedules: true
-
     deterministic_activities:
         - residence
 

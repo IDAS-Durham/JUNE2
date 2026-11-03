@@ -117,7 +117,6 @@ static WorldState buildCrossDomainWorld() {
 static Config buildConfig(WorldState& world,
                           const std::vector<std::string>& activities) {
   Config config;
-  config.performance.precompute_schedules = false;
 
   config.schedule.day_type_cycle = {"workday"};
   config.schedule.day_type_names = {"workday"};

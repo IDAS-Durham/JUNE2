@@ -33,7 +33,6 @@ TEST_CASE("ActivityManager - Bug Fixes for Schedule Caching") {
 
   config.schedule.schedule_types.push_back(worker_sched);
   config.schedule.default_schedule_type = "worker_schedule";
-  config.performance.precompute_schedules = false;
   config.performance.stochastic_activities = {
       "work"};  // Exercise the stochastic-activity path.
 
@@ -171,7 +170,6 @@ TEST_CASE("ActivityManager - Precompute Schedules") {
   // weights (We mock out the weights for the venue types)
 
   Config config;
-  config.performance.precompute_schedules = true;
   config.performance.stochastic_activities = {
       "leisure"};                             // Leisure is stochastic
   config.performance.hybrid_activities = {};  // No hybrid
@@ -335,7 +333,6 @@ struct ParticipationRig {
           {1, static_cast<uint32_t>(world.activity_venues.size()), 1});
       world.activity_venues.push_back({1, 0});
     }
-    config.performance.precompute_schedules = true;
     config.performance.deterministic_activities = {"residence"};
     if (second_is_hybrid) {
       config.performance.hybrid_activities = {second};

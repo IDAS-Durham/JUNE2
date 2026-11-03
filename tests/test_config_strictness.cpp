@@ -119,7 +119,6 @@ checkpoint:
 
 const char* kPerformanceYaml = R"(
 performance:
-  precompute_schedules: true
   deterministic_activities: [residence]
   hybrid_activities: [primary_activity]
   stochastic_activities: [leisure]
@@ -794,10 +793,12 @@ TEST_CASE("a malformed performance file throws and names the file") {
                        doctest::Contains("performance.yaml"),
                        std::runtime_error);
 
-  const auto bad_value = files.write(
-      "bad_value.yaml", "performance:\n  precompute_schedules: sometimes\n");
-  CHECK_THROWS_WITH_AS(ConfigLoader::loadPerformance(bad_value.string()),
-                       doctest::Contains("bad_value.yaml"), std::runtime_error);
+  // Schedules are always precomputed, so the old switch is an unknown key.
+  const auto removed_key = files.write(
+      "removed_key.yaml", "performance:\n  precompute_schedules: true\n");
+  CHECK_THROWS_WITH_AS(ConfigLoader::loadPerformance(removed_key.string()),
+                       doctest::Contains("precompute_schedules"),
+                       std::runtime_error);
 
   const auto bad_list =
       files.write("bad_list.yaml", "performance:\n  hybrid_activities: 7\n");
@@ -815,7 +816,6 @@ TEST_CASE("a performance file that is configured but missing throws") {
 TEST_CASE("no performance file configured means the defaults") {
   PerformanceConfig defaults;
   PerformanceConfig loaded = ConfigLoader::loadPerformance("");
-  CHECK(loaded.precompute_schedules == defaults.precompute_schedules);
   CHECK(loaded.deterministic_activities == defaults.deterministic_activities);
 }
 

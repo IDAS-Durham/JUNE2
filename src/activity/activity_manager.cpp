@@ -283,12 +283,6 @@ void ActivityManager::assignSingleSlotForLivePerson(
 }
 
 void ActivityManager::precomputeSchedules() {
-  if (!config_.performance.precompute_schedules) {
-    std::cout << "Schedule pre-computation disabled by configuration"
-              << std::endl;
-    return;
-  }
-
   int num_day_types = static_cast<int>(config_.schedule.day_type_names.size());
   world_.num_day_types = static_cast<size_t>(num_day_types);
   world_.precomputed_schedules.resize(num_day_types);

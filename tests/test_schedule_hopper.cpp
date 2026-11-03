@@ -103,7 +103,6 @@ TEST_CASE("activity triggers immediate hop to new schedule slot 0") {
   config.schedule.schedule_types.push_back(regular);
   config.schedule.schedule_types.push_back(temp_sched);
   config.schedule.default_schedule_type = "regular";
-  config.performance.precompute_schedules = false;
 
   // Resolve so hop_schedule_by_activity_idx is populated
   config.resolve(world);
@@ -177,7 +176,6 @@ TEST_CASE("non-triggering activity does not hop") {
   config.schedule.schedule_types.push_back(regular);
   config.schedule.schedule_types.push_back(temp_sched);
   config.schedule.default_schedule_type = "regular";
-  config.performance.precompute_schedules = false;
   config.resolve(world);
 
   // Precomputed: person assigned "residence" (idx 0) — no hop should trigger
