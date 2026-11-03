@@ -1,9 +1,11 @@
+#include <array>
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
 #include "epidemiology/disease.h"
 #include "epidemiology/epidemiology.h"
 #include "transmission_fixtures.h"
+#include "utils/event_logging/event_logger.h"
 
 using namespace june;
 
@@ -239,4 +241,60 @@ TEST_CASE("Epidemiology - Track Infection") {
 
   epi.untrackInfection(1);
   CHECK(epi.getActiveInfections().size() == 0);
+}
+
+TEST_CASE("Epidemiology - a hospital stay is logged once however it is checked") {
+  // mild -> hospitalised -> intensive care -> hospitalised -> mild -> healthy.
+  // One entry into hospital, one entry into ICU and one exit from hospital.
+  TransmissionParams trans;
+  trans.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto curve = std::make_shared<ConstantCurve>(1.0);
+  trans.symptom_id_curves = {nullptr, curve, curve, curve};
+
+  std::vector<SymptomTag> tags = {{"healthy", -1, 0},
+                                  {"mild", 1, 1},
+                                  {"hospitalised", 2, 2},
+                                  {"intensive_care", 3, 3}};
+  DiseaseStageSettings settings;
+  settings.recovered_stages = {"healthy"};
+  settings.hospitalised_stages = {"hospitalised"};
+  settings.intensive_care_stages = {"intensive_care"};
+
+  TrajectoryDefinition td;
+  td.selection_key = "general";
+  td.severity = 1.0;
+  for (const char* stage :
+       {"mild", "hospitalised", "intensive_care", "hospitalised", "mild"})
+    td.stages.push_back({stage, {"constant", {{"value", 2.0}}}});
+  td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
+  Disease disease("StayDisease", tags, settings, {td}, {}, trans);
+
+  // Check at the given times; the infection starts at t = 0 and its stages
+  // change at 2, 4, 6, 8 and 10.
+  auto logged = [&](const std::vector<double>& checks) {
+    WorldState world;
+    auto& p = world.people.emplace_back();
+    p.id = 0;
+    p.age = 30.0f;
+    p.geo_unit_id = -1;
+    world.buildIndices();
+    EventLogger logger;
+    Epidemiology epi(world, &disease, &logger);
+    p.infection = std::make_unique<Infection>(
+        &disease, 0.0, &p, 100, kNoTransmissionContext, nullptr, "office", 0);
+    epi.trackInfection(0);
+    std::vector<PersonLocation> no_locations;
+    for (double t : checks) epi.updateInfectionStates(t, no_locations);
+    return std::array<size_t, 3>{logger.getHospitalAdmissionCount(),
+                                 logger.getICUAdmissionCount(),
+                                 logger.getHospitalDischargeCount()};
+  };
+
+  const std::array<size_t, 3> expected = {1, 1, 1};
+  // Every transition in one check.
+  CHECK(logged({11.0}) == expected);
+  // A check inside every stage.
+  CHECK(logged({1.0, 3.0, 5.0, 7.0, 9.0, 11.0}) == expected);
+  // A check right at the stay boundaries.
+  CHECK(logged({4.0, 6.0, 8.0, 10.0, 11.0}) == expected);
 }
