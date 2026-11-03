@@ -739,13 +739,9 @@ PerformanceConfig ConfigLoader::loadPerformance(const std::string& filename) {
     if (root["performance"]) {
       const auto& perf = root["performance"];
       rejectUnknownKeys(perf,
-                        {"precompute_schedules", "deterministic_activities",
-                         "hybrid_activities", "stochastic_activities"},
+                        {"deterministic_activities", "hybrid_activities",
+                         "stochastic_activities"},
                         filename + ": ", " in 'performance'");
-
-      if (perf["precompute_schedules"]) {
-        config.precompute_schedules = perf["precompute_schedules"].as<bool>();
-      }
 
       if (perf["deterministic_activities"]) {
         config.deterministic_activities =

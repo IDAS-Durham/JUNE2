@@ -76,7 +76,6 @@ static Config makeActivityConfig(WorldState& world,
   config.schedule.day_type_names = {"workday", "rest_day"};
   config.schedule.schedule_types = std::move(sched_types);
   config.schedule.default_schedule_type = std::move(default_type);
-  config.performance.precompute_schedules = false;
   config.performance.stochastic_activities = {"work", "leisure", "residence"};
   // Resolve only the sub-configs we need, skipping checkConfigConsistency.
   config.schedule.resolve(world);
@@ -141,7 +140,6 @@ TEST_CASE("ActivityManager - precomputeSchedules populates per-day-type arrays")
   sched.participation_by_day_type["rest_day"]["leisure"] = 1.0;
 
   Config config = makeActivityConfig(world, {sched}, "worker");
-  config.performance.precompute_schedules = true;
   world.people[0].cached_schedule_type_ = &config.schedule.schedule_types[0];
 
   ActivityManager manager(world, config);
@@ -189,7 +187,6 @@ TEST_CASE("ActivityManager - multiple schedule types store independent slot coun
 
   Config config = makeActivityConfig(world, {worker_sched, non_worker_sched},
                                      "worker");
-  config.performance.precompute_schedules = true;
 
   // Point each person at their schedule type (index into schedule_types).
   world.people[0].cached_schedule_type_ = &config.schedule.schedule_types[0];

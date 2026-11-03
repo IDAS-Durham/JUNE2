@@ -63,7 +63,6 @@ FairHopFixture buildFairHopFixture() {
   f.config.schedule.schedule_types.push_back(regular);
   f.config.schedule.schedule_types.push_back(fair_temp);
   f.config.schedule.default_schedule_type = "regular";
-  f.config.performance.precompute_schedules = false;
   f.config.resolve(f.world);
   f.world.schedule_type_names = {"regular", "fair_1day"};
   f.world.num_day_types = 1;
@@ -187,7 +186,6 @@ TEST_CASE("OTF fixed-stability rule assigns same venue across days of a hop") {
   config.schedule.schedule_types.push_back(regular);
   config.schedule.schedule_types.push_back(fair_hop);
   config.schedule.default_schedule_type = "regular";
-  config.performance.precompute_schedules = false;
   config.resolve(world);
   world.num_day_types = 1;
 
@@ -292,7 +290,6 @@ TEST_CASE(
   config.schedule.schedule_types.push_back(regular);
   config.schedule.schedule_types.push_back(fair_hop);
   config.schedule.default_schedule_type = "regular";
-  config.performance.precompute_schedules = false;
   config.resolve(world);
   world.num_day_types = 1;
 

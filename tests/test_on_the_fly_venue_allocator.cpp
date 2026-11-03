@@ -294,7 +294,6 @@ TEST_CASE(
   config.schedule.schedule_types.push_back(regular);
   config.schedule.schedule_types.push_back(fair_hop);
   config.schedule.default_schedule_type = "regular";
-  config.performance.precompute_schedules = false;
   config.resolve(world);
   world.num_day_types = 1;
 
