@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include "core/config.h"
 #include "core/world_state.h"
 #include "doctest.h"
@@ -154,6 +155,22 @@ TEST_CASE("Epidemiology - updateInfectionStates progression") {
           doctest::Approx(6.0));
     CHECK(world.people[0].immunity.natural_waning_rate ==
           doctest::Approx(0.001));
+  }
+
+  SUBCASE("Recovery scales every person's susceptibility by the same factor") {
+    epi.updateInfectionStates(10.0, empty_locs);
+    const double level = 0.95;
+    const double waning = 0.001;
+    // Each person recovers at the step time, so days since recovery is the
+    // same for all of them. Nobody is drawn to be immune: the factor is
+    // identical across people and decays smoothly back toward 1.
+    for (double days : {0.0, 8.0, 100.0}) {
+      const double expected = 1.0 - level * std::exp(-waning * days);
+      for (int i = 0; i < 3; ++i) {
+        CHECK(world.people[i].getSusceptibility(10.0 + days, "TestDisease") ==
+              doctest::Approx(expected));
+      }
+    }
   }
 
   SUBCASE("All recovered after enough time") {

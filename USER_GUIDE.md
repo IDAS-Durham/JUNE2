@@ -245,8 +245,14 @@ immunity:
   waning_rate: 0.001
 ```
 
-Probability of becoming immune on recovery and the rate at which immunity
-decays per day.
+How strongly a recovery protects against reinfection, and how fast that
+protection fades. Every recovered person is treated the same way: their
+susceptibility is multiplied by `1 - level * exp(-waning_rate * days since
+recovery)`. With `level: 0.95` a person is 95% protected the day they recover
+(they keep 5% of their original susceptibility), and the protection decays by
+`waning_rate` per day until they are fully susceptible again. `level` is not a
+probability, nobody is drawn to be immune or not. `level: 0` means recovery
+gives no protection.
 
 ---
 
