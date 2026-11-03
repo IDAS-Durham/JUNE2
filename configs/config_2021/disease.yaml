@@ -394,6 +394,11 @@ disease:
     #     type: constant
     #     value: 0.0
 
+  # How strongly recovery protects a person against reinfection, and the
+  # daily rate at which that protection wears off. Every recovered person
+  # has their susceptibility multiplied by
+  # 1 - level * exp(-waning_rate * days since recovery), so at 0.95 they keep
+  # 5% of their susceptibility on the day they recover.
   immunity:
     level: 0.95
     waning_rate: 0.001
