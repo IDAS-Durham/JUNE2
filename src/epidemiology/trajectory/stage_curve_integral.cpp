@@ -41,8 +41,9 @@ double integrateStageCurves(
     symptom_id = next_symptom_id;
     stage_start_time = transition_time;
   }
-  return integral + integrateStage(curves_by_symptom, symptom_id,
-                                   stage_start_time, piece_start, interval_end);
+  integral += integrateStage(curves_by_symptom, symptom_id, stage_start_time,
+                             piece_start, interval_end);
+  return integral * trajectory.infectiousness_factor;
 }
 
 }  // namespace june

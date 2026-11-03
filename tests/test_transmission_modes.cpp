@@ -16,7 +16,8 @@ using namespace june;
 // Helper: Minimal STAGE_DRIVEN disease (healthy + mild, one trajectory)
 // =============================================================================
 static Disease makeStageDrivenDisease(
-    std::shared_ptr<InfectiousnessCurve> curve, double stage_duration = 10.0) {
+    std::shared_ptr<InfectiousnessCurve> curve, double stage_duration = 10.0,
+    double inf_factor = 1.0) {
   TransmissionParams tp;
   tp.mode = InfectiousnessMode::STAGE_DRIVEN;
   tp.stage_curves["mild"] = curve;
@@ -26,6 +27,7 @@ static Disease makeStageDrivenDisease(
   TrajectoryDefinition td;
   td.selection_key = "general_population";
   td.severity = 1.0;
+  td.infectiousness_factor = inf_factor;
   td.stages.push_back({"mild", {"constant", {{"value", stage_duration}}}});
   td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
 
@@ -401,20 +403,102 @@ TEST_CASE("B9: infectiousness_factor works with exposed+shift linkage") {
         doctest::Approx(5.0 * 0.5 * 1.0 * std::exp(-1.0)).epsilon(0.01));
 }
 
-TEST_CASE("B10: Stage-Driven mode ignores infectiousness_factor") {
-  // Stage-Driven uses per-stage curves, not the global gamma profile.
-  // infectiousness_factor should have no effect.
+TEST_CASE("B10: Stage-Driven infectiousness follows infectiousness_factor") {
   auto curve = std::make_shared<ConstantCurve>(3.0);
-  Disease disease_full = makeStageDrivenDisease(curve, 10.0);
+  Disease disease = makeStageDrivenDisease(curve, 10.0, 0.5);
   WorldState world = TestWorldFactory::createMinimalWorld(1, 0);
   Person& p = world.people[0];
 
   p.infection = std::make_unique<Infection>(
-      &disease_full, 0.0, &p, 42, kNoTransmissionContext, nullptr, "office", 0);
-  double inf = p.infection->getInfectiousness(1.0);
+      &disease, 0.0, &p, 42, kNoTransmissionContext, nullptr, "office", 0);
 
-  // Stage-Driven constant curve = 3.0, unaffected by any trajectory factor
-  CHECK(inf == doctest::Approx(3.0).epsilon(0.01));
+  // Point evaluation: stage curve 3.0 times the path factor 0.5.
+  CHECK(p.infection->getInfectiousness(1.0) == doctest::Approx(1.5));
+  CHECK(p.infection->getInfectiousness(0, 1.0) == doctest::Approx(1.5));
+  // Integrated over one day: 3.0 * 0.5 * 24 hours.
+  CHECK(p.infection->getIntegratedInfectiousness(0, 1.0, 2.0) ==
+        doctest::Approx(3.0 * 0.5 * 24.0));
+}
+
+TEST_CASE("B10b: Two paths through the same stage differ by their factor") {
+  TransmissionParams tp;
+  tp.mode = InfectiousnessMode::STAGE_DRIVEN;
+  auto curve = std::make_shared<ConstantCurve>(2.0);
+  tp.stage_curves["mild"] = curve;
+  tp.symptom_id_curves = {nullptr, curve};
+
+  std::vector<SymptomTag> stags = {{"healthy", -1, 0}, {"mild", 1, 1}};
+  auto path = [](const char* key, double factor) {
+    TrajectoryDefinition td;
+    td.selection_key = key;
+    td.severity = 0.5;
+    td.infectiousness_factor = factor;
+    td.stages.push_back({"mild", {"constant", {{"value", 10.0}}}});
+    td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
+    return td;
+  };
+  Disease disease("TwoPaths", stags, {},
+                  {path("plain", 1.0), path("weak", 0.8)}, {}, tp);
+  WorldState world = TestWorldFactory::createMinimalWorld(2, 0);
+
+  world.people[0].infection = std::make_unique<Infection>(
+      &disease, 0.0, &world.people[0], 42, kNoTransmissionContext, nullptr,
+      "office", 0, "plain");
+  world.people[1].infection = std::make_unique<Infection>(
+      &disease, 0.0, &world.people[1], 42, kNoTransmissionContext, nullptr,
+      "office", 0, "weak");
+
+  CHECK(world.people[0].infection->getInfectiousness(1.0) ==
+        doctest::Approx(2.0));
+  CHECK(world.people[1].infection->getInfectiousness(1.0) ==
+        doctest::Approx(1.6));
+}
+
+TEST_CASE("B10c: Fomite deposition follows infectiousness_factor") {
+  auto build = [](double factor) {
+    TransmissionParams tp;
+    tp.mode = InfectiousnessMode::STAGE_DRIVEN;
+    auto curve = std::make_shared<ConstantCurve>(1.0);
+    tp.symptom_id_curves = {nullptr, curve};
+
+    TransmissionMode fomite;
+    fomite.name = "surface";
+    fomite.type = TransmissionModeType::Fomite;
+    FomiteConfig cfg;
+    cfg.mode_index = 0;
+    cfg.max_age = 7.0;
+    cfg.infectiousness_curve = std::make_shared<ConstantCurve>(1.0);
+    cfg.deposition_by_symptom = {nullptr, std::make_shared<ConstantCurve>(0.4)};
+    fomite.config = std::move(cfg);
+    tp.modes.push_back(std::move(fomite));
+
+    std::vector<SymptomTag> stags = {{"healthy", -1, 0}, {"mild", 1, 1}};
+    TrajectoryDefinition td;
+    td.selection_key = "general_population";
+    td.severity = 1.0;
+    td.infectiousness_factor = factor;
+    td.stages.push_back({"mild", {"constant", {{"value", 10.0}}}});
+    td.stages.push_back({"healthy", {"constant", {{"value", 100.0}}}});
+    return Disease("FomiteFlu", stags, {}, {td}, {}, tp);
+  };
+
+  Disease full = build(1.0);
+  Disease half = build(0.5);
+  WorldState world = TestWorldFactory::createMinimalWorld(2, 0);
+  world.people[0].infection =
+      std::make_unique<Infection>(&full, 0.0, &world.people[0], 42,
+                                  kNoTransmissionContext, nullptr, "office", 0);
+  world.people[1].infection =
+      std::make_unique<Infection>(&half, 0.0, &world.people[1], 42,
+                                  kNoTransmissionContext, nullptr, "office", 0);
+
+  // 0.4 per hour over one day.
+  CHECK(world.people[0].infection->getIntegratedFomiteDeposition(0, 1.0, 2.0) ==
+        doctest::Approx(0.4 * 24.0));
+  CHECK(world.people[1].infection->getIntegratedFomiteDeposition(0, 1.0, 2.0) ==
+        doctest::Approx(0.4 * 24.0 * 0.5));
+  CHECK(world.people[1].infection->getFomiteDepositRate(0, 1.0) ==
+        doctest::Approx(0.4 * 0.5));
 }
 
 // =============================================================================
