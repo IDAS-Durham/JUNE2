@@ -678,7 +678,7 @@ double Infection::getInfectiousness(double current_time) const {
     const auto& curve = trans_params.symptom_id_curves[current_symptom_id];
     if (curve) {
       double time_in_stage = current_time - stage_start_time;
-      return curve->evaluate(time_in_stage);
+      return curve->evaluate(time_in_stage) * trajectory_.infectiousness_factor;
     }
   }
 
@@ -733,7 +733,8 @@ double Infection::getInfectiousness(int mode_index, double current_time) const {
     return 0.0;
   }
   double t_in_stage = current_time - stage_start_time;
-  return curves[current_symptom_id]->evaluate(t_in_stage);
+  return curves[current_symptom_id]->evaluate(t_in_stage) *
+         trajectory_.infectiousness_factor;
 }
 
 double Infection::getIntegratedInfectiousness(int mode_index, double t0,
@@ -773,7 +774,8 @@ double Infection::getFomiteDepositRate(int fomite_mode_index,
   if (current_symptom_id >= cfg.deposition_by_symptom.size()) return 0.0;
   const auto& curve = cfg.deposition_by_symptom[current_symptom_id];
   if (!curve) return 0.0;
-  return curve->evaluate(current_time - stage_start_time);
+  return curve->evaluate(current_time - stage_start_time) *
+         trajectory_.infectiousness_factor;
 }
 
 double Infection::getIntegratedFomiteDeposition(int fomite_mode_index,

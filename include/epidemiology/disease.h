@@ -77,7 +77,9 @@ struct TrajectoryDefinition {
       0.0;  // 0.0 (mild) to 1.0 (dead); used by vaccine efficacy logic
   double infectiousness_factor =
       1.0;  // Scales the entire infectiousness profile for this trajectory
-            // (e.g. 0.5 for asymptomatic cases). Applied once at infection
+            // (e.g. 0.5 for asymptomatic cases). Trajectory-Driven applies it
+            // once at infection; Stage-Driven multiplies every stage curve and
+            // fomite deposition of the person by it
 
   std::vector<TrajectoryStage> stages;
   std::optional<std::string>
