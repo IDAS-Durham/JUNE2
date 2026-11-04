@@ -601,10 +601,22 @@ void Simulator::run() {
   const int rank = getRank();
 
   // The schedule is complete by now, so the run's first and last slot starts
-  // are known: a seed dated outside them would never fire.
-  infection_seeder_->requireDatesInsideRun(
-      seedRunSpan(config_.schedule, config_.simulation.start_date, total_days_),
-      config_.simulation.start_date, config_.simulation.end_date);
+  // are known. A seed dated outside them never fires; say so rather than stop,
+  // so one seed file can serve runs of any length.
+  const SeedsOutsideRun outside =
+      infection_seeder_->seedsOutsideRun(seedRunSpan(
+          config_.schedule, config_.simulation.start_date, total_days_));
+  if (rank == 0) {
+    for (const auto& [names, side] :
+         {std::pair{&outside.before, "before the run starts"},
+          std::pair{&outside.after, "after the run ends"}}) {
+      if (names->empty()) continue;
+      std::cout << "[seeds] WARNING: " << names->size() << " seed(s) are dated "
+                << side << " and will not fire:";
+      for (const std::string& name : *names) std::cout << " '" << name << "'";
+      std::cout << std::endl;
+    }
+  }
 
   if (rank == 0) {
     std::cout << "\n=== Starting Simulation ===" << std::endl;

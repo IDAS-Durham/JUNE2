@@ -376,13 +376,12 @@ TEST_CASE(
         std::string::npos);
 }
 
-TEST_CASE(
-    "A seed dated after the run's last day stops the run before any day runs") {
-  const std::string error =
-      seedFileError("2020-01-01 08:00", "2021-01-01 08:00");
-  CHECK(error.find(
-            "seed 'everyone': date '2021-01-01 08:00' is outside the run") !=
-        std::string::npos);
+TEST_CASE("A seed dated after the run's last day lets the run finish") {
+  CHECK(seedFileError("2020-01-01 08:00", "2021-01-01 08:00").empty());
+}
+
+TEST_CASE("A seed dated before the run's first day lets the run finish") {
+  CHECK(seedFileError("2020-01-01 08:00", "2019-01-01 08:00").empty());
 }
 
 TEST_CASE("A death is applied in the slot it happens in") {
