@@ -179,6 +179,29 @@ TEST_CASE(
   CHECK(std::set<int>(rows.begin(), rows.end()).size() == 20);
 }
 
+TEST_CASE(
+    "An infected_only activities table holds exactly the infected people, "
+    "whatever mode the people table is in") {
+  // Almost nobody is infected here, so "the infected" differs from everyone.
+  for (const char* people_mode : {"none", "all", "infected_only"}) {
+    CAPTURE(people_mode);
+    const std::string out = "test_sim_activities_infected_only.h5";
+    runFlushEverySlot(out, people_mode, "infected_only", 0.0);
+
+    std::vector<int> infections = readPersonIds(out, "/events/infections");
+    REQUIRE(hasDataset(out, "/lookups/person_activities"));
+    std::vector<int> rows = readPersonIds(out, "/lookups/person_activities");
+    std::remove(out.c_str());
+
+    const std::set<int> infected(infections.begin(), infections.end());
+    REQUIRE_FALSE(infected.empty());
+    REQUIRE(infected.size() < 20);
+    CHECK(std::set<int>(rows.begin(), rows.end()) == infected);
+    // Two activities each, written once however many flushes there were.
+    CHECK(rows.size() == 2 * infected.size());
+  }
+}
+
 namespace {
 
 struct DeathRow {
@@ -376,13 +399,12 @@ TEST_CASE(
         std::string::npos);
 }
 
-TEST_CASE(
-    "A seed dated after the run's last day stops the run before any day runs") {
-  const std::string error =
-      seedFileError("2020-01-01 08:00", "2021-01-01 08:00");
-  CHECK(error.find(
-            "seed 'everyone': date '2021-01-01 08:00' is outside the run") !=
-        std::string::npos);
+TEST_CASE("A seed dated after the run's last day lets the run finish") {
+  CHECK(seedFileError("2020-01-01 08:00", "2021-01-01 08:00").empty());
+}
+
+TEST_CASE("A seed dated before the run's first day lets the run finish") {
+  CHECK(seedFileError("2020-01-01 08:00", "2019-01-01 08:00").empty());
 }
 
 TEST_CASE("A death is applied in the slot it happens in") {

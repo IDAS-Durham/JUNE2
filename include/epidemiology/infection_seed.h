@@ -175,6 +175,12 @@ struct InfectionSeedConfig {
 // Forward declarations
 class Disease;
 
+// Names of the seeds that fall outside a run's span, by which side.
+struct SeedsOutsideRun {
+  std::vector<std::string> before;
+  std::vector<std::string> after;
+};
+
 class InfectionSeeder {
  public:
   InfectionSeeder(WorldState& world, const Disease* disease,
@@ -198,12 +204,10 @@ class InfectionSeeder {
   // disease; an unknown name throws. Called after the world is fully loaded.
   void resolveConfig(const WorldState& world);
 
-  // Throws, naming the seed, unless every seed's date falls in `span` (see
-  // seedRunSpan): a seed outside it would never fire. The run's dates are for
-  // the message only.
-  void requireDatesInsideRun(const SeedWindow& span,
-                             const std::string& start_date,
-                             const std::string& end_date) const;
+  // The seeds dated before the run's first slot or after its last (see
+  // seedRunSpan). They never fire, which is allowed so one seed file serves
+  // runs of any length and start; the caller warns about them.
+  SeedsOutsideRun seedsOutsideRun(const SeedWindow& span) const;
 
  private:
   WorldState& world_;

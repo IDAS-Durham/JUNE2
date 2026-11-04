@@ -468,17 +468,16 @@ void InfectionSeedConfig::requireWorldGeoLevel(const WorldState& world,
                            "' is not a level of this world. Known: " + known);
 }
 
-void InfectionSeeder::requireDatesInsideRun(const SeedWindow& span,
-                                            const std::string& start_date,
-                                            const std::string& end_date) const {
+SeedsOutsideRun InfectionSeeder::seedsOutsideRun(const SeedWindow& span) const {
+  SeedsOutsideRun outside;
   for (const InfectionSeedEvent& seed : config_.seeds) {
-    if (!span.contains(seed.date_minutes)) {
-      throw std::runtime_error("Infection seed '" + seed.name + "': date '" +
-                               seed.date_time + "' is outside the run (" +
-                               start_date + " to " + end_date +
-                               ", end exclusive), so it would never fire");
+    if (seed.date_minutes <= span.after_minutes) {
+      outside.before.push_back(seed.name);
+    } else if (seed.date_minutes > span.up_to_minutes) {
+      outside.after.push_back(seed.name);
     }
   }
+  return outside;
 }
 
 // Index of `name` in `known_names`; throws, naming the seed and value, when

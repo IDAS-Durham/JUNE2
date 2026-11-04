@@ -564,24 +564,29 @@ TEST_CASE("a structured seed naming a level the world has is accepted") {
   CHECK_NOTHROW(seeder.resolveConfig(world));
 }
 
-TEST_CASE("a seed dated outside the run is refused, naming seed and date") {
+TEST_CASE("a seed dated outside the run is allowed and reported by side") {
   WorldState world = makeHouseholdWorld();
   Disease disease = makeDisease();
   const SeedWindow span{parseDateTimeMinutes("2024-01-01 08:00") - 1,
                         parseDateTimeMinutes("2024-01-03 21:00")};
 
-  for (const char* date : {"2024-01-01 07:59", "2024-01-03 21:01",
-                           "2025-01-01 08:00", "2023-12-31 08:00"}) {
+  for (const char* date : {"2024-01-01 07:59", "2023-12-31 08:00"}) {
     CAPTURE(date);
     InfectionSeedConfig config = clusteredConfig(1);
     config.seeds[0].date_time = date;
     InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
-    CHECK_THROWS_WITH(
-        seeder.requireDatesInsideRun(span, "2024-01-01", "2024-01-04"),
-        doctest::Contains(std::string("seed 'ties': date '" +
-                                      std::string(date) +
-                                      "' is outside the run")
-                              .c_str()));
+    const SeedsOutsideRun outside = seeder.seedsOutsideRun(span);
+    CHECK(outside.before == std::vector<std::string>{"ties"});
+    CHECK(outside.after.empty());
+  }
+  for (const char* date : {"2024-01-03 21:01", "2025-01-01 08:00"}) {
+    CAPTURE(date);
+    InfectionSeedConfig config = clusteredConfig(1);
+    config.seeds[0].date_time = date;
+    InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+    const SeedsOutsideRun outside = seeder.seedsOutsideRun(span);
+    CHECK(outside.after == std::vector<std::string>{"ties"});
+    CHECK(outside.before.empty());
   }
 }
 
@@ -597,7 +602,8 @@ TEST_CASE("a seed dated at the first or last slot start is inside the run") {
     InfectionSeedConfig config = clusteredConfig(1);
     config.seeds[0].date_time = date;
     InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
-    CHECK_NOTHROW(
-        seeder.requireDatesInsideRun(span, "2024-01-01", "2024-01-04"));
+    const SeedsOutsideRun outside = seeder.seedsOutsideRun(span);
+    CHECK(outside.before.empty());
+    CHECK(outside.after.empty());
   }
 }
