@@ -90,6 +90,28 @@ TEST_CASE("numeric operators compare an int threshold against fractional age") {
   CHECK(evaluateResolved(makeCriterion("age", "!=", 59), world));
 }
 
+TEST_CASE("equality compares an int value against a whole-number age") {
+  WorldState world = buildSinglePersonWorld();
+  world.people.front().age = 5.0f;
+  CHECK(evaluateResolved(makeCriterion("age", "==", 5), world));
+  CHECK_FALSE(evaluateResolved(makeCriterion("age", "!=", 5), world));
+  CHECK(evaluateResolved(makeCriterion("age", "==", 5.0), world));
+  CHECK_FALSE(evaluateResolved(makeCriterion("age", "==", 6), world));
+  CHECK(evaluateResolved(makeCriterion("age", "!=", 6), world));
+
+  world.people.front().age = 5.5f;
+  CHECK_FALSE(evaluateResolved(makeCriterion("age", "==", 5), world));
+  CHECK(evaluateResolved(makeCriterion("age", "!=", 5), world));
+}
+
+TEST_CASE("a bare integer age cell parses to an equality that matches") {
+  WorldState world = buildSinglePersonWorld();
+  world.people.front().age = 5.0f;
+  auto criteria = filtering::parseCriterionFromKeyValue("age", "5");
+  REQUIRE(criteria.size() == 1);
+  CHECK(evaluateResolved(criteria.front(), world));
+}
+
 TEST_CASE("equality on sex goes through the interned code") {
   WorldState world = buildSinglePersonWorld();
   CHECK(evaluateResolved(makeCriterion("sex", "==", std::string("female")),
