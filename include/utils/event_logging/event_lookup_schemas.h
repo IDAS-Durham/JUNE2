@@ -79,7 +79,7 @@ inline H5::CompType populationSummary() {
                     HOFFSET(PopulationSummaryRecord, geo_unit_id),
                     H5::PredType::NATIVE_INT);
   hsize_t extra_dims[1] = {4};
-  H5::ArrayType extra_type(H5::PredType::NATIVE_UINT8, 1, extra_dims);
+  H5::ArrayType extra_type(H5::PredType::NATIVE_UINT16, 1, extra_dims);
   type.insertMember("extra_codes",
                     HOFFSET(PopulationSummaryRecord, extra_codes), extra_type);
   return type;

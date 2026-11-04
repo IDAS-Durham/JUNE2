@@ -39,6 +39,9 @@ inline constexpr const char* kNotApplicable = "not applicable";
 // Lightweight Population Record for Denominators
 // =============================================================================
 
+// Code stored in extra_codes for a person who has no value for the property.
+inline constexpr uint16_t kSummaryMissingCode = 0xFFFF;
+
 struct PopulationSummaryRecord {
   int person_id;               // 4 bytes
   uint8_t age_group;           // 1 byte (0-17 for 5-year groups)
@@ -46,8 +49,12 @@ struct PopulationSummaryRecord {
   uint8_t schedule_type_code;  // 1 byte
   uint8_t reserved;            // 1 byte (padding)
   int geo_unit_id;             // 4 bytes
-  uint8_t extra_codes[4];      // 4 bytes for configurable properties
-                               // Total: 16 bytes
+  // One code per configured property. For a property with named values the
+  // code is the position of the value in that property's sorted value table
+  // (/lookups/population_summary_values/<property>); a plain integer property
+  // stores its value. kSummaryMissingCode marks a person with no value.
+  uint16_t extra_codes[4];  // 8 bytes
+                            // Total: 20 bytes
 };
 
 // =============================================================================
