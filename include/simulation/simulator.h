@@ -256,6 +256,7 @@ class Simulator {
   // all ranks; appends to the per-rank events file), then on rank 0 print
   // the wall-clock summary, activity/interaction stats, and encounter stats.
   void writeFinalEventsAndLookups(int rank);
+  std::unordered_set<PersonId> takeUnwrittenInfected();
   void printRunSummary();
   // Sum the infector-symptom lookup gaps across ranks (collective) and warn
   // once on rank 0 if any.

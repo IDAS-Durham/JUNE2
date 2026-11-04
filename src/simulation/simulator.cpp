@@ -776,6 +776,22 @@ void Simulator::maybeWriteCheckpoint(int day, int rank) {
   writeCheckpoint(day, formatDate(current_date_));
 }
 
+// The infected people whose lookup rows are still to be written, marked as
+// written. Both lookup tables draw on this one set, so it is needed when
+// either of them is "infected_only", whatever mode the other is in.
+std::unordered_set<PersonId> Simulator::takeUnwrittenInfected() {
+  std::unordered_set<PersonId> unwritten;
+  const SimulationConfig& sim = config_.simulation;
+  if (sim.save_full_person_details != "infected_only" &&
+      sim.save_person_activities != "infected_only") {
+    return unwritten;
+  }
+  for (PersonId pid : event_logger_.getInfectedPersonIds()) {
+    if (lookups_written_.insert(pid).second) unwritten.insert(pid);
+  }
+  return unwritten;
+}
+
 void Simulator::writeFinalEventsAndLookups(int rank) {
   if (rank == 0) {
     std::cout << "\n=== Simulation Complete ===" << std::endl;
@@ -785,15 +801,7 @@ void Simulator::writeFinalEventsAndLookups(int rank) {
 
   // Final save: write lookups for anyone still not written (e.g. if flushes
   // were missed or people infected in last slots)
-  std::unordered_set<PersonId> remaining_ids;
-  if (config_.simulation.save_full_person_details == "infected_only") {
-    for (PersonId pid : event_logger_.getInfectedPersonIds()) {
-      if (lookups_written_.find(pid) == lookups_written_.end()) {
-        remaining_ids.insert(pid);
-        lookups_written_.insert(pid);
-      }
-    }
-  }
+  std::unordered_set<PersonId> remaining_ids = takeUnwrittenInfected();
 
   // saveToHDF5WithLookups handles appending if file exists (from previous
   // flushes).
@@ -922,15 +930,7 @@ void Simulator::checkAndFlushEvents(bool is_day_end) {
   if (should_flush && event_logger_.getTotalRecordCount() > 0) {
     // Identify people who need their lookup records written (not already
     // written)
-    std::unordered_set<PersonId> newly_infected;
-    if (config_.simulation.save_full_person_details == "infected_only") {
-      for (PersonId pid : event_logger_.getInfectedPersonIds()) {
-        if (lookups_written_.find(pid) == lookups_written_.end()) {
-          newly_infected.insert(pid);
-          lookups_written_.insert(pid);
-        }
-      }
-    }
+    std::unordered_set<PersonId> newly_infected = takeUnwrittenInfected();
 
     event_logger_.flush(events_filename_, config_, world_, newly_infected);
   }
