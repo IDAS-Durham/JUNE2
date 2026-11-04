@@ -41,4 +41,14 @@ SeedWindow seedWindowForSlot(const ScheduleConfig& schedule,
   return {up_to_minutes - 1, up_to_minutes};
 }
 
+SeedWindow seedRunSpan(const ScheduleConfig& schedule,
+                       const std::string& start_date, int total_days) {
+  const size_t last_slot_index =
+      slotsOnDay(schedule, total_days - 1).size() - 1;
+  return {
+      seedWindowForSlot(schedule, start_date, 0, 0).after_minutes,
+      seedWindowForSlot(schedule, start_date, total_days - 1, last_slot_index)
+          .up_to_minutes};
+}
+
 }  // namespace june

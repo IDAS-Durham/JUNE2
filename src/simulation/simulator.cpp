@@ -425,15 +425,9 @@ Simulator::Simulator(WorldState& world, Config& config,
       std::make_unique<Epidemiology>(world_, disease_.get(), &event_logger_);
 
   // Initialize infection seeder
-  InfectionSeedConfig seed_config;
-  try {
-    seed_config = InfectionSeedConfigLoader::loadFromFile(
-        infection_seeds_file, &config_.simulation.referenced_paths);
-  } catch (const std::exception& e) {
-    std::cerr << "Warning: Could not load infection seeds: " << e.what()
-              << std::endl;
-    std::cerr << "Using empty infection seed configuration." << std::endl;
-  }
+  const InfectionSeedConfig seed_config =
+      InfectionSeedConfigLoader::loadFromFile(
+          infection_seeds_file, &config_.simulation.referenced_paths);
   infection_seeder_ = std::make_unique<InfectionSeeder>(
       world_, disease_.get(), seed_config, &event_logger_,
       config_.simulation.random_seed);
@@ -605,6 +599,12 @@ Simulator::Simulator(WorldState& world, Config& config,
 
 void Simulator::run() {
   const int rank = getRank();
+
+  // The schedule is complete by now, so the run's first and last slot starts
+  // are known: a seed dated outside them would never fire.
+  infection_seeder_->requireDatesInsideRun(
+      seedRunSpan(config_.schedule, config_.simulation.start_date, total_days_),
+      config_.simulation.start_date, config_.simulation.end_date);
 
   if (rank == 0) {
     std::cout << "\n=== Starting Simulation ===" << std::endl;

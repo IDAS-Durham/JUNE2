@@ -114,6 +114,7 @@ infection_seeds:
 )");
 
   WorldState world;
+  world.geo_level_names = {"MGU"};
   config.resolve(world);
   const auto& structured = config.seeds[0].structured_config;
   const auto& budget = structured.unit_cases[0].budgets[0];
@@ -148,6 +149,7 @@ infection_seeds:
 )");
 
   WorldState world;
+  world.geo_level_names = {"MGU"};
   config.resolve(world);
   const auto& structured = config.seeds[0].structured_config;
   const auto& budgets = structured.unit_cases[0].budgets;

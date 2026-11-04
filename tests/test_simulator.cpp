@@ -335,7 +335,55 @@ FatalRun runFatalWorld(double days_to_death, int days, bool vaccinate = false) {
   return result;
 }
 
+// A one-day small-world run whose seed file is the everyone-seed with `from`
+// replaced by `to`; returns the error constructing or running it throws, or
+// an empty string when there is none.
+std::string seedFileError(const std::string& from, const std::string& to) {
+  const std::string disease = "test_seed_error_disease.yaml";
+  const std::string seeds = "test_seed_error_seeds.yaml";
+  writeFatalDisease(disease, 5.0);
+  writeEveryoneSeed(seeds);
+  std::string text;
+  {
+    std::ifstream in(seeds);
+    text.assign(std::istreambuf_iterator<char>(in), {});
+  }
+  text.replace(text.find(from), from.size(), to);
+  std::ofstream(seeds) << text;
+
+  WorldState world;
+  buildSmallWorld(world);
+  Config config = makeThreeSlotConfig(world, "2020-01-02", disease);
+  std::string error;
+  try {
+    Simulator sim(world, config, nullptr, seeds, "test_seed_error_run.h5");
+    sim.run();
+  } catch (const std::exception& e) {
+    error = e.what();
+  }
+  std::remove("test_seed_error_run.h5");
+  std::remove(disease.c_str());
+  std::remove(seeds.c_str());
+  return error;
+}
+
 }  // namespace
+
+TEST_CASE(
+    "An unreadable or mistyped seed file stops the run before it starts") {
+  CHECK(seedFileError("\"uniform\"", "\"uniformm\"")
+            .find("Unknown infection seed type: uniformm") !=
+        std::string::npos);
+}
+
+TEST_CASE(
+    "A seed dated after the run's last day stops the run before any day runs") {
+  const std::string error =
+      seedFileError("2020-01-01 08:00", "2021-01-01 08:00");
+  CHECK(error.find(
+            "seed 'everyone': date '2021-01-01 08:00' is outside the run") !=
+        std::string::npos);
+}
 
 TEST_CASE("A death is applied in the slot it happens in") {
   // Death at 1.3: day 1, afternoon (the office). The death has to be applied

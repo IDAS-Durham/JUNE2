@@ -146,6 +146,10 @@ struct InfectionSeedConfig {
   std::vector<InfectionSeedEvent> seeds;
   std::string bulk_csv_path;
 
+  // Throws unless the seed's geo_level is one the world has.
+  static void requireWorldGeoLevel(const WorldState& world,
+                                   const InfectionSeedEvent& seed);
+
   void resolve(const WorldState& world) {
     for (auto& seed : seeds) {
       for (auto& filter : seed.attribute_filters) {
@@ -156,6 +160,9 @@ struct InfectionSeedConfig {
       }
       for (auto& group : seed.structured_config.target_groups) {
         group.resolve(world);
+      }
+      if (seed.type != InfectionSeedType::UNIFORM) {
+        requireWorldGeoLevel(world, seed);
       }
     }
   }
@@ -190,6 +197,13 @@ class InfectionSeeder {
   // WorldState, and each seed's declared Infection Context against the
   // disease; an unknown name throws. Called after the world is fully loaded.
   void resolveConfig(const WorldState& world);
+
+  // Throws, naming the seed, unless every seed's date falls in `span` (see
+  // seedRunSpan): a seed outside it would never fire. The run's dates are for
+  // the message only.
+  void requireDatesInsideRun(const SeedWindow& span,
+                             const std::string& start_date,
+                             const std::string& end_date) const;
 
  private:
   WorldState& world_;
