@@ -53,7 +53,7 @@ output:
     save_coordinated_encounters: true
     # At most four person properties are stored with the population summary.
     # Names the world does not carry are skipped.
-    summary_properties: [work_mode, ethnicity, comorbidities, relationship_status]
+    summary_properties: [work_mode, ethnicity, comorbidities]
 
 # Venue types whose riders are split into runtime groups each slot (carriages,
 # buses). Group count is max(1, ceil(riders / target_group_size)), so it scales

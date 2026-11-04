@@ -1,4 +1,6 @@
 #include <iostream>
+#include <map>
+#include <stdexcept>
 #include <unordered_set>
 
 #include "utils/event_logging/event_lookup_schemas.h"
@@ -271,6 +273,53 @@ void mergeOnePeopleProperty(const std::string& key,
   std::cout << "    - Merged property: " << key << std::endl;
 }
 
+// Column names, missing code and value tables of one file's population
+// summary. Every rank writes the same ones, so the merge copies them from the
+// first file that has a summary and refuses files that disagree.
+struct SummaryMeta {
+  bool present = false;
+  std::map<std::string, std::string> names;  // extra_prop_k -> property
+  uint16_t missing_code = 0;
+  std::map<std::string, std::vector<std::string>> tables;
+};
+
+SummaryMeta readSummaryMeta(const std::string& path) {
+  SummaryMeta meta;
+  H5::H5File file(path, H5F_ACC_RDONLY);
+  if (!H5Lexists(file.getId(), "/lookups/population_summary", H5P_DEFAULT))
+    return meta;
+  meta.present = true;
+  H5::DataSet ds = file.openDataSet("/lookups/population_summary");
+  H5::StrType stype(H5::PredType::C_S1, H5T_VARIABLE);
+  for (int k = 0; k < 4; ++k) {
+    const std::string attr_name = "extra_prop_" + std::to_string(k);
+    if (!ds.attrExists(attr_name)) continue;
+    std::string value;
+    ds.openAttribute(attr_name).read(stype, value);
+    meta.names[attr_name] = value;
+  }
+  ds.openAttribute("missing_code")
+      .read(H5::PredType::NATIVE_UINT16, &meta.missing_code);
+
+  const char* group_path = "/lookups/population_summary_values";
+  if (!H5Lexists(file.getId(), group_path, H5P_DEFAULT)) return meta;
+  H5::Group group = file.openGroup(group_path);
+  for (hsize_t i = 0; i < group.getNumObjs(); ++i) {
+    const std::string name = group.getObjnameByIdx(i);
+    H5::DataSet table = group.openDataSet(name);
+    hsize_t count = 0;
+    table.getSpace().getSimpleExtentDims(&count);
+    std::vector<char*> raw(count);
+    H5::StrType table_type = table.getStrType();
+    table.read(raw.data(), table_type);
+    auto& values = meta.tables[name];
+    for (char* text : raw) values.push_back(text ? text : "");
+    H5::DataSpace mem(1, &count);
+    H5::DataSet::vlenReclaim(raw.data(), table_type, mem);
+  }
+  return meta;
+}
+
 }  // namespace
 
 namespace event_merger_detail {
@@ -336,6 +385,38 @@ void mergePopulationSummary(H5::H5File& out_file,
       [](const PopulationSummaryRecord&, hsize_t) {});
   std::cout << "  Merged " << total_unique
             << " population summary records (streaming)" << std::endl;
+
+  SummaryMeta merged;
+  for (const auto& path : input_files) {
+    SummaryMeta meta = readSummaryMeta(path);
+    if (!meta.present) continue;
+    if (!merged.present) {
+      merged = std::move(meta);
+    } else if (meta.names != merged.names ||
+               meta.missing_code != merged.missing_code ||
+               meta.tables != merged.tables) {
+      throw std::runtime_error(
+          "Cannot merge population summaries: " + path +
+          " has different property names or value tables than the files "
+          "before it");
+    }
+  }
+  if (!merged.present) return;
+  H5::DataSet out_ds = out_file.openDataSet("/lookups/population_summary");
+  H5::StrType stype(H5::PredType::C_S1, H5T_VARIABLE);
+  for (const auto& [attr_name, property] : merged.names) {
+    H5::Attribute attr =
+        out_ds.createAttribute(attr_name, stype, H5::DataSpace(H5S_SCALAR));
+    attr.write(stype, property);
+  }
+  H5::Attribute missing = out_ds.createAttribute(
+      "missing_code", H5::PredType::NATIVE_UINT16, H5::DataSpace(H5S_SCALAR));
+  missing.write(H5::PredType::NATIVE_UINT16, &merged.missing_code);
+  H5::Group value_group =
+      openOrCreateGroup(out_file, "/lookups/population_summary_values");
+  for (const auto& [property, values] : merged.tables)
+    event_writer_detail::writeStringDataset(value_group, property, values,
+                                            false);
 }
 
 void mergeProfileAssignments(H5::H5File& out_file,

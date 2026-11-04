@@ -342,6 +342,7 @@ if(BUILD_TESTING)
 
       test_deterministic_rng
       test_event_record_layout
+      test_population_summary_codes
       test_encounter_group_id_rank_independent
 
       test_transmission_determinism

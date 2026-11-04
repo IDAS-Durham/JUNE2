@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 
 #include "utils/event_logging/event_lookup_schemas.h"
 #include "utils/event_logging/event_writer_detail.h"
@@ -98,6 +100,16 @@ std::vector<june::detail::PersonRecord> buildPersonRecords(
 // world.people order. Falls back to network-partner serialisation for keys
 // whose values live in Person::NetworkMeta rather than the flat property
 // table; falls back to "not applicable" when neither source has a value.
+std::string encodeStringList(const std::vector<std::string>& list) {
+  std::string encoded = "[";
+  for (size_t i = 0; i < list.size(); ++i) {
+    if (i > 0) encoded += ",";
+    encoded += jsonString(list[i]);
+  }
+  encoded += "]";
+  return encoded;
+}
+
 std::vector<std::string> collectPropertyValues(
     const june::WorldState& world,
     const std::unordered_set<june::PersonId>& people_to_save,
@@ -125,14 +137,8 @@ std::vector<std::string> collectPropertyValues(
       else if (std::holds_alternative<double>(val))
         values.push_back(std::to_string(std::get<double>(val)));
       else if (std::holds_alternative<std::vector<std::string>>(val)) {
-        const auto& list = std::get<std::vector<std::string>>(val);
-        std::string encoded = "[";
-        for (size_t i = 0; i < list.size(); ++i) {
-          if (i > 0) encoded += ",";
-          encoded += jsonString(list[i]);
-        }
-        encoded += "]";
-        values.push_back(std::move(encoded));
+        values.push_back(
+            encodeStringList(std::get<std::vector<std::string>>(val)));
       } else
         values.push_back(june::kCouldNotResolve);
     } else if (network_type_id >= 0) {
@@ -234,11 +240,59 @@ std::vector<june::detail::PersonActivityRecord> buildPersonActivityRecords(
   return records;
 }
 
+// How one summary property maps stored values to codes. A property backed by
+// a value registry (strings, string lists) gets a sorted table of its values
+// and each person stores the position in that table. Sorting makes the codes
+// depend only on the set of values, never on registry order or rank count.
+struct SummaryColumn {
+  bool named = false;
+  std::vector<std::string> table;          // sorted values (named only)
+  std::vector<uint16_t> code_of_registry;  // registry entry -> table position
+};
+
+SummaryColumn buildSummaryColumn(const june::WorldState& world,
+                                 const std::string& name) {
+  SummaryColumn column;
+  std::vector<std::string> entries;
+
+  auto list_it = world.person_property_list_value_registries.find(name);
+  auto scalar_it = world.person_property_value_registries.find(name);
+  if (list_it != world.person_property_list_value_registries.end()) {
+    for (const auto& list : list_it->second)
+      entries.push_back(encodeStringList(list));
+  } else if (scalar_it != world.person_property_value_registries.end()) {
+    entries = scalar_it->second;
+  } else {
+    return column;
+  }
+  column.named = true;
+  if (entries.size() >= june::kSummaryMissingCode)
+    throw std::runtime_error(
+        "output.summary_properties: '" + name + "' has " +
+        std::to_string(entries.size()) +
+        " distinct values, at most 65534 fit in a summary code");
+  std::vector<size_t> order(entries.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::sort(order.begin(), order.end(),
+            [&](size_t a, size_t b) { return entries[a] < entries[b]; });
+  column.code_of_registry.assign(entries.size(), 0);
+  column.table.reserve(entries.size());
+  for (size_t rank = 0; rank < order.size(); ++rank) {
+    column.code_of_registry[order[rank]] = static_cast<uint16_t>(rank);
+    column.table.push_back(entries[order[rank]]);
+  }
+  return column;
+}
+
 std::vector<june::PopulationSummaryRecord> buildPopulationSummaryRecords(
     const june::WorldState& world,
-    const std::vector<std::string>& property_names) {
+    const std::vector<std::string>& property_names,
+    const std::vector<SummaryColumn>& columns) {
   const size_t n = world.people.size();
   std::vector<june::PopulationSummaryRecord> records(n);
+  std::vector<int> property_index;
+  for (const auto& name : property_names)
+    property_index.push_back(world.getPersonPropertyIndex(name));
   for (size_t i = 0; i < n; ++i) {
     const june::Person& person = world.people[i];
     records[i].person_id = person.id;
@@ -249,18 +303,25 @@ std::vector<june::PopulationSummaryRecord> buildPopulationSummaryRecords(
         static_cast<uint8_t>(person.schedule_type_id % 256);
     records[i].reserved = 0;
     records[i].geo_unit_id = person.geo_unit_id;
+    const auto values = world.getPersonProperties(person);
     for (size_t k = 0; k < 4; ++k) {
-      records[i].extra_codes[k] = 0;
-      if (k < property_names.size()) {
-        auto p_opt = world.getPersonProperty(person, property_names[k]);
-        if (p_opt) {
-          if (std::holds_alternative<int32_t>(*p_opt))
-            records[i].extra_codes[k] =
-                (uint8_t)(std::get<int32_t>(*p_opt) % 256);
-          else if (std::holds_alternative<bool>(*p_opt))
-            records[i].extra_codes[k] = std::get<bool>(*p_opt) ? 1 : 0;
-        }
-      }
+      records[i].extra_codes[k] = june::kSummaryMissingCode;
+      if (k >= property_names.size()) continue;
+      const int idx = property_index[k];
+      if (idx < 0 || static_cast<size_t>(idx) >= values.size()) continue;
+      const int32_t raw = values[idx];
+      if (raw == -1) continue;
+      const SummaryColumn& column = columns[k];
+      const size_t limit = column.named ? column.code_of_registry.size()
+                                        : june::kSummaryMissingCode;
+      if (raw < 0 || static_cast<size_t>(raw) >= limit)
+        throw std::runtime_error(
+            "output.summary_properties: '" + property_names[k] + "' value " +
+            std::to_string(raw) + " of person " + std::to_string(person.id) +
+            (column.named ? " is not in the value registry"
+                          : " does not fit a summary code (0 to 65534)"));
+      records[i].extra_codes[k] = column.named ? column.code_of_registry[raw]
+                                               : static_cast<uint16_t>(raw);
     }
   }
   return records;
@@ -353,19 +414,33 @@ void writePopulationSummary(H5::H5File& file, const WorldState& world,
   // At most 4 properties fit (PopulationSummaryRecord::extra_codes width).
   const std::vector<std::string> property_names =
       config.simulation.summaryPropertiesFor(world);
-  auto records = buildPopulationSummaryRecords(world, property_names);
+  std::vector<SummaryColumn> columns;
+  for (const auto& name : property_names)
+    columns.push_back(buildSummaryColumn(world, name));
+  auto records = buildPopulationSummaryRecords(world, property_names, columns);
   auto ptype = event_lookup_schema::populationSummary();
 
   H5::DataSet pds =
       writeFixedDataset(file, "/lookups/population_summary", records, ptype,
                         config.simulation.compression_level);
 
+  H5::StrType stype(H5::PredType::C_S1, H5T_VARIABLE);
   for (size_t k = 0; k < property_names.size(); ++k) {
-    H5::StrType stype(H5::PredType::C_S1, H5T_VARIABLE);
     H5::Attribute attr = pds.createAttribute("extra_prop_" + std::to_string(k),
                                              stype, H5::DataSpace(H5S_SCALAR));
     attr.write(stype, property_names[k]);
   }
+  H5::Attribute missing = pds.createAttribute(
+      "missing_code", H5::PredType::NATIVE_UINT16, H5::DataSpace(H5S_SCALAR));
+  const uint16_t missing_code = june::kSummaryMissingCode;
+  missing.write(H5::PredType::NATIVE_UINT16, &missing_code);
+
+  H5::Group value_group = event_writer_detail::openOrCreateGroup(
+      file, "/lookups/population_summary_values");
+  for (size_t k = 0; k < property_names.size(); ++k)
+    if (columns[k].named)
+      event_writer_detail::writeStringDataset(value_group, property_names[k],
+                                              columns[k].table, false);
 }
 
 void writePopulationNetworks(H5::H5File& file, const WorldState& world,
