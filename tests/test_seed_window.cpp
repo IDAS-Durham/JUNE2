@@ -99,3 +99,22 @@ TEST_CASE("time of day accepts one or two hour digits and nothing else") {
   CHECK_THROWS_WITH(parseDateTimeMinutes("2024-1-01 08:00"),
                     doctest::Contains("invalid date '2024-1-01 08:00'"));
 }
+
+TEST_CASE("a run's seed span runs from its first slot start to its last") {
+  // Three days: workday, rest_day, workday. The last slot is the day-2 21:00.
+  const ScheduleConfig schedule = alternatingSchedule();
+  const SeedWindow span = seedRunSpan(schedule, "2024-01-01", 3);
+
+  CHECK(span.after_minutes == minutesAt("2024-01-01 08:00") - 1);
+  CHECK(span.up_to_minutes == minutesAt("2024-01-03 21:00"));
+}
+
+TEST_CASE("the seed span of a one day run is that day's slot starts") {
+  const ScheduleConfig schedule = alternatingSchedule();
+  const SeedWindow span = seedRunSpan(schedule, "2024-01-01", 1);
+
+  CHECK(span.contains(minutesAt("2024-01-01 08:00")));
+  CHECK(span.contains(minutesAt("2024-01-01 21:00")));
+  CHECK_FALSE(span.contains(minutesAt("2024-01-01 07:59")));
+  CHECK_FALSE(span.contains(minutesAt("2024-01-01 21:01")));
+}

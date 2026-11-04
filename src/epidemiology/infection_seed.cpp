@@ -454,6 +454,33 @@ InfectionSeeder::InfectionSeeder(WorldState& world, const Disease* disease,
   }
 }
 
+void InfectionSeedConfig::requireWorldGeoLevel(const WorldState& world,
+                                               const InfectionSeedEvent& seed) {
+  const std::string& level = seed.structured_config.geo_level;
+  const auto& names = world.geo_level_names;
+  if (std::find(names.begin(), names.end(), level) != names.end()) return;
+  std::string known;
+  for (const std::string& name : names) {
+    known += (known.empty() ? "" : ", ") + name;
+  }
+  throw std::runtime_error("Infection seed '" + seed.name + "': geo_level '" +
+                           level +
+                           "' is not a level of this world. Known: " + known);
+}
+
+void InfectionSeeder::requireDatesInsideRun(const SeedWindow& span,
+                                            const std::string& start_date,
+                                            const std::string& end_date) const {
+  for (const InfectionSeedEvent& seed : config_.seeds) {
+    if (!span.contains(seed.date_minutes)) {
+      throw std::runtime_error("Infection seed '" + seed.name + "': date '" +
+                               seed.date_time + "' is outside the run (" +
+                               start_date + " to " + end_date +
+                               ", end exclusive), so it would never fire");
+    }
+  }
+}
+
 // Index of `name` in `known_names`; throws, naming the seed and value, when
 // the disease has no such name.
 static uint8_t resolveDeclaredName(const std::string& name,

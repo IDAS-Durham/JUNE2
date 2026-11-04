@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "activity/runtime_group_allocator.h"
 #include "core/config.h"
 #include "core/types.h"
 #include "core/world_state.h"
@@ -137,6 +138,13 @@ bool policySuppressesMirror(PolicyManager* policy_manager,
                             int16_t follower_activity_index,
                             uint8_t host_venue_type, VenueId host_venue,
                             double current_time);
+
+// Would moving the follower to the host's venue strand them on a line? Someone
+// riding a line stays on it unless the host is on a line too, when they take
+// over the host's journey instead. Moving them anywhere else would leave them
+// aboard a line they are no longer on, after the groups were dealt.
+bool strandsRider(const RuntimeGroupAllocator& allocator,
+                  VenueId follower_venue, VenueId host_venue);
 
 // Stochastic enrolment: each host rolls once and gathers followers from its
 // pool and binds the followers this rank owns.

@@ -408,6 +408,12 @@ bool mirrorSuppressed(const FollowConfig& fc, int16_t host_activity,
   return false;
 }
 
+bool strandsRider(const RuntimeGroupAllocator& allocator,
+                  VenueId follower_venue, VenueId host_venue) {
+  return allocator.isPartialPresenceVenue(follower_venue) &&
+         !allocator.isPartialPresenceVenue(host_venue);
+}
+
 bool policySuppressesMirror(PolicyManager* policy_manager,
                             const Person& follower,
                             int16_t follower_activity_index,
@@ -1134,13 +1140,10 @@ void Simulator::mirrorFollowRule(
             current_simulation_time_))
       continue;
 
-    // A rider cannot be dropped off mid-journey: someone on a line stays on it
-    // unless the host is on a line too, when they take over the host's journey
-    // below. Moving them anywhere else would leave them aboard a line they are
-    // no longer on.
+    // A rider cannot be dropped off mid-journey; see strandsRider.
     if (runtime_group_allocator_ &&
-        runtime_group_allocator_->isPartialPresenceVenue(floc.venue_id) &&
-        !runtime_group_allocator_->isPartialPresenceVenue(hl->second.venue))
+        follow_detail::strandsRider(*runtime_group_allocator_, floc.venue_id,
+                                    hl->second.venue))
       continue;
 
     // Travelling with the host means riding the host's whole journey, not the

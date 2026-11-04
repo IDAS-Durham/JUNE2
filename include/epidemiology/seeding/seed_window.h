@@ -26,4 +26,10 @@ SeedWindow seedWindowForSlot(const ScheduleConfig& schedule,
                              const std::string& start_date, int day,
                              size_t slot_index);
 
+// The span of Seed Dates some slot of a `total_days`-day run applies: after the
+// run's first slot start less a minute, up to the last slot start. A seed
+// dated outside it never fires.
+SeedWindow seedRunSpan(const ScheduleConfig& schedule,
+                       const std::string& start_date, int total_days);
+
 }  // namespace june

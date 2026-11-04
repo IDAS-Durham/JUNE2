@@ -802,6 +802,43 @@ TEST_CASE("the mirror gate pins nobody at the host's venue") {
 }
 
 // ===========================================================================
+// Followers who ride a line
+// ===========================================================================
+//
+// A rider is dealt into a line's groups before followers are placed. Moving
+// them to a venue that is not a line afterwards would leave them aboard a line
+// they are no longer on, so a rider only follows a host who is on a line too.
+
+TEST_CASE("a follower on a line is never moved to a host who is not on one") {
+  WorldState world;
+  world.geo_level_names = {"city"};
+  GeographicalUnit gu;
+  gu.id = 0;
+  gu.name = "g";
+  gu.level_id = 0;
+  gu.parent_id = -1;
+  world.geo_units.push_back(gu);
+  world.venue_type_names = {"household"};
+  Config config;
+  const uint8_t line_type =
+      addPartialPresenceVenueType(world, config.simulation, "line", 100);
+  const VenueId line_a = addPartialPresenceVenue(world, line_type);
+  const VenueId line_b = addPartialPresenceVenue(world, line_type);
+  const VenueId home = addPartialPresenceVenue(world, 0);
+  world.buildIndices();
+
+  RuntimeGroupAllocator allocator(world, config);
+
+  // Riding a line, the host somewhere else: the follower stays put.
+  CHECK(follow_detail::strandsRider(allocator, line_a, home));
+  // Riding a line, the host on a line too: the follower takes the host's trip.
+  CHECK_FALSE(follow_detail::strandsRider(allocator, line_a, line_b));
+  // Not riding: free to go wherever the host is, line or not.
+  CHECK_FALSE(follow_detail::strandsRider(allocator, home, home));
+  CHECK_FALSE(follow_detail::strandsRider(allocator, home, line_a));
+}
+
+// ===========================================================================
 // Invite distribution parameters
 // ===========================================================================
 

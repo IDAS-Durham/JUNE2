@@ -542,3 +542,62 @@ TEST_CASE("an exact seed raised from one case to two keeps its first pick") {
   CHECK(std::find(two_cases.begin(), two_cases.end(), one_case[0]) !=
         two_cases.end());
 }
+
+TEST_CASE("a structured seed naming a level the world lacks is refused") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeedConfig config = clusteredConfig(1);
+  config.seeds[0].structured_config.geo_level = "ZZZ";
+  InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+
+  CHECK_THROWS_WITH(
+      seeder.resolveConfig(world),
+      doctest::Contains("seed 'ties': geo_level 'ZZZ' is not a level of this "
+                        "world. Known: MGU"));
+}
+
+TEST_CASE("a structured seed naming a level the world has is accepted") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  InfectionSeeder seeder(world, &disease, clusteredConfig(1), nullptr, 12345);
+
+  CHECK_NOTHROW(seeder.resolveConfig(world));
+}
+
+TEST_CASE("a seed dated outside the run is refused, naming seed and date") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  const SeedWindow span{parseDateTimeMinutes("2024-01-01 08:00") - 1,
+                        parseDateTimeMinutes("2024-01-03 21:00")};
+
+  for (const char* date : {"2024-01-01 07:59", "2024-01-03 21:01",
+                           "2025-01-01 08:00", "2023-12-31 08:00"}) {
+    CAPTURE(date);
+    InfectionSeedConfig config = clusteredConfig(1);
+    config.seeds[0].date_time = date;
+    InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+    CHECK_THROWS_WITH(
+        seeder.requireDatesInsideRun(span, "2024-01-01", "2024-01-04"),
+        doctest::Contains(std::string("seed 'ties': date '" +
+                                      std::string(date) +
+                                      "' is outside the run")
+                              .c_str()));
+  }
+}
+
+TEST_CASE("a seed dated at the first or last slot start is inside the run") {
+  WorldState world = makeHouseholdWorld();
+  Disease disease = makeDisease();
+  const SeedWindow span{parseDateTimeMinutes("2024-01-01 08:00") - 1,
+                        parseDateTimeMinutes("2024-01-03 21:00")};
+
+  for (const char* date :
+       {"2024-01-01 08:00", "2024-01-02 13:30", "2024-01-03 21:00"}) {
+    CAPTURE(date);
+    InfectionSeedConfig config = clusteredConfig(1);
+    config.seeds[0].date_time = date;
+    InfectionSeeder seeder(world, &disease, config, nullptr, 12345);
+    CHECK_NOTHROW(
+        seeder.requireDatesInsideRun(span, "2024-01-01", "2024-01-04"));
+  }
+}
