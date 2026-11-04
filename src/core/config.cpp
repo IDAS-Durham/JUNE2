@@ -481,14 +481,11 @@ bool SelectionCriterion::evaluate(
       return false;
     }
 
-    if (cached_operator == Operator::EQUAL) return p_val == value;
-    if (cached_operator == Operator::NOT_EQUAL) return p_val != value;
-
     // Numeric helper: extract a double from PropertyValue if it holds an
-    // int or double. Returns false in `out_set` if the value is non-numeric
-    // (e.g. a string), in which case the caller falls through to the
-    // type-mismatch return below. This lets `filter.age<=59` work even
-    // when age is stored as double and the threshold parses as int.
+    // int or double. Returns false if the value is non-numeric (e.g. a
+    // string). Used so that an int on one side and a double on the other
+    // compare by value: `filter.age<=59` and `filter.age=5` both work when
+    // age is stored as double and the cell parses as int.
     auto as_number = [](const PropertyValue& pv, double& out) -> bool {
       if (std::holds_alternative<int>(pv)) {
         out = static_cast<double>(std::get<int>(pv));
@@ -500,6 +497,16 @@ bool SelectionCriterion::evaluate(
       }
       return false;
     };
+
+    if (cached_operator == Operator::EQUAL ||
+        cached_operator == Operator::NOT_EQUAL) {
+      double lhs_num = 0.0, rhs_num = 0.0;
+      const bool equal =
+          (as_number(p_val, lhs_num) && as_number(value, rhs_num))
+              ? lhs_num == rhs_num
+              : p_val == value;
+      return cached_operator == Operator::EQUAL ? equal : !equal;
+    }
 
     double lhs = 0.0, rhs = 0.0;
     if (cached_operator == Operator::GREATER ||
