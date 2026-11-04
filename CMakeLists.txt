@@ -365,7 +365,8 @@ if(BUILD_TESTING)
       test_fomite_sub_bins
       test_emission
       test_stage_curve_integral
-      test_seed_window)
+      test_seed_window
+      test_cli_args)
   add_executable(june_tests tests/june_tests_main.cpp)
   set(JUNE_STANDARD_TEST_SOURCES)
   foreach(test_name IN LISTS JUNE_STANDARD_TESTS)

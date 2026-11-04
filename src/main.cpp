@@ -1,6 +1,7 @@
 #include <getopt.h>
 #include <yaml-cpp/yaml.h>
 
+#include <climits>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -13,6 +14,7 @@
 #include "loaders/hdf5_loader.h"
 #include "simulation/compartmental_model_manager.h"
 #include "simulation/simulator.h"
+#include "utils/cli_args.h"
 #include "utils/event_logging/event_logger.h"
 #include "utils/event_logging/event_merger.h"
 #include "utils/memory_utils.h"
@@ -118,15 +120,11 @@ int main(int argc, char* argv[]) {
       sim_config_file = optarg;
     } else if (option == 's') {
       try {
-        long long v = std::stoll(optarg);
-        if (v < 0 || v > 0xFFFFFFFFLL) {
-          throw std::out_of_range("seed must be in [0, 4294967295]");
-        }
-        seed_override = v;
-      } catch (...) {
-        if (rank == 0)
-          std::cerr << "Warning: Invalid value for --seed: " << optarg
-                    << std::endl;
+        seed_override =
+            june::cli::parseInteger("seed", optarg, 0, 0xFFFFFFFFLL);
+      } catch (const std::invalid_argument& e) {
+        option_error = true;
+        if (rank == 0) std::cerr << "Error: " << e.what() << std::endl;
       }
     } else if (option == 'r') {
       runs_dir = optarg;
@@ -136,11 +134,11 @@ int main(int argc, char* argv[]) {
       restart_from = optarg;
     } else if (option == 'd') {
       try {
-        days_override = std::stoi(optarg);
-      } catch (...) {
-        if (rank == 0)
-          std::cerr << "Warning: Invalid value for --days: " << optarg
-                    << std::endl;
+        days_override = static_cast<int>(
+            june::cli::parseInteger("days", optarg, 1, INT_MAX));
+      } catch (const std::invalid_argument& e) {
+        option_error = true;
+        if (rank == 0) std::cerr << "Error: " << e.what() << std::endl;
       }
     } else if (option == 'w') {
       filename = optarg;
