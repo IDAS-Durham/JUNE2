@@ -302,8 +302,18 @@ void loadModeFomite(const YAML::Node& mode_node, TransmissionMode& tmode,
       "disease: ", " in fomite mode '" + tmode.name + "'");
   FomiteConfig fcfg;
   fcfg.mode_index = mode_idx;
-  fcfg.max_age =
-      mode_node["max_age"] ? mode_node["max_age"].as<double>() : 14.0;
+  const std::string fomite_context =
+      "disease: fomite mode '" + tmode.name + "'";
+  if (!mode_node["max_age"]) {
+    throw std::runtime_error(
+        fomite_context +
+        " needs max_age (days after which a deposit stops acting)");
+  }
+  fcfg.max_age = mode_node["max_age"].as<double>();
+  if (!(fcfg.max_age > 0.0)) {
+    throw std::runtime_error(fomite_context +
+                             ": max_age must be greater than 0");
+  }
   fcfg.sub_bin_time =
       mode_node["sub_bin_time"] ? mode_node["sub_bin_time"].as<double>() : 0.0;
   if (mode_node["fomite_curve"]) {

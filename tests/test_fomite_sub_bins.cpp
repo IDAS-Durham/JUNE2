@@ -17,6 +17,7 @@ static TransmissionMode makeFomiteMode(
   mode.name = name;
   mode.type = TransmissionModeType::Fomite;
   FomiteConfig config;
+  config.max_age = 14.0;
   config.sub_bin_time = sub_bin_time;
   config.infectiousness_curve = std::make_shared<ConstantCurve>(1.0);
   config.deposition_by_symptom = std::move(deposition_by_symptom);

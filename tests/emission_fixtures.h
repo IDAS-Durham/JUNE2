@@ -43,6 +43,7 @@ inline Disease makeDisease(double fomite_sub_bin_hours) {
   fomite.type = TransmissionModeType::Fomite;
   fomite.symptom_curves = {nullptr, nullptr, nullptr};
   FomiteConfig fomite_config;
+  fomite_config.max_age = 14.0;
   fomite_config.sub_bin_time = fomite_sub_bin_hours;
   fomite_config.infectiousness_curve = std::make_shared<ConstantCurve>(1.0);
   fomite_config.deposition_by_symptom = {

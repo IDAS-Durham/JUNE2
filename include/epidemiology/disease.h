@@ -148,7 +148,7 @@ enum class InfectiousnessMode {
 // current symptom stage via deposition_by_symptom.
 struct FomiteConfig {
   int mode_index = -1;        // Index in TransmissionParams::modes
-  double max_age = 14.0;      // Days: prune deposition history older than this
+  double max_age = 0.0;       // Days a deposit acts for; the loader requires > 0
   double sub_bin_time = 0.0;  // Hours: target sub-bin width (0 = single bin)
 
   // Infectiousness of deposited material as a function of age (days since

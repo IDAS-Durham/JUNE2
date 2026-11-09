@@ -1,3 +1,5 @@
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -210,7 +212,7 @@ TEST_CASE("Fomite Max Age Pruning") {
 
   // current_time = 5.0 days → age of old event = 5.0 days > max_age(2 days)
   // age of recent event = 0.5 days < max_age(2 days)
-  epi.updateVenueFomites(5.0);
+  epi.updateVenueFomites(5.0, 0.0);
 
   // Old event should be pruned, recent should remain
   CHECK(world.venues[0].fomite_history[0].size() == 1);
@@ -708,4 +710,138 @@ TEST_CASE("a Person-infector infection logs the context it was judged with") {
   CHECK(logged.source == InfectionSource::Person);
   CHECK(disease.getSymptomName(logged.infector_symptom_id) == "mild");
   CHECK(disease.getModeName(logged.transmission_mode_index) == "direct");
+}
+
+// =============================================================================
+// max_age is an exact cutoff: a deposit has no effect once it is older than
+// max_age, and a slot that straddles the cutoff counts only the part before it.
+// The disease helper above uses max_age = 2 days and a constant curve, so the
+// exposure of one deposit is proportional to the length of the window counted.
+// =============================================================================
+namespace {
+
+constexpr double kSlotHours = 8.0;
+constexpr double kSlotDays = kSlotHours / 24.0;
+constexpr double kMaxAgeDays = 2.0;
+
+struct SingleVenueFomiteScene {
+  WorldState world;
+  Disease disease = makeDiseaseWithFomite(1.0, 1.0, 1.0);
+  std::vector<PersonLocation> locs;
+  ContactMatrixConfig cm_config;
+  SimulationConfig sim_config;
+  ParallelConfig parallel_config;
+
+  SingleVenueFomiteScene() {
+    Venue venue;
+    venue.id = 0;
+    venue.type_id = 0;
+    world.venue_type_names = {"office"};
+    world.venues.push_back(venue);
+    world.people.emplace_back();
+    Person& p = world.people[0];
+    p.id = 0;
+    p.age = 30;
+    p.sex = Sex::MALE;
+    p.geo_unit_id = -1;
+    world.buildIndices();
+    initVenueFomiteHistory(world, 1);
+    PersonLocation loc;
+    loc.person_id = 0;
+    loc.venue_id = 0;
+    loc.subset_index = -1;
+    loc.activity_index = -1;
+    loc.encounter_type_id = 255;
+    loc.person_array_index = 0;
+    locs.push_back(loc);
+    cm_config.allow_default_matrix = true;
+    finalizeContactMatrices(cm_config, world, disease);
+  }
+
+  // Run one slot starting at `t` and report whether the person was infected.
+  bool runSlot(InteractionManager& im, double t) {
+    world.people[0].infection.reset();
+    im.processTransmissions(locs, t, kSlotHours, nullptr);
+    return static_cast<bool>(world.people[0].infection);
+  }
+};
+
+// Smallest deposit amount that infects when the single deposit is `age` days
+// old at the start of a slot. The draw for a given person and time is fixed,
+// so infection switches on at one amount, and that amount is inversely
+// proportional to the exposure the deposit delivers in the slot. Returns
+// infinity when even a huge deposit does not infect.
+double thresholdAmountAtAge(double age) {
+  const double t = 5.0;
+  auto infects = [&](double amount) {
+    SingleVenueFomiteScene s;
+    InteractionManager im(s.world, s.cm_config, s.sim_config, s.parallel_config,
+                          &s.disease, nullptr);
+    s.world.venues[0].fomite_history[0].push_back({t - age, amount});
+    return s.runSlot(im, t);
+  };
+  double hi = 1e9;
+  if (!infects(hi)) return std::numeric_limits<double>::infinity();
+  double lo = 1e-3;
+  for (int i = 0; i < 80; ++i) {
+    double mid = std::sqrt(lo * hi);
+    (infects(mid) ? hi : lo) = mid;
+  }
+  return hi;
+}
+
+}  // namespace
+
+TEST_CASE("Fomite deposit has no effect once older than max_age") {
+  CHECK(std::isfinite(thresholdAmountAtAge(1.0)));
+  CHECK(std::isfinite(thresholdAmountAtAge(1.9)));
+  CHECK(std::isinf(thresholdAmountAtAge(kMaxAgeDays)));
+  CHECK(std::isinf(thresholdAmountAtAge(kMaxAgeDays + 0.01)));
+  CHECK(std::isinf(thresholdAmountAtAge(kMaxAgeDays + kSlotDays)));
+}
+
+TEST_CASE("Fomite exposure window stops at max_age inside a slot") {
+  // Full window: the whole slot lies before the cutoff.
+  const double full = thresholdAmountAtAge(1.0);
+  // Straddling: only the first `remaining` days of the slot lie before it.
+  for (double remaining : {0.1, 0.2, 0.3}) {
+    const double age = kMaxAgeDays - remaining;
+    const double expected_ratio = kSlotDays / remaining;
+    CHECK(thresholdAmountAtAge(age) / full ==
+          doctest::Approx(expected_ratio).epsilon(0.01));
+  }
+}
+
+TEST_CASE("Fomite deposit is last used in a slot that starts before max_age") {
+  // Walk slot by slot, using then pruning exactly as the simulator does, and
+  // check the deposit stops acting at max_age and is gone from history after.
+  SingleVenueFomiteScene s;
+  InteractionManager im(s.world, s.cm_config, s.sim_config, s.parallel_config,
+                        &s.disease, nullptr);
+  Epidemiology epi(s.world, &s.disease);
+  const double deposit_time = 10.0 + 1.0 / 48.0;
+  s.world.venues[0].fomite_history[0].push_back({deposit_time, 1e9});
+
+  double last_infecting_slot_start = -1.0;
+  for (int j = 0; j < 30; ++j) {
+    const double t = 10.0 + j * kSlotDays;
+    if (s.runSlot(im, t)) last_infecting_slot_start = t - deposit_time;
+    epi.updateVenueFomites(t, kSlotHours);
+  }
+  CHECK(last_infecting_slot_start > kMaxAgeDays - kSlotDays);
+  CHECK(last_infecting_slot_start < kMaxAgeDays);
+  CHECK(s.world.venues[0].fomite_history[0].empty());
+}
+
+TEST_CASE("Fomite history keeps only deposits still inside max_age next slot") {
+  SingleVenueFomiteScene s;
+  Epidemiology epi(s.world, &s.disease);
+  const double t = 5.0;
+  // Ages at the start of the next slot: 2.133 (past), 1.933 (inside).
+  s.world.venues[0].fomite_history[0].push_back({t - 1.8, 1.0});
+  s.world.venues[0].fomite_history[0].push_back({t - 1.6, 2.0});
+  epi.updateVenueFomites(t, kSlotHours);
+  REQUIRE(s.world.venues[0].fomite_history[0].size() == 1);
+  CHECK(s.world.venues[0].fomite_history[0].front().amount ==
+        doctest::Approx(2.0));
 }

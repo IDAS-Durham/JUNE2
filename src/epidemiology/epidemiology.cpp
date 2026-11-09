@@ -234,12 +234,14 @@ void Epidemiology::updateVenueFomites(double current_simulation_time,
     if ((int)history.size() < (int)fomite_modes.size()) {
       history.resize(fomite_modes.size());
     }
-    // Prune old entries from each mode's deposition history
+    // Drop entries that will be past max_age when the next slot starts, so
+    // history never holds a deposit the exposure sum would skip anyway.
+    const double next_slot_start = current_simulation_time + delta_hours / 24.0;
     for (int local_fm = 0; local_fm < (int)fomite_modes.size(); ++local_fm) {
       double max_age = fomite_modes[local_fm].config->max_age;
       auto& deque = history[local_fm];
       while (!deque.empty() &&
-             (current_simulation_time - deque.front().time) > max_age) {
+             (next_slot_start - deque.front().time) >= max_age) {
         deque.pop_front();
       }
     }

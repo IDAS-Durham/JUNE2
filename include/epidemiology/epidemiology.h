@@ -33,9 +33,10 @@ class Epidemiology {
       double current_simulation_time,
       const std::vector<PersonLocation>& locations);
 
-  // Apply decay to venue fomite loads based on time elapsed
-  void updateVenueFomites(double current_simulation_time,
-                          double delta_hours = 0.0);
+  // Drop deposits that are past max_age by the start of the next slot.
+  // current_simulation_time is the start of the slot just run and delta_hours
+  // its length.
+  void updateVenueFomites(double current_simulation_time, double delta_hours);
 
   // Recovery and death end any policy freeze the person is under, so
   // Epidemiology needs the manager holding it. Absent (tests that run no
