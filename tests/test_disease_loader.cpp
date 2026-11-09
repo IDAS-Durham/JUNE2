@@ -1,5 +1,7 @@
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -92,4 +94,56 @@ TEST_CASE("Open-ended age filters use a numeric comparison") {
   CHECK(criteria[0].evaluate(world.people[0], &world));
   world.people[0].age = 89.9f;
   CHECK_FALSE(criteria[0].evaluate(world.people[0], &world));
+}
+
+namespace {
+
+// The fomite test disease with its max_age line replaced (empty = removed).
+std::string loadFomiteDiseaseWithMaxAge(const ScopedTestFiles& files,
+                                        const std::string& max_age_line) {
+  std::ifstream in("tests/configs/fomite_disease.yaml");
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+  std::string text = buffer.str();
+  const std::string rates = "../../data/infection_outcome_rates_covid19.csv";
+  text.replace(text.find(rates), rates.size(), "rates.csv");
+  std::ifstream csv_in("data/infection_outcome_rates_covid19.csv");
+  std::stringstream csv;
+  csv << csv_in.rdbuf();
+  files.write("rates.csv", csv.str());
+  const std::string old_line = "      max_age: 7.0\n";
+  text.replace(text.find(old_line), old_line.size(),
+               max_age_line.empty() ? "" : "      " + max_age_line + "\n");
+  return files.write("disease.yaml", text).string();
+}
+
+}  // namespace
+
+TEST_CASE("A fomite mode without max_age is rejected and named") {
+  ScopedTestFiles files{"june_disease_loader_fomite_max_age_missing"};
+  const std::string yaml = loadFomiteDiseaseWithMaxAge(files, "");
+  CHECK_THROWS_WITH_AS(DiseaseLoader::loadFromYAML(yaml),
+                       doctest::Contains("fomite mode 'fomite' needs max_age"),
+                       std::runtime_error);
+}
+
+TEST_CASE("A fomite mode with a non-positive max_age is rejected") {
+  for (const char* value : {"max_age: 0.0", "max_age: -3.0"}) {
+    ScopedTestFiles files{"june_disease_loader_fomite_max_age_bad"};
+    const std::string yaml = loadFomiteDiseaseWithMaxAge(files, value);
+    CHECK_THROWS_WITH_AS(DiseaseLoader::loadFromYAML(yaml),
+                         doctest::Contains("max_age must be greater than 0"),
+                         std::runtime_error);
+  }
+}
+
+TEST_CASE("A fomite mode with a positive max_age loads") {
+  ScopedTestFiles files{"june_disease_loader_fomite_max_age_ok"};
+  const std::string yaml = loadFomiteDiseaseWithMaxAge(files, "max_age: 7.0");
+  CHECK_NOTHROW(DiseaseLoader::loadFromYAML(yaml));
+}
+
+TEST_CASE("A disease with no fomite mode needs no max_age") {
+  WideDiseaseFixture fixture("0.7,0.3,0.7,0.3,0.7,0.3,0.7,0.3");
+  CHECK_NOTHROW(DiseaseLoader::loadFromYAML(fixture.yaml.string()));
 }

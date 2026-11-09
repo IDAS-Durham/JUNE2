@@ -156,10 +156,13 @@ std::vector<double> InteractionManager::recordFomiteDepositionAndLambda(
       const double delta_days = delta_hours / 24.0;
       for (const auto& event : history[local_fm]) {
         double age = current_time - event.time;
+        // A deposit has no effect past max_age, so the slot's window stops
+        // there instead of running a whole slot beyond it.
+        if (age >= fomite_config.max_age) continue;
         lambda_fomite_by_mode[local_fm] +=
             event.amount *
-            fomite_config.infectiousness_curve->integrate(age,
-                                                          age + delta_days) /
+            fomite_config.infectiousness_curve->integrate(
+                age, std::min(age + delta_days, fomite_config.max_age)) /
             24.0;
       }
     }

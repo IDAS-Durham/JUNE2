@@ -603,6 +603,7 @@ TEST_CASE(
   fomite.type = TransmissionModeType::Fomite;
   fomite.symptom_curves = {nullptr, nullptr};
   FomiteConfig fomite_config;
+  fomite_config.max_age = 14.0;
   fomite_config.sub_bin_time = 0.25;
   fomite_config.infectiousness_curve = std::make_shared<ConstantCurve>(1.0);
   fomite_config.deposition_by_symptom = {std::make_shared<ConstantCurve>(1.0),

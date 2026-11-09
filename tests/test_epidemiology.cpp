@@ -55,13 +55,13 @@ TEST_CASE("Epidemiology - Fomite Pruning") {
 
   // current_time=3.0 days → age = 3.0 days > max_age(2.0 days) → should be
   // pruned
-  epi.updateVenueFomites(3.0);
+  epi.updateVenueFomites(3.0, 0.0);
   CHECK(world.venues[0].fomite_history[0].empty());
 
   // Add a recent event (time=2.5 days) and call again at time=3.0
   // age = 0.5 days < max_age(2.0 days) → should survive
   world.venues[0].fomite_history[0].push_back({2.5, 3.0});
-  epi.updateVenueFomites(3.0);
+  epi.updateVenueFomites(3.0, 0.0);
   CHECK(world.venues[0].fomite_history[0].size() == 1);
   CHECK(world.venues[0].fomite_history[0].front().amount ==
         doctest::Approx(3.0));
