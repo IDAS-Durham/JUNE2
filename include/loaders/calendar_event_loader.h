@@ -12,9 +12,10 @@ class WorldState;
 
 // Parses a calendar-events CSV (filter.*-convention) into a day-indexed table.
 // Required columns: calendar_event_id, date, schedule_name,
-//   hosting_geo_unit_id, venue_type_name, catchment_rule_id, duration_days,
-//   compliance_rate.
+//   hosting_geo_unit_id, catchment_rule_id, duration_days, compliance_rate.
 // Optional filter.* columns are parsed into CalendarEvent::attendee_filters.
+// Other columns are ignored. The venue type is not an event column: it comes
+// from the on-the-fly rule for the hopped schedule's activity.
 // `duration_days` may be blank (defaults to 1).
 // `date` is "YYYY-MM-DD"; start_day = daysBetween(start_date, date).
 // Rows outside [0, num_sim_days) are skipped with a warning. Throws

@@ -310,7 +310,6 @@ TEST_CASE(
   event.compliance_rate = 1.0f;
   event.catchment_rule_id = -1;
   event.hosting_geo_unit_id = 0;
-  event.venue_type_name = "fair";
 
   CalendarEventManager calendar_manager({{event}});
   CalendarEventManager::Snapshot snap;
