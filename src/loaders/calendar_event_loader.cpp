@@ -53,7 +53,6 @@ std::vector<std::vector<CalendarEvent>> CalendarEventLoader::parse(
       event.schedule_type_idx = static_cast<int16_t>(schedule_idx);
       event.hosting_geo_unit_id =
           static_cast<GeoUnitId>(std::stoi(get("hosting_geo_unit_id")));
-      event.venue_type_name = get("venue_type_name");
       event.catchment_rule_id = std::stoi(get("catchment_rule_id"));
       const std::string& dur_str = get("duration_days");
       event.duration_days = dur_str.empty()

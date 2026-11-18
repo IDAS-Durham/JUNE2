@@ -24,7 +24,6 @@ struct CalendarEvent {
   int16_t duration_days = 1;       // number of schedule-hop days (default 1)
   int32_t catchment_rule_id = -1;
   GeoUnitId hosting_geo_unit_id = -1;
-  std::string venue_type_name;
   std::vector<SelectionCriterion> attendee_filters;
 };
 

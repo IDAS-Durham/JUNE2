@@ -9,7 +9,7 @@
 # on-the-fly rule is what can place someone who has none. So these are Saturday
 # matinees for children aged 5 to 17 with no leisure venue, and 5 in 100 of them
 # in the catchment go. Everyone invited ends up at a cinema in the host unit.
-calendar_event_id,date,schedule_name,hosting_geo_unit_id,venue_type_name,catchment_rule_id,duration_days,compliance_rate,filter.age,filter.activities.leisure.length
-1,2020-03-14,gathering_day,2191,cinema,1,1,0.05,5-17,0
-2,2020-03-21,gathering_day,2204,cinema,2,1,0.05,5-17,0
-3,2020-05-23,gathering_day,2154,cinema,3,1,0.05,5-17,0
+calendar_event_id,date,schedule_name,hosting_geo_unit_id,catchment_rule_id,duration_days,compliance_rate,filter.age,filter.activities.leisure.length
+1,2020-03-14,gathering_day,2191,1,1,0.05,5-17,0
+2,2020-03-21,gathering_day,2204,2,1,0.05,5-17,0
+3,2020-05-23,gathering_day,2154,3,1,0.05,5-17,0
